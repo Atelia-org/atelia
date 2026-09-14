@@ -94,7 +94,7 @@ public sealed partial class ManagerVerticalTests {
             using RecapGridManagerHandle reopenedManager = OpenManager(fixture);
             RecapGridBuildResult.Fulfilled reopened = Assert.IsType<RecapGridBuildResult.Fulfilled>(
                 await reopenedManager.Manager.BuildAsync(Request(maximumNewCalls: 0), reopenedRuntime));
-            Assert.Equal(first.Proof.ViewDigest, reopened.Proof.ViewDigest);
+            Assert.Equal(first.Proof.RowResultId, reopened.Proof.RowResultId);
             Assert.Equal(0, reopened.Metrics.NewCalls);
             Assert.Equal(expectedCalls, provider.Requests.Count);
         }

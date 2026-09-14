@@ -821,11 +821,7 @@ public sealed class HostingTests {
             target
         );
         HistorySegmentDescriptor descriptor = Descriptor(timelineId, rowId);
-        EvaluationKey key = EvaluationKey.Create(
-            descriptor.DescriptorDigest,
-            definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
+        var slot = new CellSlot(recipe.Digest, rowId, logical);
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
             new RowViewCoordinate(
@@ -836,11 +832,10 @@ public sealed class HostingTests {
                 recipe.Digest,
                 target.Digest,
                 previousHistoryRowId: null,
-                previousViewDigest: null,
+                previousRowResultId: null,
                 bootstrapCompleted: true
             ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(logical, key)]
+            [new RowBuildAssignment.Evaluate(slot)]
         );
         var segment = new HistorySegmentContent(
             descriptor,
@@ -869,7 +864,7 @@ public sealed class HostingTests {
             controlHead,
             new RecapGridStoreIdentity(
                 new RecapGridStoreInstanceId(new string('6', 32)),
-                schemaVersion: 1
+                schemaVersion: 3
             ),
             recipe,
             segment,
@@ -878,8 +873,7 @@ public sealed class HostingTests {
             previousCells: Array.Empty<RecapCellArtifact>(),
             [new FrozenRecapCellWork(
                 0,
-                logical,
-                key,
+                slot,
                 definition,
                 family
             )]
@@ -970,12 +964,13 @@ public sealed class HostingTests {
             modelId,
             "test",
             "test-v1",
-            new EvaluationKeyDigest(new string('b', 64)),
+            new CellSlot(new GridBuildRecipeDigest(new string('b', 64)),
+                new HistoryRowId(new string('d', 64)), new LogicalColumnId("case.column-0")),
+            new string('6', 32),
+            3,
+            null,
             Family,
             new MaintainerDefinitionDigest(new string('c', 64)),
-            new string('d', 64),
-            true,
-            null,
             RecapCompletionWorkRole.Leader,
             TimeSpan.Zero,
             TimeSpan.Zero,

@@ -112,7 +112,7 @@ public sealed partial class RecapGridManager {
                     unit.Selected.Descriptor.RowId,
                     unit.Plan.Recipe.Digest,
                     "ReusePrerequisiteMissing",
-                    $"{absent.LogicalColumnId}:{absent.CellDigest}"
+                    $"{absent.LogicalColumnId}:{absent.CellId}"
                     ));
             }
             if (missing is RecapGridMissingResult.Busy) {
@@ -136,9 +136,9 @@ public sealed partial class RecapGridManager {
                     invalid.Detail
                 ));
             }
-            EvaluationKey[] keys = missing switch {
+            CellSlot[] keys = missing switch {
                 RecapGridMissingResult.Missing value
-                    => value.OrderedKeys.ToArray(),
+                    => value.OrderedSlots.ToArray(),
                 RecapGridMissingResult.Complete => [],
                 _ => []
             };
@@ -175,8 +175,7 @@ public sealed partial class RecapGridManager {
                             item.Ordinal,
                             unit.Selected.Descriptor.RowId,
                             unit.Plan.Recipe.Digest,
-                            item.LogicalColumnId,
-                            item.EvaluationKey.Digest
+                            item.LogicalColumnId
                         )).ToArray())
                     ));
         }
@@ -205,8 +204,8 @@ public sealed partial class RecapGridManager {
         }
         switch (_store.Reader.ReadFulfilled(key)) {
             case RecapGridStoreReadResult<RecapGridFulfilledView>.Found found
-                when found.Value.ViewDigest
-                    == requestedFinal.View.Digest:
+                when found.Value.RowResultId
+                    == requestedFinal.View.Id:
                 fulfillmentPresent = true;
                 break;
             case RecapGridStoreReadResult<RecapGridFulfilledView>.Found:
@@ -252,13 +251,13 @@ public sealed partial class RecapGridManager {
                 frozen.Through.Descriptor.RowId,
                 frozen.Through.Descriptor.DescriptorDigest,
                 key,
-                requestedFinal.View.Digest
+                requestedFinal.View.Id
             )
             : null;
         return Finish(finalFence
             ?? new RecapGridBuildProgressResult.Complete(
                 authority,
-                requestedFinal.View.Digest,
+                requestedFinal.View.Id,
                 proof
             ));
     }

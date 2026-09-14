@@ -31,9 +31,9 @@ public sealed class RecapCompletionRuntimeTests {
         Assert.Equal(2, invoker.CallCount);
         Assert.Equal(
             batch.OrderedMissingWork.Select(static work =>
-                work.EvaluationKey.Digest),
+                work.Slot),
             completed.OrderedOutcomes.Select(static outcome =>
-                outcome.EvaluationKey)
+                outcome.Slot)
         );
         Assert.All(completed.OrderedOutcomes, static outcome =>
             Assert.IsType<RecapCellExecutionOutcome.Updated>(outcome));
@@ -520,7 +520,7 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
-    public async Task SameText_WithOrWithoutReasoning_HasSameCellIdentity() {
+    public async Task SameText_WithOrWithoutReasoning_HasSameOutput() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
         var includeReasoning = new Queue<bool>([false, true]);
         ScriptedInvoker? invoker = null;
@@ -560,25 +560,9 @@ public sealed class RecapCompletionRuntimeTests {
         );
 
         Assert.Equal(first, second);
-        FrozenRecapCellWork work = Assert.Single(batch.OrderedMissingWork);
-        RecapCellArtifact firstCell = RecapCellArtifact.Create(
-            work.LogicalColumnId,
-            work.Definition.Digest,
-            work.EvaluationKey,
-            RecapCellOutcome.Updated,
-            first.Content,
-            work.Definition.MaxContentUtf8Bytes
-        );
-        RecapCellArtifact secondCell = RecapCellArtifact.Create(
-            work.LogicalColumnId,
-            work.Definition.Digest,
-            work.EvaluationKey,
-            RecapCellOutcome.Updated,
-            second.Content,
-            work.Definition.MaxContentUtf8Bytes
-        );
-        Assert.Equal(firstCell.CellDigest, secondCell.CellDigest);
-        Assert.Equal(firstCell.ToCanonicalBytes(), secondCell.ToCanonicalBytes());
+        Assert.Equal("same content", first.Content);
+        Assert.Equal(Assert.Single(batch.OrderedMissingWork).Slot, first.Slot);
+        Assert.Equal(2, invoker.CallCount);
     }
 
     [Fact]

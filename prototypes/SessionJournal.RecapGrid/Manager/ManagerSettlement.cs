@@ -4,116 +4,92 @@ using Atelia.SessionJournal.RecapGrid.Store;
 namespace Atelia.SessionJournal.RecapGrid.Manager;
 
 public sealed partial class RecapGridManager {
-    private RecapGridBuildResult? PutRowView(
+    private (RecapRowView? Winner, RecapGridBuildResult? Error) PutRowView(
         FrozenOperation frozen,
         RowBuildSpec spec,
-        RecapRowView view,
+        IReadOnlyList<RecapCellArtifact> cells,
         BuildState state
     ) {
         if (_store.Identity != frozen.StoreIdentity) {
-            return Invalid(
-                "StoreIdentityChanged",
-                "The Store identity changed during the build operation."
-            );
+            return (null, Invalid("StoreIdentityChanged",
+                "The Store identity changed during the build operation."));
         }
         RecapGridRowViewPutResult put = _testHooks.PutRowView is null
-            ? _store.Writer.PutRowView(spec, view)
-            : _testHooks.PutRowView(
-                spec,
-                view,
-                () => _store.Writer.PutRowView(spec, view)
-            );
-        if (put is RecapGridRowViewPutResult.CommitIndeterminate
-            pending) {
-            if (pending.IntendedAssignment != view.Coordinate.AssignmentKey
-                || pending.Intended != view.Digest) {
-                return Invalid(
-                    "RowViewSettlementIntendedMismatch",
-                    "The indeterminate RowView assignment or digest differs from the proposed view."
-                );
-            }
-            if (pending.Observed is { } observedDigest
-                && observedDigest != view.Digest) {
-                return Invalid(
-                    "RowViewSettlementObservedMismatch",
-                    "The observed RowView identity differs from the proposed view."
-                );
+            ? _store.Writer.PutRowView(spec, cells)
+            : _testHooks.PutRowView(spec, cells, () => _store.Writer.PutRowView(spec, cells));
+        RecapRowView? winner;
+        switch (put) {
+            case RecapGridRowViewPutResult.Inserted inserted:
+                winner = inserted.Winner;
+                state.RowViewsCommitted++;
+                break;
+            case RecapGridRowViewPutResult.AlreadyPresent already:
+                winner = already.Winner;
+                break;
+            case RecapGridRowViewPutResult.CommitIndeterminate pending:
+                if (pending.IntendedAssignment != spec.Coordinate.AssignmentKey) {
+                    return (null, Invalid("RowViewSettlementIntendedMismatch",
+                        "The indeterminate RowView assignment differs from the requested row."));
+                }
+                if (pending.Observed is { } reported && !MatchesRow(reported, spec, cells)) {
+                    return (null, Invalid("RowViewSettlementObservedMismatch",
+                        "The reported RowView differs from the requested business assignment."));
+                }
+                {
+                    RecapGridStoreReadResult<RecapRowView> observed =
+                        _store.Reader.ReadViewAt(pending.IntendedAssignment);
+                    switch (observed) {
+                        case RecapGridStoreReadResult<RecapRowView>.Found found:
+                            winner = found.Value;
+                            break;
+                        case RecapGridStoreReadResult<RecapRowView>.Missing:
+                        case RecapGridStoreReadResult<RecapRowView>.Busy:
+                            return (null, Settlement(RecapGridBuildCommitKind.RowView,
+                                pending.IntendedAssignment.ToString(), pending.Observed?.Id.Value, state));
+                        case RecapGridStoreReadResult<RecapRowView>.Disposed:
+                            return (null, Unavailable(RecapGridBuildDependency.Store, "StoreDisposed"));
+                        case RecapGridStoreReadResult<RecapRowView>.Invalid invalid:
+                            return (null, Unavailable(RecapGridBuildDependency.Store, invalid.Code, invalid.Detail));
+                        default:
+                            return (null, Invalid("RowViewSettlementMismatch", "The RowView observation is unsupported."));
+                    }
+                }
+                state.RowViewsCommitted++;
+                break;
+            case RecapGridRowViewPutResult.Busy:
+                return (null, Unavailable(RecapGridBuildDependency.Store, "StoreBusy"));
+            case RecapGridRowViewPutResult.Limit limit:
+                return (null, Unavailable(RecapGridBuildDependency.Store, "StoreLimit", limit.Name));
+            case RecapGridRowViewPutResult.Disposed:
+                return (null, Unavailable(RecapGridBuildDependency.Store, "StoreDisposed"));
+            case RecapGridRowViewPutResult.Rejected rejected:
+                return (null, Invalid("RowViewRejected", rejected.Code));
+            case RecapGridRowViewPutResult.PrerequisiteMissing missing:
+                return (null, Unavailable(RecapGridBuildDependency.Store, "RowViewPrerequisiteMissing", missing.Code));
+            case RecapGridRowViewPutResult.Invalid invalid:
+                return (null, Unavailable(RecapGridBuildDependency.Store, invalid.Code, invalid.Detail));
+            default:
+                return (null, Invalid("RowViewPutOutcomeInvalid", "The Store returned an unknown RowView put outcome."));
+        }
+        return MatchesRow(winner, spec, cells)
+            ? (winner, null)
+            : (null, Invalid("RowViewSettlementMismatch", "The stored RowView differs from the requested business assignment."));
+    }
+
+    private static bool MatchesRow(RecapRowView row, RowBuildSpec spec,
+        IReadOnlyList<RecapCellArtifact> cells) {
+        if (row.Coordinate != spec.Coordinate || row.OrderedCells.Count != cells.Count) {
+            return false;
+        }
+        for (int index = 0; index < cells.Count; index++) {
+            RecapRowViewCell member = row.OrderedCells[index];
+            RecapCellArtifact cell = cells[index];
+            if (member.CellId != cell.Id || member.LogicalColumnId != cell.LogicalColumnId
+                || member.DefinitionDigest != cell.DefinitionDigest) {
+                return false;
             }
         }
-        if (put is RecapGridRowViewPutResult.CommitIndeterminate pendingRead) {
-            RecapGridStoreReadResult<RecapRowView> observed =
-                _store.Reader.ReadViewAt(pendingRead.IntendedAssignment);
-            switch (observed) {
-                case RecapGridStoreReadResult<RecapRowView>.Found found
-                    when found.Value.Digest == pendingRead.Intended
-                        && found.Value.ToCanonicalBytes().SequenceEqual(
-                            view.ToCanonicalBytes()):
-                    put = new RecapGridRowViewPutResult
-                        .CommitIndeterminate(
-                            pendingRead.IntendedAssignment,
-                            pendingRead.Intended,
-                            pendingRead.Intended
-                        );
-                    break;
-                case RecapGridStoreReadResult<RecapRowView>.Missing:
-                case RecapGridStoreReadResult<RecapRowView>.Busy:
-                    return Settlement(
-                        RecapGridBuildCommitKind.RowView,
-                        pendingRead.Intended.Value,
-                        pendingRead.Observed?.Value,
-                        state
-                    );
-                case RecapGridStoreReadResult<RecapRowView>.Disposed:
-                    return Unavailable(
-                        RecapGridBuildDependency.Store,
-                        "StoreDisposed"
-                    );
-                case RecapGridStoreReadResult<RecapRowView>.Invalid invalid:
-                    return Unavailable(
-                        RecapGridBuildDependency.Store,
-                        invalid.Code,
-                        invalid.Detail
-                    );
-                default:
-                    return Invalid(
-                        "RowViewSettlementMismatch",
-                        "The observed RowView differs from the indeterminate commit."
-                    );
-            }
-        }
-        return put switch {
-            RecapGridRowViewPutResult.Inserted => CountView(state),
-            RecapGridRowViewPutResult.AlreadyPresent => null,
-            RecapGridRowViewPutResult.CommitIndeterminate indeterminate
-                when indeterminate.Observed == indeterminate.Intended
-                    => CountView(state),
-            RecapGridRowViewPutResult.CommitIndeterminate indeterminate
-                => Settlement(
-                    RecapGridBuildCommitKind.RowView,
-                    indeterminate.Intended.Value,
-                    indeterminate.Observed?.Value,
-                    state
-                ),
-            RecapGridRowViewPutResult.Busy
-                => Unavailable(RecapGridBuildDependency.Store,
-                    "StoreBusy"),
-            RecapGridRowViewPutResult.Limit limit
-                => Unavailable(RecapGridBuildDependency.Store,
-                    "StoreLimit", limit.Name),
-            RecapGridRowViewPutResult.Disposed
-                => Unavailable(RecapGridBuildDependency.Store,
-                    "StoreDisposed"),
-            RecapGridRowViewPutResult.Rejected rejected
-                => Invalid("RowViewRejected", rejected.Code),
-            RecapGridRowViewPutResult.PrerequisiteMissing missing
-                => Unavailable(RecapGridBuildDependency.Store,
-                    "RowViewPrerequisiteMissing", missing.Code),
-            RecapGridRowViewPutResult.Invalid invalid
-                => Unavailable(RecapGridBuildDependency.Store,
-                    invalid.Code, invalid.Detail),
-            _ => Invalid("RowViewPutOutcomeInvalid",
-                "The Store returned an unknown RowView put outcome.")
-        };
+        return true;
     }
 
     private RecapGridBuildResult FinalizeFulfilled(
@@ -153,27 +129,26 @@ public sealed partial class RecapGridManager {
         RecapGridFulfilledPutResult put = _testHooks.PutFulfilled is null
             ? _store.Writer.PutFulfilled(
                 key,
-                requestedFinal.View.Digest
+                requestedFinal.View.Id
             )
             : _testHooks.PutFulfilled(
                 key,
-                requestedFinal.View.Digest,
+                requestedFinal.View.Id,
                 () => _store.Writer.PutFulfilled(
                     key,
-                    requestedFinal.View.Digest
+                    requestedFinal.View.Id
                 )
             );
         if (put is RecapGridFulfilledPutResult.CommitIndeterminate
             pending) {
-            if (!pending.Intended.ToCanonicalBytes().SequenceEqual(
-                    key.ToCanonicalBytes())) {
+            if (pending.Intended != key) {
                 return Invalid(
                     "FulfilledSettlementIntendedMismatch",
                     "The indeterminate fulfillment key differs from the requested canonical key."
                 );
             }
             if (pending.Observed is { } observedDigest
-                && observedDigest != requestedFinal.View.Digest) {
+                && observedDigest != requestedFinal.View.Id) {
                 return Invalid(
                     "FulfilledSettlementObservedMismatch",
                     "The observed fulfillment differs from the requested view."
@@ -186,12 +161,12 @@ public sealed partial class RecapGridManager {
                 _store.Reader.ReadFulfilled(key);
             switch (observed) {
                 case RecapGridStoreReadResult<RecapGridFulfilledView>.Found
-                    found when found.Value.ViewDigest
-                        == requestedFinal.View.Digest:
+                    found when found.Value.RowResultId
+                        == requestedFinal.View.Id:
                     put = new RecapGridFulfilledPutResult
                         .CommitIndeterminate(
                             pendingRead.Intended,
-                            requestedFinal.View.Digest
+                            requestedFinal.View.Id
                         );
                     break;
                 case RecapGridStoreReadResult<RecapGridFulfilledView>.Missing:
@@ -222,14 +197,12 @@ public sealed partial class RecapGridManager {
             case RecapGridFulfilledPutResult.AlreadyPresent:
                 break;
             case RecapGridFulfilledPutResult.CommitIndeterminate indeterminate
-                when indeterminate.Observed == requestedFinal.View.Digest:
+                when indeterminate.Observed == requestedFinal.View.Id:
                 break;
             case RecapGridFulfilledPutResult.CommitIndeterminate indeterminate:
                 return Settlement(
                     RecapGridBuildCommitKind.Fulfilled,
-                    Convert.ToHexStringLower(
-                        indeterminate.Intended.ToCanonicalBytes()
-                    ),
+                    indeterminate.Intended.ToString(),
                     indeterminate.Observed?.Value,
                     state
                 );
@@ -270,7 +243,7 @@ public sealed partial class RecapGridManager {
                     through.Descriptor.RowId,
                     through.Descriptor.DescriptorDigest,
                     key,
-                    requestedFinal.View.Digest
+                    requestedFinal.View.Id
                 )
             );
         }
@@ -283,7 +256,7 @@ public sealed partial class RecapGridManager {
                 through.Descriptor.RowId,
                 through.Descriptor.DescriptorDigest,
                 key,
-                requestedFinal.View.Digest
+                requestedFinal.View.Id
             )
         );
     }

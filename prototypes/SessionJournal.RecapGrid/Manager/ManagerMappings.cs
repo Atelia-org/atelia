@@ -121,7 +121,7 @@ public sealed partial class RecapGridManager {
             RecapRowViewCell manifest = built.View.OrderedCells[index];
             if (cell.LogicalColumnId != manifest.LogicalColumnId
                 || cell.DefinitionDigest != manifest.DefinitionDigest
-                || cell.CellDigest != manifest.CellDigest) {
+                || cell.Id != manifest.CellId) {
                 return Invalid(
                     "PreviousViewMemberMismatch",
                     "A predecessor RowView member differs from its Cell."
@@ -136,14 +136,12 @@ public sealed partial class RecapGridManager {
         LogicalColumnId logicalColumnId,
         MaintainerDefinitionDigest definitionDigest,
         int maxContentUtf8Bytes,
-        EvaluationKey key,
+        CellSlot key,
         IReadOnlyList<RecapCellArtifact> previousCells
     ) {
         if (cell.LogicalColumnId != logicalColumnId
             || cell.DefinitionDigest != definitionDigest
-            || cell.EvaluationKey.Digest != key.Digest
-            || !cell.EvaluationKey.ToCanonicalBytes().SequenceEqual(
-                key.ToCanonicalBytes())
+            || cell.Slot != key
             || Encoding.UTF8.GetByteCount(cell.Content)
                 > maxContentUtf8Bytes) {
             return Invalid(
@@ -186,11 +184,6 @@ public sealed partial class RecapGridManager {
         _ => Invalid("CellReadOutcomeInvalid",
             "The Store returned an unknown Cell read outcome.")
     };
-
-    private static RecapGridBuildResult? CountView(BuildState state) {
-        state.RowViewsCommitted++;
-        return null;
-    }
 
     private static RecapGridBuildResult.SettlementRequired Settlement(
         RecapGridBuildCommitKind kind,

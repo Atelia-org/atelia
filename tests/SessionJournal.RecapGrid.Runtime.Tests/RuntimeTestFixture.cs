@@ -101,17 +101,11 @@ internal static class RuntimeTestFixture {
         HistorySegmentDescriptor descriptor = Descriptor(timelineId, rowId);
         RowBuildAssignment[] assignments = [.. definitions.Select(
             definition => (RowBuildAssignment)new RowBuildAssignment.Evaluate(
-                definition.LogicalColumnId,
-                EvaluationKey.Create(
-                    descriptor.DescriptorDigest,
-                    definition.Digest,
-                    PriorInputReference.FirstRow.Value
-                )
+                new CellSlot(recipe.Digest, descriptor.RowId, definition.LogicalColumnId)
             ))];
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
             Coordinate(recipe, descriptor, previousView: null),
-            PriorInputReference.FirstRow.Value,
             assignments
         );
         SessionHistoryPlanningWindow window = Window(history ?? [
@@ -122,8 +116,7 @@ internal static class RuntimeTestFixture {
             var evaluate = (RowBuildAssignment.Evaluate)assignment;
             return new FrozenRecapCellWork(
                 ordinal,
-                evaluate.LogicalColumnId,
-                evaluate.EvaluationKey,
+                evaluate.Slot,
                 definitions[ordinal],
                 families[ordinal]
             );
@@ -150,7 +143,7 @@ internal static class RuntimeTestFixture {
         );
         var storeIdentity = new RecapGridStoreIdentity(
             new RecapGridStoreInstanceId(new string('6', 32)),
-            schemaVersion: 1
+            schemaVersion: 3
         );
         return new FrozenRowBatch(
             timelineHead,
@@ -238,282 +231,75 @@ internal static class RuntimeTestFixture {
 
     internal static FrozenRowBatch BatchWithPrior(
         RecapCellOutcome priorOutcome = RecapCellOutcome.Updated,
-        string priorContent = "prior content"
+        string priorContent = "prior content",
+        int columnCount = 1
     ) {
-        FamilyDefinition family = Family();
-        var logical = new LogicalColumnId("case.column-0");
-        MaintainerDefinitionRevision definition =
-            MaintainerDefinitionRevision.Create(
-                logical,
-                family.Digest,
-                new ContextHeaderBlockTarget(
-                    ContextHeaderCarrier.System,
-                    "column-0",
-                    "Derived context from prior history: column 0"
-                ),
-                new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV3.RuntimeProtocolId,
-                    MaintainerReadableScope
-                        .FullPriorBuildTargetAndCurrentHistorySegmentV1
-                ),
-                new MaintainerDeclarativeSpec(
-                    "Question 0",
-                    "Maintain question 0 literally."
-                ),
-                16 * 1024
-            );
-        var timelineId = new TimelineId(new string('1', 32));
-        var priorRowId = new HistoryRowId(new string('9', 64));
-        var currentRowId = new HistoryRowId(new string('2', 64));
-        BuildTarget target = BuildTarget.Create([
-            new BuildTargetColumn(logical, definition.Digest)
-        ]);
-        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
-            timelineId,
-            currentRowId,
-            target
-        );
-        HistorySegmentDescriptor priorDescriptor = Descriptor(
-            timelineId,
-            priorRowId,
-            digestCharacter: 'a',
-            previousRowId: null
-        );
-        EvaluationKey priorKey = EvaluationKey.Create(
-            priorDescriptor.DescriptorDigest,
-            definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        RowBuildSpec priorSpec = RowBuildSpec.CreateFull(
-            recipe,
-            Coordinate(recipe, priorDescriptor, previousView: null),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(logical, priorKey)]
-        );
-        RecapCellArtifact priorCell = RecapCellArtifact.Create(
-            logical,
-            definition.Digest,
-            priorKey,
-            priorOutcome,
-            priorContent,
-            definition.MaxContentUtf8Bytes
-        );
+        FrozenRowBatch first = Batch(columnCount: columnCount);
+        RecapCellArtifact[] cells = [.. first.OrderedMissingWork.Select(work =>
+            new RecapCellArtifact(new CellId(Guid.NewGuid().ToString("N")),
+                work.Slot, work.Definition.Digest, priorOutcome, priorContent,
+                work.Definition.MaxContentUtf8Bytes))];
         RecapRowView previousView = RecapRowView.Create(
-            priorSpec,
-            [priorCell]
-        );
-        var priorReference = new PriorInputReference.Projection(
-            PriorInputProjectionDigest.FromCells([priorCell])
-        );
-        HistorySegmentDescriptor currentDescriptor = Descriptor(
-            timelineId,
-            currentRowId,
-            digestCharacter: '8',
-            previousRowId: priorRowId
-        );
-        EvaluationKey currentKey = EvaluationKey.Create(
-            currentDescriptor.DescriptorDigest,
-            definition.Digest,
-            priorReference
-        );
-        RowBuildSpec currentSpec = RowBuildSpec.CreateNormal(
-            recipe,
-            Coordinate(recipe, currentDescriptor, previousView),
-            priorReference,
-            [new RowBuildAssignment.Evaluate(logical, currentKey)]
-        );
-        var segment = new HistorySegmentContent(
-            currentDescriptor,
-            Window([new ObservationMessage("visible history")])
-        );
-        var timelineHead = new TimelineHeadRef(
-            timelineId,
-            currentDescriptor.RefId,
-            currentRowId,
-            new string('3', 64),
-            currentDescriptor.EndInclusive,
-            2,
-            new string('4', 64),
-            generation: 2
-        );
-        var controlHead = new ControlHeadRef(
-            new ControlInstanceId(new string('4', 32)),
-            currentDescriptor.RefId,
-            timelineId,
-            generation: 1,
-            new ControlStateDigest(new string('5', 64)),
-            recipe.Digest
-        );
+            new RowResultId(Guid.NewGuid().ToString("N")), first.Spec, cells);
+        var currentRowId = new HistoryRowId(new string('9', 64));
+        HistorySegmentDescriptor descriptor = Descriptor(first.Spec.TimelineId,
+            currentRowId, digestCharacter: 'a', previousRowId: first.Spec.HistoryRowId);
+        FrozenRecapCellWork[] work = [.. first.OrderedMissingWork.Select(item =>
+            new FrozenRecapCellWork(item.Ordinal,
+                new CellSlot(first.Recipe.Digest, currentRowId, item.LogicalColumnId),
+                item.Definition, item.Family))];
+        RowBuildSpec spec = RowBuildSpec.CreateNormal(first.Recipe,
+            Coordinate(first.Recipe, descriptor, previousView),
+            [.. work.Select(item => new RowBuildAssignment.Evaluate(item.Slot))]);
         return new FrozenRowBatch(
-            timelineHead,
-            controlHead,
-            new RecapGridStoreIdentity(
-                new RecapGridStoreInstanceId(new string('6', 32)),
-                1
-            ),
-            recipe,
-            segment,
-            currentSpec,
-            previousView,
-            [priorCell],
-            [new FrozenRecapCellWork(
-                0,
-                logical,
-                currentKey,
-                definition,
-                family
-            )]
-        );
+            new TimelineHeadRef(descriptor.TimelineId, descriptor.RefId, currentRowId,
+                new string('3', 64), descriptor.EndInclusive, 2, new string('4', 64), 2),
+            first.ControlHead,
+            first.StoreIdentity,
+            first.Recipe,
+            new HistorySegmentContent(descriptor,
+                Window([new ObservationMessage("visible history")])),
+            spec, previousView, cells, work);
     }
 
     internal static FrozenRowBatch OverlayBatchWithNewColumn() {
         FamilyDefinition family = Family();
-        var priorLogical = new LogicalColumnId("case.prior");
-        var newLogical = new LogicalColumnId("case.new");
-        MaintainerDefinitionRevision priorDefinition = Definition(
-            family,
-            priorLogical,
-            "prior"
-        );
-        MaintainerDefinitionRevision newDefinition = Definition(
-            family,
-            newLogical,
-            "new"
-        );
+        var baseColumn = new LogicalColumnId("case.prior");
+        var newColumn = new LogicalColumnId("case.new");
+        MaintainerDefinitionRevision baseDefinition = Definition(family, baseColumn, "prior");
+        MaintainerDefinitionRevision newDefinition = Definition(family, newColumn, "new");
         var timelineId = new TimelineId(new string('1', 32));
-        var priorRowId = new HistoryRowId(new string('9', 64));
-        var currentRowId = new HistoryRowId(new string('2', 64));
-        GridBuildRecipe baseRecipe = GridBuildRecipe.CreateFull(
-            timelineId,
-            priorRowId,
+        var rowId = new HistoryRowId(new string('2', 64));
+        GridBuildRecipe baseRecipe = GridBuildRecipe.CreateFull(timelineId, rowId,
+            BuildTarget.Create([new BuildTargetColumn(baseColumn, baseDefinition.Digest)]));
+        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(baseRecipe, rowId,
             BuildTarget.Create([
-                new BuildTargetColumn(
-                    priorLogical,
-                    priorDefinition.Digest
-                )
-            ])
-        );
-        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
-            baseRecipe,
-            currentRowId,
-            BuildTarget.Create([
-                new BuildTargetColumn(
-                    priorLogical,
-                    priorDefinition.Digest
-                ),
-                new BuildTargetColumn(
-                    newLogical,
-                    newDefinition.Digest
-                )
-            ]),
-            [newLogical]
-        );
-        HistorySegmentDescriptor priorDescriptor = Descriptor(
-            timelineId,
-            priorRowId,
-            digestCharacter: 'a'
-        );
-        EvaluationKey priorKey = EvaluationKey.Create(
-            priorDescriptor.DescriptorDigest,
-            priorDefinition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        RowBuildSpec priorSpec = RowBuildSpec.CreateFull(
-            baseRecipe,
-            Coordinate(baseRecipe, priorDescriptor, previousView: null),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(priorLogical, priorKey)]
-        );
-        RecapCellArtifact priorCell = RecapCellArtifact.Create(
-            priorLogical,
-            priorDefinition.Digest,
-            priorKey,
-            RecapCellOutcome.Updated,
-            "prior content",
-            priorDefinition.MaxContentUtf8Bytes
-        );
-        RecapRowView previousView = RecapRowView.Create(
-            priorSpec,
-            [priorCell]
-        );
-        var priorReference = new PriorInputReference.Projection(
-            PriorInputProjectionDigest.FromCells([priorCell])
-        );
-        HistorySegmentDescriptor descriptor = Descriptor(
-            timelineId,
-            currentRowId,
-            digestCharacter: '8',
-            previousRowId: priorRowId
-        );
-        EvaluationKey newKey = EvaluationKey.Create(
-            descriptor.DescriptorDigest,
-            newDefinition.Digest,
-            priorReference
-        );
-        EvaluationKey currentBaseKey = EvaluationKey.Create(
-            descriptor.DescriptorDigest,
-            priorDefinition.Digest,
-            priorReference
-        );
-        RecapCellArtifact currentBaseCell = RecapCellArtifact.Create(
-            priorLogical,
-            priorDefinition.Digest,
-            currentBaseKey,
-            RecapCellOutcome.Updated,
-            "current base content",
-            priorDefinition.MaxContentUtf8Bytes
-        );
-        RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(
-            overlay,
-            Coordinate(overlay, descriptor, previousView),
-            priorReference,
-            [
-                new RowBuildAssignment.Reuse(
-                    priorLogical,
-                    currentBaseCell
-                ),
-                new RowBuildAssignment.Evaluate(newLogical, newKey)
-            ]
-        );
+                new BuildTargetColumn(baseColumn, baseDefinition.Digest),
+                new BuildTargetColumn(newColumn, newDefinition.Digest)
+            ]), [newColumn]);
+        HistorySegmentDescriptor descriptor = Descriptor(timelineId, rowId);
+        var baseSlot = new CellSlot(baseRecipe.Digest, rowId, baseColumn);
+        var newSlot = new CellSlot(overlay.Digest, rowId, newColumn);
+        var baseCell = new RecapCellArtifact(new CellId(Guid.NewGuid().ToString("N")),
+            baseSlot, baseDefinition.Digest, RecapCellOutcome.Updated,
+            "current base content", baseDefinition.MaxContentUtf8Bytes);
+        RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(overlay,
+            Coordinate(overlay, descriptor, previousView: null), [
+                new RowBuildAssignment.Reuse(baseColumn, baseCell),
+                new RowBuildAssignment.Evaluate(newSlot)
+            ]);
         return new FrozenRowBatch(
-            new TimelineHeadRef(
-                timelineId,
-                descriptor.RefId,
-                currentRowId,
-                new string('3', 64),
-                descriptor.EndInclusive,
-                2,
-                new string('4', 64),
-                2
-            ),
-            new ControlHeadRef(
-                new ControlInstanceId(new string('4', 32)),
-                descriptor.RefId,
-                timelineId,
-                1,
-                new ControlStateDigest(new string('5', 64)),
-                overlay.Digest
-            ),
-            new RecapGridStoreIdentity(
-                new RecapGridStoreInstanceId(new string('6', 32)),
-                1
-            ),
+            new TimelineHeadRef(timelineId, descriptor.RefId, rowId,
+                new string('3', 64), descriptor.EndInclusive, 1, new string('4', 64), 1),
+            new ControlHeadRef(new ControlInstanceId(new string('4', 32)),
+                descriptor.RefId, timelineId, 1,
+                new ControlStateDigest(new string('5', 64)), overlay.Digest),
+            new RecapGridStoreIdentity(new RecapGridStoreInstanceId(new string('6', 32)), 3),
             overlay,
-            new HistorySegmentContent(
-                descriptor,
-                Window([new ObservationMessage("visible history")])
-            ),
-            spec,
-            previousView,
-            [priorCell],
-            [new FrozenRecapCellWork(
-                1,
-                newLogical,
-                newKey,
-                newDefinition,
-                family
-            )]
-        );
+            new HistorySegmentContent(descriptor,
+                Window([new ObservationMessage("visible history")])),
+            spec, previousView: null, previousCells: [],
+            [new FrozenRecapCellWork(1, newSlot, newDefinition, family)]);
     }
 
     private static HistorySegmentDescriptor Descriptor(
@@ -557,7 +343,7 @@ internal static class RuntimeTestFixture {
         recipe.Digest,
         recipe.Target.Digest,
         descriptor.PreviousRowId,
-        previousView?.Digest,
+        previousView?.Id,
         recipe.Kind == GridBuildRecipeKind.Full
             || recipe.BootstrapThroughRowId == descriptor.RowId
     );

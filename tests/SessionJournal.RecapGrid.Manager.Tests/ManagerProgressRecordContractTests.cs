@@ -43,12 +43,10 @@ public sealed class ManagerProgressRecordContractTests {
             7,
             default,
             default,
-            default,
             default
         );
         var second = new RecapGridMissingAssignmentProgress(
             7,
-            default,
             default,
             default,
             default
@@ -61,8 +59,7 @@ public sealed class ManagerProgressRecordContractTests {
         Assert.Equal(first, clone);
         Assert.Equal(
             "RecapGridMissingAssignmentProgress { Ordinal = 7, RowId = , "
-                + "RecipeDigest = , LogicalColumnId = , "
-                + "EvaluationKey =  }",
+                + "RecipeDigest = , LogicalColumnId =  }",
             first.ToString()
         );
     }

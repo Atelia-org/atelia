@@ -259,12 +259,12 @@ public sealed record RecapCompletionTelemetryEvent {
         string modelId,
         string providerId,
         string apiSpecId,
-        EvaluationKeyDigest evaluationKey,
+        CellSlot slot,
+        string storeInstanceId,
+        int storeSchemaVersion,
+        RowResultId? previousRowResultId,
         FamilyDefinitionDigest familyDigest,
         MaintainerDefinitionDigest definitionDigest,
-        string historySegmentDigest,
-        bool isFirstRowPrior,
-        PriorInputProjectionDigest? priorProjectionDigest,
         RecapCompletionWorkRole role,
         TimeSpan admissionWait,
         TimeSpan laneWait,
@@ -284,21 +284,13 @@ public sealed record RecapCompletionTelemetryEvent {
         ModelId = RequireText(modelId, nameof(modelId));
         ProviderId = RequireText(providerId, nameof(providerId));
         ApiSpecId = RequireText(apiSpecId, nameof(apiSpecId));
-        EvaluationKey = evaluationKey;
+        Slot = slot ?? throw new ArgumentNullException(nameof(slot));
+        StoreInstanceId = RequireText(storeInstanceId, nameof(storeInstanceId));
+        if (storeSchemaVersion < 1) { throw new ArgumentOutOfRangeException(nameof(storeSchemaVersion)); }
+        StoreSchemaVersion = storeSchemaVersion;
+        PreviousRowResultId = previousRowResultId;
         FamilyDigest = familyDigest;
         DefinitionDigest = definitionDigest;
-        HistorySegmentDigest = RequireText(
-            historySegmentDigest,
-            nameof(historySegmentDigest)
-        );
-        IsFirstRowPrior = isFirstRowPrior;
-        PriorProjectionDigest = priorProjectionDigest;
-        if (isFirstRowPrior == (priorProjectionDigest is not null)) {
-            throw new ArgumentException(
-                "Prior telemetry must identify exactly one prior-input kind.",
-                nameof(priorProjectionDigest)
-            );
-        }
         if (!Enum.IsDefined(role)) {
             throw new ArgumentOutOfRangeException(nameof(role));
         }
@@ -333,12 +325,13 @@ public sealed record RecapCompletionTelemetryEvent {
     public string ModelId { get; }
     public string ProviderId { get; }
     public string ApiSpecId { get; }
-    public EvaluationKeyDigest EvaluationKey { get; }
+    public CellSlot Slot { get; }
+    public string StoreInstanceId { get; }
+    public int StoreSchemaVersion { get; }
+    public RowResultId? PreviousRowResultId { get; }
     public FamilyDefinitionDigest FamilyDigest { get; }
     public MaintainerDefinitionDigest DefinitionDigest { get; }
-    public string HistorySegmentDigest { get; }
-    public bool IsFirstRowPrior { get; }
-    public PriorInputProjectionDigest? PriorProjectionDigest { get; }
+    public bool IsFirstRowPrior => PreviousRowResultId is null;
     public RecapCompletionWorkRole Role { get; }
     public TimeSpan AdmissionWait { get; }
     public TimeSpan LaneWait { get; }

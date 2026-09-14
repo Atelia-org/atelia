@@ -24,8 +24,7 @@ public sealed partial class RecapGridManager {
                 "Candidate row provenance does not match Timeline order."
             ));
         }
-        PriorInputReference prior = PriorInputReference.FirstRow.Value;
-        RowViewDigest? previousDigest = null;
+        RowResultId? previousRowResultId = null;
         IReadOnlyList<RecapCellArtifact> previousCells = [];
         if (previousRow is not null) {
             if (previousRow.View.HistoryRowId
@@ -41,10 +40,7 @@ public sealed partial class RecapGridManager {
                 ));
             }
             previousCells = previousRow.Cells;
-            prior = new PriorInputReference.Projection(
-                PriorInputProjectionDigest.FromCells(previousCells)
-            );
-            previousDigest = previousRow.View.Digest;
+            previousRowResultId = previousRow.View.Id;
         }
 
         RowBuildAssignment[] assignments;
@@ -53,7 +49,6 @@ public sealed partial class RecapGridManager {
                 plan,
                 descriptor,
                 isOverlayBootstrap,
-                prior,
                 baseRow
             );
         }
@@ -72,7 +67,7 @@ public sealed partial class RecapGridManager {
                 plan.Recipe.Digest,
                 plan.Recipe.Target.Digest,
                 descriptor.PreviousRowId,
-                previousDigest,
+                previousRowResultId,
                 !isOverlayBootstrap
                     || plan.Recipe.BootstrapThroughRowId
                         == descriptor.RowId
@@ -81,7 +76,6 @@ public sealed partial class RecapGridManager {
                 GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
                     plan.Recipe,
                     coordinate,
-                    prior,
                     assignments
                 ),
                 GridBuildRecipeKind.Overlay
@@ -89,15 +83,13 @@ public sealed partial class RecapGridManager {
                     => RowBuildSpec.CreateOverlayBootstrap(
                         plan.Recipe,
                         coordinate,
-                        prior,
-                        assignments
+                    assignments
                     ),
                 GridBuildRecipeKind.Overlay
                     => RowBuildSpec.CreateNormal(
                         plan.Recipe,
                         coordinate,
-                        prior,
-                        assignments
+                    assignments
                     ),
                 _ => throw new InvalidOperationException(
                     "The recipe kind is unsupported."
@@ -120,7 +112,6 @@ public sealed partial class RecapGridManager {
         FrozenRecipePlan plan,
         HistorySegmentDescriptor descriptor,
         bool isOverlayBootstrap,
-        PriorInputReference prior,
         BuiltRow? baseRow
     ) {
         HashSet<LogicalColumnId> recomputed = plan.Recipe
@@ -148,12 +139,7 @@ public sealed partial class RecapGridManager {
             if (!overlayBootstrap
                 || recomputed.Contains(target.LogicalColumnId)) {
                 assignments[index] = new RowBuildAssignment.Evaluate(
-                    target.LogicalColumnId,
-                    EvaluationKey.Create(
-                        descriptor.DescriptorDigest,
-                        target.DefinitionDigest,
-                        prior
-                    )
+                    new CellSlot(plan.Recipe.Digest, descriptor.RowId, target.LogicalColumnId)
                 );
                 continue;
             }
@@ -161,8 +147,8 @@ public sealed partial class RecapGridManager {
                     target.LogicalColumnId,
                     out RecapCellArtifact? cell)
                 || cell.DefinitionDigest != target.DefinitionDigest
-                || cell.EvaluationKey.HistorySegmentDigest
-                    != descriptor.DescriptorDigest) {
+                || cell.Slot.HistoryRowId
+                    != descriptor.RowId) {
                 throw new InvalidOperationException(
                     "The overlay base view lacks an exact reusable cell."
                 );
@@ -179,14 +165,14 @@ public sealed partial class RecapGridManager {
         CreateMissingWork(
             FrozenRecipePlan plan,
             RowBuildSpec spec,
-            IReadOnlyList<EvaluationKey> missing
+            IReadOnlyList<CellSlot> missing
         ) {
         var evaluate = spec.OrderedAssignments
             .OfType<RowBuildAssignment.Evaluate>()
             .ToDictionary(
-                static assignment => assignment.EvaluationKey.Digest
+                static assignment => assignment.Slot
             );
-        var seen = new HashSet<EvaluationKeyDigest>();
+        var seen = new HashSet<CellSlot>();
         var positions = spec.OrderedAssignments
             .Select((assignment, index) => (assignment, index))
             .OfType<(RowBuildAssignment assignment, int index)>()
@@ -194,30 +180,27 @@ public sealed partial class RecapGridManager {
                 pair => pair.index);
         var work = new List<FrozenRecapCellWork>(missing.Count);
         int previousPosition = -1;
-        foreach (EvaluationKey key in missing) {
+        foreach (CellSlot key in missing) {
             if (key is null
-                || !seen.Add(key.Digest)
+                || !seen.Add(key)
                 || !evaluate.TryGetValue(
-                    key.Digest,
-                    out RowBuildAssignment.Evaluate? assignment)
-                || !key.ToCanonicalBytes().SequenceEqual(
-                    assignment.EvaluationKey.ToCanonicalBytes())) {
+                    key,
+                    out RowBuildAssignment.Evaluate? assignment)) {
                 return (null, Invalid(
-                    "MissingEvaluationKeyInvalid",
+                    "MissingCellSlotInvalid",
                     "Store missing keys are not an exact subset of Evaluate assignments."
                 ));
             }
             int position = positions[assignment.LogicalColumnId];
             if (position <= previousPosition) {
                 return (null, Invalid(
-                    "MissingEvaluationKeyOrderInvalid",
+                    "MissingCellSlotOrderInvalid",
                     "Store missing keys are not in target order."
                 ));
             }
             previousPosition = position;
             work.Add(new FrozenRecapCellWork(
                 position,
-                assignment.LogicalColumnId,
                 key,
                 plan.Definitions[assignment.LogicalColumnId],
                 plan.Families[assignment.LogicalColumnId]
@@ -226,7 +209,7 @@ public sealed partial class RecapGridManager {
         return (work.ToArray(), null);
     }
 
-    private (RecapCellArtifact?, RecapGridBuildResult?) CreateCell(
+    private (RecapCellDraft?, RecapGridBuildResult?) CreateCell(
         FrozenRecapCellWork item,
         RecapCellExecutionOutcome outcome,
         IReadOnlyList<RecapCellArtifact> previousCells
@@ -258,10 +241,9 @@ public sealed partial class RecapGridManager {
                 ));
         }
         try {
-            return (RecapCellArtifact.Create(
-                item.LogicalColumnId,
+            return (RecapCellDraft.Create(
+                item.Slot,
                 item.Definition.Digest,
-                item.EvaluationKey,
                 cellOutcome,
                 content,
                 item.Definition.MaxContentUtf8Bytes
@@ -277,8 +259,9 @@ public sealed partial class RecapGridManager {
 
     private (RecapCellArtifact?, RecapGridBuildResult?) PutCell(
         FrozenOperation frozen,
+        RowBuildSpec spec,
         FrozenRecapCellWork item,
-        RecapCellArtifact proposed,
+        RecapCellDraft proposed,
         IReadOnlyList<RecapCellArtifact> previousCells,
         BuildState state
     ) {
@@ -289,32 +272,33 @@ public sealed partial class RecapGridManager {
             ));
         }
         RecapGridCellPutResult result = _testHooks.PutCell is null
-            ? _store.Writer.PutCell(proposed)
+            ? _store.Writer.PutCell(spec, proposed)
             : _testHooks.PutCell(
+                spec,
                 proposed,
-                () => _store.Writer.PutCell(proposed)
+                () => _store.Writer.PutCell(spec, proposed)
             );
         RecapCellArtifact? winner;
         switch (result) {
-            case RecapGridCellPutResult.Inserted:
+            case RecapGridCellPutResult.Inserted inserted:
                 state.CellsCommitted++;
-                winner = proposed;
+                winner = inserted.Winner;
                 break;
             case RecapGridCellPutResult.AlreadyFilled already:
                 winner = already.Winner;
                 break;
             case RecapGridCellPutResult.CommitIndeterminate indeterminate:
-                if (indeterminate.IntendedKey
-                    != item.EvaluationKey.Digest) {
+                if (indeterminate.IntendedSlot
+                    != item.Slot) {
                     return (null, Invalid(
                         "CellSettlementIntendedMismatch",
-                        "The indeterminate Cell identity differs from the proposed EvaluationKey."
+                        "The indeterminate Cell identity differs from the proposed CellSlot."
                     ));
                 }
                 winner = indeterminate.Observed;
                 if (winner is null) {
                     RecapGridStoreReadResult<RecapCellArtifact> observed =
-                        _store.Reader.TryReadCell(item.EvaluationKey);
+                        _store.Reader.TryReadCell(item.Slot);
                     if (observed is RecapGridStoreReadResult<
                             RecapCellArtifact>.Found found) {
                         winner = found.Value;
@@ -325,7 +309,7 @@ public sealed partial class RecapGridManager {
                                  RecapCellArtifact>.Busy) {
                         return (null, Settlement(
                             RecapGridBuildCommitKind.Cell,
-                            indeterminate.IntendedKey.Value,
+                            indeterminate.IntendedSlot.ToString(),
                             null,
                             state
                         ));
@@ -374,7 +358,7 @@ public sealed partial class RecapGridManager {
             item.LogicalColumnId,
             item.Definition.Digest,
             item.Definition.MaxContentUtf8Bytes,
-            item.EvaluationKey,
+            item.Slot,
             previousCells
         );
         return validation is null
@@ -386,7 +370,7 @@ public sealed partial class RecapGridManager {
         ResolveSelectedCells(
             FrozenRecipePlan plan,
             RowBuildSpec spec,
-            IReadOnlyDictionary<EvaluationKeyDigest,
+            IReadOnlyDictionary<CellSlot,
                 RecapCellArtifact> settled,
             IReadOnlyList<RecapCellArtifact> previousCells
         ) {
@@ -399,11 +383,11 @@ public sealed partial class RecapGridManager {
                     break;
                 case RowBuildAssignment.Evaluate evaluate:
                     if (!settled.TryGetValue(
-                            evaluate.EvaluationKey.Digest,
+                            evaluate.Slot,
                             out RecapCellArtifact? cell)) {
                         RecapGridStoreReadResult<RecapCellArtifact> read =
                             _store.Reader.TryReadCell(
-                                evaluate.EvaluationKey
+                                evaluate.Slot
                             );
                         if (read is not RecapGridStoreReadResult<
                                 RecapCellArtifact>.Found found) {
@@ -420,7 +404,7 @@ public sealed partial class RecapGridManager {
                         plan.Definitions[
                             assignment.LogicalColumnId
                         ].MaxContentUtf8Bytes,
-                        evaluate.EvaluationKey,
+                        evaluate.Slot,
                         previousCells
                     );
                     if (invalid is not null) {

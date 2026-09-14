@@ -109,10 +109,10 @@ internal static class RuntimeParser {
             Content: { } priorContent
         } && string.Equals(content, priorContent, StringComparison.Ordinal)
             ? new RecapCellExecutionOutcome.KeepUnchanged(
-                prepared.Work.EvaluationKey.Digest
+                prepared.Work.Slot
             )
             : new RecapCellExecutionOutcome.Updated(
-                prepared.Work.EvaluationKey.Digest,
+                prepared.Work.Slot,
                 content
             );
         return new RuntimeParseResult.Parsed(outcome);

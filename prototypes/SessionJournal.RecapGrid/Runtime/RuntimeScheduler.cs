@@ -93,7 +93,7 @@ public sealed partial class RecapCompletionRuntime {
                     item,
                     new RecapCellExecutionOutcome
                         .NotStartedDueToCallerCancellation(
-                            item.Work.EvaluationKey.Digest
+                            item.Work.Slot
                         ),
                     null
                 ))];
@@ -115,7 +115,7 @@ public sealed partial class RecapCompletionRuntime {
                     item,
                     new RecapCellExecutionOutcome
                         .NotStartedDueToCallerCancellation(
-                            item.Work.EvaluationKey.Digest
+                            item.Work.Slot
                         ),
                     null
                 ))];
@@ -310,16 +310,12 @@ public sealed partial class RecapCompletionRuntime {
                 prepared.Route.ModelId,
                 prepared.Route.Invoker.ProviderId,
                 prepared.Route.Invoker.ApiSpecId,
-                prepared.Work.EvaluationKey.Digest,
+                prepared.Work.Slot,
+                prepared.StoreInstanceId,
+                prepared.StoreSchemaVersion,
+                prepared.PreviousRowResultId,
                 prepared.Work.Family.Digest,
                 prepared.Work.Definition.Digest,
-                prepared.Work.EvaluationKey.HistorySegmentDigest.Value,
-                prepared.Work.EvaluationKey.PriorInput
-                    is PriorInputReference.FirstRow,
-                prepared.Work.EvaluationKey.PriorInput
-                    is PriorInputReference.Projection projection
-                        ? projection.Digest
-                        : null,
                 priority is RuntimeLanePriority.Leader
                     ? RecapCompletionWorkRole.Leader
                     : RecapCompletionWorkRole.Follower,
@@ -351,7 +347,7 @@ public sealed partial class RecapCompletionRuntime {
         return new RuntimeItemResult(
             prepared,
             new RecapCellExecutionOutcome.Failed(
-                prepared.Work.EvaluationKey.Digest,
+                prepared.Work.Slot,
                 code,
                 RuntimeDiagnostics.BoundDetail(detail)
             ),
@@ -376,7 +372,7 @@ public sealed partial class RecapCompletionRuntime {
     ) => new(
         prepared,
         new RecapCellExecutionOutcome.NotStartedDueToCallerCancellation(
-            prepared.Work.EvaluationKey.Digest
+            prepared.Work.Slot
         ),
         null
     );
@@ -387,7 +383,7 @@ public sealed partial class RecapCompletionRuntime {
         prepared.Select(static item =>
             (RecapCellExecutionOutcome)new RecapCellExecutionOutcome
                 .NotStartedDueToCallerCancellation(
-                    item.Work.EvaluationKey.Digest
+                    item.Work.Slot
                 )).ToArray()
     );
 

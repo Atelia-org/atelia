@@ -182,19 +182,19 @@ public sealed partial class RecapGridManager {
 
         RecapGridMissingResult missingRead =
             _store.Reader.FindMissingAssignments(spec);
-        EvaluationKey[] missing;
+        CellSlot[] missing;
         switch (missingRead) {
             case RecapGridMissingResult.Complete:
                 missing = [];
                 break;
             case RecapGridMissingResult.Missing found:
-                missing = found.OrderedKeys.ToArray();
+                missing = found.OrderedSlots.ToArray();
                 break;
             case RecapGridMissingResult.PrerequisiteMissing prerequisite:
                 return RowError(Unavailable(
                     RecapGridBuildDependency.Store,
                     "ReusePrerequisiteMissing",
-                    $"{prerequisite.LogicalColumnId}:{prerequisite.CellDigest}"
+                    $"{prerequisite.LogicalColumnId}:{prerequisite.CellId}"
                 ));
             case RecapGridMissingResult.Busy:
                 return RowError(Unavailable(
@@ -228,7 +228,7 @@ public sealed partial class RecapGridManager {
             return RowError(workError);
         }
         FrozenRecapCellWork[] orderedWork = work!;
-        var settled = new Dictionary<EvaluationKeyDigest,
+        var settled = new Dictionary<CellSlot,
             RecapCellArtifact>();
         if (orderedWork.Length > 0) {
             if (state.NewCalls + orderedWork.Length
@@ -322,8 +322,8 @@ public sealed partial class RecapGridManager {
             for (int index = 0; index < outcomes.Length; index++) {
                 RecapCellExecutionOutcome? outcome = outcomes[index];
                 if (outcome is null
-                    || outcome.EvaluationKey
-                        != orderedWork[index].EvaluationKey.Digest) {
+                    || outcome.Slot
+                        != orderedWork[index].Slot) {
                     return RowError(
                         new RecapGridBuildResult.ExecutorFailed(
                             "ExecutorOutcomeOrderInvalid",
@@ -369,7 +369,7 @@ public sealed partial class RecapGridManager {
                 if (outcome is RecapCellExecutionOutcome.Failed failed) {
                     failures.Add(new RecapGridCellFailure(
                         item.Ordinal,
-                        outcome.EvaluationKey,
+                        outcome.Slot,
                         failed.Code,
                         failed.Detail,
                         NotStarted: false
@@ -380,14 +380,14 @@ public sealed partial class RecapGridManager {
                     .NotStartedDueToCallerCancellation) {
                     failures.Add(new RecapGridCellFailure(
                         item.Ordinal,
-                        outcome.EvaluationKey,
+                        outcome.Slot,
                         "CallerCancellation",
                         "The work item was not started due to caller cancellation.",
                         NotStarted: true
                     ));
                     continue;
                 }
-                (RecapCellArtifact? proposed,
+                (RecapCellDraft? proposed,
                     RecapGridBuildResult? proposalError) = CreateCell(
                         item,
                         outcome,
@@ -400,6 +400,7 @@ public sealed partial class RecapGridManager {
                 (RecapCellArtifact? winner,
                     RecapGridBuildResult? putError) = PutCell(
                         frozen,
+                        spec,
                         item,
                         proposed!,
                         previousCells,
@@ -409,7 +410,7 @@ public sealed partial class RecapGridManager {
                     localErrors.Add((item.Ordinal, putError));
                     continue;
                 }
-                settled.Add(item.EvaluationKey.Digest, winner!);
+                settled.Add(item.Slot, winner!);
             }
             RecapGridBuildResult? settlement = localErrors
                 .OrderBy(static error => error.Ordinal)
@@ -462,28 +463,11 @@ public sealed partial class RecapGridManager {
         if (publishFence is not null) {
             return RowError(publishFence);
         }
-        RecapRowView view;
-        try {
-            view = RecapRowView.Create(spec, selectedCells!);
-        }
-        catch (Exception exception) when (IsContractFailure(exception)) {
-            return RowError(Invalid(
-                "RowViewCreationInvalid",
-                exception.Message
-            ));
-        }
-        RecapGridBuildResult? viewPut = PutRowView(
-            frozen,
-            spec,
-            view,
-            state
-        );
-        return viewPut is null
-            ? new RowAttempt(
-                new BuiltRow(view, Array.AsReadOnly(selectedCells!)),
-                null
-            )
-            : RowError(viewPut);
+        (RecapRowView? rowWinner, RecapGridBuildResult? viewError) = PutRowView(
+            frozen, spec, selectedCells!, state);
+        return viewError is null
+            ? new RowAttempt(new BuiltRow(rowWinner!, Array.AsReadOnly(selectedCells!)), null)
+            : RowError(viewError);
     }
 
     private RecapGridBuildResult? EnsureRawCapture(

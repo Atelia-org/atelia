@@ -4,11 +4,11 @@ using Atelia.SessionJournal.RecapGrid.Store;
 namespace Atelia.SessionJournal.RecapGrid.Manager;
 
 internal sealed record ManagerTestHooks(
-    Func<RecapCellArtifact, Func<RecapGridCellPutResult>,
+    Func<RowBuildSpec, RecapCellDraft, Func<RecapGridCellPutResult>,
         RecapGridCellPutResult>? PutCell = null,
-    Func<RowBuildSpec, RecapRowView, Func<RecapGridRowViewPutResult>,
+    Func<RowBuildSpec, IReadOnlyList<RecapCellArtifact>, Func<RecapGridRowViewPutResult>,
         RecapGridRowViewPutResult>? PutRowView = null,
-    Func<FulfilledViewKey, RowViewDigest,
+    Func<FulfilledViewKey, RowResultId,
         Func<RecapGridFulfilledPutResult>,
         RecapGridFulfilledPutResult>? PutFulfilled = null,
     Action? BeforeCaptureRaw = null,

@@ -180,14 +180,16 @@ public sealed class RuntimeRenderingAndSchedulingTests {
     }
 
     [Fact]
-    public async Task KeepUnchanged_NewOverlayColumnCannotReuseCrossColumnPrior() {
+    public async Task KeepUnchanged_NewOverlayColumnCannotReuseCurrentBaseCell() {
         FrozenRowBatch batch = RuntimeTestFixture.OverlayBatchWithNewColumn();
+        RecapCellArtifact baseCell = Assert.IsType<RowBuildAssignment.Reuse>(
+            batch.Spec.OrderedAssignments[0]).Cell;
         ScriptedInvoker? invoker = null;
         invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
             RuntimeTestFixture.Result(
                 request,
                 invoker!,
-                "prior content"
+                baseCell.Content
             )
         ));
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
@@ -199,7 +201,9 @@ public sealed class RuntimeRenderingAndSchedulingTests {
             Assert.Single(completed.OrderedOutcomes)
         );
 
-        Assert.Equal("prior content", updated.Content);
+        Assert.Equal(baseCell.Content, updated.Content);
+        Assert.NotEqual(baseCell.Slot.RecipeDigest, updated.Slot.RecipeDigest);
+        Assert.Equal(batch.Recipe.Digest, updated.Slot.RecipeDigest);
         Assert.Equal(1, invoker.CallCount);
     }
 
@@ -537,9 +541,13 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         Assert.Equal(0, invoker.DisposeCount);
     }
 
-    [Fact]
-    public async Task OperationalTelemetry_CarriesBoundedWholeWorkEvidence() {
-        FrozenRowBatch batch = RuntimeTestFixture.Batch(columnCount: 2);
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OperationalTelemetry_CarriesBoundedWholeWorkEvidence(bool withPrior) {
+        FrozenRowBatch batch = withPrior
+            ? RuntimeTestFixture.BatchWithPrior(columnCount: 2)
+            : RuntimeTestFixture.Batch(columnCount: 2);
         var usage = new CompletionUsage(
             uncachedInputTokens: 7,
             cacheCreationInputTokens: 3,
@@ -579,7 +587,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         );
         foreach (RecapCompletionTelemetryEvent value in events) {
             FrozenRecapCellWork work = batch.OrderedMissingWork.Single(
-                item => item.EvaluationKey.Digest == value.EvaluationKey
+                item => item.Slot == value.Slot
             );
             Assert.Equal(work.Family.Digest, value.FamilyDigest);
             Assert.Equal(work.Definition.Digest, value.DefinitionDigest);
@@ -587,12 +595,10 @@ public sealed class RuntimeRenderingAndSchedulingTests {
             Assert.Equal("test-model", value.ModelId);
             Assert.Equal("test-provider", value.ProviderId);
             Assert.Equal("test-api-v1", value.ApiSpecId);
-            Assert.Equal(
-                work.EvaluationKey.HistorySegmentDigest.Value,
-                value.HistorySegmentDigest
-            );
-            Assert.True(value.IsFirstRowPrior);
-            Assert.Null(value.PriorProjectionDigest);
+            Assert.Equal(batch.StoreIdentity.InstanceId.Value, value.StoreInstanceId);
+            Assert.Equal(batch.StoreIdentity.SchemaVersion, value.StoreSchemaVersion);
+            Assert.Equal(!withPrior, value.IsFirstRowPrior);
+            Assert.Equal(batch.PreviousView?.Id, value.PreviousRowResultId);
             Assert.True(value.ResultReceived);
             Assert.Equal(CompletionTerminationKind.Completed, value.Termination);
             Assert.Same(usage, value.Usage);

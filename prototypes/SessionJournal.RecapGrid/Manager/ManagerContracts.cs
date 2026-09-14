@@ -80,21 +80,19 @@ public sealed record RecapGridBuildRequest {
 public sealed class FrozenRecapCellWork {
     internal FrozenRecapCellWork(
         int ordinal,
-        LogicalColumnId logicalColumnId,
-        EvaluationKey evaluationKey,
+        CellSlot slot,
         MaintainerDefinitionRevision definition,
         FamilyDefinition family
     ) {
         Ordinal = ordinal;
-        LogicalColumnId = logicalColumnId;
-        EvaluationKey = evaluationKey;
+        Slot = slot ?? throw new ArgumentNullException(nameof(slot));
         Definition = definition;
         Family = family;
     }
 
     public int Ordinal { get; }
-    public LogicalColumnId LogicalColumnId { get; }
-    public EvaluationKey EvaluationKey { get; }
+    public LogicalColumnId LogicalColumnId => Slot.LogicalColumnId;
+    public CellSlot Slot { get; }
     public MaintainerDefinitionRevision Definition { get; }
     public FamilyDefinition Family { get; }
 }
@@ -180,21 +178,15 @@ public abstract record RecapCellBatchExecutionResult {
 }
 
 public abstract record RecapCellExecutionOutcome {
-    private RecapCellExecutionOutcome(EvaluationKeyDigest evaluationKey) {
-        if (evaluationKey.Value is null) {
-            throw new ArgumentException(
-                "Evaluation key must not be default.",
-                nameof(evaluationKey)
-            );
-        }
-        EvaluationKey = evaluationKey;
+    private RecapCellExecutionOutcome(CellSlot slot) {
+        Slot = slot ?? throw new ArgumentNullException(nameof(slot));
     }
 
-    public EvaluationKeyDigest EvaluationKey { get; }
+    public CellSlot Slot { get; }
 
     public sealed record Updated : RecapCellExecutionOutcome {
-        public Updated(EvaluationKeyDigest evaluationKey, string content)
-            : base(evaluationKey) {
+        public Updated(CellSlot slot, string content)
+            : base(slot) {
             Content = content
                 ?? throw new ArgumentNullException(nameof(content));
         }
@@ -203,16 +195,16 @@ public abstract record RecapCellExecutionOutcome {
     }
 
     public sealed record KeepUnchanged : RecapCellExecutionOutcome {
-        public KeepUnchanged(EvaluationKeyDigest evaluationKey)
-            : base(evaluationKey) { }
+        public KeepUnchanged(CellSlot slot)
+            : base(slot) { }
     }
 
     public sealed record Failed : RecapCellExecutionOutcome {
         public Failed(
-            EvaluationKeyDigest evaluationKey,
+            CellSlot slot,
             string code,
             string detail
-        ) : base(evaluationKey) {
+        ) : base(slot) {
             Code = RequireText(code, nameof(code));
             Detail = RequireText(detail, nameof(detail));
         }
@@ -224,8 +216,8 @@ public abstract record RecapCellExecutionOutcome {
     public sealed record NotStartedDueToCallerCancellation
         : RecapCellExecutionOutcome {
         public NotStartedDueToCallerCancellation(
-            EvaluationKeyDigest evaluationKey
-        ) : base(evaluationKey) { }
+            CellSlot slot
+        ) : base(slot) { }
     }
 
     private static string RequireText(string value, string parameterName) {
@@ -263,7 +255,7 @@ public sealed class RecapGridFulfillmentReceipt {
         HistoryRowId throughRowId,
         HistorySegmentDescriptorDigest throughDescriptorDigest,
         FulfilledViewKey fulfilledKey,
-        RowViewDigest viewDigest
+        RowResultId rowResultId
     ) {
         TimelineHead = timelineHead;
         StoreIdentity = storeIdentity;
@@ -271,7 +263,7 @@ public sealed class RecapGridFulfillmentReceipt {
         ThroughRowId = throughRowId;
         ThroughDescriptorDigest = throughDescriptorDigest;
         FulfilledKey = fulfilledKey;
-        ViewDigest = viewDigest;
+        RowResultId = rowResultId;
     }
 
     public TimelineHeadRef TimelineHead { get; }
@@ -280,7 +272,7 @@ public sealed class RecapGridFulfillmentReceipt {
     public HistoryRowId ThroughRowId { get; }
     public HistorySegmentDescriptorDigest ThroughDescriptorDigest { get; }
     public FulfilledViewKey FulfilledKey { get; }
-    public RowViewDigest ViewDigest { get; }
+    public RowResultId RowResultId { get; }
 }
 
 public sealed class RecapGridPromotableProof {
@@ -292,7 +284,7 @@ public sealed class RecapGridPromotableProof {
         HistoryRowId throughRowId,
         HistorySegmentDescriptorDigest throughDescriptorDigest,
         FulfilledViewKey fulfilledKey,
-        RowViewDigest viewDigest
+        RowResultId rowResultId
     ) {
         ControlHead = controlHead;
         TimelineHead = timelineHead;
@@ -301,7 +293,7 @@ public sealed class RecapGridPromotableProof {
         ThroughRowId = throughRowId;
         ThroughDescriptorDigest = throughDescriptorDigest;
         FulfilledKey = fulfilledKey;
-        ViewDigest = viewDigest;
+        RowResultId = rowResultId;
     }
 
     public ControlHeadRef ControlHead { get; }
@@ -311,7 +303,7 @@ public sealed class RecapGridPromotableProof {
     public HistoryRowId ThroughRowId { get; }
     public HistorySegmentDescriptorDigest ThroughDescriptorDigest { get; }
     public FulfilledViewKey FulfilledKey { get; }
-    public RowViewDigest ViewDigest { get; }
+    public RowResultId RowResultId { get; }
 }
 
 public enum RecapGridBuildBudgetKind {
@@ -335,7 +327,7 @@ public enum RecapGridBuildCommitKind {
 
 public sealed record RecapGridCellFailure(
     int Ordinal,
-    EvaluationKeyDigest EvaluationKey,
+    CellSlot Slot,
     string Code,
     string Detail,
     bool NotStarted
@@ -480,21 +472,18 @@ public sealed record RecapGridMissingAssignmentProgress {
         int ordinal,
         HistoryRowId rowId,
         GridBuildRecipeDigest recipeDigest,
-        LogicalColumnId logicalColumnId,
-        EvaluationKeyDigest evaluationKey
+        LogicalColumnId logicalColumnId
     ) {
         Ordinal = ordinal;
         RowId = rowId;
         RecipeDigest = recipeDigest;
         LogicalColumnId = logicalColumnId;
-        EvaluationKey = evaluationKey;
     }
 
     public int Ordinal { get; }
     public HistoryRowId RowId { get; }
     public GridBuildRecipeDigest RecipeDigest { get; }
     public LogicalColumnId LogicalColumnId { get; }
-    public EvaluationKeyDigest EvaluationKey { get; }
 }
 
 /// <summary>
@@ -524,7 +513,7 @@ public abstract record RecapGridBuildProgressResult {
 
     public sealed record Complete(
         RecapGridBuildProgressAuthority Authority,
-        RowViewDigest ThroughViewDigest,
+        RowResultId ThroughRowResultId,
         RecapGridPromotableProof? Proof
     ) : RecapGridBuildProgressResult {
         public bool FulfillmentPresent => Proof is not null;

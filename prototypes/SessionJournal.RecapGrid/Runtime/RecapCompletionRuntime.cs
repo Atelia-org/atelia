@@ -55,7 +55,7 @@ public sealed partial class RecapCompletionRuntime
                     batch.OrderedMissingWork.Select(static work =>
                         (RecapCellExecutionOutcome)new RecapCellExecutionOutcome
                             .NotStartedDueToCallerCancellation(
-                                work.EvaluationKey.Digest
+                                work.Slot
                             )).ToArray()
                 );
             }

@@ -137,11 +137,13 @@ public sealed class BoundedRecapCompletionTelemetry
             Add(value.ModelId);
             Add(value.ProviderId);
             Add(value.ApiSpecId);
-            Add(value.EvaluationKey.Value);
+            Add(value.Slot.RecipeDigest.Value);
+            Add(value.Slot.HistoryRowId.Value);
+            Add(value.Slot.LogicalColumnId.Value);
+            Add(value.StoreInstanceId);
             Add(value.FamilyDigest.Value);
             Add(value.DefinitionDigest.Value);
-            Add(value.HistorySegmentDigest);
-            Add(value.PriorProjectionDigest?.Value);
+            Add(value.PreviousRowResultId?.Value);
             Add(value.ProviderOutcome);
             Add(value.Code);
             Add(value.Detail);

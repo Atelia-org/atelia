@@ -280,17 +280,17 @@ public sealed partial class RecapGridManager {
                 ));
             }
             RecapGridStoreReadResult<RecapCellArtifact> read =
-                _store.Reader.ReadCell(manifest.CellDigest);
+                _store.Reader.ReadCell(manifest.CellId);
             if (read is not RecapGridStoreReadResult<RecapCellArtifact>
                 .Found found) {
                 return (null, MapStoreCellRead(read));
             }
             RecapCellArtifact cell = found.Value;
-            if (cell.CellDigest != manifest.CellDigest
+            if (cell.Id != manifest.CellId
                 || cell.LogicalColumnId != manifest.LogicalColumnId
                 || cell.DefinitionDigest != manifest.DefinitionDigest
-                || cell.EvaluationKey.HistorySegmentDigest
-                    != descriptor.DescriptorDigest) {
+                || cell.Slot.HistoryRowId
+                    != descriptor.RowId) {
                 return (null, Invalid(
                     "AssignedViewCellMismatch",
                     "An assignment Cell differs from its manifest or Timeline row."

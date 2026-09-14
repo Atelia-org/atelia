@@ -7,7 +7,10 @@ internal sealed record PreparedRecapWork(
     FrozenRecapCellWork Work,
     RecapCompletionRoute Route,
     CompletionRequest Request,
-    RecapCellArtifact? SameColumnPrior
+    RecapCellArtifact? SameColumnPrior,
+    string StoreInstanceId,
+    int StoreSchemaVersion,
+    RowResultId? PreviousRowResultId
 );
 
 internal abstract record RuntimePreflightResult {
@@ -55,7 +58,8 @@ public sealed partial class RecapCompletionRuntime {
                 != batch.Spec.HistoryRowId
             || batch.HistorySegment.Descriptor.TimelineId
                 != batch.Spec.TimelineId
-            || batch.Recipe.Digest != batch.Spec.RecipeDigest) {
+            || batch.Recipe.Digest != batch.Spec.RecipeDigest
+            || batch.HistorySegment.Descriptor.PreviousRowId != batch.Spec.PreviousHistoryRowId) {
             return new RuntimePreflightResult.Rejected(
                 "BatchAuthorityMismatch",
                 "The frozen history segment, recipe, and row spec do not share one exact authority."
@@ -91,26 +95,16 @@ public sealed partial class RecapCompletionRuntime {
                 || batch.Spec.OrderedAssignments[work.Ordinal]
                     is not RowBuildAssignment.Evaluate assignment
                 || assignment.LogicalColumnId != work.LogicalColumnId
-                || assignment.EvaluationKey.Digest
-                    != work.EvaluationKey.Digest
-                || !assignment.EvaluationKey.ToCanonicalBytes().SequenceEqual(
-                    work.EvaluationKey.ToCanonicalBytes()
-                )
-                || work.EvaluationKey.DefinitionDigest
-                    != work.Definition.Digest
-                || work.EvaluationKey.HistorySegmentDigest
-                    != batch.Spec.HistorySegmentDigest
+                || assignment.Slot
+                    != work.Slot
+                || batch.Spec.DefinitionAt(work.Ordinal) != work.Definition.Digest
+                || work.Slot.RecipeDigest != batch.Spec.RecipeDigest
+                || work.Slot.HistoryRowId != batch.Spec.HistoryRowId
                 || work.Definition.LogicalColumnId != work.LogicalColumnId
                 || work.Definition.FamilyDigest != work.Family.Digest) {
                 return new RuntimePreflightResult.Rejected(
                     "WorkAuthorityMismatch",
                     "Missing work differs from its exact row assignment, definition, family, or history segment."
-                );
-            }
-            if (!PriorReferencesMatch(batch.Spec.PriorInput, work.EvaluationKey.PriorInput)) {
-                return new RuntimePreflightResult.Rejected(
-                    "WorkPriorMismatch",
-                    "A work evaluation key carries a different prior-input reference."
                 );
             }
             if (!string.Equals(
@@ -164,7 +158,10 @@ public sealed partial class RecapCompletionRuntime {
                 work,
                 route,
                 request,
-                sameColumnPrior
+                sameColumnPrior,
+                batch.StoreIdentity.InstanceId.Value,
+                batch.StoreIdentity.SchemaVersion,
+                batch.Spec.PreviousRowResultId
             );
         }
         return new RuntimePreflightResult.Ready(prepared);
@@ -285,71 +282,44 @@ public sealed partial class RecapCompletionRuntime {
         var prior = new Dictionary<LogicalColumnId, RecapCellArtifact>();
         priorByColumn = prior;
         priorMessage = RuntimeRenderer.RenderPrior(Array.Empty<RecapCellArtifact>());
-        switch (batch.Spec.PriorInput) {
-            case PriorInputReference.FirstRow:
-                if (batch.PreviousView is not null
-                    || batch.PreviousCells.Count != 0) {
-                    return new RuntimePreflightResult.Rejected(
-                        "FirstRowPriorInvalid",
-                        "A first-row batch must not carry previous view state."
-                    );
-                }
-                return null;
-
-            case PriorInputReference.Projection expected:
-                if (batch.PreviousView is null
-                    || batch.PreviousCells.Count
-                        != batch.PreviousView.OrderedCells.Count) {
-                    return new RuntimePreflightResult.Rejected(
-                        "PriorProjectionMissing",
-                        "A projected batch requires one exact previous view and its cells."
-                    );
-                }
-                for (int index = 0; index < batch.PreviousCells.Count; index++) {
-                    RecapCellArtifact cell = batch.PreviousCells[index];
-                    RecapRowViewCell member =
-                        batch.PreviousView.OrderedCells[index];
-                    if (cell.LogicalColumnId != member.LogicalColumnId
-                        || cell.DefinitionDigest != member.DefinitionDigest
-                        || cell.CellDigest != member.CellDigest
-                        || !prior.TryAdd(cell.LogicalColumnId, cell)) {
-                        return new RuntimePreflightResult.Rejected(
-                            "PriorViewMismatch",
-                            "Previous cells do not exactly materialize the previous view."
-                        );
-                    }
-                }
-                PriorInputProjectionDigest actual =
-                    PriorInputProjectionDigest.FromCells(batch.PreviousCells);
-                if (expected.Digest != actual) {
-                    return new RuntimePreflightResult.Rejected(
-                        "PriorProjectionMismatch",
-                        "The prior projection differs from the ordered previous-cell loop."
-                    );
-                }
-                priorMessage = RuntimeRenderer.RenderPrior(
-                    batch.PreviousCells
-                );
-                return null;
-
-            default:
+        if (batch.Spec.PreviousHistoryRowId is null) {
+            if (batch.Spec.PreviousRowResultId is not null
+                || batch.PreviousView is not null || batch.PreviousCells.Count != 0) {
                 return new RuntimePreflightResult.Rejected(
-                    "PriorInputUnsupported",
-                    "The prior-input reference subtype is unsupported."
-                );
+                    "FirstRowPriorInvalid", "A first-row batch must not carry previous view state.");
+            }
+            return null;
         }
+        if (batch.PreviousView is null
+            || batch.PreviousCells.Count != batch.PreviousView.OrderedCells.Count) {
+            return new RuntimePreflightResult.Rejected(
+                "PriorViewMissing", "A successor batch requires one exact previous view and its cells.");
+        }
+        RecapRowView previous = batch.PreviousView;
+        if (previous.Id != batch.Spec.PreviousRowResultId
+            || previous.HistoryRowId != batch.Spec.PreviousHistoryRowId
+            || previous.RefId != batch.Spec.RefId
+            || previous.TimelineId != batch.Spec.TimelineId
+            || previous.RecipeDigest != batch.Spec.RecipeDigest
+            || previous.TargetDigest != batch.Spec.TargetDigest) {
+            return new RuntimePreflightResult.Rejected(
+                "PriorSourceMismatch", "The previous row differs from the independently frozen source.");
+        }
+        for (int index = 0; index < batch.PreviousCells.Count; index++) {
+            RecapCellArtifact cell = batch.PreviousCells[index];
+            RecapRowViewCell member = previous.OrderedCells[index];
+            if (cell is null || cell.LogicalColumnId != member.LogicalColumnId
+                || cell.DefinitionDigest != member.DefinitionDigest
+                || cell.Id != member.CellId
+                || cell.Slot.HistoryRowId != previous.HistoryRowId
+                || !prior.TryAdd(cell.LogicalColumnId, cell)) {
+                return new RuntimePreflightResult.Rejected(
+                    "PriorViewMismatch", "Previous cells do not exactly materialize the previous view.");
+            }
+        }
+        priorMessage = RuntimeRenderer.RenderPrior(batch.PreviousCells);
+        return null;
     }
-
-    private static bool PriorReferencesMatch(
-        PriorInputReference left,
-        PriorInputReference right
-    ) => (left, right) switch {
-        (PriorInputReference.FirstRow, PriorInputReference.FirstRow) => true,
-        (PriorInputReference.Projection first,
-            PriorInputReference.Projection second)
-            => first.Digest == second.Digest,
-        _ => false
-    };
 
     private sealed record PreparedFamily(
         byte[] FamilyCanonical,

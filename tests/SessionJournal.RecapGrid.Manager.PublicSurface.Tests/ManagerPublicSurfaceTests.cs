@@ -14,20 +14,24 @@ public sealed class ManagerPublicSurfaceTests {
     public void ExternalExecutorCanConstructOrdinaryResults() {
         RecapCellExecutionOutcome[] outcomes = [
             new RecapCellExecutionOutcome.Updated(
-                new EvaluationKeyDigest(new string('a', 64)),
+                new CellSlot(new GridBuildRecipeDigest(new string('a', 64)),
+                    new HistoryRowId(new string('e', 64)), new LogicalColumnId("case.column")),
                 "updated"
             ),
             new RecapCellExecutionOutcome.KeepUnchanged(
-                new EvaluationKeyDigest(new string('b', 64))
+                new CellSlot(new GridBuildRecipeDigest(new string('b', 64)),
+                    new HistoryRowId(new string('e', 64)), new LogicalColumnId("case.column"))
             ),
             new RecapCellExecutionOutcome.Failed(
-                new EvaluationKeyDigest(new string('c', 64)),
+                new CellSlot(new GridBuildRecipeDigest(new string('c', 64)),
+                    new HistoryRowId(new string('e', 64)), new LogicalColumnId("case.column")),
                 "provider-failed",
                 "Provider did not return a usable result."
             ),
             new RecapCellExecutionOutcome
                 .NotStartedDueToCallerCancellation(
-                    new EvaluationKeyDigest(new string('d', 64))
+                    new CellSlot(new GridBuildRecipeDigest(new string('d', 64)),
+                    new HistoryRowId(new string('e', 64)), new LogicalColumnId("case.column"))
                 )
         ];
         var completed = new RecapCellBatchExecutionResult.Completed(outcomes);
@@ -81,8 +85,7 @@ public sealed class ManagerPublicSurfaceTests {
                 ("Ordinal", typeof(int)),
                 ("RowId", typeof(HistoryRowId)),
                 ("RecipeDigest", typeof(GridBuildRecipeDigest)),
-                ("LogicalColumnId", typeof(LogicalColumnId)),
-                ("EvaluationKey", typeof(EvaluationKeyDigest))
+                ("LogicalColumnId", typeof(LogicalColumnId))
             ]
         );
         AssertProgressRecordShape(
@@ -227,7 +230,7 @@ public sealed class ManagerPublicSurfaceTests {
                 RecapGridBuildProgressResult.Complete
             >(manager.Manager.InspectBuildProgress(request));
             Assert.True(progress.FulfillmentPresent);
-            Assert.Equal(fulfilled.Proof.ViewDigest, progress.ThroughViewDigest);
+            Assert.Equal(fulfilled.Proof.RowResultId, progress.ThroughRowResultId);
             Assert.IsType<RecapGridPromotableProof>(fulfilled.Proof);
             Assert.Equal(1, fulfilled.Metrics.SelectedRows);
             Assert.Null(typeof(RecapGridFulfillmentReceipt).GetProperty(

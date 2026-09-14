@@ -5,8 +5,8 @@ namespace Atelia.SessionJournal.RecapGrid.Runtime.Tests;
 
 public sealed class RuntimePriorValidationTests {
     [Theory]
-    [InlineData("view", "PriorProjectionMissing")]
-    [InlineData("count", "PriorProjectionMissing")]
+    [InlineData("view", "PriorViewMissing")]
+    [InlineData("count", "PriorViewMissing")]
     [InlineData("column", "PriorViewMismatch")]
     [InlineData("definition", "PriorViewMismatch")]
     [InlineData("cell", "PriorViewMismatch")]
@@ -28,43 +28,41 @@ public sealed class RuntimePriorValidationTests {
     [InlineData(false)]
     [InlineData(true)]
     public async Task PriorMemberOrderOrDuplicateRejectsBeforeDispatch(bool duplicate) {
-        FrozenRowBatch firstRow = RuntimeTestFixture.Batch(columnCount: 2);
-        RecapCellArtifact[] cells = firstRow.OrderedMissingWork.Select(work =>
-            RecapCellArtifact.Create(work.LogicalColumnId, work.Definition.Digest,
-                work.EvaluationKey, RecapCellOutcome.Updated, "content", work.Definition.MaxContentUtf8Bytes))
-            .ToArray();
-        RecapRowView previous = RecapRowView.Create(firstRow.Spec, cells);
-        FrozenRowBatch projected = RuntimeTestFixture.BatchWithPrior();
+        FrozenRowBatch projected = RuntimeTestFixture.BatchWithPrior(columnCount: 2);
+        IReadOnlyList<RecapCellArtifact> cells = projected.PreviousCells;
         RecapCellArtifact[] invalid = duplicate ? [cells[0], cells[0]] : [cells[1], cells[0]];
-        await AssertRejected(Copy(projected, previous, invalid), "PriorViewMismatch");
+        await AssertRejected(Copy(projected, projected.PreviousView, invalid), "PriorViewMismatch");
     }
 
     [Fact]
-    public async Task ActualCellsMustMatchIndependentSpecDigest() {
+    public async Task ActualPreviousViewMustMatchIndependentSpecRowId() {
         FrozenRowBatch valid = RuntimeTestFixture.BatchWithPrior();
-        // Keep actual previous view/cells intact. Independently alter the expected
-        // spec and its work so the failure cannot come from work/spec disagreement.
-        var expected = new PriorInputReference.Projection(new PriorInputProjectionDigest(new string('f', 64)));
+        // Preserve actual view/cells and all work. Only the independently frozen
+        // expected predecessor changes, so member checks cannot explain rejection.
+        RowViewCoordinate original = valid.Spec.Coordinate;
+        var coordinate = new RowViewCoordinate(original.RefId, original.TimelineId,
+            original.HistoryRowId, original.HistorySegmentDigest, original.RecipeDigest,
+            original.TargetDigest, original.PreviousHistoryRowId,
+            new RowResultId(Guid.NewGuid().ToString("N")), original.BootstrapCompleted);
+        RowBuildSpec spec = RowBuildSpec.CreateNormal(valid.Recipe, coordinate,
+            valid.Spec.OrderedAssignments);
+        await AssertRejected(Copy(valid, valid.PreviousView, valid.PreviousCells, spec),
+            "PriorSourceMismatch");
+    }
+
+    [Theory]
+    [InlineData("recipe")]
+    [InlineData("history")]
+    [InlineData("column")]
+    public async Task WorkWithDifferentSlotCannotBypassSpecAuthority(string axis) {
+        FrozenRowBatch valid = RuntimeTestFixture.BatchWithPrior();
         FrozenRecapCellWork original = Assert.Single(valid.OrderedMissingWork);
-        EvaluationKey key = EvaluationKey.Create(valid.Spec.HistorySegmentDigest, original.Definition.Digest, expected);
-        RowBuildSpec spec = RowBuildSpec.CreateNormal(valid.Recipe, valid.Spec.Coordinate, expected,
-            [new RowBuildAssignment.Evaluate(original.LogicalColumnId, key)]);
-        FrozenRecapCellWork work = new(original.Ordinal, original.LogicalColumnId, key,
+        var changedSlot = new CellSlot(
+            axis == "recipe" ? new GridBuildRecipeDigest(new string('f', 64)) : original.Slot.RecipeDigest,
+            axis == "history" ? valid.PreviousView!.HistoryRowId : original.Slot.HistoryRowId,
+            axis == "column" ? new LogicalColumnId("case.other") : original.LogicalColumnId);
+        FrozenRecapCellWork changed = new(original.Ordinal, changedSlot,
             original.Definition, original.Family);
-        await AssertRejected(Copy(valid, valid.PreviousView, valid.PreviousCells, spec, [work]),
-            "PriorProjectionMismatch");
-    }
-
-    [Fact]
-    public async Task WorkWithDifferentPriorCannotBypassSpecAuthority() {
-        FrozenRowBatch valid = RuntimeTestFixture.BatchWithPrior();
-        FrozenRecapCellWork original = Assert.Single(valid.OrderedMissingWork);
-        EvaluationKey changedKey = EvaluationKey.Create(valid.Spec.HistorySegmentDigest,
-            original.Definition.Digest, PriorInputReference.FirstRow.Value);
-        FrozenRecapCellWork changed = new(original.Ordinal, original.LogicalColumnId,
-            changedKey, original.Definition, original.Family);
-        // The earlier exact assignment check detects this disagreement before
-        // the defensive WorkPriorMismatch check becomes reachable.
         await AssertRejected(Copy(valid, valid.PreviousView, valid.PreviousCells, work: [changed]),
             "WorkAuthorityMismatch");
     }
@@ -88,10 +86,10 @@ public sealed class RuntimePriorValidationTests {
     private static RecapCellArtifact ReplaceCell(RecapCellArtifact original,
         LogicalColumnId? column = null, MaintainerDefinitionDigest? definition = null, string? content = null) {
         MaintainerDefinitionDigest target = definition ?? original.DefinitionDigest;
-        EvaluationKey key = EvaluationKey.Create(original.EvaluationKey.HistorySegmentDigest,
-            target, original.EvaluationKey.PriorInput);
-        return RecapCellArtifact.Create(column ?? original.LogicalColumnId, target, key,
-            original.Outcome, content ?? original.Content, 16 * 1024);
+        var slot = new CellSlot(original.Slot.RecipeDigest, original.Slot.HistoryRowId,
+            column ?? original.LogicalColumnId);
+        return new RecapCellArtifact(new CellId(Guid.NewGuid().ToString("N")),
+            slot, target, original.Outcome, content ?? original.Content, 16 * 1024);
     }
 
     private static async Task AssertRejected(FrozenRowBatch batch, string code) {

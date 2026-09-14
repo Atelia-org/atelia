@@ -192,7 +192,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridBuildProgressResult.Complete
             >(manager.Manager.InspectBuildProgress(Request()));
             Assert.True(complete.FulfillmentPresent);
-            Assert.Equal(built.Proof.ViewDigest, complete.ThroughViewDigest);
+            Assert.Equal(built.Proof.RowResultId, complete.ThroughRowResultId);
             Assert.Equal(0, complete.Metrics.MissingAssignments);
             Assert.Equal(1, complete.Metrics.SelectedRows);
         }
@@ -228,7 +228,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             ));
             Assert.Equal(calls, executor.Batches.Count);
             Assert.Equal(0, second.Metrics.NewCalls);
-            Assert.Equal(first.Proof.ViewDigest, second.Proof.ViewDigest);
+            Assert.Equal(first.Proof.RowResultId, second.Proof.RowResultId);
             RecapGridBuildResult.Fulfilled third = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await manager.Manager.BuildAsync(
@@ -237,7 +237,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             ));
             Assert.Equal(calls, executor.Batches.Count);
             Assert.Equal(0, third.Metrics.NewCalls);
-            Assert.Equal(first.Proof.ViewDigest, third.Proof.ViewDigest);
+            Assert.Equal(first.Proof.RowResultId, third.Proof.RowResultId);
         }
     }
 
@@ -553,24 +553,25 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         }
     }
 
-    [Fact]
-    public async Task IndeterminateWritesSettleFromSameHandleExactReads() {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IndeterminateWritesSettleFromSameHandleExactReads(bool differentReportedRowId) {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
         var hooks = new ManagerTestHooks(
-            PutCell: (cell, next) => {
-                _ = Assert.IsType<RecapGridCellPutResult.Inserted>(next());
+            PutCell: (_, cell, next) => {
+                Assert.IsType<RecapGridCellPutResult.Inserted>(next());
                 return new RecapGridCellPutResult.CommitIndeterminate(
-                    cell.EvaluationKey.Digest,
+                    cell.Slot,
                     null
                 );
             },
-            PutRowView: (spec, view, next) => {
-                Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
+            PutRowView: (spec, cells, next) => {
+                RecapRowView winner = Assert.IsType<RecapGridRowViewPutResult.Inserted>(next()).Winner;
                 return new RecapGridRowViewPutResult.CommitIndeterminate(
-                    spec.Coordinate.AssignmentKey,
-                    view.Digest,
-                    view.Digest
-                );
+                    spec.Coordinate.AssignmentKey, differentReportedRowId
+                        ? RecapRowView.Create(DifferentRowResultId(winner.Id), spec, cells)
+                        : winner);
             },
             PutFulfilled: (key, viewDigest, next) => {
                 _ = viewDigest;
@@ -593,6 +594,10 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 result.Metrics.CellsCommitted);
             Assert.Equal(fixture.Rows.Count,
                 result.Metrics.RowViewsCommitted);
+            using RecapGridStoreReaderHandle reader = OpenStoreReader(fixture);
+            RecapRowView stored = Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                reader.Reader.ReadView(result.Proof.RowResultId)).Value;
+            Assert.Equal(fixture.Rows[^1].Descriptor.RowId, stored.HistoryRowId);
         }
     }
 
@@ -600,22 +605,19 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [InlineData(RecapGridBuildCommitKind.Cell)]
     [InlineData(RecapGridBuildCommitKind.RowView)]
     [InlineData(RecapGridBuildCommitKind.Fulfilled)]
-    public async Task IndeterminateMissingRequiresSettlementEvenWhenRowViewReportsSameDigest(
+    public async Task IndeterminateMissingRequiresSettlementEvenWhenRowViewReportsMatchingRecord(
         RecapGridBuildCommitKind kind
     ) {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
         var hooks = new ManagerTestHooks(
             PutCell: kind == RecapGridBuildCommitKind.Cell
-                ? (cell, _) => new RecapGridCellPutResult
-                    .CommitIndeterminate(cell.EvaluationKey.Digest, null)
+                ? (_, cell, _) => new RecapGridCellPutResult
+                    .CommitIndeterminate(cell.Slot, null)
                 : null,
             PutRowView: kind == RecapGridBuildCommitKind.RowView
-                ? (spec, view, _) => new RecapGridRowViewPutResult
-                    .CommitIndeterminate(
-                        spec.Coordinate.AssignmentKey,
-                        view.Digest,
-                        view.Digest
-                    )
+                ? (spec, cells, _) => new RecapGridRowViewPutResult
+                    .CommitIndeterminate(spec.Coordinate.AssignmentKey,
+                        RecapRowView.Create(new RowResultId(Guid.NewGuid().ToString("N")), spec, cells))
                 : null,
             PutFulfilled: kind == RecapGridBuildCommitKind.Fulfilled
                 ? (key, _, _) => new RecapGridFulfilledPutResult
@@ -641,11 +643,11 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
-    public async Task IndeterminateRowViewWrongAssignmentIsInvalidEvenWhenDigestMatches() {
+    public async Task IndeterminateRowViewWrongAssignmentIsInvalidEvenWhenStoredRecordMatches() {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
         var hooks = new ManagerTestHooks(
-            PutRowView: (spec, view, next) => {
-                Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
+            PutRowView: (spec, _, next) => {
+                RecapRowView winner = Assert.IsType<RecapGridRowViewPutResult.Inserted>(next()).Winner;
                 return new RecapGridRowViewPutResult.CommitIndeterminate(
                     new RowViewAssignmentKey(
                         spec.RefId,
@@ -653,8 +655,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                         spec.RecipeDigest,
                         new HistoryRowId(new string('f', 64))
                     ),
-                    view.Digest,
-                    view.Digest
+                    winner
                 );
             }
         );
@@ -699,45 +700,31 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         FulfilledViewKey? fulfilledKey = null;
         var hooks = new ManagerTestHooks(
             PutCell: kind == RecapGridBuildCommitKind.Cell
-                ? (proposed, next) => {
-                    cell = proposed;
-                    Assert.IsType<RecapGridCellPutResult.Inserted>(next());
+                ? (_, proposed, next) => {
+                    cell = Assert.IsType<RecapGridCellPutResult.Inserted>(next()).Winner;
                     RecapCellArtifact? observed = observedKind switch {
-                        IndeterminateObservedKind.Same => proposed,
-                        IndeterminateObservedKind.Different
-                            => RecapCellArtifact.Create(
-                                proposed.LogicalColumnId,
-                                proposed.DefinitionDigest,
-                                proposed.EvaluationKey,
-                                RecapCellOutcome.Updated,
-                                proposed.Content + "-different",
-                                16 * 1024
-                            ),
+                        IndeterminateObservedKind.Same => cell,
+                        IndeterminateObservedKind.Different => new RecapCellArtifact(
+                            new CellId(Guid.NewGuid().ToString("N")), cell.Slot,
+                            cell.DefinitionDigest, RecapCellOutcome.Updated,
+                            cell.Content + "-different", 16 * 1024),
                         _ => null
                     };
                     return new RecapGridCellPutResult.CommitIndeterminate(
-                        DifferentEvaluationKeyDigest(
-                            proposed.EvaluationKey.Digest
-                        ),
-                        observed
-                    );
+                        DifferentSlot(proposed.Slot), observed);
                 }
                 : null,
             PutRowView: kind == RecapGridBuildCommitKind.RowView
-                ? (spec, proposed, next) => {
-                    view = proposed;
-                    Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
+                ? (spec, cells, next) => {
+                    view = Assert.IsType<RecapGridRowViewPutResult.Inserted>(next()).Winner;
                     return new RecapGridRowViewPutResult.CommitIndeterminate(
-                        spec.Coordinate.AssignmentKey,
-                        DifferentRowViewDigest(proposed.Digest),
+                        new RowViewAssignmentKey(spec.RefId, spec.TimelineId,
+                            spec.RecipeDigest, DifferentSlot(cells[0].Slot).HistoryRowId),
                         observedKind switch {
-                            IndeterminateObservedKind.Same
-                                => proposed.Digest,
-                            IndeterminateObservedKind.Different
-                                => DifferentRowViewDigest(proposed.Digest),
+                            IndeterminateObservedKind.Same => view,
+                            IndeterminateObservedKind.Different => DifferentRowMembers(spec, cells),
                             _ => null
-                        }
-                    );
+                        });
                 }
                 : null,
             PutFulfilled: kind == RecapGridBuildCommitKind.Fulfilled
@@ -753,7 +740,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                                 IndeterminateObservedKind.Same
                                     => viewDigest,
                                 IndeterminateObservedKind.Different
-                                    => DifferentRowViewDigest(viewDigest),
+                                    => DifferentRowResultId(viewDigest),
                                 _ => null
                             }
                         );
@@ -776,13 +763,13 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 case RecapGridBuildCommitKind.Cell:
                     Assert.IsType<RecapGridStoreReadResult<
                         RecapCellArtifact>.Found>(
-                            reader.Reader.TryReadCell(cell!.EvaluationKey)
+                            reader.Reader.TryReadCell(cell!.Slot)
                         );
                     break;
                 case RecapGridBuildCommitKind.RowView:
                     Assert.IsType<RecapGridStoreReadResult<
                         RecapRowView>.Found>(
-                            reader.Reader.ReadView(view!.Digest)
+                            reader.Reader.ReadView(view!.Id)
                         );
                     break;
                 case RecapGridBuildCommitKind.Fulfilled:
@@ -804,13 +791,10 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         Fixture fixture = CreateFullFixture(1, zeroColumns: false);
         var hooks = new ManagerTestHooks(
             PutRowView: kind == RecapGridBuildCommitKind.RowView
-                ? (spec, view, next) => {
+                ? (spec, cells, next) => {
                     Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
                     return new RecapGridRowViewPutResult.CommitIndeterminate(
-                        spec.Coordinate.AssignmentKey,
-                        view.Digest,
-                        DifferentRowViewDigest(view.Digest)
-                    );
+                        spec.Coordinate.AssignmentKey, DifferentRowMembers(spec, cells));
                 }
                 : null,
             PutFulfilled: kind == RecapGridBuildCommitKind.Fulfilled
@@ -821,7 +805,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     return new RecapGridFulfilledPutResult
                         .CommitIndeterminate(
                             key,
-                            DifferentRowViewDigest(viewDigest)
+                            DifferentRowResultId(viewDigest)
                         );
                 }
                 : null
@@ -1102,7 +1086,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     )
                 );
             }
-            CellDigest headCell;
+            CellId headCell;
             using (RecapGridStoreReaderHandle reader =
                    OpenStoreReader(fixture)) {
                 RecapRowView headView = Assert.IsType<
@@ -1113,7 +1097,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     fixture.Recipe.Digest,
                     fixture.Rows[^1].Descriptor.RowId
                 ))).Value;
-                headCell = Assert.Single(headView.OrderedCells).CellDigest;
+                headCell = Assert.Single(headView.OrderedCells).CellId;
             }
             string database = Path.Combine(
                 fixture.Path,
@@ -1133,8 +1117,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 connection.Open();
                 using DbCommand command = connection.CreateCommand();
                 command.CommandText = missingCell
-                    ? "DELETE FROM cell_artifact WHERE cell_digest = $cell;"
-                    : "UPDATE cell_artifact SET canonical = X'00' WHERE cell_digest = $cell;";
+                    ? "DELETE FROM cell_artifact WHERE cell_id = $cell;"
+                    : "UPDATE cell_artifact SET definition_digest = 'invalid' WHERE cell_id = $cell;";
                 DbParameter parameter = command.CreateParameter();
                 parameter.ParameterName = "$cell";
                 parameter.Value = headCell.Value;
@@ -1180,8 +1164,11 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         }
     }
 
-    [Fact]
-    public async Task InvalidOutcomeOrderWritesNoBatchCells() {
+    [Theory]
+    [InlineData("order")]
+    [InlineData("recipe")]
+    [InlineData("history")]
+    public async Task InvalidOutcomeSlotOrOrderWritesNoBatchCells(string mismatch) {
         Fixture fixture = CreateOverlayFixture(
             initialTurns: 0,
             laterTurns: 1
@@ -1190,13 +1177,21 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         var executor = new DelegateExecutor((batch, _) => {
             captured = batch;
             Assert.Equal(2, batch.OrderedMissingWork.Count);
+            CellSlot firstSlot = batch.OrderedMissingWork[0].Slot;
+            CellSlot wrong = mismatch switch {
+                "order" => batch.OrderedMissingWork[1].Slot,
+                "recipe" => new CellSlot(
+                    new GridBuildRecipeDigest(new string('f', 64)),
+                    firstSlot.HistoryRowId, firstSlot.LogicalColumnId),
+                _ => DifferentSlot(firstSlot)
+            };
             return new RecapCellBatchExecutionResult.Completed([
                 new RecapCellExecutionOutcome.Updated(
-                    batch.OrderedMissingWork[1].EvaluationKey.Digest,
+                    wrong,
                     "wrong-order"
                 ),
                 new RecapCellExecutionOutcome.Updated(
-                    batch.OrderedMissingWork[0].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[mismatch == "order" ? 0 : 1].Slot,
                     "wrong-order"
                 )
             ]);
@@ -1227,12 +1222,12 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             captured = batch;
             return new RecapCellBatchExecutionResult.Completed([
                 new RecapCellExecutionOutcome.Failed(
-                    batch.OrderedMissingWork[0].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[0].Slot,
                     "failed",
                     "primary failure"
                 ),
                 new RecapCellExecutionOutcome.Updated(
-                    batch.OrderedMissingWork[1].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[1].Slot,
                     "settled sibling"
                 )
             ]);
@@ -1266,11 +1261,11 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             captured = batch;
             return new RecapCellBatchExecutionResult.Completed([
                 new RecapCellExecutionOutcome.Updated(
-                    batch.OrderedMissingWork[0].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[0].Slot,
                     new string('x', 20 * 1024)
                 ),
                 new RecapCellExecutionOutcome.Updated(
-                    batch.OrderedMissingWork[1].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[1].Slot,
                     "settled sibling"
                 )
             ]);
@@ -1295,10 +1290,10 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [Fact]
     public async Task FirstSettlementStillSettlesLaterStartedSuccess() {
         Fixture fixture = CreateOverlayFixture(0, 1);
-        var hooks = new ManagerTestHooks(PutCell: (cell, next) =>
+        var hooks = new ManagerTestHooks(PutCell: (_, cell, next) =>
             cell.LogicalColumnId.Value == "case.culprit"
                 ? new RecapGridCellPutResult.CommitIndeterminate(
-                    cell.EvaluationKey.Digest,
+                    cell.Slot,
                     null
                 )
                 : next());
@@ -1308,7 +1303,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             return new RecapCellBatchExecutionResult.Completed([
                 .. batch.OrderedMissingWork.Select(work =>
                     new RecapCellExecutionOutcome.Updated(
-                        work.EvaluationKey.Digest,
+                        work.Slot,
                         $"settled-{work.Ordinal}"
                     ))
             ]);
@@ -1337,7 +1332,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             return new RecapCellBatchExecutionResult.Completed([
                 .. batch.OrderedMissingWork.Select(work =>
                     new RecapCellExecutionOutcome.Updated(
-                        work.EvaluationKey.Digest,
+                        work.Slot,
                         $"elapsed-{work.Ordinal}"
                     ))
             ]);
@@ -1379,7 +1374,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             return new RecapCellBatchExecutionResult.Completed([
                 .. batch.OrderedMissingWork.Select(work =>
                     new RecapCellExecutionOutcome.Updated(
-                        work.EvaluationKey.Digest,
+                        work.Slot,
                         $"drift-{work.Ordinal}"
                     ))
             ]);
@@ -1401,23 +1396,13 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             Assert.All(captured.OrderedMissingWork, work =>
                 Assert.IsType<RecapGridStoreReadResult<
                     RecapCellArtifact>.Found>(
-                        reader.Reader.TryReadCell(work.EvaluationKey)
+                        reader.Reader.TryReadCell(work.Slot)
                     ));
             Assert.IsType<RecapGridMissingResult.Complete>(
                 reader.Reader.FindMissingAssignments(captured.Spec)
             );
-            RecapCellArtifact[] cells = [..
-                captured.OrderedMissingWork.Select(work => Assert.IsType<
-                    RecapGridStoreReadResult<RecapCellArtifact>.Found
-                >(reader.Reader.TryReadCell(work.EvaluationKey)).Value)
-            ];
-            RecapRowView unpublished = RecapRowView.Create(
-                captured.Spec,
-                cells
-            );
             Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
-                reader.Reader.ReadView(unpublished.Digest)
-            );
+                reader.Reader.ReadViewAt(captured.Spec.Coordinate.AssignmentKey));
         }
     }
 
@@ -1496,7 +1481,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             Assert.All(captured.OrderedMissingWork, work =>
                 Assert.IsType<RecapGridStoreReadResult<
                     RecapCellArtifact>.Found>(
-                        reader.Reader.TryReadCell(work.EvaluationKey)
+                        reader.Reader.TryReadCell(work.Slot)
                     ));
         }
     }
@@ -1611,19 +1596,19 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [Fact]
     public async Task KeepCopiesExactPriorContentAfterFirstRow() {
         Fixture fixture = CreateFullFixture(2, zeroColumns: false);
-        var keys = new List<EvaluationKey>();
+        var keys = new List<CellSlot>();
         var executor = new DelegateExecutor((batch, _) => {
             FrozenRecapCellWork work = Assert.Single(
                 batch.OrderedMissingWork
             );
-            keys.Add(work.EvaluationKey);
+            keys.Add(work.Slot);
             RecapCellExecutionOutcome outcome = batch.PreviousCells.Count == 0
                 ? new RecapCellExecutionOutcome.Updated(
-                    work.EvaluationKey.Digest,
+                    work.Slot,
                     "stable hypothesis"
                 )
                 : new RecapCellExecutionOutcome.KeepUnchanged(
-                    work.EvaluationKey.Digest
+                    work.Slot
                 );
             return new RecapCellBatchExecutionResult.Completed([outcome]);
         });
@@ -1651,7 +1636,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             work = Assert.Single(batch.OrderedMissingWork);
             return new RecapCellBatchExecutionResult.Completed([
                 new RecapCellExecutionOutcome.KeepUnchanged(
-                    work.EvaluationKey.Digest
+                    work.Slot
                 )
             ]);
         });
@@ -1666,13 +1651,13 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 OpenStoreReader(fixture);
             Assert.IsType<RecapGridStoreReadResult<
                 RecapCellArtifact>.Missing>(
-                    reader.Reader.TryReadCell(work.EvaluationKey)
+                    reader.Reader.TryReadCell(work.Slot)
                 );
         }
     }
 
     [Fact]
-    public async Task ConcurrentManagersConvergeOnOneEvaluationWinner() {
+    public async Task ConcurrentManagersConvergeOnOneSlotWinner() {
         Fixture fixture = CreateFullFixture(1, zeroColumns: false);
         using (fixture.Journal)
         using (RecapGridManagerHandle first = OpenManager(fixture))
@@ -1692,8 +1677,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Fulfilled secondResult = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(results[1]);
-            Assert.Equal(firstResult.Proof.ViewDigest,
-                secondResult.Proof.ViewDigest);
+            Assert.Equal(firstResult.Proof.RowResultId,
+                secondResult.Proof.RowResultId);
             Assert.True(executor.DispatchCount >= 2);
         }
     }
@@ -1861,7 +1846,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                         _ => "仍然怀疑X，但证据链不完整。"
                     };
                     return new RecapCellExecutionOutcome.Updated(
-                        work.EvaluationKey.Digest,
+                        work.Slot,
                         content
                     );
                 })
@@ -1908,13 +1893,13 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 OpenStoreReader(fixture);
             RecapRowView view = Assert.IsType<
                 RecapGridStoreReadResult<RecapRowView>.Found
-            >(reader.Reader.ReadView(result.Proof.ViewDigest)).Value;
+            >(reader.Reader.ReadView(result.Proof.RowResultId)).Value;
             RecapCellArtifact cell = Assert.IsType<
                 RecapGridStoreReadResult<RecapCellArtifact>.Found
             >(reader.Reader.ReadCell(
                 view.OrderedCells.Single(item =>
                     item.LogicalColumnId.Value == "case.culprit"
-                ).CellDigest
+                ).CellId
             )).Value;
             Assert.Contains("原来如此", cell.Content,
                 StringComparison.Ordinal);
@@ -1978,7 +1963,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 OpenStoreReader(fixture);
             RecapRowView view = Assert.IsType<
                 RecapGridStoreReadResult<RecapRowView>.Found
-            >(reader.Reader.ReadView(result.Proof.ViewDigest)).Value;
+            >(reader.Reader.ReadView(result.Proof.RowResultId)).Value;
             RecapRowViewCell only = Assert.Single(view.OrderedCells);
             Assert.Equal("case.culprit", only.LogicalColumnId.Value);
             Assert.Equal(
@@ -2013,46 +1998,41 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
-    public async Task ContentEquivalentPriorAcrossDifferentViewsNeedsNoCall() {
-        Fixture fixture = CreateOverlayFixture(
-            initialTurns: 2,
-            laterTurns: 0,
-            equivalentTarget: true
-        );
+    public async Task EquivalentContentAcrossRecipesUsesDistinctSlotsAndThenReusesEachWinner() {
+        Fixture fixture = CreateOverlayFixture(initialTurns: 2, laterTurns: 0,
+            equivalentTarget: true);
         var executor = new RecordingExecutor();
-        using (fixture.Journal)
-        using (RecapGridManagerHandle manager = OpenManager(fixture)) {
-            RecapGridBuildResult.Fulfilled result = Assert.IsType<
-                RecapGridBuildResult.Fulfilled
-            >(await manager.Manager.BuildAsync(
-                CandidateRequest(fixture.Recipe.Digest),
-                executor
-            ));
-            Assert.Equal(fixture.BootstrapRowCount,
-                executor.Batches.Count);
-            Assert.DoesNotContain(executor.Batches, batch =>
-                batch.Recipe.Digest == fixture.Recipe.Digest);
-            FrozenRowBatch baseFinal = executor.Batches[^1];
-            using RecapGridStoreReaderHandle reader =
-                OpenStoreReader(fixture);
-            RecapCellArtifact[] baseCells = [..
-                baseFinal.OrderedMissingWork.Select(work => Assert.IsType<
-                    RecapGridStoreReadResult<RecapCellArtifact>.Found
-                >(reader.Reader.TryReadCell(work.EvaluationKey)).Value)
-            ];
-            RecapRowView baseView = RecapRowView.Create(
-                baseFinal.Spec,
-                baseCells
-            );
-            RecapRowView candidateView = Assert.IsType<
-                RecapGridStoreReadResult<RecapRowView>.Found
-            >(reader.Reader.ReadView(result.Proof.ViewDigest)).Value;
-            Assert.NotEqual(baseView.Digest, candidateView.Digest);
-            Assert.Equal(
-                baseView.OrderedCells.Select(static cell => cell.CellDigest),
-                candidateView.OrderedCells.Select(static cell =>
-                    cell.CellDigest)
-            );
+        using (fixture.Journal) {
+            RecapGridBuildResult.Fulfilled result;
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                result = Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await manager.Manager.BuildAsync(CandidateRequest(fixture.Recipe.Digest), executor));
+            }
+            Assert.Equal(2 * fixture.BootstrapRowCount, executor.Batches.Count);
+            Assert.Equal(2 * fixture.BootstrapRowCount, result.Metrics.NewCalls);
+            using RecapGridStoreReaderHandle reader = OpenStoreReader(fixture);
+            foreach (HistoryTimelineSelectedRow row in fixture.Rows) {
+                FrozenRecapCellWork baseWork = Assert.Single(executor.Batches.Single(batch =>
+                    batch.Recipe.Digest == fixture.BaseRecipe!.Digest
+                    && batch.Spec.HistoryRowId == row.Descriptor.RowId).OrderedMissingWork);
+                FrozenRecapCellWork candidateWork = Assert.Single(executor.Batches.Single(batch =>
+                    batch.Recipe.Digest == fixture.Recipe.Digest
+                    && batch.Spec.HistoryRowId == row.Descriptor.RowId).OrderedMissingWork);
+                RecapCellArtifact baseCell = Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+                    reader.Reader.TryReadCell(baseWork.Slot)).Value;
+                RecapCellArtifact candidateCell = Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+                    reader.Reader.TryReadCell(candidateWork.Slot)).Value;
+                Assert.Equal(baseCell.Content, candidateCell.Content);
+                Assert.NotEqual(baseCell.Slot, candidateCell.Slot);
+                Assert.NotEqual(baseCell.Id, candidateCell.Id);
+            }
+            using RecapGridManagerHandle reopened = OpenManager(fixture);
+            var cachedExecutor = new RecordingExecutor();
+            RecapGridBuildResult.Fulfilled cached = Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                await reopened.Manager.BuildAsync(CandidateRequest(fixture.Recipe.Digest), cachedExecutor));
+            Assert.Empty(cachedExecutor.Batches);
+            Assert.Equal(0, cached.Metrics.NewCalls);
+            Assert.Equal(result.Proof.RowResultId, cached.Proof.RowResultId);
         }
     }
 
@@ -2069,12 +2049,12 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             cancellation.Cancel();
             return new RecapCellBatchExecutionResult.Completed([
                 new RecapCellExecutionOutcome.Updated(
-                    batch.OrderedMissingWork[0].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[0].Slot,
                     "settled before cancel"
                 ),
                 new RecapCellExecutionOutcome
                     .NotStartedDueToCallerCancellation(
-                        batch.OrderedMissingWork[1].EvaluationKey.Digest
+                        batch.OrderedMissingWork[1].Slot
                     )
             ]);
         });
@@ -2199,7 +2179,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             new RecapCellBatchExecutionResult.Completed([
                 new RecapCellExecutionOutcome
                     .NotStartedDueToCallerCancellation(
-                        batch.OrderedMissingWork[0].EvaluationKey.Digest
+                        batch.OrderedMissingWork[0].Slot
                     )
             ]));
         using (fixture.Journal)
@@ -2260,10 +2240,10 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [Fact]
     public async Task TargetOrdinalSurvivesCompactedMissingWork() {
         Fixture fixture = CreateOverlayFixture(0, 1);
-        var firstHooks = new ManagerTestHooks(PutCell: (cell, next) =>
+        var firstHooks = new ManagerTestHooks(PutCell: (_, cell, next) =>
             cell.LogicalColumnId.Value == "case.culprit"
                 ? new RecapGridCellPutResult.CommitIndeterminate(
-                    cell.EvaluationKey.Digest,
+                    cell.Slot,
                     null
                 )
                 : next());
@@ -2286,7 +2266,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 Assert.Equal(1, only.Ordinal);
                 return new RecapCellBatchExecutionResult.Completed([
                     new RecapCellExecutionOutcome.Failed(
-                        only.EvaluationKey.Digest,
+                        only.Slot,
                         "failed",
                         "target ordinal must survive compaction"
                     )
@@ -2309,12 +2289,12 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         var executor = new DelegateExecutor((batch, _) =>
             new RecapCellBatchExecutionResult.Completed([
                 new RecapCellExecutionOutcome.Failed(
-                    batch.OrderedMissingWork[0].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[0].Slot,
                     "first-failed",
                     "the lower target ordinal is primary"
                 ),
                 new RecapCellExecutionOutcome.Updated(
-                    batch.OrderedMissingWork[1].EvaluationKey.Digest,
+                    batch.OrderedMissingWork[1].Slot,
                     new string('x', 20 * 1024)
                 )
             ]));
@@ -2931,7 +2911,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     ) => new RecapCellBatchExecutionResult.Completed([
         .. batch.OrderedMissingWork.Select(work =>
             new RecapCellExecutionOutcome.Updated(
-                work.EvaluationKey.Digest,
+                work.Slot,
                 $"{prefix}-{work.Ordinal}"
             ))
     ]);
@@ -2980,7 +2960,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using RecapGridStoreReaderHandle reader = OpenStoreReader(fixture);
         for (int index = 0; index < work.Count; index++) {
             RecapGridStoreReadResult<RecapCellArtifact> result =
-                reader.Reader.TryReadCell(work[index].EvaluationKey);
+                reader.Reader.TryReadCell(work[index].Slot);
             if (index == expectedFoundOrdinal) {
                 Assert.IsType<RecapGridStoreReadResult<
                     RecapCellArtifact>.Found>(result);
@@ -3016,17 +2996,28 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         )
     );
 
-    private static EvaluationKeyDigest DifferentEvaluationKeyDigest(
-        EvaluationKeyDigest current
-    ) => new(current.Value == new string('f', 64)
-        ? new string('e', 64)
-        : new string('f', 64));
+    private static CellSlot DifferentSlot(CellSlot current) => new(
+        current.RecipeDigest,
+        new HistoryRowId(current.HistoryRowId.Value == new string('f', 64)
+            ? new string('e', 64) : new string('f', 64)),
+        current.LogicalColumnId);
 
-    private static RowViewDigest DifferentRowViewDigest(
-        RowViewDigest current
-    ) => new(current.Value == new string('f', 64)
-        ? new string('e', 64)
-        : new string('f', 64));
+    private static RowResultId DifferentRowResultId(RowResultId current) {
+        RowResultId different;
+        do { different = new RowResultId(Guid.NewGuid().ToString("N")); }
+        while (different == current);
+        return different;
+    }
+
+    private static RecapRowView DifferentRowMembers(RowBuildSpec spec,
+        IReadOnlyList<RecapCellArtifact> cells) {
+        RecapCellArtifact original = cells[0];
+        RecapCellArtifact[] changed = cells.ToArray();
+        changed[0] = new RecapCellArtifact(new CellId(Guid.NewGuid().ToString("N")),
+            original.Slot, original.DefinitionDigest, RecapCellOutcome.Updated,
+            original.Content + "-different", 16 * 1024);
+        return RecapRowView.Create(new RowResultId(Guid.NewGuid().ToString("N")), spec, changed);
+    }
 
     private static FulfilledViewKey DifferentFulfilledKey(
         Fixture fixture,
@@ -3160,7 +3151,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 batch.OrderedMissingWork.Select(work =>
                     (RecapCellExecutionOutcome)new
                         RecapCellExecutionOutcome.Updated(
-                            work.EvaluationKey.Digest,
+                            work.Slot,
                             $"{work.LogicalColumnId}:{batch.Spec.HistoryRowId}"
                         ))
             ];
@@ -3286,7 +3277,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridStoreReaderOpenResult.Opened
             >(RecapGridStoreFactory.OpenReader(repositoryPath)).Handle;
             PreviousViewWasCommitted = reader.Reader.ReadView(
-                batch.PreviousView.Digest
+                batch.PreviousView.Id
             ) is RecapGridStoreReadResult<RecapRowView>.Found;
             SecondRowStarted.TrySetResult();
             return Updated(batch, $"row-{batchOrdinal}");
@@ -3302,7 +3293,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             }
             await _release.Task.WaitAsync(cancellationToken);
             return new RecapCellExecutionOutcome.Updated(
-                work.EvaluationKey.Digest,
+                work.Slot,
                 $"overlap-{work.Ordinal}"
             );
         }
