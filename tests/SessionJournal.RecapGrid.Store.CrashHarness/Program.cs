@@ -113,12 +113,12 @@ internal static class Program {
             BuildTarget.Create([new BuildTargetColumn(column, definition)]));
         var slot = new CellSlot(recipe.Digest, rowId, column);
         RowBuildSpec spec = RowBuildSpec.CreateFull(recipe, new RowViewCoordinate(
-            new RefId(1), timeline, rowId, new HistorySegmentDescriptorDigest(rowId.Value), recipe.Digest,
+            new RefId(1), timeline, rowId, recipe.Digest,
             recipe.Target.Digest, null, null, bootstrapCompleted: true), [new RowBuildAssignment.Evaluate(slot)]);
         var head = new TimelineHeadRef(timeline, new RefId(1), null, new string('d', 64), null,
             0, HistoryTimelineSelectedPath.EmptyDigest, generation: 1);
         return (spec, RecapCellDraft.Create(slot, definition, RecapCellOutcome.Updated,
             "crash fixture answer", RecapGridLimits.MaximumContentUtf8Bytes),
-            FulfilledViewKey.Create(head.RefId, head, spec.HistorySegmentDigest, recipe));
+            FulfilledViewKey.Create(head.RefId, head, spec.HistoryRowId, recipe));
     }
 }
