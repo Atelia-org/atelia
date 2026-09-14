@@ -125,7 +125,19 @@ exactly-one，再与V2 manifest及新binary一起发布。V1没有compatibility 
 Hosting的provider-free exact route inspection只报告configured connection/model/limits，
 不会构造provider client；只有settled runtime telemetry中的`ConnectionId`、model与provider
 才是actual dispatch evidence。这些字段是bounded operational evidence，不进入durable
-Family、Definition、Recipe、EvaluationKey、Cell或RowView identity。
+Family、Definition、Recipe 或 CellSlot。Cell/Row 使用 Store 分配的普通结果 ID。
+Runtime 日志直接携带 Slot、StoreIdentity 与必要前驱 ID，不再记录 EvaluationKey/PriorProjection digest。
+
+Grid Store 当前为 SQLite schema v3，物理槽位仍是 `derived/recap-grid/v1/grid.sqlite`。
+同 `CellSlot(recipe, history row, column)` 保留首个结果；不同 recipe 不自动共享同正文缓存，
+Overlay 通过原 CellId/Slot 显式复用。SQL 列与成员关系是唯一持久数据，导出 JSON 只是临时投影：
+输出使用 `jsonBase64/fulfilledRowResultId`，selection 使用 `rowResultId`；旧 digest cursor 不兼容。
+Getter provenance 为 `priorSourceAligned` 与行/cell/member/实际正文 UTF-8 bytes 计数，合法 Overlay 的
+来源不同不拒绝正文。具体模型见 [Store v3 说明](../../docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v3.md)。
+
+普通打开旧 Store schema 返回 Unsupported，不自动迁移、Reset 或调用模型。全部重构完成后才统一清旧 Recap
+并重建：先在旧库仍可读时正常收敛相关 pending promotion，再停服备份并用已有显式离线 Reset 初始化新库。
+Timeline/Cadence、Control 与 Journal/Prepared 保留；本代码切片不执行真实数据处置。
 
 `run-online-turn` 是唯一正式 online CLI。Prepared 按 frozen identity exact bind；
 启动时strict config/connections已经冻结；Started/Refuse早于本次current connection

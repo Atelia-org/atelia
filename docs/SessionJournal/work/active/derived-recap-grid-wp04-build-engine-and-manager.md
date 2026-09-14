@@ -1,5 +1,8 @@
 # DerivedRecap Grid WP-04：Grid Build Engine 与 MaintainerManager
 
+> 后继边界（2026-09-14）：本文保留原工作包的实现/验收证据；旧 EvaluationKey、内容寻址结果、canonical Store 与 provenance 度量不再是当前保留要求。
+> 当前模型见[Store v3 说明](../../current/contracts/recap-grid-store-sqlite-v3.md)，实施验证见[Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)；行前沿、显式 Overlay 与冻结恢复边界继续保留。
+
 状态：Complete；两路independent review GO（P0=0，P1=0）；current production尚未切换
 
 只需加载：目标设计、总计划、WP-03 handoff、本文和 WP-05 摘要。

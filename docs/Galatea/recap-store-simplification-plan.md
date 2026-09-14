@@ -1,8 +1,8 @@
-# RecapGrid Store 简化：下一实施切片
+# RecapGrid Store 简化：实施计划
 
-> 状态：规划完成，经过三视角独立审查、交叉质询和剩余争议裁决；尚未实施。
+> 状态：设计已批准，工作包 A/B/C 实施中；集成验证与最终提交记录待补。设计经过三视角独立审查、交叉质询和剩余争议裁决。
 > 日期：2026-09-14；源码基线：`4f718d87`。
-> 承接[身份简化总设计](identity-simplification-design.md)。本轮仅修订文档，不清空真实数据、不部署、不调用 LLM。
+> 承接[身份简化总设计](identity-simplification-design.md)。本轮实施代码与测试、维护文档；真实清库、部署与 LLM 重建留到全部重构完成后。
 
 ## 1. 最小模型与需求来源
 
@@ -36,10 +36,10 @@ CellId / RowResultId = Store 分配的普通随机 128-bit ID
 |---|---|
 | [ManagerRowBuild](../../prototypes/SessionJournal.RecapGrid/Manager/ManagerRowBuild.cs) `DeriveRowPlan` | 前驱必须属于同 ref/Timeline/recipe/target，并是 Timeline 指定的上一行 |
 | 同文件 `DeriveAssignments`；[ArtifactContracts](../../prototypes/SessionJournal.RecapGrid/Abstractions/ArtifactContracts.cs) | recipe 固定列与 definition；Evaluate 使用当前输入，Reuse 引用同历史行 base cell |
-| [SchemaV2.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV2.sql) | cell 按 evaluation hash 唯一、row 按 assignment 唯一；SQL 字段与整对象 canonical BLOB 并存 |
-| [SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) `PutCell/PutRowView` | cell 返回首个 winner；row 目前比较包含 hash ID 的 canonical，改普通 ID 时必须换成业务关系比较 |
-| [Getter materializer](../../prototypes/SessionJournal.RecapGrid/Getter/RecapGridContextMaterializer.cs) | 当前 prior 内容等价仅用于 provenance 诊断；预算还统计整对象 canonical bytes |
-| [RuntimeContracts](../../prototypes/SessionJournal.RecapGrid/Runtime/RuntimeContracts.cs)、[RuntimeHosting](../../prototypes/SessionJournal.RecapGrid.Hosting/RuntimeHosting.cs) | outcome/work 关联和日志仍携带 EvaluationKeyDigest/PriorProjectionDigest，须随主链一起改 |
+| 规划基线 `4f718d87` 的 `Store/SchemaV2.sql`；当前 [SchemaV3.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV3.sql) | 旧版 cell 按 evaluation hash 唯一、SQL 与 canonical BLOB 并存；v3 改 Slot 唯一与普通结果 ID |
+| [SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) `PutCell/PutRowView` | cell 返回首个 winner；row 改按业务关系比较并返回实际持久 winner |
+| [Getter materializer](../../prototypes/SessionJournal.RecapGrid/Getter/RecapGridContextMaterializer.cs) | 原内容等价仅用于 provenance 诊断；现改来源关系与正文/数量预算 |
+| [RuntimeContracts](../../prototypes/SessionJournal.RecapGrid/Runtime/RuntimeContracts.cs)、[RuntimeHosting](../../prototypes/SessionJournal.RecapGrid.Hosting/RuntimeHosting.cs) | outcome/work 关联和日志统一使用 Slot、StoreIdentity 与必要前驱 ID |
 | [SessionRequestManifest](../../prototypes/SessionJournal/SessionRequestManifest.cs) `SessionRequestContextInput` | 已冻结输入保存 ContextSnapshot 正文，无 Cell/Row/Store ID，不参与旧缓存转换 |
 | [AgentControlTool](../../prototypes/SessionJournal.RecapGrid/AgentControl/RecapGridAgentControlTool.cs) `PromoteAsync` | 先查 Manager progress/fulfillment，后调用 Control 并查 receipt；清 Store 会影响未完成 promotion |
 
@@ -73,8 +73,8 @@ cell.Slot.HistoryRowId → Timeline.PreviousRowId
 Store API 的语义收口为：
 
 ```text
-PutCell(frozen spec 中的 Slot, 输出) → Inserted(stored cell) | AlreadyFilled(stored cell)
-PutRow(spec, 已存 cells)           → Inserted(stored row)  | AlreadyExists(stored row)
+PutCell(spec, internal draft) → Inserted(Winner) | AlreadyFilled(Winner)
+PutRowView(spec, stored cells) → Inserted(Winner) | AlreadyPresent(Winner)
 ```
 
 具体参数复用现有已验证业务类型，不为示意签名新建一套 DTO 框架。ID 由 Store 分配，所有成功路径返回实际持久记录。cell 同 Slot 即使竞争正文不同也返回 first-winner；row 同 assignment、同业务成员与前驱返回已存 row，成员/前驱不同才 Conflict。候选随机 ID 不参与业务相等。
@@ -83,7 +83,7 @@ PutRow(spec, 已存 cells)           → Inserted(stored row)  | AlreadyExists(s
 
 ### 3.3 SQL 一份数据与单一 reader
 
-以当前 schema v2 为基线，新 schema 使用下一版本（预计 v3，实施前确认）。保留现有物理槽位 `derived/recap-grid/v1/grid.sqlite`，目录名不是 schema 版本；不为过渡期建设第二套运行 Store。
+本轮 schema 确认为 v3，DDL owner 为 `Store/SchemaV3.sql`。保留现有物理槽位 `derived/recap-grid/v1/grid.sqlite`，目录名不是 schema 版本；不为过渡期建设第二套运行 Store。
 
 新表至少表达：
 
@@ -102,9 +102,9 @@ Runtime 保留独立 frozen spec、history/recipe/target、前驱 RowResult 与�
 
 Evaluate 属于当前 Slot；Overlay Reuse 必须引用明确的同历史行 base cell，验证列和 definition，保留 base Slot。不能强制每个 member 都属于 candidate recipe，也不能给复用 cell 重写来源。
 
-Getter 的 `PriorInputAligned` 不再承诺内容等价，改名并定义为来源关系一致性（建议 `PriorSourceAligned`）。用 cell 源 recipe 与历史前驱定位 source row，与当前 row 的前驱比较；合法 Overlay 复用可为 NotSatisfied，不能因此拒绝正文或触发重建。缺来源或预算耗尽为 Incomplete；FullRebuildChain 不能把 Overlay 冒充 full。全仓当前没有按该诊断字段决定执行的生产分支，仍需同步输出和测试。
+Getter 的旧 `PriorInputAligned` 替换为 `PriorSourceAligned`，定义为来源关系一致性，不承诺内容等价。用 cell 源 recipe 与历史前驱定位 source row，与当前 row 的前驱比较；合法 Overlay 复用可为 NotSatisfied，不能因此拒绝正文或触发重建。缺来源或预算耗尽为 Incomplete；FullRebuildChain 不能把 Overlay 冒充 full。输出与测试同步使用新语义。
 
-移除 `ExaminedCanonicalUtf8Bytes` 等旧对象编码字节度量，改为实际正文 UTF-8 bytes 加独立行/cell/member 数量预算；明确度量单位变化，不为计量重新编码已删除的对象。Runtime/Hosting 日志直接记录 Slot、已有 StoreIdentity 和必要前驱 ID，不生成替代 hash 或用旧 digest 名称承载新值。
+移除 `ExaminedCanonicalUtf8Bytes` 等旧对象编码字节度量，改为 `ExaminedContentUtf8Bytes` 加独立 `ExaminedRows/ExaminedCells/ExaminedMembers` 数量预算；明确度量单位变化，不为计量重新编码已删除的对象。Runtime/Hosting 日志直接记录 Slot、已有 StoreIdentity 和必要前驱 ID，不生成替代 hash 或用旧 digest 名称承载新值。
 
 ## 4. 实施工作包与验收
 
@@ -158,3 +158,17 @@ Getter 的 `PriorInputAligned` 不再承诺内容等价，改名并定义为来�
 | Timeline/Control 同时改、规则版本注册器 | defer | 下一 Store 切片无需它们；涉及保留数据/命令时再独立设计 |
 
 预计删除独立 EvaluationKey、Content/Prior/Evaluation 三种 digest、两种内容寻址结果 ID 的计算和整对象持久 canonical 链；增加普通 CellSlot 与两种普通结果 ID。旧 Store 数据转换阶段完全取消，没有额外产品裁决阻塞本切片。
+
+## 7. 实施记录（集成验证待补）
+
+当前实施采用 `CellSlot` sealed record、32 位随机结果 ID 与 SQL v3；实体名 `RecapCellArtifact/RecapRowView`
+保留，成功 Store put 返回 `Winner`。完整的当前数据/API/operator 入口见
+[Store v3 说明](../SessionJournal/current/contracts/recap-grid-store-sqlite-v3.md)。旧 v2 合同、旧工作包和前置输入
+切片保留其历史证据，不要求继续保留旧 hash 模型。
+
+CLI 导出使用临时 JSON 投影的 `JsonUtf8Bytes/Json/FulfilledRowResultId`，外层字段为
+`jsonBase64/fulfilledRowResultId`；selection 输出 `rowResultId`。Galatea missing-work 只保留
+ordinal、rowId、recipeDigest、logicalColumnId，不再输出 evaluationKey。
+
+最终代码提交、各测试项目实际通过数、Server/CLI build 与独立 review 结论由集成完成后填写。
+本节不引用历史切片通过数，不声明真实部署、清库或模型重建已经完成。

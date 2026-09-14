@@ -170,6 +170,10 @@ runtime identity；写入 v3 后的程序回退需匹配数据快照，见[回�
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。
 
-Manager 向 Runtime 传递前驱 view 与实际 cells；Runtime 校验成员关系后直接计算原 prior digest，
-对照 frozen spec。完整 `PriorInputProjection` 对象已删除，缓存键和持久格式保持，
-无需数据升级；详见[前置输入简化](recap-prior-input-simplification-plan.md)。
+Manager 向 Runtime 传递前驱 view 与实际 cells；Runtime 对照 frozen spec 独立校验历史、规则、
+前驱 ID 与有序成员，不再计算 prior digest。
+
+RecapGrid 构建改用 `CellSlot(recipe, history row, column)` 与 Store 分配的 `CellId/RowResultId`；
+同 Slot 重开复用首个结果，Overlay 显式复用 base cell。Getter `PriorSourceAligned` 比较来源前驱，
+不再以摘要内容 hash 判断等价；合法 Overlay 来源不同仍可读。Store schema v3 遇旧库明确 unsupported，
+不会随刷新或恢复自动清库。最终统一 Reset/重建的 pending promotion 前提见 [Store 简化计划](recap-store-simplification-plan.md)。

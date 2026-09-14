@@ -1,6 +1,6 @@
 # RecapGrid 前置输入简化：设计与实施记录
 
-> 状态：已实施并通过本地验证；代码提交 `258125fd`，验证结果见 §8；尚未部署。
+> 状态：历史前置切片已实施并通过本地验证；代码提交 `258125fd`，验证结果见 §8；尚未部署。当前 Store v3 实施将删除本切片保留的 digest 入口，不能把下文历史验证当作新格式证据。
 > 日期：2026-09-14；规划源码基线：`f53ac2e2`；实施基线：`606f3c04`。
 > 承接[身份简化总设计](identity-simplification-design.md)。本文 §1–5、§7–8 保留 `258125fd` 当时的无格式变更合同与验证；后续已按用户新决定改为清旧 Recap、全部重构后统一重建，见 §6。
 
@@ -162,7 +162,7 @@ Manager、Runtime 和 Getter 共用这个入口。内部 body DTO、domain、can
 Runtime rendering 与 Hosting 证据字段保持；没有 adapter、双 reader、迁移工具或模型能力变化。
 
 删除前，用旧已编译生产程序集和真实 cells 捕获了空、单列、双列固定 digest，写入
-[PriorInputProjectionDigestTests](../../tests/SessionJournal.RecapGrid.Abstractions.Tests/PriorInputProjectionDigestTests.cs)。
+`PriorInputProjectionDigestTests`（见提交 `258125fd`；Store v3 删除对应 digest 后该测试退役）。
 单列正文为 `alpha content`，双列第二列含中文、引号和反斜杠；expected 是旧实现输出的固定值，
 不是新方法生成。现有 EvaluationKey/Cell/Row/Fulfilled 的 canonical 与 digest golden 保持原值；
 只删除已退休 projection wrapper 自身的 canonical 项。

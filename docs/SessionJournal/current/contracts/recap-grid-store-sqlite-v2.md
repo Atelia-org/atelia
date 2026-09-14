@@ -1,5 +1,8 @@
 # RecapGrid Store SQLite V2 approved logical-schema contract
 
+> 历史合同：下文只认证当时 v2 approval anchor。2026-09-14 用户批准的 [Store v3 简化](recap-grid-store-sqlite-v3.md)
+> 替换当前运行模型；v2 DDL、canonical 与测试指纹不延伸为新 Store 的保留要求。原文的“当前”均指其 validated source。
+
 状态：**Approved / Frozen R2 logical-schema sub-surface；surface set 2 anchored**  
 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
 approval anchor：不属于immutable v1 tag；v2 tag object `13111f3d` dereferences to approval ledger `c4c6dd16`
@@ -12,7 +15,7 @@ language，也不包含physical SQLite determinism。
 ## 1. Authority与slot identity
 
 唯一DDL owner是embedded resource
-[`SchemaV2.sql`](../../../../prototypes/SessionJournal.RecapGrid/Store/SchemaV2.sql)；本文只给审阅用shape，
+`Store/SchemaV2.sql`（见上列 validated source；当前已退役）；本文只给审阅用shape，
 不复制完整DDL或建立第二个可执行schema truth。runtime validation与operator mapping由
 [`SqliteRecapGridStore`](../../../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs)、
 [`StoreRuntime`](../../../../prototypes/SessionJournal.RecapGrid/Store/StoreRuntime.cs)及

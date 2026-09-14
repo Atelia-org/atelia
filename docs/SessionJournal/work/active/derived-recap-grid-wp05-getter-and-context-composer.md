@@ -1,5 +1,8 @@
 # DerivedRecap Grid WP-05：Getter 与 ContextComposer
 
+> 后继边界（2026-09-14）：本文保留原工作包的实现/验收证据；旧 EvaluationKey、内容寻址结果、canonical Store 与 provenance 度量不再是当前保留要求。
+> 当前模型见[Store v3 说明](../../current/contracts/recap-grid-store-sqlite-v3.md)，实施验证见[Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)；行前沿、显式 Overlay 与冻结恢复边界继续保留。
+
 状态：Complete；两路independent closure review与final serial validation均GO；current production尚未切换
 
 只需加载：目标设计、总计划、WP-04 handoff、本文和 WP-06 摘要。

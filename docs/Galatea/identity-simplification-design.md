@@ -1,8 +1,8 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；后续采用“丢弃旧 Recap，全部重构完成后统一重建”；下一切片见[Store 简化计划](recap-store-simplification-plan.md)。首轮代码见 §10，首轮 E2E 见 §11。
+> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；后续采用“丢弃旧 Recap，全部重构完成后统一重建”；当前正在实施[Store 简化计划](recap-store-simplification-plan.md)，验证待补。首轮代码见 §10，首轮 E2E 见 §11。
 >
-> 日期：2026-09-14。首轮代码基线：`277baeea`；本次规划基线：`4f718d87`。本文区分目标设计、当前实现和历史验证；本次仅修订文档与规划，不执行清库、部署或真实模型重建。
+> 日期：2026-09-14。首轮代码基线：`277baeea`；本次规划基线：`4f718d87`。本文区分目标设计、当前实现和历史验证；本次正在实施 Store 代码与测试、维护文档，不执行清库、部署或真实模型重建。
 
 ## 1. 目标与最小模型
 
@@ -56,7 +56,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 | Adapter 指纹 | [CompletionDispatchIdentity](../../src/Completion/CompletionDispatchIdentity.cs)，[Registry.BindExact](../../src/Completion/CompletionConnections.cs)，[Galatea BindPrepared](../../prototypes/Galatea/GalateaRecapGridComposition.cs) | 已确认：hash 的是手工 mapping 标签，不是实际 adapter 代码/HTTP 请求 |
 | 恢复二次比对 | [SessionJournalEngine](../../prototypes/SessionJournal/SessionJournalEngine.cs) `ValidateRecoveryRuntimeCompatibility`、[RuntimeRecovery](../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) `CreateFrozenCompletionRequirement` | 已确认：不只 Registry 一处检查；只绕过 Host 门槛不足以正确完成变更 |
 | 同 body 双身份 | [HistoryTimelineCanonicalCodec](../../prototypes/SessionJournal.HistoryTimeline/HistoryTimelineCanonicalCodec.cs) `RowIdDomain` / `DescriptorDomain` | 已确认：同 descriptor body 换 domain 计算两遍 |
-| 结果身份与唯一性 | [SchemaV2.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV2.sql)、[SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) | 已确认：cell 的 evaluation key 唯一；row 的 `(ref,timeline,recipe,row)` 唯一 |
+| 结果身份与唯一性 | 基线 `Store/SchemaV2.sql`（已退役；当前为 [SchemaV3.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV3.sql)）、[SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) | 已确认：cell 的 evaluation key 唯一；row 的 `(ref,timeline,recipe,row)` 唯一 |
 | 摘要缓存输入 | [ManagerRowBuild](../../prototypes/SessionJournal.RecapGrid/Manager/ManagerRowBuild.cs)、[BuildContracts](../../prototypes/SessionJournal.RecapGrid/Abstractions/BuildContracts.cs) | 已确认：缓存区分规则、历史和前置摘要内容 |
 | 操作结果摘要 | [ControlOperationCanonicalizer](../../prototypes/SessionJournal.RecapGrid/Control/ControlOperationCanonicalizer.cs)、[ControlRuntime](../../prototypes/SessionJournal.RecapGrid/Control/ControlRuntime.cs) `TryReplay` | 已确认：ResultIdentity 不参与操作判重；receipt 参与 |
 | Prepared 内容证明 | [Manifest](../../prototypes/SessionJournal/SessionRequestManifest.cs)、[Reconstructor](../../prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs) | 已确认：局部 hash 与最终 commitment 并存；最终检查可发现重构变化，但该故障场景目前是结构推论 |
@@ -68,7 +68,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 | RequestAdapterFingerprint | delete | 删除执行硬门槛及当前身份字段，不用另一个手工标签或常量 hash 替代 |
 | ConnectionFingerprint | defer | 第一切片保持当前行为；改变 endpoint/reasoning 后如何恢复是另一项产品选择 |
 | HistoryRowId + DescriptorDigest | merge | 保留一个不可变 HistoryRowId，暂沿用现有 RowId 算法；无需顺便换 UUID |
-| CellDigest / RowViewDigest | simplify | 后续改普通记录 ID，保留唯一约束、前驱及成员 FK |
+| CellDigest / RowViewDigest | simplify，实施中 | 改普通 CellId/RowResultId，保留唯一约束、前驱及成员 FK |
 | Content / Projection / Evaluation 三层摘要 | delete | 用普通 CellSlot 关联工作与首个结果，不计算新的缓存 hash；前驱和规则由不可变关系确定并校验 |
 | Control ResultIdentity | delete | 回执返回稳定操作/回执 ID，保留命令匹配与已应用结果 |
 | ControlStateDigest | defer | 可从在线 CAS 移除；需确认所有写入都递增 generation，再独立处理 |
@@ -158,7 +158,7 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 这部分生效事实和规则图不属于可丢弃的 Recap 内容。清空 Store 不授权清空 Control、改变命令匹配或改写 Journal 工具结果。
 
-### 6.3 下一切片：Store 与构建位置
+### 6.3 当前实施：Store 与构建位置
 
 详细工作包见[Store 简化计划](recap-store-simplification-plan.md)。最小目标为：
 
@@ -198,11 +198,11 @@ ConnectionFingerprint、Prepared 局部 hash、ControlStateDigest、tool catalog
 
 Prepared 保存的 ContextSnapshot 正文没有 Cell/Row/Store ID。旧冻结请求必须在旧 Store 已不可用时仍保持 canonical request、commitment 和 ExactContextInputs，并且零 recap 调用。只有最后重建后的新请求才使用新摘要。
 
-回退采用匹配代码与完整数据快照；本次文档规划没有清库、调用真实模型或执行部署。
+回退采用匹配代码与完整数据快照；本次 Store 实施没有清库、调用真实模型或执行部署。
 
 ## 8. 实施入口、验证与完成定义
 
-唯一下一实施入口为[Store 简化计划](recap-store-simplification-plan.md)，尚未实施。已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
+当前实施入口为[Store 简化计划](recap-store-simplification-plan.md)，工作包 A/B/C 实施中，最终验证待补。已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 

@@ -1,6 +1,8 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Implemented target；WP-00至WP-08 complete，independent closure Closed
+状态：WP-00至WP-08 complete，independent closure Closed；2026-09-14 Store v3 简化实施中，验证待补。
+
+当前 CellSlot、普通结果 ID、SQL 单份数据与新来源诊断以[Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)和当前源码为准。本文已同步对应 Shape/Rule；末尾旧工作包与审查记录只认证当时实现。
 
 ## 1. Intent
 
@@ -36,8 +38,8 @@ DerivedRecap不只是“从旧History召回事实”的缓存，也是一套纵�
    是既有分段决策的 authority。
 7. 同 row、同 family、同 history segment 的工作仍可并行并共享 completion prefix。
 8. durable model 的独立语义概念、状态数和 authority 路径必须受到明确预算约束。
-9. 相同Maintainer实际可见输入必须产生相同`EvaluationKeyDigest`，允许跨不同view/recipe exact reuse；不同输入不得因
-   正文碰巧相同而混成同一次求值。
+9. 同一 `CellSlot(RecipeDigest, HistoryRowId, LogicalColumnId)` 沿用首个已提交结果。不同 recipe 不再隐式共享
+   同输入/同正文缓存，包括首行；Overlay 只通过显式 Reuse 引用 base cell。
 
 ### 2.2 Non-goals
 
@@ -186,7 +188,7 @@ FamilyDefinition拥有的system prompt、tool schema或output protocol。
 - 已 committed cell 不原地 rewrite/repair；
 - prompt、definition或输入变化产生新的 cell identity；
 - partial progress表现为某些 cells存在、另一些缺失，不需要整 row transaction；
-- Missing assignment可以正常生成；但已committed cell/view hash mismatch或SQLite corruption使整个Grid Store typed
+- Missing assignment可以正常生成；但已 committed cell/view 关系无效或 SQLite corruption使整个Grid Store typed
   `Invalid`，首版只允许关闭Store后reset/rebuild，不做targeted delete、quarantine、repair或salvage；
 - Store不读取 Completion配置，也不决定该运行哪个 Maintainer。
 
@@ -195,8 +197,8 @@ FamilyDefinition拥有的system prompt、tool schema或output protocol。
 只提供exact Grid纯读：
 
 - `FindMissingAssignments(rowBuildSpec)`；
-- `TryReadCell(evaluationKeyDigest)`；
-- `ReadView(rowViewDigest)`；
+- `TryReadCell(cellSlot)`；
+- `ReadView(rowResultId)`；
 - Getter public入口是owner-bound factory，而非caller-supplied authority tuple：
   `RecapGridContextFactory.Open(selectedSessionJournalReadView)`取得owned handle，再调用
   `handle.Resolve(completionBoundary, nthPrevious)`；factory内部打开canonical Timeline/Control Readers，Resolve内部读取current whole
@@ -219,7 +221,7 @@ sealed rows都授权raw-only且不打开Store；(2) Timeline仍empty时，即使
 partial/unfulfilled/Invalid不得fallback到raw-only、旧recipe或旧head cache。
 
 `NthPrevious`不要求Store为旧row合成新的current-head fulfillment key：先exact解析current Timeline head + active recipe的
-fulfilled RowView，再沿该view的`PreviousRowViewDigest`链走n步；每一步都复验same RecipeDigest和exact Timeline
+fulfilled RowView，再沿该view的`PreviousRowResultId`链走n步；每一步都复验same RecipeDigest和exact Timeline
 predecessor descriptor。broken/missing/damaged predecessor chain立即fail closed，不扫描任意RowView找替代品。
 
 ### 4.6 Campaign and live selection
@@ -375,7 +377,7 @@ Completion runtime的唯一public binding key是exact
 `(FamilyDefinitionDigest, Capability.RuntimeProtocolId, Capability.SemanticModelId?)`；nullable semantic model是key的真实成员，
 不是default/fallback。Host只提供deferred resolver与provider-neutral invoker；route object reference拥有跨batch lane affinity与cap，
 Manager仍独占whole-batch budget、row barrier和artifact settlement。Runtime不得读取Control/Store/Timeline coordinator，也不得把
-provider、model connection、cache hint、usage、call-log或lane identity写入Family/Definition/EvaluationKey/Cell。Provider input只允许
+provider、model connection、cache hint、usage、call-log或lane identity写入Family/Definition/Cell。Provider input只允许
 V1 schema marker、有序previous `logicalColumnId/content`、visible History，以及本work的Topic/literal UserPromptTemplate/Target；
 reasoning、inline think与未commit Grid metadata不进入prompt。
 冻结的Target投影仍只有carrier与block key；`SemanticHeading`只用于main-agent request的pre-Prepared渲染，
@@ -422,7 +424,7 @@ GridBuildRecipe {
   normal fill可以求值全部active columns；
 - `RecipeDigest`提交domain/schema及以上全部canonical fields；同target的overlay/full recipe digest必然不同；
 - active/live选择只能由`MaintainerControlPlane`中的CAS决定，不能由磁盘时间、最新view或当前catalog重新推导；
-- Grid reset后，control plane中的definition与recipe完整值仍足以重建同一语义recipe；模型非确定性可使新cell/view digest
+- Grid reset后，control plane中的definition与recipe完整值仍足以重建同一语义recipe；新 Store 为 cell/view 分配新的普通 ID，正文也可能
   不同，但不会把overlay误恢复成full rebuild。
 
 control plane写入recipe时必须验证base已存在、属于同一`TimelineId`且只向较早已写入recipe引用，从而保证recipe
@@ -435,119 +437,62 @@ recipe到RowBuildSpec的派生是唯一规范，不是Manager policy：
 - overlay recipe从Row 0到bootstrap row闭区间令Assignments exact等于`RecomputedColumns`，其余target columns从base
   recipe的exact same-row view复用；
 - overlay在bootstrap之后的新rows令Assignments exact等于全部target columns，ReusedCells为空；
-- 已存在相同EvaluationKey winner可以让assignment零remote call完成，但不能把assignment改写成任意reuse。
+- 已存在相同 CellSlot winner可以让assignment零remote call完成，但不能把assignment改写成任意reuse。
 
-Manager为每个待构建row产生一个非durable纯值，而不是把recipe语义交给Store猜测：
+Manager 为每个待构建 row 派生非持久 `RowBuildSpec`，其中的 recipe、history row、target、前驱与
+assignments 共同约束执行。`RowBuildSpec.Create` 不再接收单独 `PriorInput`。
 
-```text
-RowBuildSpec {
-  GridBuildRecipeDigest
-  RowDescriptorDigest: HistorySegmentDescriptorDigest
-  PreviousRowViewDigest?
-  PriorInputProjectionDigest | FirstRowSentinel
-  OutputBuildTarget
-  Assignments [{ LogicalColumnId, MaintainerDefinitionDigest }]
-  ReusedCells [LogicalColumnId -> exact CellDigest]
-}
-```
+Evaluate assignment 使用当前 Slot；Reuse assignment 引用已存 base cell。两者 disjoint、union exact 覆盖
+OutputBuildTarget，每列与 definition 均须匹配。Runtime 独立检查 frozen spec、实际前驱 RowResult 及有序 cells；
+Store 查询仅返回该 spec 缺失的 Slots。executor outcome 必须与冻结的 missing-work 集合精确对应，不能按另一批次的
+ordinal 接受结果。bootstrap 后仍对全部 target columns 求值。
 
-`Assignments`与`ReusedCells`必须disjoint，union exact覆盖OutputBuildTarget，且每个logical column/definition都与target
-exact匹配。所有新求值cells共同使用从顶层`PreviousRowViewDigest`确定性投影出的`PriorInputProjectionDigest`；reused cell
-必须属于当前exact row/column/definition，但允许它曾读取content-equivalent的其他prior view。在overlay bootstrap闭区间，
-new/recomputed subset进入Assignments，其余target columns进入ReusedCells；bootstrap之后全部target columns进入Assignments。
-full-grid recipe始终把全部columns放入Assignments。创建RowView时只能使用该spec的exact winners与reused cells。
-Store只实现`FindMissingAssignments(RowBuildSpec)`与exact put-if-absent，不知道overlay/full mode。
-
-### 5.7 PriorInputProjection
-
-上一row输入按Maintainer实际可见的provider-neutral typed shape做content-addressing，而不是直接使用整个RowView identity：
+### 5.7 CellSlot 与前驱来源
 
 ```text
-PriorInputProjection {
-  OrderedCells [
-    LogicalColumnId,
-    ContentDigest
-  ]
-  ProjectionDigest
-}
+CellSlot = (RecipeDigest, HistoryRowId, LogicalColumnId)
 ```
 
-首版所有Maintainers看到上一row BuildTarget中的完整ordered cells；因此同一RowBuildSpec的assignments共享一个projection。
-`LogicalColumnId`和顺序必须进入hash，不能把内容摘要当无序集合。若未来prompt真实展示额外metadata或只读取声明过的
-column subset，必须升级projection schema并只提交exact可见字段，不能靠实现猜测。
+这是普通结构坐标，不编码为 hash。不可变 recipe 固定规则/列，Timeline 行固定历史与上一行，同 recipe/上一行
+的 RowResult 唯一且必须先发布，因此 Slot 已确定求值输入。规则或前驱不符应拒绝，不能用另一 key 绕过校验。
+没有独立 EvaluationKey、PriorInputReference 或 content/projection digest；前驱有无由行关系表达。
 
-`PreviousRowViewDigest`保留为row-chain provenance；`ProjectionDigest`表达Maintainer实际看到的前行内容。两个不同view若
-产生相同canonical projection，就可以安全复用同一cell winner。这正是避免“上游artifact identity变化但可见正文未变”
-导致级联重算的关键。
+Cell 不另存 producer prior：沿 `cell.Slot.HistoryRowId` 找 Timeline 前驱，再按 cell 的源 recipe 与该历史行
+查已提交 RowResult。本行只提交部分 cell 时也能推导，因为前驱早已发布。没有历史前驱才是 FirstRow；
+有历史前驱却缺来源 RowResult 是缺失；零列前驱仍是有 ID 的真实 RowResult。
 
-本row `HistorySegmentContent`不复制进Grid；`RowDescriptorDigest`提交exact raw boundaries与range commitment，
-`FamilyDefinitionDigest`提交input rendering protocol。执行前必须从raw materialize并复验descriptor，不能只信digest
-字符串。由此，动态user input的semantic value等价于
-`{RowDescriptorDigest, PriorInputProjectionDigest | FirstRowSentinel}`；静态user-prompt template已进入definition。
+模型仍读取上一行完整有序正文及本行 HistorySegment；Slot 与普通 ID 不进入 provider prompt。
+HistorySegmentContent 按 raw materialize 并复验 descriptor，Family/Definition 仍确定渲染协议与静态规则。
 
 ### 5.8 RecapCellArtifact
 
-```text
-RecapCellArtifact {
-  RowDescriptorDigest: HistorySegmentDescriptorDigest
-  LogicalColumnId
-  MaintainerDefinitionDigest
-  PriorInputProjectionDigest | FirstRowSentinel
-  EvaluationKeyDigest
-  Outcome: Updated | KeepUnchanged
-  Content
-  ContentDigest
-  CellDigest
-}
-```
+`RecapCellArtifact` 保留实体名；`.Id` 为 Store 分配的普通随机 128-bit `CellId`，`.Slot` 记录源构建位置，
+并保存 definition、Outcome 与 Content 等业务字段；历史行来自 Slot。没有 ContentDigest 或 CellDigest。
 
-```text
-EvaluationKeyDigest = Hash(
-  domain/schema,
-  RowDescriptorDigest,
-  MaintainerDefinitionDigest,
-  PriorInputProjectionDigest | FirstRowSentinel
-)
-```
+同 Slot 并发得到不同模型正文，第一个 commit 者获胜；`PutCell(spec, draft)` 的 `Inserted` 与
+`AlreadyFilled` 都返回实际持久 `Winner`。提交结果不明时按 Slot 重新观察，不能按未出现的候选 ID 判未提交。
 
-`MaintainerDefinitionDigest`已经提交LogicalColumnId与family/user-prompt semantics，因此key不再重复字段。BuildTarget、recipe、
-previous RowView identity和runtime route不进入key，除非Maintainer实际看到了它们。同key并发得到不同模型文本时，第一个
-成功commit者获胜；loser读取winner artifact并返回AlreadyFilled，不产生integrity failure。
-
-首 row使用FirstRowSentinel。`KeepUnchanged`仍产生绑定新 row与新input projection的cell；它证明 Maintainer
-看过本 row输入后决定正文不变，而不是“没有调用”或“缺失”。
+`KeepUnchanged` 仍是一次实际求值后的新 Slot 结果，保存前行对应列正文；不是缺失或跳过调用。
+Overlay Reuse 则直接引用 base cell 的 ID 与源 Slot，不给它重写 candidate 来源。
 
 ### 5.9 RecapRowView
 
-```text
-RecapRowView {
-  GridBuildRecipeDigest
-  RowDescriptorDigest: HistorySegmentDescriptorDigest
-  PreviousRowViewDigest?
-  BuildTargetDigest
-  Columns [LogicalColumnId -> {MaintainerDefinitionDigest, CellDigest}]
-  RowViewDigest
-}
-```
+`RecapRowView` 保留实体名；`.Id` 为 Store 分配的普通随机 `RowResultId`，`.PreviousRowResultId` 引用已存前驱，
+有序 members 使用 `CellId`。row assignment、target 与成员必须完整匹配；首行前驱为 null，其他行精确匹配
+Timeline 指定的上一行及同 recipe/target/scope。
 
-它是小型immutable selection manifest，不内联所有cell正文。完整性要求 columns与BuildTarget exact匹配。
-首row的`PreviousRowViewDigest`必须为空；其他row必须引用其`PreviousRowId`对应的exact RowView。
-RowView允许结构共享，也允许single-column backfill形成mixed/overlay view：在overlay bootstrap区间，reused columns可
-引用此前已存在、因而曾读取不同prior view的cells；new/recomputed columns引用candidate上一row view。full-grid
-bootstrap区间全部columns都是assignments，因此每row都PriorInputAligned。overlay追平后的normal rows也可以
-PriorInputAligned，但recipe provenance仍是overlay。
+`PutRowView(spec, stored cells)` 原子发布 header 与 members，成功返回实际持久 `Winner`。
+同 assignment、成员与前驱返回已有 row；真实业务差异才 Conflict，候选随机 ID 不参与业务相等。
 
-三个谓词/证明必须分开：
+三个谓词/证明分开：
 
-- `MembershipComplete(view, buildTarget)`：exact definitions/columns全部有选定cell；Getter据此决定可读。
-- `PriorInputAligned(view)`：首row的每个member cell都使用FirstRowSentinel；其他row先从exact
-  `PreviousRowViewDigest`重算canonical projection，再要求每个member cell的`PriorInputProjectionDigest`与之相等。它只
-  证明当前row的local input equivalence；overlay追平后的新row也可为true。
-- `FullRebuildChain(view, recipe)`：recipe无base、`RecomputedColumns` exact等于target，且从Row 0到该view的每个
-  predecessor view都提交同一`RecipeDigest`并满足`PriorInputAligned`。full/overlay身份只由recipe表达，不能由单row
-  对齐情况猜测。
+- `MembershipComplete`：exact definitions/columns 都有选定 cell；Getter 据此决定可读。
+- `PriorSourceAligned`：由每个 cell 的源 Slot 推导前驱 RowResult，与当前 row 前驱比较。它不承诺正文等价；
+  合法 Overlay 可以 NotSatisfied，不能因此拒绝正文或重建。缺来源或预算耗尽为 Incomplete。
+- `FullRebuildChain`：recipe 无 base、完整重算，且前驱链属于同 recipe 并满足来源对齐。不能把 Overlay 冒充 full。
 
-“完整”不得暗示full rebuild，“一致”也不得被用来掩盖mixed provenance。
+诊断统计独立 `ExaminedRows`、`ExaminedCells`、`ExaminedMembers` 与实际 `ExaminedContentUtf8Bytes`。
+这些单位不等于旧整对象 canonical bytes；不为计量重建已删除的序列化对象。
 
 ## 6. Core workflows
 
@@ -592,12 +537,10 @@ wavefront rebuild全部columns。
 
 ### 6.5 Reuse and skip
 
-- `MaintainerDefinitionDigest + RowDescriptorDigest + PriorInputProjectionDigest`完全相同：允许零调用精确复用同一cell
-  artifact，即使PreviousRowView或GridBuildRecipe identity不同；
-- 上游cell artifact变化但ordered visible contents不变：projection不变，避免级联重算；column label/order/content任一
-  可见字段改变：projection变化；
-- 输入变化但预计结果不变：首版必须由exact Maintainer invocation返回`KeepUnchanged`，再提交新的cell。
-- 后续可引入明确的column dependency declaration；只有依赖证明成立时才能结构性跳过。首版不做自动依赖推断。
+- 同 Slot 已提交结果零调用复用；不同 recipe 的同输入/同正文不再隐式共享，包括首行。
+- Overlay 的显式 Reuse 读取 exact same-row base cell，保留其 ID 与源 Slot。
+- 新 Slot 即使预计正文不变，也须由实际 Maintainer 调用返回 `KeepUnchanged`。
+- 首版不做自动依赖推断或以内容等价跳过重算。
 
 ## 7. Consistency and failure rules
 
@@ -605,17 +548,17 @@ wavefront rebuild全部columns。
 2. Timeline ledger是既有row边界、长度和predecessor决策的authority；它不保存History正文，也不随cell reset丢失。
 3. MaintainerControlPlane是definition、GridBuildRecipe与active recipe CAS的唯一逻辑authority；具体composition只选
    一个物理carrier。执行进度由missing query恢复，不获得独立durable campaign lifecycle。
-4. cell、row view及其查询索引是derived immutable artifacts，可删除重建。
+4. cell、row view 及查询状态是可整体 Reset/重建的派生结果；正常运行不局部删除已提交 winner。
 5. cell只依赖当前row descriptor和同一TimelineHead predecessor chain上的上一row view，不允许同row依赖。
 6. row view只引用exact definition revision对应的cells，不混用“碰巧同LogicalColumnId”的其他版本。
 7. remote call期间不持有Store transaction/lock；成功结果才短事务commit。
 8. crash前没有committed cell等同于Missing；允许重复remote call，不持久化复杂Attempt/Settlement状态机。
-9. 同一`EvaluationKeyDigest`的并发结果使用atomic put-if-absent决胜；系统不宣称远端调用exactly once。
-10. unknown schema、hash mismatch、wrong row/column/version、off-lineage raw proof均fail closed。
+9. 同一 `CellSlot`的并发结果使用atomic put-if-absent决胜；系统不宣称远端调用exactly once。
+10. unknown schema、关系无效、wrong row/column/version、off-lineage raw proof均fail closed。
 11. partial candidate永远不会被Getter误报成live complete view。
-12. 只有FulfilledViewRef、进程内cache与普通查询索引可由healthy canonical artifacts重建；canonical bytes与
-    row_view_member/locator不一致必须使whole Store Invalid，不得在线补表形成第二authority。
-13. committed artifact损坏使whole Grid Store invalid；不得为绕过unique EvaluationKey删除单cell再补写。
+12. SQL columns 与 row members 是唯一持久表示；按实际类型、关系、唯一性、FK 和预算验证。损坏时 typed Invalid，
+    不保留整对象 canonical 副本，也不在线猜测/补表。
+13. committed artifact损坏使whole Grid Store invalid；不得为绕过Slot UNIQUE删除单cell再补写。
 14. `Prepared`/`Started` request已经冻结exact context与completion recipe；恢复这两相时不得读取Timeline、Grid、
     ControlPlane或DerivedRecap active/current route config。Prepared仍按frozen completion identity从Host registry exact bind；
     `Started`默认Refuse在client creation前零derived write，显式restart只从Prepared frozen bytes产生新attempt。
@@ -624,175 +567,52 @@ wavefront rebuild全部columns。
 
 ## 8. Persistence backend decision
 
-Grid的主要访问模式是：
+RecapGrid 使用单一 SQLite Store；DDL owner 为
+[`SchemaV3.sql`](../../../../prototypes/SessionJournal.RecapGrid/Store/SchemaV3.sql)。当前规则见
+[Store v3 说明](../../current/contracts/recap-grid-store-sqlite-v3.md)。旧 v2 逻辑 schema 的批准与测试指纹是历史证据，
+不自动认证 v3。
 
-- 按row列出expected/missing cells；
-- 按column顺序读取和回填全部rows；
-- 按BuildTarget判断row completeness；
-- atomic插入immutable cell和小型row view；
-- 同raw row并存多个definition/cell/view variants；
-- 按reachability做candidate/旧recipe retention与GC；
-- inspect、导出和精确诊断损坏记录。
+### 8.1 单一持久表示
 
-候选仅比较两种单一真源，不采用“SQLite metadata + JSON cell files”双介质方案：
+- cell：普通 CellId、源 Slot、正文/结果字段；Slot 三字段均非 null，并有 UNIQUE。
+- row：普通 RowResultId、唯一 assignment、前驱 ID 与必要状态。
+- members：row、ordinal、column/definition 与已存 CellId；有序唯一成员与 FK。
+- fulfillment：exact Timeline head/recipe/through → 已存 RowResult，保留 scope 与前沿验证。
 
-### 8.1 Directory + canonical JSON
+SQL columns 与成员关系直接物化对象；没有 `cell.canonical`、`row.canonical`、`fulfilled.key_canonical`。
+不再需要 nullable prior 唯一键、FirstRow sentinel 索引或额外 producer prior 字段。导出为临时诊断投影，
+不作为第二份持久权威或生产导入格式。
 
-优点：直接可读、diff/golden友好、单artifact损坏隔离、无需数据库依赖。风险：row×column×revision文件数增长；
-missing/completeness/latest/reachability需要自行维护索引、inventory、锁与跨文件原子协议，容易重新实现一个脆弱数据库。
+### 8.2 事务与恢复
 
-### 8.2 SQLite
+Completion、History materialization 与 prompt 构造都在事务外；成功结果短事务提交。
+同 Slot first-winner、row assignment UNIQUE、成员/前驱 FK、metadata counters、bounded retry 与原子发布保留。
+不确定 cell commit 按 Slot、row commit 按 assignment 重新观察实际记录；本地 retry 不重新调用 provider。
 
-优点：二维Grid、版本引用、missing-cell query、unique/foreign-key约束、短事务commit、并发读和GC查询天然匹配；
-避免全目录inventory。风险：需要schema与SQLite依赖；单文件损坏影响面更大；没有专用工具时Coding Agent不如直接读JSON方便；
-必须提供first-party inspect/export命令，不能要求Agent或operator直接猜内部表。
+Timeline 与 Control 是独立 authorities；不做跨库事务或 `ATTACH`。Prepared 已冻结正文不依赖当前 Store。
+Reset 更换 StoreInstanceId；新 CellId/RowResultId 不从内容生成，陌生 ID 返回 Missing 即可，不增加跨 Store ID 服务。
 
-### 8.3 Decision：RecapGrid选择SQLite
+### 8.3 Operator 与 schema 切换
 
-理想Grid的dynamic columns、single-column frontier、missing assignment、A/B views、CAS promotion和未来reachability
-查询都是关系操作。首版选择单一SQLite数据库作为RecapGrid derived artifacts/index的唯一durable store；canonical JSON
-保留为逻辑artifact bytes、export、diagnostic和golden contract，不作为第二live布局。authoritative GridBuildRecipe
-与active selection仍属于control plane。Timeline拥有独立Store/API；即使两者最终都使用SQLite，
-也必须是两个数据库，禁止`ATTACH`、跨库SQL join或跨库事务。Timeline row先独立commit，Grid cell随后引用opaque
-`RowId + SegmentCommitment`。
+物理槽位仍为 `derived/recap-grid/v1/grid.sqlite`，SQLite schema 为 v3。普通打开旧 schema 返回
+UnsupportedSchema，不自动清库、迁移或调用模型。显式离线 Reset 复用已有文件 witness、lease 与原子替换机制，
+不解码旧 cell，不保留旧 schema reader。
 
-首版不使用EF Core；采用`Microsoft.Data.Sqlite`、显式checked-in schema SQL和薄repository。最小Grid表面只需：
+`recap-grid inspect/export/verify/reset` 与现有 Timeline/Cadence/Control/build/progress/materialize 命令继续由
+CLI owner 提供。inspect/verify/export read-only/no-create；导出正文须显式选择，分页与数量/正文上限保留。
+不要手工编辑 live 数据库，或为绕过 Slot first-winner 局部删除 cell。
 
-```text
-cell_artifact(
-  evaluation_key unique,
-  cell_digest primary key,
-  row_descriptor_digest,
-  logical_column_id,
-  definition_digest,
-  prior_input_projection_digest,
-  canonical_artifact_bytes,
-  unique(cell_digest, logical_column_id, definition_digest)
-)
-
-row_view(
-  view_digest primary key,
-  timeline_id,
-  history_row_id,
-  grid_build_recipe_digest,
-  row_descriptor_digest,
-  previous_view_key not null,
-  build_target_digest,
-  canonical_artifact_bytes,
-  unique(view_digest, grid_build_recipe_digest,
-         row_descriptor_digest, build_target_digest),
-  unique(grid_build_recipe_digest, row_descriptor_digest,
-         build_target_digest, previous_view_key)
-)
-
-row_view_member(
-  view_digest,
-  column_ordinal,
-  logical_column_id,
-  definition_digest,
-  cell_digest,
-  primary key(view_digest, column_ordinal),
-  unique(view_digest, logical_column_id),
-  foreign key(view_digest) to row_view,
-  foreign key(cell_digest, logical_column_id, definition_digest) to cell_artifact
-)
-
-fulfilled_view_ref(
-  ref_id,
-  timeline_id,
-  timeline_head_generation,
-  through_row_descriptor_digest,
-  grid_build_recipe_digest,
-  view_digest,
-  primary key(ref_id, timeline_id, timeline_head_generation,
-              through_row_descriptor_digest, grid_build_recipe_digest),
-  foreign key(view_digest, grid_build_recipe_digest,
-              through_row_descriptor_digest) to row_view
-)
-```
-
-artifact insert API只接受完整canonical artifact；repository在内部decode并写query locator columns。canonical bytes
-是唯一semantic authority，locator/member rows只是受控denormalized indexes；row-view header与完整member set在同一
-transaction写入，读取时必须重新核对digest、locator与member exact equality；每个member还必须核对cell的exact
-logical column与definition，而不是只确认cell digest存在。使用`STRICT` tables、foreign keys、
-unique/check constraints作为第二层防护；任何不一致都是typed StoreInvalid，不在线猜测或局部修补。
-`previous_view_key`只是locator：canonical null必须映射为固定FirstRowSentinel，避免SQLite unique constraint把多个NULL
-视为互不冲突。
-除digest主键与unique evaluation key外，首个spike必须为
-`(grid_build_recipe_digest, row_descriptor_digest, build_target_digest, previous_view_key)`和exact fulfillment key
-建立索引，并用大Grid fixture的`EXPLAIN QUERY PLAN`证明主路径没有无界full scan。
-
-Grid fulfillment ref由exact active recipe、Timeline head与through-row descriptor确定；`RowId`可以另作诊断列，但不
-参与authority。同exact key+same view返回`AlreadyFulfilled`；同key+different view必须typed StoreInvalid，不能
-last-write-wins。该ref删除后，Manager可用同一
-GridBuildRecipe重建RowBuildSpec并解析唯一EvaluationKey winners；whole Grid reset后也可按同一recipe语义重新求值，
-即使模型非确定性使新view digest变化，也不改变control-plane active recipe。
-
-Completion调用、History materialization和prompt构造全部在transaction外并行；成功结果只执行短transaction。
-correctness来自SQLite transaction、unique/FK constraints和CAS，不依赖进程内single-writer queue。WP-03 candidate已选择
-rollback journal `DELETE` + `synchronous=EXTRA`、private cache、pooling false、`busy_timeout=0`与code-owned bounded local retry；
-retry只能重试已物化的本地commit，不能重新触发remote call。`Microsoft.Data.Sqlite` async方法实际同步执行
-（[Async limitations](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/async)），因此Store V1诚实保留同步repository API，
-不引入`Task.Run`包装；WAL候选及其reset边界不再进入V1 code/config。
-
-当前开发环境没有`sqlite3` executable，因此first-party可观察性属于首批contract，不是后补便利功能：
-
-```text
-recap-grid inspect
-recap-grid export [--after <opaque-cursor>] [--include-content]
-recap-grid verify
-recap-grid reset --prepare
-recap-grid reset --confirm-length <bytes> --confirm-sha256 <sha256>
-```
-
-Coding Agent日常通过稳定CLI、checked-in SQL、canonical export和golden审阅；不得手工编辑live数据库。除`reset`外，
-所有inspect/verify/export命令必须read-only/no-create、bounded输出；V1 bounds由code固定，不暴露`--limit`或`--max-errors`。
-数据库不存在返回typed Absent，正文导出需要显式选项。`reset --prepare`是first-party exact physical witness入口；`reset`只允许在
-Grid Store已关闭后执行。数据库损坏走`verify -> reset/rebuild`，不设计SQLite page级salvage或
-Published repair。
-
-WP-08已把完整operator vertical升格为stable `recap-grid`命令树，并删除nested candidate与old production
-commands：
-
-```text
-recap-grid init
-recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon
-recap-grid timeline history-load inspect
-recap-grid cadence inspect|set-reserve
-recap-grid control create|inspect|verify|export|put-family|put-definition|compose-full-recipe|put-recipe|provision-asset|activate|promote|backup|restore|reinitialize
-recap-grid build|progress|materialize
-recap-grid legacy-root inspect|archive|delete
-run-online-turn
-```
-
-branch命令内部从selected `SessionJournalReadView`取得canonical repository/Ref authority；mutation要求exact Ref确认。
-`build`与Fresh/NewRequest/ToolResult/ToolContinuation online只在各自lazy dispatch boundary读取strict route/connection inputs并构造
-所需Runtime/clients。route必须exact匹配`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`，含显式`null`且无fallback；
-Prepared frozen resume不读current route，Started/Refuse在connections前终止。`progress`是Manager pure read；
-`promote`必须同进程pure-read检查current head-through assignment、fulfillment与exact proof后立即CAS；不得调用Build或写Store，
-proof不得编码或跨进程保存。
-
-首个spike不实现cell/view GC：除whole-store reset外不得删除committed artifacts。retention、generation与忘记
-EvaluationKey reservation的规则必须另立设计，不能借“清理旧candidate”偷偷引入targeted repair。spike至少覆盖cell
-put-if-absent、row-view header+members atomic commit、fulfillment ref commit三个child-process crash/reopen窗口；两连接
-contention与bounded `SQLITE_BUSY` local-commit retry；read-only/no-create CLI；runtime SQLite version/schema/PRAGMA报告；
-大Grid bounded query/materialization；以及hash/locator/FK/integrity任一失败统一进入whole-store `Invalid`。
-
-不采用“SQLite metadata + JSON cell blobs”混合方案；除非未来cell经测量长期达到多MiB且BLOB/VACUUM成为真实瓶颈，
-否则它只会引入第二durability domain、orphan inventory和跨介质backup/GC。
+旧 Recap 不转换；全部重构代码完成后才统一重建。最终清库前须在旧 Store 仍可读时正常收敛所有仍支持执行分支的
+pending promotion，因为工具先查 Store proof 才查 Control receipt。随后停服并备份匹配快照、显式 Reset、新库构建。
+没有完成这个前提就暂缓对应数据集；不清 Timeline、Control、Journal 或冻结请求。
 
 ### 8.4 Backend invariants
 
-无论后续SQLite实现细节如何，都必须满足：
-
-- raw History不进入DerivedRecap数据库/文件正文；
-- schema不兼容时允许reset/rebuild，不引入长期migration matrix；
-- artifact hash和foreign identity仍由应用层严格验证；
-- 提供canonical JSON export供review、fixture和bug report；
-- completion call在transaction外；
-- 一次cell commit、row-view commit和fulfilled-ref commit都有清楚、可crash-test的边界。
-- Grid的artifact/ref commits与MaintainerControlPlane active-recipe CAS是独立crash boundaries，不做跨库transaction；
-  active recipe暂时unfulfilled时Getter fail closed。
+- raw History 不进入 RecapGrid 正文存储；规则图保留在 Control。
+- SQL 类型、scope、成员、前驱、UNIQUE/FK 与资源预算验证实际业务关系。
+- 整体 Reset 可丢弃旧 Recap，不要求新正文相同；正常重开保留首个已存结果。
+- cell、row、fulfilled 各自有明确事务与 crash/reopen 边界。
+- Store 发布与 Control active CAS 是独立边界，active recipe 尚未 fulfilled 时不伪装可读。
 
 ## 9. Complexity budget
 
@@ -852,18 +672,17 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
    混淆两者，control plane可明确选择其一。
 6. A prompt v1/v2同LogicalColumnId并存；A/B comparison后promotion只改变authoritative active GridBuildRecipe中的
    definition selection，随后fulfilled-view projection指向对应complete view；不覆盖v1 cells。
-7. 两个不同PreviousRowViews若ordered visible column/content projection相同，则相同definition/row产生同一
-   EvaluationKey并零调用复用；column label、顺序、内容或definition任一可见语义变化都会改变key。输入变化但输出正文
-   不变时，KeepUnchanged仍产生新cell identity。
+7. 同 Slot 重开零新增调用；不同 recipe 即使输入或正文相同也各自求值。Overlay 显式复用 base cell；
+   新 Slot 的 KeepUnchanged 仍产生新 cell，并保留实际调用事实。
 8. crash before cell commit留下Missing；retry允许第二次调用；crash after commit不重复生成healthy cell。
-   两个worker并发完成同一EvaluationKey时，put-if-absent只接受一个cell，另一方读取AlreadyFilled。
+   两个worker并发完成同一 CellSlot时，put-if-absent只接受一个cell，另一方读取AlreadyFilled。
 9. rewind使row descriptor off-lineage时Getter fail closed；不会选择相同ordinal的另一branch row。
 10. 删除RecapGrid数据库后，durable Timeline ledger、raw History与MaintainerControlPlane仍在，可按exact active
     GridBuildRecipe完整rebuild cells/views。recipe已经active但fulfilled view cache尚未更新或已丢失时，Getter fail
     closed，恢复不会把overlay与full rebuild混淆，也不需要跨库repair。
-11. inspect/export能在不加载Completion provider和secret时列row、column、missing、view与hash证据。
+11. inspect/export能在不加载Completion provider和secret时列row、column、missing、view 与来源关系。
 12. 大grid fixture验证按row/column查询不依赖无界目录扫描或全表内存materialization。
-13. committed cell hash mismatch或SQLite integrity failure只允许whole-Grid reset/rebuild，不出现targeted repair状态。
+13. committed cell 关系无效或 SQLite integrity failure只允许whole-Grid reset/rebuild，不出现targeted repair状态。
 14. Agent请求未知FamilyDefinition、越权scope或超预算创建column时，control plane零变化；合法control event在Grid reset后仍在。
 15. 悬疑分析fixture中，`XSuspicion` overlay回填不改旧`CulpritHypothesis` cells；激活后的新rows允许后者读取前一row的
     X疑点而更新。full-grid recipe则从Row 0重算全部columns，证明新专题发现可沿wavefront逐row传播，同时不存在同row循环。

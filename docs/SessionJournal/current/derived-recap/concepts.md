@@ -1,6 +1,6 @@
 # RecapGrid current concepts
 
-状态：WP-08 formal source cutover Complete；raw selected `RefId` Parent lineage仍是唯一历史事实源。
+状态：WP-08 formal source cutover Complete；Store v3 简化正在实施，验证见[Store 计划](../../../Galatea/recap-store-simplification-plan.md)。raw selected `RefId` Parent lineage仍是唯一历史事实源。
 
 1. HistoryTimeline、Cadence、Control 与 RecapGrid Store 是独立 companion authorities；都不能替代 raw history。
 2. Timeline row 绑定 exact raw range、partition policy、descriptor digest 与 previous-row chain。
@@ -9,10 +9,9 @@
 4. Full recipe 对目标列全部求值；Overlay bootstrap 对 recomputed columns 求值并对其余列复用 same-row
    base cells；bootstrap 后走 normal full-row evaluation。
 5. Manager 以一个 frozen Timeline/Control/Store authority 做 row-major base-to-candidate wavefront；
-   missing-only restart 不重发已有 exact cells。
-   前驱输入仅传 `PreviousView` 与 `PreviousCells`；Runtime 校验成员顺序与身份后，调用
-   `PriorInputProjectionDigest.FromCells` 对照 `Spec.PriorInput` 的独立 expected digest。
-   不再传递完整 projection 对象；digest 的旧 body/domain、缓存键和持久格式保持。
+   missing-only restart 按 `CellSlot(RecipeDigest, HistoryRowId, LogicalColumnId)` 读取首个已存结果。
+   前驱输入传 `PreviousView` 与 `PreviousCells`；Runtime 对照 frozen spec 独立校验历史、规则、前驱 ID、
+   成员与顺序。没有独立 EvaluationKey 或正文/投影 digest；不同 recipe 不再隐式共享求值缓存。
 6. Runtime 的 route key 是 exact `(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`；null 也是 exact key，
    没有 wildcard 或 default fallback。
 7. Cadence是per-Ref repo-owned R/expected Timeline policy authority。Timeline仍按first-safe B分区，所有writer
@@ -33,6 +32,15 @@
     `MaximumNewCalls = 0` 保证不在 promotion阶段启动 recap provider。
 13. old `derived/recap` v4-v8 与 rebuild/v1 都是 inert legacy slots；只有显式 manifest-confirmed
     legacy-root archive/delete会触碰它们。
+14. Store 为 Cell/Row 分配普通随机 `CellId`/`RowResultId`；SQL 列与成员关系是唯一持久表示。
+    同 Slot 的并发正文沿用 first-winner；同 row assignment、成员和前驱返回已存 row。
+    Overlay Reuse 保留 base cell 的 ID 与源 Slot，不复制为 candidate cell。
+15. Getter 的 `PriorSourceAligned` 比较来源前驱 RowResult，不承诺正文等价。合法 Overlay 可以
+    `NotSatisfied` 而仍可读；来源缺失或预算耗尽为 `Incomplete`。诊断计量为独立行/cell/member 数及
+    实际正文 UTF-8 bytes，不能把它与旧 canonical 对象字节数直接比较。
+16. Store v3 使用既有 `derived/recap-grid/v1/grid.sqlite` 槽位，普通打开旧 schema 返回 unsupported。
+    旧 Store 不迁移；全部重构完成后，收敛 pending promotion、停服备份，再显式 Reset 与统一 LLM 重建。
+    Timeline/Cadence、Control 与 Journal/Prepared 保留；本切片不执行真实清库或模型重建。
 
 Owning code 与 tests见[架构与代码地图](../architecture-and-code-map.md)。
 Control 格式、跨提交窗口与回退边界见[回执简化设计](../../../Galatea/control-receipt-simplification-plan.md)。

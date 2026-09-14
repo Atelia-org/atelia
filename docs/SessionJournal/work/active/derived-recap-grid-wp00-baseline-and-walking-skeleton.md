@@ -1,5 +1,8 @@
 # DerivedRecap Grid WP-00：Baseline、迁移账本与 Walking Skeleton
 
+> 后继边界（2026-09-14）：本文保留原工作包的实现/验收证据；旧 EvaluationKey、内容寻址结果、canonical Store 与 provenance 度量不再是当前保留要求。
+> 当前模型见[Store v3 说明](../../current/contracts/recap-grid-store-sqlite-v3.md)，实施验证见[Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)；行前沿、显式 Overlay 与冻结恢复边界继续保留。
+
 状态：Complete on `feature/derived-recap-grid-rewrite`；WP-01A ready
 
 上游：[`Grid target`](derived-recap-grid-target-design.md) · [`Master plan`](derived-recap-grid-rewrite-master-plan.md)

@@ -115,7 +115,7 @@ maintainer work tail，不负责替换任意 Galatea 变量。
 
 所以 RecapGrid source template 必须在**构造 registration bundle 之前**展开。不能在 provider
 dispatch、Context header materialization 或 Cell 读取时替换，否则 provider 实际输入会与
-Definition/EvaluationKey 宣称的语义身份分叉。
+Definition 与由 recipe 固定规则的 CellSlot 不一致。
 
 ### 2.3 邮箱还有第三条角色 prompt 链
 
@@ -323,7 +323,7 @@ V6 的 shared family prompt 保持角色无关，因此不同 character name 应
 另加一个重要 golden：V6 source template 以 `characterName:"Galatea"` 渲染时，finalized family、
 topics、member prompts、headings、block keys 与 V5 exact 相同，因而 Family/Definition/registration
 command digests 也相同。Asset selector 升到 V6 本身不进入 canonical bundle；仍叫 Galatea 的现有
-session 不应被迫重建 Cells。只有角色名实际不同，Definitions/Recipe/EvaluationKeys/Cells 才旋转。
+session 不应被迫重建 Cells。只有角色名实际不同，Definitions/Recipe 改变，后续构建位置与 Cells 才改变。
 
 ### 6.1 Operator CLI
 
@@ -579,7 +579,7 @@ read-only canary已验证两个user能加载，cyber active recipe仍exact命中
 - **用 `userId` 充当角色名**：authentication/session identity 与故事角色 identity 不是同一概念。
 - **只模板化主 system prompt**：Recap maintainer 与 outbound extractor 仍会按 `[Galatea]` 判定角色
   证据，generated mail Observation 也仍称呼 Galatea，产生最危险的 silent semantic split。
-- **在 provider dispatch 时替换 Recap prompt**：最终请求与 canonical Definition/EvaluationKey 不一致，
+- **在 provider dispatch 时替换 Recap prompt**：最终请求与 canonical Definition 及 CellSlot 固定的规则不一致，
   破坏 replay 和 Cell reuse。
 - **让每个 user 生成不同 Family**：没有必要；会使当前 host-wide route manifest/profile 也按名字扩张。
   名字只应进入 member Definition。

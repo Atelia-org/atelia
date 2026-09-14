@@ -20,6 +20,10 @@ approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v
 > v2 reader preserving the source Head and bytes until a normal mutation. Command/runtime binding stays
 > unchanged. The original R2 inventory below remains historical; this does not change other companion formats.
 
+> **Store successor:** 用户已批准 [Store v3 简化](recap-grid-store-sqlite-v3.md)，当前实施使用 CellSlot、普通结果 ID
+> 与 SQL 单份数据；旧 v2 schema、canonical artifacts、digest cursor 和旧 Store JSON 字段不继续作为保留合同。
+> v2 approval anchors 与下文证据保持历史原义，不能认证 v3；当前验证见[实施计划](../../../Galatea/recap-store-simplification-plan.md)。
+
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
 [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录了prior source `a77ed16c`的final gates；

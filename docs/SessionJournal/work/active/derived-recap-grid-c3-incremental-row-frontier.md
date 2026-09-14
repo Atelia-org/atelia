@@ -1,5 +1,8 @@
 # RecapGrid C3：逐 row 增量 frontier 重构
 
+> 后继边界（2026-09-14）：本文保留原工作包的实现/验收证据；旧 EvaluationKey、内容寻址结果、canonical Store 与 provenance 度量不再是当前保留要求。
+> 当前模型见[Store v3 说明](../../current/contracts/recap-grid-store-sqlite-v3.md)，实施验证见[Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)；行前沿、显式 Overlay 与冻结恢复边界继续保留。
+
 状态：C3A、C3B、C3C、C3D Complete。C3C两路independent closure均GO（P0=0，P1=0）；尚未执行real-provider canary或actual cyber activation。
 
 上游设计：

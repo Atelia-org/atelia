@@ -29,7 +29,7 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 | `SessionJournal.HistoryTimeline` | immutable timeline rows、selected-path head、policy、branch reconcile、owner-bound build reads |
 | `SessionJournal.HistoryTimeline.O200k` | fixed o200k estimator、renderer 与 tokenizer adapter |
 | `SessionJournal.RecapGrid.Cadence` | per-Ref R/expected Timeline policy、reserve-aware seal authority、strict CAS/no-create reader |
-| `SessionJournal.RecapGrid` | 以 namespace/source module 分隔的 canonical contracts、Control、Store、Manager、Runtime、Getter、Online 与 AgentControl；source-module 依赖由 RG0001/RG0002 守门 |
+| `SessionJournal.RecapGrid` | 以 namespace/source module 分隔的 规则 canonical contracts、普通结果模型、Control、Store、Manager、Runtime、Getter、Online 与 AgentControl；source-module 依赖由 RG0001/RG0002 守门 |
 | `SessionJournal.RecapGrid.Hosting` | strict completion/route composition、single connection owner、runtime lifetime |
 | CLI / Galatea | operator surface、application phase gate、provider and UI composition |
 
@@ -41,7 +41,7 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 | durable Timeline and branch reconcile | `HistoryTimeline`, `HistoryTimeline.Tests` |
 | fixed o200k history-load estimation | `HistoryTimeline.O200k`, `HistoryTimeline.Tests` |
 | durable cadence and recent reserve | `RecapGrid.Cadence`, `RecapGrid.Cadence.Tests` |
-| canonical Grid values | `RecapGrid/Abstractions`, `RecapGrid.Abstractions.Tests` |
+| Grid rules、Slot 与普通结果 ID | `RecapGrid/Abstractions`, `RecapGrid.Abstractions.Tests` |
 | Control state and receipts | `RecapGrid/Control`, `RecapGrid.Control.Tests` |
 | SQLite artifact Store | `RecapGrid/Store`, `RecapGrid.Store.Tests` |
 | wavefront build/progress | `RecapGrid/Manager`, `RecapGrid.Manager.Tests` |
