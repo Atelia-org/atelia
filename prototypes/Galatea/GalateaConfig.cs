@@ -27,12 +27,150 @@ public sealed record GalateaConfig(
     GalateaRecapGridRuntimeConfig? RecapGrid = null,
     IReadOnlyList<string>? ServerAgentUserIds = null
 ) {
+    // This directory is derived once from the complete config-file user set.
+    // Direct in-process test configurations intentionally leave it unset; the
+    // character-mail runtime only accepts the loader-produced directory.
+    internal GalateaCharacterRecipientDirectory? CharacterRecipientDirectory {
+        get;
+        init;
+    }
+
     public IReadOnlyList<string> ServerAgentUserIds { get; init; } =
         GalateaConfigValidation.NormalizeServerAgentUserIds(
             Users,
             ServerAgentUserIds
         );
 }
+
+/// <summary>
+/// Immutable, host-owned exact address directory for configured characters.
+/// Character names are data for prompt rendering and the sole current
+/// character-mail address form; they are not aliases or display-only labels.
+/// </summary>
+internal sealed class GalateaCharacterRecipientDirectory {
+    private const string CodexRecipient = "Codex";
+    private readonly IReadOnlyDictionary<string, GalateaCharacterRecipient>
+        _byCharacterName;
+    private readonly IReadOnlyList<GalateaCharacterRecipient> _recipients;
+
+    private GalateaCharacterRecipientDirectory(
+        IReadOnlyDictionary<string, GalateaCharacterRecipient> byCharacterName,
+        IReadOnlyList<GalateaCharacterRecipient> recipients
+    ) {
+        _byCharacterName = byCharacterName;
+        _recipients = recipients;
+    }
+
+    internal IReadOnlyList<GalateaCharacterRecipient> Recipients => _recipients;
+
+    internal static GalateaCharacterRecipientDirectory Create(
+        IReadOnlyList<(string UserId, GalateaCharacterName CharacterName)> users
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        var byCharacterName = new Dictionary<string, GalateaCharacterRecipient>(
+            users.Count,
+            StringComparer.Ordinal
+        );
+        foreach ((string userId, GalateaCharacterName characterName) in users) {
+            ArgumentNullException.ThrowIfNull(characterName);
+            if (string.Equals(
+                    characterName.Value,
+                    CodexRecipient,
+                    StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    "Galatea config characterName 'Codex' is reserved for "
+                    + "the external delegate recipient."
+                );
+            }
+            var recipient = new GalateaCharacterRecipient(
+                characterName,
+                userId,
+                SessionRepositoryId: null
+            );
+            if (!byCharacterName.TryAdd(characterName.Value, recipient)) {
+                throw new InvalidOperationException(
+                    "Galatea config contains duplicate characterName '"
+                    + characterName.Value + "'."
+                );
+            }
+        }
+
+        GalateaCharacterRecipient[] recipients = byCharacterName.Values
+            .OrderBy(static value => value.CharacterName.Value,
+                StringComparer.Ordinal)
+            .ToArray();
+        return new GalateaCharacterRecipientDirectory(
+            new System.Collections.ObjectModel.ReadOnlyDictionary<
+                string, GalateaCharacterRecipient>(byCharacterName),
+            Array.AsReadOnly(recipients)
+        );
+    }
+
+    internal static GalateaCharacterRecipientDirectory Create(
+        IReadOnlyList<GalateaUserConfig> users
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        var namedUsers = new (string UserId, GalateaCharacterName CharacterName)[
+            users.Count
+        ];
+        for (int index = 0; index < users.Count; index++) {
+            GalateaUserConfig user = users[index]
+                ?? throw new ArgumentException(
+                    "Character recipient users must not contain null.",
+                    nameof(users)
+                );
+            namedUsers[index] = (user.UserId, user.CharacterName);
+        }
+        GalateaCharacterRecipientDirectory namesOnly = Create(namedUsers);
+        var recipients = new List<GalateaCharacterRecipient>(users.Count);
+        foreach (GalateaCharacterRecipient recipient in namesOnly.Recipients) {
+            GalateaUserConfig user = users.Single(value => string.Equals(
+                value.UserId,
+                recipient.UserId,
+                StringComparison.Ordinal));
+            recipients.Add(recipient with {
+                SessionRepositoryId =
+                    GalateaDelegationSupervisor.CreateSessionRepositoryId(
+                        user.SessionDir
+                    )
+            });
+        }
+        var byCharacterName = recipients.ToDictionary(
+            static recipient => recipient.CharacterName.Value,
+            StringComparer.Ordinal
+        );
+        return new GalateaCharacterRecipientDirectory(
+            new System.Collections.ObjectModel.ReadOnlyDictionary<
+                string, GalateaCharacterRecipient>(byCharacterName),
+            Array.AsReadOnly(recipients.ToArray())
+        );
+    }
+
+    internal bool TryGetExact(
+        string characterName,
+        out GalateaCharacterRecipient recipient
+    ) {
+        ArgumentNullException.ThrowIfNull(characterName);
+        return _byCharacterName.TryGetValue(characterName, out recipient!);
+    }
+
+    internal IReadOnlyList<GalateaCharacterName> GetPeerNames(string userId) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        return Array.AsReadOnly(_recipients
+            .Where(recipient => !string.Equals(
+                recipient.UserId,
+                userId,
+                StringComparison.Ordinal))
+            .Select(static recipient => recipient.CharacterName)
+            .ToArray());
+    }
+}
+
+internal sealed record GalateaCharacterRecipient(
+    GalateaCharacterName CharacterName,
+    string UserId,
+    string? SessionRepositoryId
+);
 
 public sealed record GalateaRecapGridRuntimeConfig(
     string RouteManifestPath,

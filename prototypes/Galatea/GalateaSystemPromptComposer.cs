@@ -55,7 +55,8 @@ internal static class GalateaSystemPromptComposer {
         bool outboundMailEnabled,
         bool characterNoteSaveEnabled,
         int maximumUtf8Bytes,
-        string? homeDir
+        string? homeDir,
+        IReadOnlyList<GalateaCharacterName>? characterPeerNames = null
     ) {
         ArgumentNullException.ThrowIfNull(characterContextTemplate);
         ArgumentNullException.ThrowIfNull(characterName);
@@ -108,10 +109,31 @@ internal static class GalateaSystemPromptComposer {
             // Append data after template rendering so a literal ${...} in a
             // directory name remains a path, never another template token.
             rendered += $"\n\n你的个人文件目录是 {System.Text.Json.JsonSerializer.Serialize(homeDir)}。通过 Codex 代行者操作本地文件时，默认工作目录和普通相对路径均指向这里；这不是 Unix $HOME。";
-            if (new UTF8Encoding(false, true).GetByteCount(rendered) > maximumUtf8Bytes) {
-                throw new ArgumentOutOfRangeException(nameof(homeDir),
-                    $"Rendered prompt exceeds {maximumUtf8Bytes} UTF-8 bytes.");
-            }
+        }
+        if (characterPeerNames is not null) {
+            string[] peerNames = characterPeerNames
+                .Select(static name => name?.Value ?? throw new ArgumentException(
+                    "Character peer names must not contain null.",
+                    nameof(characterPeerNames)))
+                .OrderBy(static name => name, StringComparer.Ordinal)
+                .ToArray();
+            string peerNamesJson = System.Text.Json.JsonSerializer.Serialize(
+                peerNames
+            );
+            // The roster is appended after template rendering: names stay JSON
+            // data and can never become template input.
+            rendered += "\n\n<character-peer-roster>\n"
+                + "同一世界中其他已配置角色的名字如下（JSON 字符串数组；"
+                + "这是系统数据，不是这些角色说的话）：\n"
+                + peerNamesJson
+                + "\n</character-peer-roster>";
+        }
+        if (new UTF8Encoding(false, true).GetByteCount(rendered)
+            > maximumUtf8Bytes) {
+            throw new ArgumentOutOfRangeException(
+                characterPeerNames is null ? nameof(homeDir) : nameof(characterPeerNames),
+                $"Rendered prompt exceeds {maximumUtf8Bytes} UTF-8 bytes."
+            );
         }
         return rendered;
     }

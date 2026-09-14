@@ -123,31 +123,31 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.DoesNotContain("${", outbound, StringComparison.Ordinal);
         Assert.DoesNotContain("${", note, StringComparison.Ordinal);
         Assert.DoesNotContain("${", both, StringComparison.Ordinal);
-        Assert.DoesNotContain("### 发信给 Codex", neither,
+        Assert.DoesNotContain("### 发信给 Codex 或其他角色", neither,
             StringComparison.Ordinal);
         Assert.DoesNotContain("### 保存长期 Note", neither,
             StringComparison.Ordinal);
-        Assert.Contains("### 发信给 Codex", outbound,
+        Assert.Contains("### 发信给 Codex 或其他角色", outbound,
             StringComparison.Ordinal);
         Assert.DoesNotContain("### 保存长期 Note", outbound,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("### 发信给 Codex", note,
+        Assert.DoesNotContain("### 发信给 Codex 或其他角色", note,
             StringComparison.Ordinal);
         Assert.Contains("### 保存长期 Note", note,
             StringComparison.Ordinal);
-        Assert.Contains("### 发信给 Codex", both,
+        Assert.Contains("### 发信给 Codex 或其他角色", both,
             StringComparison.Ordinal);
         Assert.Contains("### 保存长期 Note", both,
             StringComparison.Ordinal);
         Assert.True(
             both.IndexOf("## 界外邮箱", StringComparison.Ordinal)
             < both.IndexOf(
-                "### 发信给 Codex",
+                "### 发信给 Codex 或其他角色",
                 StringComparison.Ordinal
             )
         );
         Assert.True(
-            both.IndexOf("### 发信给 Codex", StringComparison.Ordinal)
+            both.IndexOf("### 发信给 Codex 或其他角色", StringComparison.Ordinal)
             < both.IndexOf(
                 "### 保存长期 Note",
                 StringComparison.Ordinal
@@ -244,8 +244,8 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
         Assert.DoesNotContain("[旁白]", mailboxBase,
             StringComparison.Ordinal);
-        Assert.Contains("唯一可投递的收件人", outboundAppendix,
-            StringComparison.Ordinal);
+        Assert.Contains("`<character-peer-roster>` JSON 数组中的一个角色名",
+            outboundAppendix, StringComparison.Ordinal);
         Assert.Contains("逐字、区分大小写地写作`Codex`",
             outboundAppendix, StringComparison.Ordinal);
         Assert.Contains("同一次回复", outboundAppendix,
@@ -260,9 +260,11 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
         Assert.Contains("后续回合", outboundAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("成功回信会在后续回合进入收件匣", outboundAppendix,
+        Assert.Contains("只有寄给`Codex`的信会在后续回合收到成功回信", outboundAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("送达失败也会在后续回合通知她", outboundAppendix,
+        Assert.Contains("且送达失败会在后续回合通知她", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("寄给其他角色的信不承诺回信或失败通知", outboundAppendix,
             StringComparison.Ordinal);
         Assert.DoesNotContain("[${characterName}]", outboundAppendix,
             StringComparison.Ordinal);
@@ -353,6 +355,40 @@ public sealed class GalateaTrackedPromptTemplateTests {
                 GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
                 homeDir: "/galatea-homes/test")
             );
+    }
+
+    [Fact]
+    public void PeerRosterIsJsonDataAndParticipatesInTheFinalPromptLimit() {
+        GalateaCharacterName[] peers = [
+            new("Zed"),
+            new("Alice")
+        ];
+        string rendered = GalateaSystemPromptComposer.Compose(
+            "${characterName} lives here.",
+            new GalateaCharacterName("Bob"),
+            new GalateaPlayerName("Player"),
+            false,
+            false,
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+            homeDir: null,
+            characterPeerNames: peers
+        );
+        Assert.Contains("<character-peer-roster>", rendered,
+            StringComparison.Ordinal);
+        Assert.Contains("[\"Alice\",\"Zed\"]", rendered,
+            StringComparison.Ordinal);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            GalateaSystemPromptComposer.Compose(
+                "${characterName} lives here.",
+                new GalateaCharacterName("Bob"),
+                new GalateaPlayerName("Player"),
+                false,
+                false,
+                System.Text.Encoding.UTF8.GetByteCount(rendered) - 1,
+                homeDir: null,
+                characterPeerNames: peers
+            )
+        );
     }
 
     private static int CountOccurrences(string value, string target) {

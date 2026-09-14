@@ -14,7 +14,8 @@ Galatea 主system prompt不是一份可由operator整体替换的文件。Curren
    code-owned；始终定义邮箱Quick Start的收件部分。
 4. [`trpg-outbound-mail-protocol-appendix-zh-cn.md`](trpg-outbound-mail-protocol-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned；仅当validated `galatea.outbound-mail-extractor` binding非`null`时追加，
-   作为同一份Quick Start的发件部分。
+   作为同一份Quick Start的发件部分。它允许精确 `Codex` 或本次配置生成的角色名单中的名字；只有
+   `Codex` 保留回信和失败通知承诺。
 5. [`trpg-character-note-save-appendix-zh-cn.md`](trpg-character-note-save-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned；仅当validated `galatea.character-note-extractor` binding非`null`时追加，
    定义长期Note保存Quick Start；只有runtime保存回执证明成功，不承诺分类、metadata补全或召回。
@@ -28,7 +29,7 @@ prefix + "\n\n---\n\n" + operator context + "\n\n---\n\n" + mailbox base
 [when Character Note binding is non-null: "\n\n" + Character Note save appendix]
 ```
 
-组合后只执行一次closed `${characterName}` / `${playerName}` renderer。outbound 启用时，随后追加配置派生的实际 `homeDir` 与相对路径说明；路径按 JSON 字符串表示，作为数据不再参与模板替换，最终 prompt（含此说明）仍受同一 UTF-8 上限约束。新鲜请求采用新路径，已冻结 Prepared request 不重新拼装。H2/H3只用于呈现；是否追加
+组合后只执行一次closed `${characterName}` / `${playerName}` renderer。随后，host 为每个角色追加由完整配置生成的 `<character-peer-roster>`：其中是按 Ordinal 排序、排除自身的角色名 JSON 字符串数组，作为数据不再参与模板替换；它即使 outbound 未启用也说明其他角色存在。outbound 启用时还会追加配置派生的实际 `homeDir` 与相对路径说明。两类后置数据都计入最终 UTF-8 上限。新鲜请求采用新路径，已冻结 Prepared request 不重新拼装。H2/H3只用于呈现；是否追加
 各appendix只看自己的validated sibling binding，不看heading或自然语言。这里没有完整prompt副本、include/module
 engine、基于Markdown heading的动态路由或operator module field。Character-context fields不能移除、替换或重排
 validated binding所选的code-owned bytes；但operator context与protocol位于同一trusted system message，prose

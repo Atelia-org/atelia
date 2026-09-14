@@ -4306,7 +4306,10 @@ internal static class GalateaConfigLoader {
         GalateaDelegateConfig delegates =
             GalateaDelegateConfigReader.Read(delegatesPath);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
-        IReadOnlyList<GalateaUserConfig> users =
+        (
+            IReadOnlyList<GalateaUserConfig> users,
+            GalateaCharacterRecipientDirectory characterRecipientDirectory
+        ) =
             ResolveUsers(
                 usersFile.Users,
                 configDir,
@@ -4341,7 +4344,9 @@ internal static class GalateaConfigLoader {
             MaintenanceMode: usersFile.MaintenanceMode,
             RecapGrid: LoadRecapGridConfig(usersFile.RecapGrid, configDir),
             ServerAgentUserIds: usersFile.ServerAgentUserIds
-        );
+        ) with {
+            CharacterRecipientDirectory = characterRecipientDirectory
+        };
 
         Validate(config);
         return config;
@@ -4486,7 +4491,10 @@ internal static class GalateaConfigLoader {
         "RecapGrid route manifest"
     ));
 
-    private static IReadOnlyList<GalateaUserConfig>
+    private static (
+        IReadOnlyList<GalateaUserConfig> Users,
+        GalateaCharacterRecipientDirectory CharacterRecipientDirectory
+    )
         ResolveUsers(
             IReadOnlyList<GalateaUserFileConfig> configuredUsers,
             string configDirectory,
@@ -4494,18 +4502,18 @@ internal static class GalateaConfigLoader {
             bool outboundMailEnabled,
             bool characterNoteRequestEnabled
         ) {
-        var resolvedUsers = new List<GalateaUserConfig>(
+        var namedUsers = new (string UserId, GalateaCharacterName CharacterName)[
             configuredUsers.Count
-        );
+        ];
         for (int index = 0; index < configuredUsers.Count; index++) {
             GalateaUserFileConfig user = configuredUsers[index]
                 ?? throw new InvalidOperationException(
                     $"Galatea config user[{index}] must not be null."
                 );
-            GalateaCharacterName characterName;
             try {
-                characterName = new GalateaCharacterName(
-                    user.CharacterName
+                namedUsers[index] = (
+                    user.UserId,
+                    new GalateaCharacterName(user.CharacterName)
                 );
             }
             catch (ArgumentException exception) {
@@ -4515,6 +4523,19 @@ internal static class GalateaConfigLoader {
                     exception
                 );
             }
+        }
+        GalateaCharacterRecipientDirectory characterRecipientDirectory =
+            GalateaCharacterRecipientDirectory.Create(namedUsers);
+
+        var resolvedUsers = new List<GalateaUserConfig>(
+            configuredUsers.Count
+        );
+        for (int index = 0; index < configuredUsers.Count; index++) {
+            GalateaUserFileConfig user = configuredUsers[index]
+                ?? throw new InvalidOperationException(
+                    $"Galatea config user[{index}] must not be null."
+                );
+            GalateaCharacterName characterName = namedUsers[index].CharacterName;
             GalateaPlayerName playerName;
             try {
                 playerName = new GalateaPlayerName(user.PlayerName);
@@ -4581,7 +4602,8 @@ internal static class GalateaConfigLoader {
                     outboundMailEnabled,
                     characterNoteRequestEnabled,
                     GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-                    homeDirectory
+                    homeDirectory,
+                    characterRecipientDirectory.GetPeerNames(user.UserId)
                 );
             }
             catch (ArgumentException exception) {
@@ -4607,7 +4629,10 @@ internal static class GalateaConfigLoader {
                 user.DefaultConnectionId
             ));
         }
-        return resolvedUsers;
+        return (
+            resolvedUsers,
+            GalateaCharacterRecipientDirectory.Create(resolvedUsers)
+        );
     }
 
     private static string ResolveCharacterContextTemplate(

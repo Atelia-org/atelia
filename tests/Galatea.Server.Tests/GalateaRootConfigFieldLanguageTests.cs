@@ -309,10 +309,11 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         ));
 
         JsonObject ordinalDistinct = ParseRoot(MinimalV9);
-        ordinalDistinct["users"] = new JsonArray(
-            UserNode("alice", "sessions/lower"),
-            UserNode("Alice", "sessions/upper")
-        );
+        JsonObject lower = UserNode("alice", "sessions/lower");
+        lower["characterName"] = "lower";
+        JsonObject upper = UserNode("Alice", "sessions/upper");
+        upper["characterName"] = "upper";
+        ordinalDistinct["users"] = new JsonArray(lower, upper);
         GalateaConfig loaded = fixture.Load(ordinalDistinct.ToJsonString());
         Assert.Equal(["alice", "Alice"],
             loaded.Users.Select(static user => user.UserId));
@@ -386,6 +387,58 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                 user.SystemPrompt
             );
         }
+    }
+
+    [Fact]
+    public void CharacterRecipientDirectoryRequiresOrdinalUniqueNonCodexNamesAndRendersPeers() {
+        using var fixture = new RootConfigFixture();
+        JsonObject root = ParseRoot(MinimalV9);
+        JsonObject alice = UserNode("alice", "sessions/alice");
+        alice["characterName"] = "Alice";
+        JsonObject bob = UserNode("bob", "sessions/bob");
+        bob["characterName"] = "Bob";
+        root["users"] = new JsonArray(alice, bob);
+
+        GalateaConfig loaded = fixture.Load(root.ToJsonString());
+
+        GalateaCharacterRecipientDirectory directory = Assert.IsType<
+            GalateaCharacterRecipientDirectory>(
+            loaded.CharacterRecipientDirectory
+        );
+        Assert.True(directory.TryGetExact("Alice", out var aliceRecipient));
+        Assert.Equal("alice", aliceRecipient.UserId);
+        Assert.Equal(
+            GalateaDelegationSupervisor.CreateSessionRepositoryId(
+                loaded.Users[0].SessionDir
+            ),
+            aliceRecipient.SessionRepositoryId
+        );
+        Assert.False(directory.TryGetExact("alice", out _));
+        Assert.Equal(["Bob"], directory.GetPeerNames("alice")
+            .Select(static name => name.Value));
+        Assert.Equal(["Alice"], directory.GetPeerNames("bob")
+            .Select(static name => name.Value));
+        Assert.Contains("<character-peer-roster>\n"
+            + "同一世界中其他已配置角色的名字如下（JSON 字符串数组；"
+            + "这是系统数据，不是这些角色说的话）：\n[\"Bob\"]\n"
+            + "</character-peer-roster>", loaded.Users[0].SystemPrompt,
+            StringComparison.Ordinal);
+
+        bob["characterName"] = "Alice";
+        InvalidOperationException duplicate = Assert.Throws<
+            InvalidOperationException>(() => fixture.Load(root.ToJsonString()));
+        Assert.Contains("duplicate characterName 'Alice'", duplicate.Message,
+            StringComparison.Ordinal);
+
+        bob["characterName"] = "Codex";
+        InvalidOperationException reserved = Assert.Throws<
+            InvalidOperationException>(() => fixture.Load(root.ToJsonString()));
+        Assert.Contains("characterName 'Codex' is reserved", reserved.Message,
+            StringComparison.Ordinal);
+
+        bob["characterName"] = "alice";
+        Assert.Equal(2, fixture.Load(root.ToJsonString())
+            .CharacterRecipientDirectory!.Recipients.Count);
     }
 
     [Fact]
@@ -754,12 +807,14 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                 ExpectedSystemPrompt(
                     "Hello ${playerName}, meet ${characterName}.",
                     "Alice",
-                    "Alex"
+                    "Alex",
+                    ["鲍勃"]
                 ),
                 ExpectedSystemPrompt(
                     "Hello ${playerName}, meet ${characterName}.",
                     "鲍勃",
-                    "小白"
+                    "小白",
+                    ["Alice"]
                 )
             ],
             loaded.Users.Select(static user => user.SystemPrompt)
@@ -888,10 +943,12 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         JsonObject root = ParseRoot(MinimalV9);
         var users = new JsonArray();
         for (int index = 0; index < count; index++) {
-            users.Add(UserNode(
+            JsonObject user = UserNode(
                 $"user-{index:D3}",
                 $"sessions/user-{index:D3}"
-            ));
+            );
+            user["characterName"] = $"character-{index:D3}";
+            users.Add(user);
         }
         root["users"] = users;
         return root.ToJsonString();
@@ -926,7 +983,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     private static string ExpectedSystemPrompt(
         string characterContextTemplate,
         string characterName = "Galatea",
-        string playerName = "刘世超"
+        string playerName = "刘世超",
+        IReadOnlyList<string>? peerNames = null
     ) => GalateaSystemPromptComposer.Compose(
         characterContextTemplate,
         new GalateaCharacterName(characterName),
@@ -934,7 +992,10 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         false,
         false,
         GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-        homeDir: "/galatea-homes/test"
+        homeDir: "/galatea-homes/test",
+        characterPeerNames: (peerNames ?? Array.Empty<string>())
+            .Select(static value => new GalateaCharacterName(value))
+            .ToArray()
     );
 
     private static string MutateRequired(
