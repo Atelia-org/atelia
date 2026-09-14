@@ -55,8 +55,9 @@ internal sealed class SqliteRecapGridStore {
                     singleton, schema_version, store_instance_id,
                     cell_count, row_view_count,
                     row_view_member_count, fulfilled_view_count
-                ) VALUES (1, 3, $instance, 0, 0, 0, 0);
+                ) VALUES (1, $schemaVersion, $instance, 0, 0, 0, 0);
                 """;
+            metadata.Parameters.AddWithValue("$schemaVersion", SchemaVersion);
             metadata.Parameters.AddWithValue("$instance", instance.Value);
             metadata.ExecuteNonQuery();
         }
