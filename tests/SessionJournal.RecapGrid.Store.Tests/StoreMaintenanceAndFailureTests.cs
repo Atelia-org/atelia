@@ -411,13 +411,17 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         Assert.Equal(cells.Length, seen.Count);
     }
 
-    [Fact]
-    public void FulfilledExportUsesCompositeCursorAndStoredResultIds() {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FulfilledExportUsesCompositeCursorAndStoredResultIds(bool varyingThroughRow) {
         Create();
         var expected = new Dictionary<string, RowResultId>();
         using (RecapGridStoreHandle handle = OpenWithHooks(new StorePersistenceTestHooks())) {
             for (int index = 1; index <= 257; index++) {
-                RowBuildSpec spec = StoreFixture.Spec(refId: new RefId((ulong)index));
+                RowBuildSpec spec = varyingThroughRow
+                    ? StoreFixture.Spec(row: new HistoryRowId(index.ToString("x64")))
+                    : StoreFixture.Spec(refId: new RefId((ulong)index));
                 RecapGridCellPutResult put = handle.Writer.PutCell(spec, StoreFixture.Draft(spec));
                 RecapCellArtifact cell = put switch {
                     RecapGridCellPutResult.Inserted inserted => inserted.Winner,
@@ -425,7 +429,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                     _ => throw new InvalidOperationException(put.ToString())
                 };
                 RecapRowView view = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(spec, [cell])).Winner;
-                FulfilledViewKey key = StoreFixture.Fulfilled(spec, index);
+                FulfilledViewKey key = StoreFixture.Fulfilled(spec, varyingThroughRow ? 7 : index);
                 Assert.IsType<RecapGridFulfilledPutResult.Inserted>(handle.Writer.PutFulfilled(key, view.Id));
                 string cursorKey = RecapGridStoreExportCursor.CreateFulfilled(key.RefId.ToHexString(), key.TimelineId.Value,
                     key.TimelineHeadGeneration, key.ThroughRowId.Value, key.RecipeDigest.Value).Key;
@@ -449,7 +453,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             Assert.True(cursors.Add(cursor.Value));
             cursor = RecapGridStoreExportCursor.Parse(cursor.Value);
         } while (true);
-        Assert.Equal(5, pages);
+        Assert.Equal(varyingThroughRow ? 7 : 5, pages);
         Assert.Equal(expected.Count, seen.Count);
     }
 
