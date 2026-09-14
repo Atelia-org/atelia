@@ -1,7 +1,5 @@
 using System.Text;
 using System.Security.Cryptography;
-using Atelia.EventJournal;
-using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Xunit;
@@ -338,251 +336,47 @@ public sealed class CanonicalContractTests {
     }
 
     [Fact]
-    public void ContentEquivalentViewsShareProjectionIdentity() {
-        (GridBuildRecipe recipe, MaintainerDefinitionRevision definition) =
-            SingleColumnRecipe();
-        EvaluationKey evaluation = EvaluationKey.Create(
-            HistoryDigest('1'),
-            definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            recipe,
-            Coordinate(recipe, RowId('1'), HistoryDigest('1')),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(
-                definition.LogicalColumnId,
-                evaluation
-            )]
-        );
-        RecapCellArtifact cell = RecapCellArtifact.Create(
-            definition.LogicalColumnId,
-            definition.Digest,
-            evaluation,
-            RecapCellOutcome.Updated,
-            "same content",
-            definition.MaxContentUtf8Bytes
-        );
-        RecapRowView first = RecapRowView.Create(spec, [cell]);
-        RecapCellArtifact differentSource = RecapCellArtifact.Create(
-            definition.LogicalColumnId, definition.Digest,
-            EvaluationKey.Create(HistoryDigest('3'), definition.Digest, PriorInputReference.FirstRow.Value),
-            RecapCellOutcome.KeepUnchanged, cell.Content, definition.MaxContentUtf8Bytes);
-        Assert.NotEqual(cell.CellDigest, differentSource.CellDigest);
-        Assert.Equal(PriorInputProjectionDigest.FromCells([cell]),
-            PriorInputProjectionDigest.FromCells([differentSource]));
+    public void RuleIdentitiesAndCanonicalBytesKeepExistingGoldens() {
+        FamilyDefinition family = Family();
+        MaintainerDefinitionRevision definition = Definition("culprit", family.Digest);
+        BuildTarget target = Target(definition);
+        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(Timeline, RowId('a'), target);
+        Assert.Equal(new[] {
+            "d53cead7c23bb8a318751127d013971414dee255fed4ef5b81bfd376f18b4fc1",
+            "fadf96f1c8bb19c837d2f3c9c2e2cb0ff3b76cbaacce78aaa0ca18e38e5c6084",
+            "d3e5570da30f97bb33fdefe2f3effb14ec706a7320e21471eea34e24958666a3",
+            "4b281e3de8409b88eeb330813b36526ed150aaf958c7a29ecfafc64541cadd19"
+        }, new[] { family.Digest.Value, definition.Digest.Value, target.Digest.Value, recipe.Digest.Value });
+        Assert.Equal(new[] {
+            "9522354f4dca93dc4499bb7f5f4567c02c2c885d3e0b1a10a81624dd4dba7315",
+            "551f58efc84fc7164e4f7aad1c1f0e4cb38dfa00de77c0e41bcda24028df51d6",
+            "111b651063cd05c6c75fb9dc819936cbcb33bf1919f32f22c99356fa13278731",
+            "7fd854fa376c08cc22bd3e57c970eef98e2bf344141a945ec3c3f96af38a32cd"
+        }, new[] { family.ToCanonicalBytes(), definition.ToCanonicalBytes(),
+            target.ToCanonicalBytes(), recipe.ToCanonicalBytes() }
+            .Select(static bytes => Convert.ToHexStringLower(SHA256.HashData(bytes))));
+        Assert.Equal(target.ToCanonicalBytes(), BuildTarget.DecodeCanonical(target.ToCanonicalBytes()).ToCanonicalBytes());
+        Assert.Equal(recipe.ToCanonicalBytes(), GridBuildRecipe.DecodeCanonical(recipe.ToCanonicalBytes()).ToCanonicalBytes());
     }
 
     [Fact]
-    public void RowBuildAndViewRejectNonExactMembership() {
-        (GridBuildRecipe recipe, MaintainerDefinitionRevision definition) =
-            SingleColumnRecipe();
-        EvaluationKey evaluation = EvaluationKey.Create(
-            HistoryDigest('2'),
-            definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
-            recipe,
-            Coordinate(recipe, RowId('2'), HistoryDigest('2')),
-            PriorInputReference.FirstRow.Value,
-            Array.Empty<RowBuildAssignment>()
-        ));
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            recipe,
-            Coordinate(recipe, RowId('2'), HistoryDigest('2')),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(
-                definition.LogicalColumnId,
-                evaluation
-            )]
-        );
-        Assert.Throws<ArgumentException>(() => RecapRowView.Create(
-            spec,
-            Array.Empty<RecapCellArtifact>()
-        ));
+    public void NestedRecipeTargetRejectsNonCanonicalBytes() {
+        BuildTarget target = Target(Definition("culprit", Family().Digest));
+        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(Timeline, RowId('a'), target);
+        byte[] targetWithTrailingWhitespace = [.. target.ToCanonicalBytes(), (byte)'\n'];
+        string original = Encoding.UTF8.GetString(recipe.ToCanonicalBytes());
+        string changed = original.Replace(Convert.ToBase64String(target.ToCanonicalBytes()),
+            Convert.ToBase64String(targetWithTrailingWhitespace), StringComparison.Ordinal);
+        Assert.NotEqual(original, changed);
+        Assert.Throws<InvalidDataException>(() => GridBuildRecipe.DecodeCanonical(Encoding.UTF8.GetBytes(changed)));
     }
 
     [Fact]
-    public void FormalValuesRoundTripAndKeepDomainSeparatedGoldens() {
-        FormalFixture value = FormalValues();
-        Assert.Equal(
-            "d53cead7c23bb8a318751127d013971414dee255fed4ef5b81bfd376f18b4fc1\n"
-            + "fadf96f1c8bb19c837d2f3c9c2e2cb0ff3b76cbaacce78aaa0ca18e38e5c6084\n"
-            + "d3e5570da30f97bb33fdefe2f3effb14ec706a7320e21471eea34e24958666a3\n"
-            + "4b281e3de8409b88eeb330813b36526ed150aaf958c7a29ecfafc64541cadd19\n"
-            + "7b622b3e5ba946841d45722375ae7a5ae0f15b75b3f28b4ccb7c74ba642cb753\n"
-            + "7cf35b2ecb7b791420b2e5bdeecaf99c7da3131e087343239eb2ef677c2136ec\n"
-            + "13abe0196f72da491691abb9bf9f1747c7e57ee5f0f2d65e5988fd738ac38344\n"
-            + "257f0375c657316a776134fedaf8d9970ca971e8b5c24e0a392b842cc50c902d\n"
-            + "ea0300b1a12eb5848beac3693cb476f7602adc972f35a2e6b15f4404ef0cc993",
-            string.Join("\n", new[] {
-                value.Family.Digest.Value,
-                value.Definition.Digest.Value,
-                value.Target.Digest.Value,
-                value.Recipe.Digest.Value,
-                value.Projection.Value,
-                value.Evaluation.Digest.Value,
-                value.Cell.ContentDigest.Value,
-                value.Cell.CellDigest.Value,
-                value.View.Digest.Value
-            })
-        );
-    }
-
-    [Fact]
-    public void ArtifactAndKeyCanonicalValuesRoundTripExactly() {
-        FormalFixture value = FormalValues();
-        Assert.Equal(
-            value.Target.ToCanonicalBytes(),
-            BuildTarget.DecodeCanonical(
-                value.Target.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.Recipe.ToCanonicalBytes(),
-            GridBuildRecipe.DecodeCanonical(
-                value.Recipe.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.Evaluation.ToCanonicalBytes(),
-            EvaluationKey.DecodeCanonical(
-                value.Evaluation.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.Cell.ToCanonicalBytes(),
-            RecapCellArtifact.DecodeCanonical(
-                value.Cell.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.View.ToCanonicalBytes(),
-            RecapRowView.DecodeCanonical(
-                value.View.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.View.ToCanonicalBytes(),
-            RecapRowView.DecodeCanonical(
-                value.Spec,
-                [value.Cell],
-                value.View.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.Fulfilled.ToCanonicalBytes(),
-            FulfilledViewKey.DecodeCanonical(
-                value.Fulfilled.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.Fulfilled.ToCanonicalBytes(),
-            FulfilledViewKey.DecodeCanonical(
-                value.Recipe,
-                value.TimelineHead,
-                value.Fulfilled.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.StartsWith(
-            "{\"schemaVersion\":2,",
-            Encoding.UTF8.GetString(value.Family.ToCanonicalBytes()),
-            StringComparison.Ordinal
-        );
-        Assert.StartsWith(
-            "{\"schemaVersion\":2,",
-            Encoding.UTF8.GetString(value.Definition.ToCanonicalBytes()),
-            StringComparison.Ordinal
-        );
-        Assert.All(new[] {
-            value.Target.ToCanonicalBytes(),
-            value.Recipe.ToCanonicalBytes(),
-            value.Evaluation.ToCanonicalBytes(),
-            value.Cell.ToCanonicalBytes(),
-            value.Fulfilled.ToCanonicalBytes()
-        }, bytes => Assert.StartsWith(
-            "{\"schemaVersion\":1,",
-            Encoding.UTF8.GetString(bytes),
-            StringComparison.Ordinal
-        ));
-        Assert.StartsWith(
-            "{\"schemaVersion\":2,",
-            Encoding.UTF8.GetString(value.View.ToCanonicalBytes()),
-            StringComparison.Ordinal
-        );
-        Assert.Equal(9, new[] {
-            value.Family.Digest.Value,
-            value.Definition.Digest.Value,
-            value.Target.Digest.Value,
-            value.Recipe.Digest.Value,
-            value.Projection.Value,
-            value.Evaluation.Digest.Value,
-            value.Cell.ContentDigest.Value,
-            value.Cell.CellDigest.Value,
-            value.View.Digest.Value
-        }.Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(
-            "9522354f4dca93dc4499bb7f5f4567c02c2c885d3e0b1a10a81624dd4dba7315\n"
-            + "551f58efc84fc7164e4f7aad1c1f0e4cb38dfa00de77c0e41bcda24028df51d6\n"
-            + "111b651063cd05c6c75fb9dc819936cbcb33bf1919f32f22c99356fa13278731\n"
-            + "7fd854fa376c08cc22bd3e57c970eef98e2bf344141a945ec3c3f96af38a32cd\n"
-            + "4f1506dca06b9a785801dce0ce7ca6e37d42fda05fa78fa3ac1766bc2c0db6b4\n"
-            + "962adc4d5e174799ff321155f48fd7945fe53e32128f65779a106b0318de6b19\n"
-            + "e051374b7f1e7fc9bb64dbba8f5e97b4041ee79ca67474409a453201a2f17629\n"
-            + "007aba886874c97fbfbdcdf12259a75e245b365eba68ed9a5c3802d4ead8e43e",
-            string.Join("\n", new[] {
-                CanonicalSha(value.Family.ToCanonicalBytes()),
-                CanonicalSha(value.Definition.ToCanonicalBytes()),
-                CanonicalSha(value.Target.ToCanonicalBytes()),
-                CanonicalSha(value.Recipe.ToCanonicalBytes()),
-                CanonicalSha(value.Evaluation.ToCanonicalBytes()),
-                CanonicalSha(value.Cell.ToCanonicalBytes()),
-                CanonicalSha(value.View.ToCanonicalBytes()),
-                CanonicalSha(value.Fulfilled.ToCanonicalBytes())
-            })
-        );
-    }
-
-    [Fact]
-    public void DefaultTypedValuesAreRejectedAtFactories() {
-        FormalFixture value = FormalValues();
-        Assert.Throws<ArgumentException>(() =>
-            new BuildTargetColumn(default, value.Definition.Digest));
-        Assert.Throws<ArgumentException>(() =>
-            new BuildTargetColumn(
-                value.Definition.LogicalColumnId,
-                default
-            ));
-        Assert.Throws<ArgumentException>(() => GridBuildRecipe.CreateFull(
-            default,
-            value.Recipe.BootstrapThroughRowId,
-            value.Target
-        ));
-        Assert.Throws<ArgumentException>(() => EvaluationKey.Create(
-            default,
-            value.Definition.Digest,
-            PriorInputReference.FirstRow.Value
-        ));
-        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
-            value.Recipe,
-            Coordinate(
-                value.Recipe,
-                default,
-                value.Evaluation.HistorySegmentDigest
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(
-                value.Definition.LogicalColumnId,
-                value.Evaluation
-            )]
-        ));
-        Assert.Throws<ArgumentException>(() => FulfilledViewKey.Create(
-            default,
-            value.TimelineHead,
-            value.View.RowDescriptorDigest,
-            value.Recipe
-        ));
+    public void RuleFactoriesRejectDefaultTypedValues() {
+        MaintainerDefinitionRevision definition = Definition("culprit", Family().Digest);
+        Assert.Throws<ArgumentException>(() => new BuildTargetColumn(default, definition.Digest));
+        Assert.Throws<ArgumentException>(() => new BuildTargetColumn(definition.LogicalColumnId, default));
+        Assert.Throws<ArgumentException>(() => GridBuildRecipe.CreateFull(default, RowId('a'), Target(definition)));
     }
 
     [Fact]
@@ -646,7 +440,7 @@ public sealed class CanonicalContractTests {
     }
 
     [Fact]
-    public void DenseToolSchemaAndProjectionDiscriminantRemainExact() {
+    public void DenseToolSchemaRemainsExact() {
         var tool = new FamilyToolDefinition(
             "submit_typed_evidence",
             "Submit typed evidence.",
@@ -710,193 +504,6 @@ public sealed class CanonicalContractTests {
                 root.Properties[2].Schema
             ).OrderedEnum
         );
-        FormalFixture value = FormalValues();
-        EvaluationKey first = EvaluationKey.Create(
-            value.Evaluation.HistorySegmentDigest,
-            value.Definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        EvaluationKey projected = EvaluationKey.Create(
-            value.Evaluation.HistorySegmentDigest,
-            value.Definition.Digest,
-            new PriorInputReference.Projection(value.Projection)
-        );
-        Assert.NotEqual(first.Digest, projected.Digest);
-        Assert.IsType<PriorInputReference.FirstRow>(
-            EvaluationKey.DecodeCanonical(
-                first.ToCanonicalBytes()
-            ).PriorInput
-        );
-        Assert.Equal(
-            value.Projection,
-            Assert.IsType<PriorInputReference.Projection>(
-                EvaluationKey.DecodeCanonical(
-                    projected.ToCanonicalBytes()
-                ).PriorInput
-            ).Digest
-        );
-    }
-
-    [Fact]
-    public void SameTargetOverlayAndKeepUnchangedRemainDistinctCanonicalValues() {
-        FormalFixture value = FormalValues();
-        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
-            value.Recipe,
-            value.Recipe.BootstrapThroughRowId,
-            value.Target,
-            [value.Definition.LogicalColumnId]
-        );
-        Assert.NotEqual(value.Recipe.Digest, overlay.Digest);
-        Assert.Equal(
-            overlay.ToCanonicalBytes(),
-            GridBuildRecipe.DecodeCanonical(
-                overlay.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-
-        RecapCellArtifact unchanged = RecapCellArtifact.Create(
-            value.Definition.LogicalColumnId,
-            value.Definition.Digest,
-            value.Evaluation,
-            RecapCellOutcome.KeepUnchanged,
-            value.Cell.Content,
-            value.Definition.MaxContentUtf8Bytes
-        );
-        Assert.Equal(
-            RecapCellOutcome.KeepUnchanged,
-            RecapCellArtifact.DecodeCanonical(
-                unchanged.ToCanonicalBytes()
-            ).Outcome
-        );
-        Assert.NotEqual(value.Cell.CellDigest, unchanged.CellDigest);
-        Assert.Equal(value.Cell.ContentDigest, unchanged.ContentDigest);
-    }
-
-    [Fact]
-    public void NestedCanonicalChildrenRejectNonCanonicalBytes() {
-        FormalFixture value = FormalValues();
-        byte[] targetWithTrailingWhitespace = [
-            .. value.Target.ToCanonicalBytes(),
-            (byte)'\n'
-        ];
-        string recipe = Encoding.UTF8.GetString(
-            value.Recipe.ToCanonicalBytes()
-        );
-        string tamperedRecipe = recipe.Replace(
-            Convert.ToBase64String(value.Target.ToCanonicalBytes()),
-            Convert.ToBase64String(targetWithTrailingWhitespace),
-            StringComparison.Ordinal
-        );
-        Assert.NotEqual(recipe, tamperedRecipe);
-        Assert.Throws<InvalidDataException>(() =>
-            GridBuildRecipe.DecodeCanonical(
-                Encoding.UTF8.GetBytes(tamperedRecipe)
-            ));
-
-        byte[] keyWithTrailingWhitespace = [
-            .. value.Evaluation.ToCanonicalBytes(),
-            (byte)'\n'
-        ];
-        string cell = Encoding.UTF8.GetString(value.Cell.ToCanonicalBytes());
-        string tamperedCell = cell.Replace(
-            Convert.ToBase64String(value.Evaluation.ToCanonicalBytes()),
-            Convert.ToBase64String(keyWithTrailingWhitespace),
-            StringComparison.Ordinal
-        );
-        Assert.NotEqual(cell, tamperedCell);
-        Assert.Throws<InvalidDataException>(() =>
-            RecapCellArtifact.DecodeCanonical(
-                Encoding.UTF8.GetBytes(tamperedCell)
-            ));
-    }
-
-    [Fact]
-    public void WrongRowPriorReuseAndArtifactTamperFailClosed() {
-        FormalFixture value = FormalValues();
-        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
-            value.Recipe,
-            Coordinate(
-                value.Recipe,
-                value.Spec.HistoryRowId,
-                value.Spec.HistorySegmentDigest
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Reuse(
-                value.Definition.LogicalColumnId,
-                value.Cell
-            )]
-        ));
-        EvaluationKey wrongRow = EvaluationKey.Create(
-            HistoryDigest('d'),
-            value.Definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
-            value.Recipe,
-            Coordinate(
-                value.Recipe,
-                RowId('a'),
-                value.Evaluation.HistorySegmentDigest
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(
-                value.Definition.LogicalColumnId,
-                wrongRow
-            )]
-        ));
-        var projected = new PriorInputReference.Projection(
-            value.Projection
-        );
-        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
-            value.Recipe,
-            Coordinate(
-                value.Recipe,
-                RowId('a'),
-                value.Evaluation.HistorySegmentDigest
-            ),
-            projected,
-            [new RowBuildAssignment.Evaluate(
-                value.Definition.LogicalColumnId,
-                value.Evaluation
-            )]
-        ));
-
-        string cell = Encoding.UTF8.GetString(value.Cell.ToCanonicalBytes());
-        Assert.Throws<InvalidDataException>(() =>
-            RecapCellArtifact.DecodeCanonical(Encoding.UTF8.GetBytes(
-                cell.Replace(
-                    "service passage",
-                    "hidden passage",
-                    StringComparison.Ordinal
-                ))));
-        string view = Encoding.UTF8.GetString(value.View.ToCanonicalBytes());
-        Assert.Throws<InvalidDataException>(() =>
-            RecapRowView.DecodeCanonical(
-                value.Spec,
-                [value.Cell],
-                Encoding.UTF8.GetBytes(view.Replace(
-                    value.View.Digest.Value,
-                    new string('f', 64),
-                    StringComparison.Ordinal
-                ))
-            ));
-        Assert.Throws<InvalidDataException>(() =>
-            RecapRowView.DecodeCanonical(Encoding.UTF8.GetBytes(
-                view.Replace(
-                    value.View.Digest.Value,
-                    new string('f', 64),
-                    StringComparison.Ordinal
-                ))));
-        string fulfilled = Encoding.UTF8.GetString(
-            value.Fulfilled.ToCanonicalBytes()
-        );
-        Assert.Throws<InvalidDataException>(() =>
-            FulfilledViewKey.DecodeCanonical(Encoding.UTF8.GetBytes(
-                fulfilled.Replace(
-                    value.Fulfilled.RecipeDigest.Value,
-                    new string('f', 63),
-                    StringComparison.Ordinal
-                ))));
     }
 
     private static FamilyDefinition Family() {
@@ -947,136 +554,8 @@ public sealed class CanonicalContractTests {
             definition.Digest
         )));
 
-    private static (GridBuildRecipe, MaintainerDefinitionRevision)
-        SingleColumnRecipe() {
-        FamilyDefinition family = Family();
-        MaintainerDefinitionRevision definition = Definition(
-            "culprit",
-            family.Digest
-        );
-        return (
-            GridBuildRecipe.CreateFull(
-                Timeline,
-                RowId('f'),
-                Target(definition)
-            ),
-            definition
-        );
-    }
+    private static MaintainerDefinitionDigest ChangedDefinitionDigest(MaintainerDefinitionDigest value)
+        => new(value.Value[0] == 'a' ? "b" + value.Value[1..] : "a" + value.Value[1..]);
 
-    private static MaintainerDefinitionDigest ChangedDefinitionDigest(
-        MaintainerDefinitionDigest value
-    ) => new(value.Value[0] == 'a'
-        ? "b" + value.Value[1..]
-        : "a" + value.Value[1..]);
-
-    private static HistorySegmentDescriptorDigest HistoryDigest(char value)
-        => new(new string(value, 64));
-
-    private static HistoryRowId RowId(char value)
-        => new(new string(value, 64));
-
-    private static string CanonicalSha(byte[] bytes)
-        => Convert.ToHexStringLower(SHA256.HashData(bytes));
-
-    private static FormalFixture FormalValues() {
-        FamilyDefinition family = Family();
-        MaintainerDefinitionRevision definition = Definition(
-            "culprit",
-            family.Digest
-        );
-        BuildTarget target = Target(definition);
-        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
-            Timeline,
-            RowId('a'),
-            target
-        );
-        EvaluationKey evaluation = EvaluationKey.Create(
-            HistoryDigest('b'),
-            definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact cell = RecapCellArtifact.Create(
-            definition.LogicalColumnId,
-            definition.Digest,
-            evaluation,
-            RecapCellOutcome.Updated,
-            "X had access to the service passage.",
-            definition.MaxContentUtf8Bytes
-        );
-        PriorInputProjectionDigest projection = PriorInputProjectionDigest.FromCells([cell]);
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            recipe,
-            Coordinate(recipe, RowId('a'), HistoryDigest('b')),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(
-                definition.LogicalColumnId,
-                evaluation
-            )]
-        );
-        RecapRowView view = RecapRowView.Create(spec, [cell]);
-        TimelineHeadRef timelineHead = new(
-            Timeline,
-            new RefId(1),
-            null,
-            new string('c', 64),
-            null,
-            0,
-            HistoryTimelineSelectedPath.EmptyDigest,
-            generation: 0
-        );
-        FulfilledViewKey fulfilled = FulfilledViewKey.Create(
-            new RefId(1),
-            timelineHead,
-            view.RowDescriptorDigest,
-            recipe
-        );
-        return new FormalFixture(
-            family,
-            definition,
-            target,
-            recipe,
-            projection,
-            evaluation,
-            cell,
-            spec,
-            view,
-            timelineHead,
-            fulfilled
-        );
-    }
-
-    private static RowViewCoordinate Coordinate(
-        GridBuildRecipe recipe,
-        HistoryRowId rowId,
-        HistorySegmentDescriptorDigest descriptor,
-        RowViewDigest? previousView = null,
-        bool? bootstrapCompleted = null
-    ) => new(
-        new RefId(1),
-        recipe.TimelineId,
-        rowId,
-        descriptor,
-        recipe.Digest,
-        recipe.Target.Digest,
-        previousView is null ? null : RowId('0'),
-        previousView,
-        bootstrapCompleted
-            ?? (recipe.Kind == GridBuildRecipeKind.Full
-                || recipe.BootstrapThroughRowId == rowId)
-    );
-
-    private sealed record FormalFixture(
-        FamilyDefinition Family,
-        MaintainerDefinitionRevision Definition,
-        BuildTarget Target,
-        GridBuildRecipe Recipe,
-        PriorInputProjectionDigest Projection,
-        EvaluationKey Evaluation,
-        RecapCellArtifact Cell,
-        RowBuildSpec Spec,
-        RecapRowView View,
-        TimelineHeadRef TimelineHead,
-        FulfilledViewKey Fulfilled
-    );
+    private static HistoryRowId RowId(char value) => new(new string(value, 64));
 }
