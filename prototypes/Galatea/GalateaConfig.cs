@@ -558,8 +558,7 @@ public sealed record RecapGridReadinessAuthorityDto(
     string StoreInstanceId,
     int StoreSchemaVersion,
     string RecipeDigest,
-    string ThroughRowId,
-    string ThroughDescriptorDigest
+    string ThroughRowId
 );
 
 public sealed record RecapGridReadinessMetricsDto(

@@ -507,7 +507,6 @@ function requireAuthority(value, label) {
     "refId", "timelineId", "timelineGeneration", "timelineHeadRowId",
     "controlGeneration", "controlStateDigest", "storeInstanceId",
     "storeSchemaVersion", "recipeDigest", "throughRowId",
-    "throughDescriptorDigest",
   ], label);
   requireNonblankString(authority.refId, `${label}.refId`);
   requireNonblankString(authority.timelineId, `${label}.timelineId`);
@@ -519,7 +518,6 @@ function requireAuthority(value, label) {
   requireNonnegativeInteger(authority.storeSchemaVersion, `${label}.storeSchemaVersion`);
   requireNonblankString(authority.recipeDigest, `${label}.recipeDigest`);
   requireNonblankString(authority.throughRowId, `${label}.throughRowId`);
-  requireNonblankString(authority.throughDescriptorDigest, `${label}.throughDescriptorDigest`);
   return authority;
 }
 

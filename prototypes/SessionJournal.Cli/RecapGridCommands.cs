@@ -84,6 +84,7 @@ internal static partial class RecapGridCommands {
             "export" => TimelineExport(options),
             "backup" => TimelineBackup(options),
             "restore" => TimelineRestore(options),
+            "upgrade-schema-v2" => TimelineUpgradeSchemaV2(options),
             "abandon" => TimelineAbandon(options),
             _ => throw new ArgumentException(
                 $"Unknown recap-grid timeline command '{action}'."

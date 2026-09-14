@@ -2321,7 +2321,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             item => Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
                 store.Reader.ReadView(new RowResultId(item.Key))).Value);
         object RowBody(RecapRowView row) => new {
-            row.RefId, row.TimelineId, row.HistoryRowId, row.RowDescriptorDigest,
+            row.RefId, row.TimelineId, row.HistoryRowId,
             row.RecipeDigest, row.TargetDigest, row.PreviousHistoryRowId, row.BootstrapCompleted,
             members = row.OrderedCells.Select(member => CellBody(cells[member.CellId.Value])).ToArray()
         };

@@ -251,8 +251,6 @@ internal static partial class RecapGridCommands {
                         selected.Selection.StoreIdentity,
                         recipe = selected.Selection.Recipe.Digest.Value,
                         rowId = selected.Selection.SelectedRowId.Value,
-                        descriptorDigest = selected.Selection
-                            .SelectedDescriptorDigest.Value,
                         rowResultId = selected.Selection.SelectedRowResultId.Value
                     },
                     candidate = new {

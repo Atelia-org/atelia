@@ -10,7 +10,6 @@ public sealed class RG0001RecapGridModuleDependencyTests {
         namespace Atelia.SessionJournal.HistoryTimeline {
             public readonly struct TimelineId { public TimelineId(string value) { } }
             public readonly struct HistoryRowId { public HistoryRowId(string value) { } }
-            public readonly struct HistorySegmentDescriptorDigest { public HistorySegmentDescriptorDigest(string value) { } }
             public static class HistoryTimelineMaintenance { public static void Open() { } }
             public readonly struct TimelineValue {
                 public static bool operator ==(
@@ -333,8 +332,7 @@ public sealed class RG0001RecapGridModuleDependencyTests {
             namespace Atelia.SessionJournal.RecapGrid.Store;
             public static class Read {
                 public static object[] Coordinates() => new object[] {
-                    new TimelineId("timeline"), new HistoryRowId("row"),
-                    new HistorySegmentDescriptorDigest("descriptor")
+                    new TimelineId("timeline"), new HistoryRowId("row")
                 };
             }
             """;

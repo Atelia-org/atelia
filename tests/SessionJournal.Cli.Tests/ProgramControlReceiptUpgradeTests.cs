@@ -139,7 +139,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         Assert.Equal(1, completed.ExecutionStateAtCapturedHead.ToolExecutionSequenceCheckpoint);
     }
 
-    private void ExtractControlReceiptFixture(string name) {
+    private void ExtractControlReceiptFixture(string name, bool upgradeTimeline = true) {
         ZipFile.ExtractToDirectory(
             Path.Combine(AppContext.BaseDirectory, "Fixtures", "ControlReceiptV2", name + ".zip"), _root);
         if (!OperatingSystem.IsWindows()) {
@@ -152,6 +152,14 @@ public sealed partial class ProgramRecapGridCommandTests {
             foreach (string file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories)) {
                 File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
+        }
+        if (upgradeTimeline) {
+            string locatorPath = Directory.GetFiles(Path.Combine(_root, "derived", "history-timeline"),
+                "locator.json", SearchOption.AllDirectories).Single();
+            ActiveTimelineLocator locator = HistoryTimelineCanonicalCodec.DecodeActiveTimelineLocator(
+                File.ReadAllBytes(locatorPath));
+            Assert.IsType<HistoryTimelineUpgradeResult.Upgraded>(
+                HistoryTimelineMaintenance.UpgradeSchemaV2(_root, locator.RefId, locator.ActiveTimelineId));
         }
     }
 

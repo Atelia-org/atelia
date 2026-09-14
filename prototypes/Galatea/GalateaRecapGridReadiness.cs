@@ -649,8 +649,7 @@ internal static class GalateaRecapGridReadiness {
         selection.ControlHead,
         selection.StoreIdentity,
         selection.Recipe.Digest,
-        selection.SelectedRowId,
-        selection.SelectedDescriptorDigest
+        selection.SelectedRowId
     );
 
     private static RecapGridReadinessAuthorityDto Authority(
@@ -660,8 +659,7 @@ internal static class GalateaRecapGridReadiness {
         authority.ControlHead,
         authority.StoreIdentity,
         authority.RecipeDigest,
-        authority.ThroughRowId,
-        authority.ThroughDescriptorDigest
+        authority.ThroughRowId
     );
 
     private static RecapGridReadinessAuthorityDto Authority(
@@ -669,8 +667,7 @@ internal static class GalateaRecapGridReadiness {
         ControlHeadRef control,
         RecapGridStoreIdentity store,
         GridBuildRecipeDigest recipe,
-        HistoryRowId through,
-        HistorySegmentDescriptorDigest descriptor
+        HistoryRowId through
     ) => new(
         timeline.RefId.ToHexString(),
         timeline.TimelineId.Value!,
@@ -681,8 +678,7 @@ internal static class GalateaRecapGridReadiness {
         store.InstanceId.Value!,
         store.SchemaVersion,
         recipe.Value!,
-        through.Value!,
-        descriptor.Value!
+        through.Value!
     );
 
     private static RecapGridReadinessSnapshotDto Exact(

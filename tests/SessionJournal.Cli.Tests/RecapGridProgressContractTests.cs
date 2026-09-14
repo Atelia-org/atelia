@@ -16,8 +16,7 @@ public sealed class RecapGridProgressContractTests {
                 null,
                 null,
                 default(GridBuildRecipeDigest),
-                default(HistoryRowId),
-                default(HistorySegmentDescriptorDigest)
+                default(HistoryRowId)
             );
         var nextWork = (RecapGridRecipeRowWork)InvokeArgumentConstructor(
             typeof(RecapGridRecipeRowWork),
@@ -59,8 +58,7 @@ public sealed class RecapGridProgressContractTests {
                 "\"TimelineHead\":null,\"ControlHead\":null," +
                 "\"StoreIdentity\":null," +
                 "\"RecipeDigest\":{\"Value\":null}," +
-                "\"ThroughRowId\":{\"Value\":null}," +
-                "\"ThroughDescriptorDigest\":{\"Value\":null}}," +
+                "\"ThroughRowId\":{\"Value\":null}}," +
                 "\"AnchorRowId\":null," +
                 "\"NextWork\":{" +
                 "\"RowId\":{\"Value\":null}," +

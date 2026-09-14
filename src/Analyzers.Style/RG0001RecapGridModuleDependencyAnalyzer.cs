@@ -435,7 +435,7 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
         return type is { TypeKind: TypeKind.Struct, IsReadOnly: true }
             && type.ContainingNamespace.ToDisplayString()
                 == "Atelia.SessionJournal.HistoryTimeline"
-            && type.Name is "TimelineId" or "HistoryRowId" or "HistorySegmentDescriptorDigest";
+            && type.Name is "TimelineId" or "HistoryRowId";
     }
 
     private static bool ContainsPathSegment(string path, string segment) =>
