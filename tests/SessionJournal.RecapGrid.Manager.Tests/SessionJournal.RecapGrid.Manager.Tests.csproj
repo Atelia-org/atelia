@@ -23,4 +23,9 @@
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2/repository.zip" Link="Fixtures/RowIdentityV2/repository.zip" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2/expected.json" Link="Fixtures/RowIdentityV2/expected.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
