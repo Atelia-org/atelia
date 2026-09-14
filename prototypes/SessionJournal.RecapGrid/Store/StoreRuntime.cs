@@ -311,13 +311,13 @@ public sealed class RecapGridStoreReader {
     }
 
     public RecapGridStoreReadResult<RecapCellArtifact> ReadCell(
-        CellId cellDigest
+        CellId cellId
     ) {
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         if (operation is null) {
             return new RecapGridStoreReadResult<RecapCellArtifact>.Disposed();
         }
-        return Read(() => _store.ReadCellById(cellDigest));
+        return Read(() => _store.ReadCellById(cellId));
     }
 
     internal RecapGridMissingResult FindMissingAssignments(RowBuildSpec spec) {
@@ -345,7 +345,7 @@ public sealed class RecapGridStoreReader {
     }
 
     public RecapGridStoreReadResult<RecapRowView> ReadView(
-        RowResultId digest
+        RowResultId rowResultId
     ) {
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         if (operation is null) {
@@ -356,7 +356,7 @@ public sealed class RecapGridStoreReader {
                 .Invalid(code, detail);
         }
         try {
-            RecapRowView? value = _store.ReadRowView(digest);
+            RecapRowView? value = _store.ReadRowView(rowResultId);
             return value is null
                 ? new RecapGridStoreReadResult<RecapRowView>.Missing()
                 : new RecapGridStoreReadResult<RecapRowView>.Found(value);
@@ -500,12 +500,12 @@ internal sealed class RecapGridStoreWriter {
 
     public RecapGridFulfilledPutResult PutFulfilled(
         FulfilledViewKey key,
-        RowResultId viewDigest
+        RowResultId rowResultId
     ) {
         ArgumentNullException.ThrowIfNull(key);
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         return operation is null
             ? new RecapGridFulfilledPutResult.Disposed()
-            : _store.PutFulfilled(key, viewDigest);
+            : _store.PutFulfilled(key, rowResultId);
     }
 }

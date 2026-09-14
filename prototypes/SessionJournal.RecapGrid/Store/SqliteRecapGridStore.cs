@@ -262,15 +262,15 @@ internal sealed class SqliteRecapGridStore {
         return ReadCellBySlotCore(connection, null, slot);
     }
 
-    internal RecapCellArtifact? ReadCellById(CellId digest) {
-        if (digest.Value is null) {
+    internal RecapCellArtifact? ReadCellById(CellId cellId) {
+        if (cellId.Value is null) {
             throw new ArgumentException(
                 "CellId must not be default.",
-                nameof(digest)
+                nameof(cellId)
             );
         }
         using SqliteConnection connection = OpenVerifiedConnection();
-        return ReadCellByIdCore(connection, transaction: null, digest);
+        return ReadCellByIdCore(connection, transaction: null, cellId);
     }
 
     internal RecapGridMissingResult FindMissing(RowBuildSpec spec) {
@@ -320,15 +320,15 @@ internal sealed class SqliteRecapGridStore {
             );
     }
 
-    internal RecapRowView? ReadRowView(RowResultId digest) {
-        if (digest.Value is null) {
+    internal RecapRowView? ReadRowView(RowResultId rowResultId) {
+        if (rowResultId.Value is null) {
             throw new ArgumentException(
                 "RowResultId must not be default.",
-                nameof(digest)
+                nameof(rowResultId)
             );
         }
         using SqliteConnection connection = OpenVerifiedConnection();
-        return ReadRowViewCore(connection, transaction: null, digest);
+        return ReadRowViewCore(connection, transaction: null, rowResultId);
     }
 
     internal RecapRowView? ReadRowViewAt(RowViewAssignmentKey key) {
@@ -340,12 +340,12 @@ internal sealed class SqliteRecapGridStore {
     internal RecapGridFulfilledView? ReadFulfilled(FulfilledViewKey key) {
         ArgumentNullException.ThrowIfNull(key);
         using SqliteConnection connection = OpenVerifiedConnection();
-        RowResultId? digest = ReadFulfilledCore(
+        RowResultId? rowResultId = ReadFulfilledCore(
             connection,
             transaction: null,
             key
         );
-        return digest is null ? null : new RecapGridFulfilledView(digest.Value);
+        return rowResultId is null ? null : new RecapGridFulfilledView(rowResultId.Value);
     }
 
     internal RecapGridCellPutResult PutCell(RowBuildSpec spec, RecapCellDraft proposed) {
@@ -579,13 +579,13 @@ internal sealed class SqliteRecapGridStore {
 
     internal RecapGridFulfilledPutResult PutFulfilled(
         FulfilledViewKey key,
-        RowResultId viewDigest
+        RowResultId rowResultId
     ) {
         ArgumentNullException.ThrowIfNull(key);
-        if (viewDigest.Value is null) {
+        if (rowResultId.Value is null) {
             throw new ArgumentException(
                 "RowResultId must not be default.",
-                nameof(viewDigest)
+                nameof(rowResultId)
             );
         }
         if (_readOnly) {
@@ -612,7 +612,7 @@ internal sealed class SqliteRecapGridStore {
                 );
                 if (existing is not null) {
                     transaction.Rollback();
-                    if (existing == viewDigest) {
+                    if (existing == rowResultId) {
                         return new RecapGridFulfilledPutResult
                             .AlreadyPresent();
                     }
@@ -628,7 +628,7 @@ internal sealed class SqliteRecapGridStore {
                 RecapRowView? view = ReadRowViewCore(
                     connection,
                     transaction,
-                    viewDigest
+                    rowResultId
                 );
                 if (view is null) {
                     transaction.Rollback();
@@ -650,7 +650,7 @@ internal sealed class SqliteRecapGridStore {
                     connection,
                     transaction,
                     key,
-                    viewDigest
+                    rowResultId
                 );
                 WriteCounts(
                     connection,
@@ -1682,7 +1682,7 @@ internal sealed class SqliteRecapGridStore {
             if (items.Count >= RecapGridStoreLimits.MaximumPageItems) {
                 return false;
             }
-            (FulfilledViewKey key, RowResultId viewDigest) =
+            (FulfilledViewKey key, RowResultId rowResultId) =
                 ValidateFulfilledPhysicalRow(connection, transaction, row);
             byte[] canonical = ExportFulfilledJson(key);
             RecapGridStoreExportCursor cursor =
@@ -1701,7 +1701,7 @@ internal sealed class SqliteRecapGridStore {
                         cursor.Key,
                         canonical.Length,
                         includeContent ? canonical : null,
-                        viewDigest
+                        rowResultId
                     ))) {
                 return false;
             }
@@ -1745,8 +1745,8 @@ internal sealed class SqliteRecapGridStore {
                 after,
                 static value => new CellId(value)
             );
-            foreach (CellId digest in page) {
-                _ = ReadCellByIdCore(connection, transaction, digest)
+            foreach (CellId cellId in page) {
+                _ = ReadCellByIdCore(connection, transaction, cellId)
                     ?? throw new InvalidDataException(
                         "A Cell disappeared during verification."
                     );
@@ -1772,11 +1772,11 @@ internal sealed class SqliteRecapGridStore {
                 after,
                 static value => new RowResultId(value)
             );
-            foreach (RowResultId digest in page) {
+            foreach (RowResultId rowResultId in page) {
                 RecapRowView view = ReadRowViewCore(
                     connection,
                     transaction,
-                    digest
+                    rowResultId
                 ) ?? throw new InvalidDataException(
                     "A RowView disappeared during verification."
                 );
@@ -1890,7 +1890,7 @@ internal sealed class SqliteRecapGridStore {
         }
     }
 
-    private static (FulfilledViewKey Key, RowResultId ViewDigest)
+    private static (FulfilledViewKey Key, RowResultId RowResultId)
         ValidateFulfilledPhysicalRow(
             SqliteConnection connection,
             SqliteTransaction transaction,
@@ -1898,7 +1898,7 @@ internal sealed class SqliteRecapGridStore {
         ) {
         var key = DecodeStoredValue(() => new FulfilledViewKey(ParseRef(row.RefId), new(row.TimelineId), row.Generation,
             new(row.Through), new(row.Recipe)));
-        var id = DecodeStoredValue(() => new RowResultId(row.ViewDigest));
+        var id = DecodeStoredValue(() => new RowResultId(row.RowResultId));
         ValidateFulfilledTarget(connection, transaction, key, id);
         return (key, id);
     }
@@ -1909,7 +1909,7 @@ internal sealed class SqliteRecapGridStore {
         long Generation,
         string Through,
         string Recipe,
-        string ViewDigest
+        string RowResultId
     );
 
     // Translate malformed SQL values only; public input validation stays outside this boundary.
