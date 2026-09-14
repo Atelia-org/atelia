@@ -7,9 +7,9 @@ Diagnostics、Completion.Abstractions、Completion、Completion.Tools 的源码�
 
 ## 默认包模式
 
-公开交付完成后，普通 `dotnet build Atelia.sln -c Release` 直接从 nuget.org restore，
-不需要新仓检出或 Prepare 脚本。当前迁移候选的开发包验收使用仓外冻结 feed；
-合入共享 main 前必须切到已公开且实测可还原的版本。
+普通 `dotnet build Atelia.sln -c Release` 直接从 nuget.org restore，
+不需要新仓检出或 Prepare 脚本。当前使用 `0.1.0-preview.1`，对应源码
+`3ae1ebeccdd94a7bd507444154a283201a68c992`；具体 pin 以 props 为准。
 
 对应版本指南：[快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)、
 [传输合同](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Completion/README.md)、

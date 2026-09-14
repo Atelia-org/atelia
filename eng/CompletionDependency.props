@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <CompletionPackageVersion Condition="'$(CompletionPackageVersion)' == ''">0.1.0-dev.20260914.2</CompletionPackageVersion>
+    <CompletionPackageVersion Condition="'$(CompletionPackageVersion)' == ''">0.1.0-preview.1</CompletionPackageVersion>
     <CompletionSourceRevision>3ae1ebeccdd94a7bd507444154a283201a68c992</CompletionSourceRevision>
     <CompletionRepositoryUrl>https://github.com/Atelia-org/atelia-completion.git</CompletionRepositoryUrl>
     <UseCompletionSources Condition="'$(UseCompletionSources)' == ''">false</UseCompletionSources>
