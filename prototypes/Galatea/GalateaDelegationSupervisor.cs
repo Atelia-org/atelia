@@ -21,6 +21,13 @@ internal sealed record GalateaDelegationUserStatus(
     string? UnavailableCode
 );
 
+/// <summary>One sender-owned outbox row exposed to the target delivery gate.</summary>
+internal sealed record GalateaInternalMailSourceOutbox(
+    string SourceUserId,
+    GalateaDelegationSqliteStore Store,
+    GalateaInternalMailOutboxSnapshot Outbox
+);
+
 internal sealed class GalateaDelegationUserUnavailableException
     : InvalidOperationException {
     internal GalateaDelegationUserUnavailableException(
@@ -272,6 +279,38 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
     internal GalateaDelegationUserStatus ReadStatus(string userId) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
         return GetSlot(userId).ReadStatus();
+    }
+
+    /// <summary>
+    /// Reads all writable sender stores for a target without attaching source
+    /// sessions. An uninitialized source has never captured mail and is safely
+    /// empty; an unavailable/read-only source cannot prove that fact and is a
+    /// target writer gate failure.
+    /// </summary>
+    internal IReadOnlyList<GalateaInternalMailSourceOutbox>
+        ReadInternalMailOutboxesForTarget(string targetUserId) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetUserId);
+        var result = new List<GalateaInternalMailSourceOutbox>();
+        foreach (UserSlot slot in _slots.Values) {
+            GalateaDelegationUserStatus status = slot.ReadStatus();
+            if (status.Availability
+                == GalateaDelegationUserAvailability.Uninitialized) {
+                continue;
+            }
+            if (status.Availability != GalateaDelegationUserAvailability.Writable) {
+                throw new GalateaDelegationUserUnavailableException(
+                    status.UserId,
+                    status.UnavailableCode ?? "STORE_NOT_WRITABLE"
+                );
+            }
+            GalateaDelegationSqliteStore store = slot.Store;
+            foreach (GalateaInternalMailOutboxSnapshot outbox in
+                store.ReadInternalMailOutboxesForTarget(targetUserId)) {
+                result.Add(new GalateaInternalMailSourceOutbox(
+                    status.UserId, store, outbox));
+            }
+        }
+        return result;
     }
 
     /// <summary>

@@ -64,7 +64,10 @@ builder.Services.AddSingleton(static services => new GalateaHostService(
 ));
 builder.Services.AddSingleton<GalateaAcceptedTurnRunner>();
 builder.Services.AddSingleton<GalateaAutomaticTurnCoordinator>();
+builder.Services.AddSingleton<GalateaCharacterMailRelay>();
 builder.Services.AddHostedService<GalateaServerAgentHostedService>();
+builder.Services.AddHostedService(static services =>
+    services.GetRequiredService<GalateaCharacterMailRelay>());
 builder.Services.ConfigureHttpJsonOptions(
     options => GalateaHttpV1.ConfigureJson(options.SerializerOptions)
 );

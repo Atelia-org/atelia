@@ -51,7 +51,14 @@ internal abstract record GalateaFreshInput {
             );
     }
 
-    internal sealed record InboundMail(MailboxMessage Message)
+    /// <summary>
+    /// A mailbox Observation.  HTTP mail has no delivery binding; the binding
+    /// is an in-process capability carried only by the character-mail relay.
+    /// </summary>
+    internal sealed record InboundMail(
+        MailboxMessage Message,
+        GalateaInternalMailDeliveryBinding? InternalDelivery = null
+    )
         : GalateaFreshInput {
         internal override string DisplayText =>
             GalateaMailboxObservationEnvelope.FormatForDisplay(Message);

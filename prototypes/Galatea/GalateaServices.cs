@@ -60,6 +60,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
     private readonly GalateaDelegationSupervisor _delegationSupervisor;
+    private readonly GalateaCharacterRecipientDirectory?
+        _characterRecipientDirectory;
     private readonly GalateaPlayerTurnRecallProviderFactory?
         _playerTurnRecallProviderFactory;
     private readonly TimeProvider _timeProvider;
@@ -76,6 +78,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly object _lifecycleGate = new();
     private bool _stopping;
     private GalateaAcceptedTurnRunner? _turnRunner;
+    private GalateaCharacterMailRelay? _characterMailRelay;
     private Task? _disposeTask;
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
@@ -142,6 +145,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _sessionBootstrapAdmission = components.SessionBootstrapAdmission;
         _completionOwner = components.Owner;
         _delegationSupervisor = components.DelegationSupervisor;
+        _characterRecipientDirectory = config.CharacterRecipientDirectory;
         _playerTurnRecallProviderFactory =
             components.PlayerTurnRecallProviderFactory;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -213,6 +217,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             userMessageNormalizer
         );
         _maintenanceMode = config.MaintenanceMode;
+        _characterRecipientDirectory = config.CharacterRecipientDirectory;
         _characterNoteBindingEnabled =
             config.CharacterNoteExtractorConnectionId is not null;
         _allowMissingCharacterNoteDerivedInfoEnricher = true;
@@ -579,6 +584,34 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (stopping) { runner.BeginShutdown(); }
     }
 
+    internal void RegisterCharacterMailRelay(GalateaCharacterMailRelay relay) {
+        ArgumentNullException.ThrowIfNull(relay);
+        bool stopping;
+        lock (_lifecycleGate) {
+            if (_characterMailRelay is not null
+                && !ReferenceEquals(_characterMailRelay, relay)) {
+                throw new InvalidOperationException(
+                    "Only one character-mail relay may own a host.");
+            }
+            _characterMailRelay = relay;
+            stopping = _stopping;
+        }
+        if (stopping) { relay.BeginShutdown(); }
+    }
+
+    internal IReadOnlyList<GalateaCharacterRecipient> CharacterRecipients =>
+        _characterRecipientDirectory?.Recipients
+            ?? Array.Empty<GalateaCharacterRecipient>();
+
+    internal bool IsCurrentInternalMailTarget(
+        GalateaInternalMailOutboxSnapshot outbox
+    ) => _characterRecipientDirectory?.Recipients.Any(recipient =>
+            string.Equals(recipient.UserId, outbox.TargetUserId,
+                StringComparison.Ordinal)
+            && string.Equals(recipient.SessionRepositoryId,
+                outbox.TargetSessionRepositoryId,
+                StringComparison.Ordinal)) == true;
+
     internal UserSessionHost? ReadAttachedSession(string userId) {
         if (!_sessions.TryGetValue(userId, out var lazy) || !lazy.IsValueCreated) {
             return null;
@@ -658,6 +691,28 @@ public sealed class GalateaHostService : IAsyncDisposable {
             >(userId, lazy));
             throw;
         }
+    }
+
+    private GalateaInternalMailTarget? ResolveInternalMailTarget(
+        GalateaUserConfig sender,
+        SendMailIntent intent
+    ) {
+        ArgumentNullException.ThrowIfNull(sender);
+        ArgumentNullException.ThrowIfNull(intent);
+        if (_characterRecipientDirectory is null
+            || !_characterRecipientDirectory.TryGetExact(
+                intent.Recipient, out GalateaCharacterRecipient? target)
+            || string.Equals(target.UserId, sender.UserId,
+                StringComparison.Ordinal)) {
+            return null;
+        }
+        return new GalateaInternalMailTarget(
+            target.UserId,
+            target.SessionRepositoryId
+                ?? throw new InvalidDataException(
+                    "A configured character-mail target has no repository locator."),
+            sender.CharacterName.Value
+        );
     }
 
     private StableRecentTurnsProjection BuildRecentTurnsResponse(
@@ -1715,13 +1770,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal GalateaLiveTurn StartInboundMailTurn(
         UserSessionHost host,
         MailboxMessage message,
-        GalateaTurnOptions options
+        GalateaTurnOptions options,
+        GalateaInternalMailDeliveryBinding? internalDelivery = null
     ) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(options);
         return host.StartTurn(
-            new GalateaFreshInput.InboundMail(message),
+            new GalateaFreshInput.InboundMail(message, internalDelivery),
             options
         );
     }
@@ -1742,6 +1798,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(host);
+        GalateaCharacterMailDeliveryReconciler.Reconcile(
+            _delegationSupervisor, host, cancellationToken);
         GalateaNoteReceiptDelivery.Reconcile(
             host.CharacterMemoryReconciler, host.Engine, cancellationToken);
         SessionCompletedTurnRewindPrepareResult preparation =
@@ -1843,6 +1901,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
             "completed",
             StringComparison.Ordinal
         );
+        if (!completed
+            && turn.FreshInput is GalateaFreshInput.InboundMail {
+                InternalDelivery: not null
+            }) {
+            // A relay-owned inbound mail may already have appended its
+            // Observation. Keep automatic admission paused until the normal
+            // recovery/settlement path has made that boundary explicit.
+            host.AutomaticAdmissionFailed = true;
+            host.AutomaticAdmissionFailure = new ApiErrorDto(
+                "character-mail-generation-failed",
+                "角色站内信生成未完成；请先处理会话恢复。"
+            );
+        }
         bool settled = host.AutonomyCadence.SettleMainTurn(
             turn.AutonomyCadenceSettlement,
             turn.FreshInput is GalateaFreshInput.HeartbeatActivation,
@@ -1868,6 +1939,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
         host.FinishTurn(turn);
         host.PublishAutonomyStatus();
+        _characterMailRelay?.Signal();
     }
 
     /// <summary>
@@ -2073,7 +2145,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         liveTurn.PublishDone(snapshot);
     }
 
-    private static async ValueTask<
+    private async ValueTask<
         GalateaOutboundMailExtractionReconcileResult>
         ReconcileOutboundMailExtractionAsync(
         UserSessionHost host,
@@ -2105,6 +2177,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
             if (result is GalateaOutboundMailExtractionReconcileResult.Captured) {
                 _ = host.DelegationHandle?.Signal();
+                _characterMailRelay?.Signal();
             }
             return result;
         }
@@ -2690,6 +2763,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     private async Task DisposeCoreAsync() {
         List<Exception>? failures = null;
+        if (_characterMailRelay is { } relay) {
+            try { await relay.DrainAsync().ConfigureAwait(false); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
         if (_turnRunner is { } runner) {
             try { await runner.DrainAsync().ConfigureAwait(false); }
             catch (Exception exception) { (failures ??= []).Add(exception); }
@@ -2747,10 +2824,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     internal void BeginShutdown() {
         GalateaAcceptedTurnRunner? runner;
+        GalateaCharacterMailRelay? characterMailRelay;
         lock (_lifecycleGate) {
             _stopping = true;
             runner = _turnRunner;
+            characterMailRelay = _characterMailRelay;
         }
+        characterMailRelay?.BeginShutdown();
         runner?.BeginShutdown();
         _delegationSupervisor.BeginShutdown();
     }
@@ -2916,6 +2996,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ready.GoverningSetup.Head,
             prompted
         );
+        if (liveTurn.FreshInput is GalateaFreshInput.InboundMail {
+                InternalDelivery: { } internalDelivery
+            }) {
+            internalDelivery.BindObservationBase(
+                host.Engine,
+                ready.GoverningSetup.Head,
+                prompted
+            );
+        }
         if (receiptDelivery is not null) {
             GalateaNoteReceiptDelivery.Bind(
                 host.CharacterMemoryReconciler!, host.Engine,
@@ -3538,7 +3627,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     ? null
                     : RequireCharacterNoteDerivedInfoDeadline(),
                 playerTurnRecallProvider,
-                _timeProvider
+                _timeProvider,
+                intent => ResolveInternalMailTarget(user, intent)
             );
             characterMemory = null;
             delegationHandle = null;
@@ -3648,7 +3738,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private static void AbandonCurrentFailedTurnAndReconcile(
+    private void AbandonCurrentFailedTurnAndReconcile(
         UserSessionHost host
     ) {
         SessionExecutionBoundaryInspection boundary =
@@ -3667,7 +3757,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
     }
 
-    private static void AbandonFailedTurnAndReconcile(
+    private void AbandonFailedTurnAndReconcile(
         UserSessionHost host,
         EventAddress failedHead,
         CancellationToken cancellationToken
@@ -3703,11 +3793,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private static GalateaDurableReplyLeaseReconcileResult
+    private GalateaDurableReplyLeaseReconcileResult
         ReconcileDurableDeliveries(
         UserSessionHost host,
         CancellationToken cancellationToken
     ) {
+        GalateaCharacterMailDeliveryReconciler.Reconcile(
+            _delegationSupervisor, host, cancellationToken);
         GalateaNoteReceiptDelivery.Reconcile(
             host.CharacterMemoryReconciler, host.Engine, cancellationToken);
         GalateaDurableReplyLeaseReconcileResult result = host
@@ -3751,7 +3843,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         };
     }
 
-    private static void ReconcileDurableDeliveriesBestEffort(
+    private void ReconcileDurableDeliveriesBestEffort(
         UserSessionHost host,
         GalateaLiveTurn liveTurn
     ) {
@@ -3978,7 +4070,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
         ICharacterNoteDerivedInfoEnricher? derivedInfoEnricher,
         TimeSpan? derivedInfoProviderDeadline,
         IGalateaPlayerTurnRecallProvider playerTurnRecallProvider,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        Func<SendMailIntent, GalateaInternalMailTarget?>?
+            resolveInternalMailTarget = null
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(engine);
@@ -4016,7 +4110,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
             OutboundMailExtractionReconciler =
                 new GalateaOutboundMailExtractionReconciler(
                     delegationHandle.Store,
-                    outboundMailExtractor
+                    outboundMailExtractor,
+                    resolveInternalMailTarget
                 );
         }
     }
