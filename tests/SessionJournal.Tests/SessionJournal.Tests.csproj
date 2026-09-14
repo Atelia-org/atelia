@@ -15,7 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/Completion.Tools/Completion.Tools.csproj" />
+    <PackageReference Include="Atelia.Completion.Tools" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Tools/Completion.Tools.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
   </ItemGroup>

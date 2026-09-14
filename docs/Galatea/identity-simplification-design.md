@@ -53,7 +53,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 
 | 机制 | 代码与消费者 | 结论强度 |
 |---|---|---|
-| Adapter 指纹 | [CompletionDispatchIdentity](../../src/Completion/CompletionDispatchIdentity.cs)，[Registry.BindExact](../../src/Completion/CompletionConnections.cs)，[Galatea BindPrepared](../../prototypes/Galatea/GalateaRecapGridComposition.cs) | 已确认：hash 的是手工 mapping 标签，不是实际 adapter 代码/HTTP 请求 |
+| Adapter 指纹 | [CompletionDispatchIdentity](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Completion/CompletionDispatchIdentity.cs)，[Registry.BindExact](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Completion/CompletionConnections.cs)，[Galatea BindPrepared](../../prototypes/Galatea/GalateaRecapGridComposition.cs) | 已确认：hash 的是手工 mapping 标签，不是实际 adapter 代码/HTTP 请求 |
 | 恢复二次比对 | [SessionJournalEngine](../../prototypes/SessionJournal/SessionJournalEngine.cs) `ValidateRecoveryRuntimeCompatibility`、[RuntimeRecovery](../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) `CreateFrozenCompletionRequirement` | 已确认：不只 Registry 一处检查；只绕过 Host 门槛不足以正确完成变更 |
 | 同 body 双身份 | [HistoryTimelineCanonicalCodec](../../prototypes/SessionJournal.HistoryTimeline/HistoryTimelineCanonicalCodec.cs) `RowIdDomain` / `DescriptorDomain` | 已确认：同 descriptor body 换 domain 计算两遍 |
 | 结果身份与唯一性 | 基线 `Store/SchemaV2.sql`（已退役；当前为 [SchemaV4.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV4.sql)）、[SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) | 基线事实：cell 的 evaluation key 唯一；row 的 `(ref,timeline,recipe,row)` 唯一；后继已改 Slot/普通结果 ID |
@@ -211,6 +211,7 @@ Prepared 保存的 ContextSnapshot 正文没有 Cell/Row/Store ID。旧冻结请
 第一切片验证项目：
 
 ```bash
+# Completion.Tests 已迁至 atelia-completion；下条命令在该仓执行。
 dotnet test tests/Completion.Tests/Completion.Tests.csproj --no-restore -m:1 -nr:false
 dotnet test tests/SessionJournal.Tests/SessionJournal.Tests.csproj --no-restore -m:1 -nr:false
 dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName!~CharacterNoteTranscriptionLiveTests&FullyQualifiedName!~GalateaCodexDelegationLiveTests&FullyQualifiedName!~GalateaScenarioLabLiveTests' -- xUnit.MaxParallelThreads=4

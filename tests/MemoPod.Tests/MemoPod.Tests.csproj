@@ -15,7 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/Completion/Completion.csproj" />
+    <PackageReference Include="Atelia.Completion" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion/Completion.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="../../prototypes/MemoPod.DebugApp/MemoPod.DebugApp.csproj" />
     <ProjectReference Include="../../prototypes/MemoPod/MemoPod.csproj" />
     <ProjectReference Include="../MemoPod.CrashHarness/MemoPod.CrashHarness.csproj"

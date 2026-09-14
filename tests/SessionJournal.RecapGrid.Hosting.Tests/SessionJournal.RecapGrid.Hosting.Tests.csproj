@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
-    <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
+    <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
   </ItemGroup>
 </Project>

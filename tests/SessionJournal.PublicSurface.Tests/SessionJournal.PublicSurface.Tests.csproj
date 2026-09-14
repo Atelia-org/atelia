@@ -15,8 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
-    <ProjectReference Include="../../src/Completion.Tools/Completion.Tools.csproj" />
+    <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
+    <PackageReference Include="Atelia.Completion.Tools" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Tools/Completion.Tools.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
   </ItemGroup>
 

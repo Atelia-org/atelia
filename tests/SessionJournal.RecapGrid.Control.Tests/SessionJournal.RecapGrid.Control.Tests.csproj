@@ -24,7 +24,8 @@
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
-    <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
+    <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Control.CrashHarness/SessionJournal.RecapGrid.Control.CrashHarness.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 

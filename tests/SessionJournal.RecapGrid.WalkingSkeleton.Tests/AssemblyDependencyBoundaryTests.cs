@@ -51,7 +51,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
-                "../../src/Completion.Abstractions/Completion.Abstractions.csproj",
+                "$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj",
                 "../SessionJournal/SessionJournal.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
             ],
@@ -60,8 +60,8 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             [
                 "$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj",
-                "../../src/Completion.Abstractions/Completion.Abstractions.csproj",
-                "../../src/Completion.Tools/Completion.Tools.csproj",
+                "$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj",
+                "$(CompletionSourceRoot)/src/Completion.Tools/Completion.Tools.csproj",
                 "../SessionJournal/SessionJournal.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
                 "../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj"
@@ -72,8 +72,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             [
                 "../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
-                "../../src/Completion/Completion.csproj",
-                "../../src/Completion.Abstractions/Completion.Abstractions.csproj"
+                "$(CompletionSourceRoot)/src/Completion/Completion.csproj",
+                "$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj"
             ],
             DirectProjectReferences(hostingProject)
         );
@@ -102,6 +102,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "Atelia.Completion.Abstractions@$(CompletionPackageVersion)",
                 "Microsoft.ML.Tokenizers@2.0.0",
                 "Microsoft.ML.Tokenizers.Data.O200kBase@2.0.0"
             ],
@@ -122,12 +123,20 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             [
                 "Atelia.EventJournal@$(StoragePackageVersion)",
+                "Atelia.Completion.Abstractions@$(CompletionPackageVersion)",
+                "Atelia.Completion.Tools@$(CompletionPackageVersion)",
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12"
             ],
             DirectPackageReferences(recapGridProject)
         );
-        Assert.Empty(DirectPackageReferences(hostingProject));
+        Assert.Equal(
+            [
+                "Atelia.Completion@$(CompletionPackageVersion)",
+                "Atelia.Completion.Abstractions@$(CompletionPackageVersion)"
+            ],
+            DirectPackageReferences(hostingProject)
+        );
         Assert.Equal(
             ["Atelia.EventJournal@$(StoragePackageVersion)"],
             DirectPackageReferences(cadenceProject)
@@ -741,27 +750,16 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparer.Ordinal
             );
         }
-        string[] completionFriends = [.. File.ReadLines(
-            Path.Combine(
-                root,
-                "src",
-                "Completion",
-                "Properties",
-                "AssemblyInfo.cs"
+        // The library owns its exact internal friend list. The consumer verifies
+        // the actual package/source assembly grants no SessionJournal friend access.
+        Assembly completion = Assembly.LoadFrom(
+            Path.Combine(AppContext.BaseDirectory, "Atelia.Completion.dll")
+        );
+        Assert.DoesNotContain(
+            completion.GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>(),
+            static friend => friend.AssemblyName.StartsWith(
+                "Atelia.SessionJournal", StringComparison.Ordinal
             )
-        )
-            .Where(
-            static line => line.Contains(
-                "InternalsVisibleTo",
-                StringComparison.Ordinal
-            )
-        )];
-        Assert.Equal(
-            [
-                "[assembly: InternalsVisibleTo(\"Atelia.Completion.Tests\")]",
-                "[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.RecapGrid.Runtime.Tests\")]"
-            ],
-            completionFriends
         );
         string runtimeTestsProject = Path.Combine(
             root,
@@ -770,8 +768,13 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Runtime.Tests.csproj"
         );
         Assert.Contains(
-            "../../src/Completion/Completion.csproj",
+            "$(CompletionSourceRoot)/src/Completion/Completion.csproj",
             DirectProjectReferences(runtimeTestsProject),
+            StringComparer.Ordinal
+        );
+        Assert.Contains(
+            "Atelia.Completion@$(CompletionPackageVersion)",
+            DirectPackageReferences(runtimeTestsProject),
             StringComparer.Ordinal
         );
     }
@@ -1506,6 +1509,7 @@ public sealed class AssemblyDependencyBoundaryTests {
     private static string[] DirectProjectReferences(string projectPath) {
         XDocument document = XDocument.Load(projectPath);
         AssertStorageReferencePairs(document);
+        AssertCompletionReferencePairs(document);
         return [.. document
             .Descendants("ProjectReference")
             .Select(element => (string?)element.Attribute("Include"))
@@ -1516,6 +1520,7 @@ public sealed class AssemblyDependencyBoundaryTests {
     private static string[] DirectPackageReferences(string projectPath) {
         XDocument document = XDocument.Load(projectPath);
         AssertStorageReferencePairs(document);
+        AssertCompletionReferencePairs(document);
         return [.. document
             .Descendants("PackageReference")
             .Select(
@@ -1569,6 +1574,38 @@ public sealed class AssemblyDependencyBoundaryTests {
         }
     }
 
+    // Only these four declared upstream projects terminate the source graph;
+    // unknown paths/properties still fail instead of being silently skipped.
+    private static readonly string[] CompletionProjectNames =
+        ["Diagnostics", "Completion.Abstractions", "Completion", "Completion.Tools"];
+
+    private static bool IsCompletionSourceReference(string reference) =>
+        CompletionProjectNames.Any(
+            name => string.Equals(
+                reference,
+                $"$(CompletionSourceRoot)/src/{name}/{name}.csproj",
+                StringComparison.Ordinal
+            )
+        );
+
+    private static void AssertCompletionReferencePairs(XDocument document) {
+        foreach (string name in CompletionProjectNames) {
+            XElement[] source = [.. document.Descendants("ProjectReference")
+                .Where(
+                element => ((string?)element.Attribute("Include"))
+                    ?.Replace('\\', '/') == $"$(CompletionSourceRoot)/src/{name}/{name}.csproj"
+            )];
+            XElement[] package = [.. document.Descendants("PackageReference")
+                .Where(element => (string?)element.Attribute("Include") == $"Atelia.{name}")];
+            if (source.Length == 0 && package.Length == 0) { continue; }
+            XElement sourceReference = Assert.Single(source);
+            XElement packageReference = Assert.Single(package);
+            Assert.Equal("'$(UseCompletionSources)' == 'true'", (string?)sourceReference.Attribute("Condition"));
+            Assert.Equal("'$(UseCompletionSources)' != 'true'", (string?)packageReference.Attribute("Condition"));
+            Assert.Equal("$(CompletionPackageVersion)", (string?)packageReference.Attribute("Version"));
+        }
+    }
+
     private static IEnumerable<Type> ProductModuleTypes(
         Assembly assembly,
         string module
@@ -1594,7 +1631,7 @@ public sealed class AssemblyDependencyBoundaryTests {
                     "A project path has no parent directory."
                 );
             foreach (string reference in DirectProjectReferences(projectPath)) {
-                if (IsStorageSourceReference(reference)) {
+                if (IsStorageSourceReference(reference) || IsCompletionSourceReference(reference)) {
                     visited.Add(reference);
                     continue;
                 }

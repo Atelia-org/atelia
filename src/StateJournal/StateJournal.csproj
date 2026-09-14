@@ -26,7 +26,8 @@
     <ProjectReference Include="$(StorageSourceRoot)/src/Rbf/Rbf.csproj" Condition="'$(UseStorageSources)' == 'true'" />
     <PackageReference Include="Atelia.Primitives" Version="$(StoragePackageVersion)" Condition="'$(UseStorageSources)' != 'true'" />
     <ProjectReference Include="$(StorageSourceRoot)/src/Primitives/Primitives.csproj" Condition="'$(UseStorageSources)' == 'true'" />
-    <ProjectReference Include="..\Diagnostics\Diagnostics.csproj" />
+    <PackageReference Include="Atelia.Diagnostics" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Diagnostics/Diagnostics.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="..\StateJournal.Generators\StateJournal.Generators.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
