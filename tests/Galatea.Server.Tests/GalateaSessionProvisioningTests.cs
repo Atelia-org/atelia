@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -19,6 +20,15 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaSessionProvisioningTests {
+    public static TheoryData<RecapGridControlPermission>
+        MissingBootstrapPermissions { get; } = [
+            RecapGridControlPermission.Create,
+            RecapGridControlPermission.RegisterFamily,
+            RecapGridControlPermission.RegisterDefinition,
+            RecapGridControlPermission.RegisterRecipe,
+            RecapGridControlPermission.Activate
+        ];
+
     [Fact]
     public void FirstTurnBootstrapPolicy_IsExactAndTimelineProjected() {
         RecapGridCadencePolicySpec cadence =
@@ -621,8 +631,18 @@ public sealed class GalateaSessionProvisioningTests {
         );
     }
 
-    [Fact]
-    public async Task BootstrapStepFailure_ClosesAndCleansOwnedCandidate() {
+    [Theory]
+    [InlineData("Cadence")]
+    [InlineData("Timeline")]
+    [InlineData("Control")]
+    [InlineData("Store")]
+    [InlineData("AssetRegistration")]
+    [InlineData("Recipe")]
+    [InlineData("Activation")]
+    [InlineData("Validation")]
+    public async Task BootstrapStepFailure_ClosesAndCleansOwnedCandidate(
+        string failedComponent
+    ) {
         var factory = new CountingCompletionClientFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
             factory,
@@ -635,7 +655,7 @@ public sealed class GalateaSessionProvisioningTests {
             AfterSessionRepositoryBootstrapStep: (component, staging) => {
                 if (string.Equals(
                         component,
-                        "Cadence",
+                        failedComponent,
                         StringComparison.Ordinal)) {
                     stagingPath = staging;
                     throw new TestBootstrapException();
@@ -649,6 +669,14 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.NotNull(stagingPath);
         Assert.False(Directory.Exists(stagingPath));
         Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.Equal(0, factory.CreateCallCount);
+
+        service.SessionProvisioningHooksForTest = null;
+        UserSessionHost retry = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        AssertFirstTurnReadyRepository(retry.Engine);
         Assert.Equal(0, factory.CreateCallCount);
     }
 
@@ -734,6 +762,77 @@ public sealed class GalateaSessionProvisioningTests {
         )));
     }
 
+    [Theory]
+    [MemberData(nameof(MissingBootstrapPermissions))]
+    public async Task MissingCreateIfMissing_WithoutEachRequiredBootstrapPermissionWritesNothing(
+        RecapGridControlPermission missingPermission
+    ) {
+        RecapGridControlPermission permissions =
+            GalateaSessionRepositoryProvisioner.RequiredBootstrapPermissions
+            & ~missingPermission;
+        await using var host = GalateaTestHost.CreateMissingSession(
+            new CountingCompletionClientFactory(),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            agentControlProfile: GalateaTestHost.CreateGalateaV6Profile(
+                permissions,
+                $"missing-{(int)missingPermission}"
+            )
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+
+        GalateaSessionUnavailableException failure =
+            await Assert.ThrowsAsync<GalateaSessionUnavailableException>(
+                () => service.GetSessionAsync("alice", CancellationToken.None)
+            );
+
+        Assert.Equal("session-unprovisioned", failure.Code);
+        Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.Empty(Directory.EnumerateDirectories(
+            host.RootDirectory,
+            ".galatea-session-*.staging",
+            SearchOption.TopDirectoryOnly
+        ));
+    }
+
+    [Fact]
+    public async Task MissingCreateIfMissing_AssetAllowlistFailureCleansCandidate() {
+        var profile = RecapGridAgentControlProfile.Create(
+            "asset-denied",
+            new RecapGridControlAdmission(
+                RecapGridControlPermission.All,
+                Array.Empty<FamilyDefinitionDigest>(),
+                Array.Empty<string>(),
+                Array.Empty<ContextHeaderCarrier>(),
+                ["test."],
+                maximumBootstrapRows: 64,
+                maximumProjectedCalls: 1_024
+            )
+        );
+        var factory = new CountingCompletionClientFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            agentControlProfile: profile
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+
+        InvalidOperationException failure =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.GetSessionAsync("alice", CancellationToken.None)
+            );
+
+        Assert.Contains("Family registration returned Unauthorized", failure.Message);
+        Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.Empty(Directory.EnumerateDirectories(
+            host.RootDirectory,
+            ".galatea-session-*.staging",
+            SearchOption.TopDirectoryOnly
+        ));
+        Assert.Equal(0, factory.CreateCallCount);
+    }
+
     [Fact]
     public async Task MissingCreateIfMissing_FirstTwoOrdinaryTurnsUseRawOnlyWithoutRecapDispatch() {
         var factory = new TwoTurnCompletionFactory();
@@ -796,9 +895,12 @@ public sealed class GalateaSessionProvisioningTests {
             session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns.Count
         );
-        Assert.IsType<RecapGridStoreReaderOpenResult.Absent>(
-            RecapGridStoreFactory.OpenReader(host.SessionDirectory)
-        );
+        RecapGridStoreReaderOpenResult storeOpened =
+            RecapGridStoreFactory.OpenReader(host.SessionDirectory);
+        using RecapGridStoreReaderHandle store = Assert.IsType<
+            RecapGridStoreReaderOpenResult.Opened
+        >(storeOpened).Handle;
+        Assert.NotNull(store.Identity.InstanceId.Value);
         Assert.False(File.Exists(Path.Combine(
             Path.GetDirectoryName(host.ConfigPath)!,
             "recap-grid-routes.json"
@@ -828,7 +930,11 @@ public sealed class GalateaSessionProvisioningTests {
                        "old prompt",
                        "openai-chat/strict"
                    ),
-                   profile.Admission
+                   profile.Admission,
+                   new GalateaRecapGridAssetParameters(
+                       new GalateaCharacterName("Galatea"),
+                       new GalateaPlayerName("刘世超")
+                   )
                )) {
             originalHead = Assert.IsType<Atelia.EventJournal.EventAddress>(
                 created.ReadCurrentHead()
@@ -1007,16 +1113,54 @@ public sealed class GalateaSessionProvisioningTests {
         RecapGridControlSnapshot controlSnapshot = Assert.IsType<
             RecapGridControlSnapshotResult.Available
         >(control.Reader.ReadSnapshot()).Snapshot;
-        Assert.Equal(timelineHead.TimelineId,
-            controlSnapshot.Head.TimelineId);
-        Assert.Equal(0, controlSnapshot.Head.Generation);
-        Assert.Null(controlSnapshot.ActiveRecipe);
-        Assert.Empty(controlSnapshot.Families);
-        Assert.Empty(controlSnapshot.Definitions);
-        Assert.Empty(controlSnapshot.Recipes);
-        Assert.IsType<RecapGridStoreReaderOpenResult.Absent>(
-            RecapGridStoreFactory.OpenReader(candidate.Path)
+        RecapGridControlRegistrationBundle bundle = CreateGalateaV6Bundle();
+        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
+            timelineHead.TimelineId,
+            bootstrapThroughRowId: null,
+            BuildTarget.Create(bundle.Definitions.Select(
+                static definition => new BuildTargetColumn(
+                    definition.LogicalColumnId,
+                    definition.Digest
+                )
+            ))
         );
+        Assert.Equal(timelineHead.TimelineId, controlSnapshot.Head.TimelineId);
+        Assert.Equal(5, controlSnapshot.Head.Generation);
+        Assert.Equal(recipe.Digest, controlSnapshot.Head.ActiveRecipeDigest);
+        Assert.Equal(
+            bundle.Families[0].ToCanonicalBytes(),
+            Assert.Single(controlSnapshot.Families).ToCanonicalBytes()
+        );
+        Assert.Equal(2, controlSnapshot.Definitions.Count);
+        foreach (MaintainerDefinitionRevision expected in bundle.Definitions) {
+            Assert.Contains(
+                controlSnapshot.Definitions,
+                actual => actual.Digest == expected.Digest
+                    && actual.ToCanonicalBytes().SequenceEqual(
+                        expected.ToCanonicalBytes()
+                    )
+            );
+        }
+        RegisteredGridRecipe active = Assert.IsType<RegisteredGridRecipe>(
+            controlSnapshot.ActiveRecipe
+        );
+        Assert.Equal(recipe.Target.Digest, active.Recipe.Target.Digest);
+        Assert.Equal(
+            recipe.ToCanonicalBytes(),
+            active.Recipe.ToCanonicalBytes()
+        );
+        Assert.Equal(
+            recipe.ToCanonicalBytes(),
+            Assert.Single(controlSnapshot.Recipes).Recipe.ToCanonicalBytes()
+        );
+
+        RecapGridStoreReaderOpenResult storeOpened =
+            RecapGridStoreFactory.OpenReader(candidate.Path);
+        using RecapGridStoreReaderHandle store = Assert.IsType<
+            RecapGridStoreReaderOpenResult.Opened
+        >(storeOpened).Handle;
+        Assert.NotNull(store.Identity.InstanceId.Value);
+        Assert.True(store.Identity.SchemaVersion >= 1);
 
         RecapGridContextOpenResult getterOpened =
             RecapGridContextFactory.Open(
@@ -1029,6 +1173,18 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.IsType<RecapGridContextResolveResult.RawHistoryAuthorized>(
             getter.Resolve(rawHead, nthPrevious: 0)
         );
+    }
+
+    private static RecapGridControlRegistrationBundle CreateGalateaV6Bundle() {
+        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName("Galatea"),
+                new GalateaPlayerName("刘世超")
+            ),
+            out RecapGridControlRegistrationBundle? bundle
+        ));
+        return Assert.IsType<RecapGridControlRegistrationBundle>(bundle);
     }
 
     private static int CountSystemPromptSetups(

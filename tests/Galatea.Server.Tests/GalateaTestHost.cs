@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -530,7 +531,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
-            ?? AssertBuiltInProfile();
+            ?? CreateGalateaV6Profile();
         File.WriteAllBytes(
             Path.Combine(
                 configurationDirectory,
@@ -751,24 +752,33 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         File.WriteAllBytes(path, bytes);
     }
 
-    private static RecapGridAgentControlProfile AssertBuiltInProfile() {
-        if (!RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
+    internal static RecapGridAgentControlProfile CreateGalateaV6Profile(
+        RecapGridControlPermission permissions =
+            RecapGridControlPermission.All,
+        string profileId = "test-profile"
+    ) {
+        if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
+                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                new GalateaRecapGridAssetParameters(
+                    new GalateaCharacterName("Galatea"),
+                    new GalateaPlayerName("刘世超")
+                ),
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             throw new InvalidOperationException(
-                "The code-owned RecapGrid test asset is unavailable."
+                "The code-owned Galatea RecapGrid test asset is unavailable."
             );
         }
         return RecapGridAgentControlProfile.Create(
-            "test-profile",
+            profileId,
             new RecapGridControlAdmission(
-                RecapGridControlPermission.All,
+                permissions,
                 bundle.Families.Select(static value => value.Digest),
                 bundle.Definitions.Select(static value =>
                     value.Capability.CapabilityFingerprint).Distinct(),
-                [ContextHeaderCarrier.System],
-                ["case."],
+                bundle.Definitions.Select(static value => value.Target.Carrier)
+                    .Distinct(),
+                ["world-understanding", "autobiography"],
                 maximumBootstrapRows: 64,
                 maximumProjectedCalls: 1_024
             )
