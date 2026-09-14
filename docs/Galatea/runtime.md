@@ -169,3 +169,7 @@ runtime identity；写入 v3 后的程序回退需匹配数据快照，见[回�
 当前 root strict config language 为 V9，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V4，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。
+
+Manager 向 Runtime 传递前驱 view 与实际 cells；Runtime 校验成员关系后直接计算原 prior digest，
+对照 frozen spec。完整 `PriorInputProjection` 对象已删除，缓存键和持久格式保持，
+无需数据升级；详见[前置输入简化](recap-prior-input-simplification-plan.md)。

@@ -1,8 +1,8 @@
-# RecapGrid 前置输入简化：下一实施切片
+# RecapGrid 前置输入简化：设计与实施记录
 
-> 状态：规划完成，经过三视角独立审查与交叉质询；尚未实施。
-> 日期：2026-09-14；源码基线：`f53ac2e2`。
-> 承接[身份简化总设计](identity-simplification-design.md)。本轮只规划和维护文档，不改变生产代码、持久格式或真实实例。
+> 状态：已实施并通过本地验证；代码提交 `258125fd`，验证结果见 §8；尚未部署。
+> 日期：2026-09-14；规划源码基线：`f53ac2e2`；实施基线：`606f3c04`。
+> 承接[身份简化总设计](identity-simplification-design.md)。仅改变瞬态计算与传递，不改变持久格式或真实实例。
 
 ## 1. 最小目标
 
@@ -27,11 +27,11 @@ Runtime：校验前驱成员 → 从实际 cells 计算原 digest → 对照 Spe
 | 已有会话、摘要、first-winner、回执与冻结请求须保持 | 用户已采纳总设计；Store/Manager/SessionJournal 的当前消费者 |
 | 摘要必须使用正确前驱、列顺序和实际内容；同内容不同来源仍复用缓存 | ManagerRowBuild、RuntimePreflight、Getter provenance 与现有测试 |
 | 保留逐行推进、未完成 cell 的 missing-only 恢复、既有预算和原子发布 | 当前 Manager/Store/Online；本切片不调整调度 |
-| 下一切片只做规划 | 本轮用户请求；过去实施与 E2E 记录不构成本轮执行证据 |
+| 先规划审查，再按批准方案实施、验证和提交 | 用户先要求规划，随后明确批准本切片实施；过去 E2E 不构成本轮部署证据 |
 
 故障模型仍是本地进程崩溃、重启、正常重试与并发构建。本切片只改变内存中的派生表示，不引入新的持久状态、身份注册表、兼容层或迁移器。
 
-源码证据：
+规划基线源码证据（描述删除前的对象与调用链）：
 
 | 位置 | 当前事实 |
 |---|---|
@@ -93,7 +93,7 @@ Getter 改用同一计算入口。不要在 Manager、Runtime、Getter 中复制
 
 在当前禁止控制字符及 encoder 规则下，用每个合法标识符 UTF-8 byte 最多膨胀为 3 个 JSON bytes 保守估计，完整旧 wrapper 不超过 `115 + 128 × (41 + 3 × 128 + 64) + 127 = 62,834` bytes，低于 65,536。该界限依赖当前字段形状与编码规则，不变成新的运行常量。
 
-本轮用现有已构建生产类做了独立 .NET 实验：128 个唯一列名，每个恰为 128 UTF-8 bytes；内部大量 U+00A0 的 wrapper 为 **60,786 bytes**，U+2028、反斜杠、双引号三种样本各为 **45,426 bytes**。这些是边界样本证据，不冒充穷举所有字符。实施时将相应输入边界覆盖纳入现有测试。
+规划时用当时已构建生产类做了独立 .NET 实验：128 个唯一列名，每个恰为 128 UTF-8 bytes；内部大量 U+00A0 的 wrapper 为 **60,786 bytes**，U+2028、反斜杠、双引号三种样本各为 **45,426 bytes**。这些是边界样本证据，不冒充穷举所有字符。实施时将相应输入边界覆盖纳入现有测试。
 
 `MaximumProjectionCanonicalUtf8Bytes` 仍被 `EvaluationKey.DecodeCanonical` 使用，本切片保留该常量及其余调用，不能按名称全局删除。
 
@@ -123,7 +123,7 @@ API 与调用方一次收口，不提交需要长期保留两种 batch 构造形
 
 直接受影响的测试树已找到：`SessionJournal.RecapGrid.Abstractions/Runtime/Getter/Store/Hosting/WalkingSkeleton.Tests`（斜线表示分别对应各项目）、`SessionJournal.Cli.Tests`、`Galatea.RecapGrid.Tests`、`Galatea.Server.Tests`。Manager 的实际主链另由 `SessionJournal.RecapGrid.Manager.Tests` 回归；按最终符号搜索补齐自然消费者，不预设整个仓库全测。
 
-重 .NET 验证串行使用 `--no-restore -m:1 -nr:false`；Server/CLI 独立 build；Galatea 用 [E2E 指南](e2e-testing.md#离线与非-live-命令)的明确 Live 类过滤。源码实验之外，本轮没有执行这些实施回归，也没有部署或操作真实实例。
+重 .NET 验证串行使用 `--no-restore -m:1 -nr:false`；Server/CLI 独立 build；Galatea 用 [E2E 指南](e2e-testing.md#离线与非-live-命令)的明确 Live 类过滤。规划阶段仅做源码实验，实施验证单独记录；不部署或操作真实实例。
 
 ## 6. 后续联合迁移：保留方向，减少前置工程
 
@@ -154,4 +154,59 @@ API 与调用方一次收口，不提交需要长期保留两种 batch 构造形
 | 新迁移器/双 reader、旧 wrapper fallback | defer / 不引入 | 本切片没有任何持久格式变化，无实际消费者 |
 | 联合迁移默认 GC、所有旧 Control 操作必须先执行完 | simplify | 默认全量保留；仅处理编码确实受影响的 pending，避免无关副作用 |
 
-预计删除 **2 个公开瞬态模型、2 个重复传递字段，以及完整 wrapper 的编码缓存/解码/对账路径**；增加 1 个现有 digest 类型上的计算方法。内部 hash body 与持久 digest 暂留，不以代码行数或 hash 清零作为完成指标。没有需要用户额外裁决的本切片产品问题。
+已删除 **2 个公开瞬态模型、2 个重复传递字段，以及完整 wrapper 的编码缓存/解码/对账路径**；增加 1 个现有 digest 类型上的计算方法。内部 hash body 与持久 digest 暂留，不以代码行数或 hash 清零作为完成指标。没有需要用户额外裁决的本切片产品问题。
+
+## 8. 实施记录（2026-09-14）
+
+代码与测试提交：`258125fd`。
+
+生产改动在 7 个文件收口：删除 `PriorInputProjection`、`PriorProjectedContent`、完整 wrapper DTO、
+`FrozenRowBatch.PriorProjection` 与 `DerivedRowPlan.Projection`，新增既有 digest 类型上的 `FromCells`。
+Manager、Runtime 和 Getter 共用这个入口。内部 body DTO、domain、canonical encoder、持久 schema、
+Runtime rendering 与 Hosting 证据字段保持；没有 adapter、双 reader、迁移工具或模型能力变化。
+
+删除前，用旧已编译生产程序集和真实 cells 捕获了空、单列、双列固定 digest，写入
+[PriorInputProjectionDigestTests](../../tests/SessionJournal.RecapGrid.Abstractions.Tests/PriorInputProjectionDigestTests.cs)。
+单列正文为 `alpha content`，双列第二列含中文、引号和反斜杠；expected 是旧实现输出的固定值，
+不是新方法生成。现有 EvaluationKey/Cell/Row/Fulfilled 的 canonical 与 digest golden 保持原值；
+只删除已退休 projection wrapper 自身的 canonical 项。
+
+[RuntimePriorValidationTests](../../tests/SessionJournal.RecapGrid.Runtime.Tests/RuntimePriorValidationTests.cs)
+覆盖缺前驱、数量/列名/definition/cell 不匹配、错序、重复列、独立 expected、work 与 FirstRow 校验，
+拒绝时 resolver/provider 均为零调用。work 的 prior 不一致会先触发现有 `WorkAuthorityMismatch`；
+后面的防御性 `WorkPriorMismatch` 保留，不为强行命中它伪造非法私有对象。
+
+[ManagerRuntimePriorInputTests](../../tests/SessionJournal.RecapGrid.Manager.Tests/ManagerRuntimePriorInputTests.cs)
+补齐真实 Manager → Runtime → 假 provider 的多行两列链，逐行检查模型输入中的前驱列顺序和正文；
+关闭并重开 Manager/Runtime 后，在零调用预算下读取既有结果。此测试保持 Journal owner 打开，
+不把它当作完整进程重启证据；非空 Prepared 冷恢复继续由现有 Galatea 恢复套件验证。
+
+生产与测试经交叉只读审查，无阻断发现。测试迁移没有删减 Store first-winner、Manager missing-only
+与 row-frontier 回归。持久 hash 数量不变；后续入口仍是 §6 的联合格式迁移设计。
+
+最终串行验证结果：
+
+| 测试项目 | 通过 |
+|---|---:|
+| SessionJournal.RecapGrid.Abstractions.Tests | 28 |
+| SessionJournal.RecapGrid.Manager.Tests | 79 |
+| SessionJournal.RecapGrid.Runtime.Tests | 66 |
+| SessionJournal.RecapGrid.Getter.Tests | 29 |
+| SessionJournal.RecapGrid.Store.Tests | 55 |
+| SessionJournal.RecapGrid.Hosting.Tests | 29 |
+| SessionJournal.RecapGrid.WalkingSkeleton.Tests | 27 |
+| SessionJournal.RecapGrid.Manager.PublicSurface.Tests | 3 |
+| SessionJournal.RecapGrid.Runtime.PublicSurface.Tests | 4 |
+| Galatea.RecapGrid.Tests | 9 |
+| SessionJournal.Cli.Tests | 142 |
+| Galatea.Server.Tests（明确排除 3 个 Live 类） | 983 |
+| **合计** | **1,454** |
+
+以上项目均为 0 失败、0 跳过，使用 `dotnet test tests/<项目>/<项目>.csproj --no-restore -m:1 -nr:false`；
+Galatea 附加 [E2E 指南](e2e-testing.md#离线与非-live-命令)中的环境清理、精确类过滤与
+`xUnit.MaxParallelThreads=4`。RecapGrid、Server 和 CLI 独立 build 均为 0 warning、0 error。
+文档检查 `python3 scripts/check_session_journal_docs.py` 为 36 文件、0 diagnostics，diff 检查通过。
+
+实施中新增 Manager 测试首次把两轮对话误当两行，实际夹具有 5 个 Timeline 行；修正为按实际行数
+逐行验证前驱内容代次后，focused 测试及完整 Manager 套件均通过。最终统计仅计算完整套件一次。
+本轮是本地、无真实 provider 的验证，没有部署或修改真实会话数据。

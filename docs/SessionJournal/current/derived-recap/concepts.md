@@ -10,6 +10,9 @@
    base cells；bootstrap 后走 normal full-row evaluation。
 5. Manager 以一个 frozen Timeline/Control/Store authority 做 row-major base-to-candidate wavefront；
    missing-only restart 不重发已有 exact cells。
+   前驱输入仅传 `PreviousView` 与 `PreviousCells`；Runtime 校验成员顺序与身份后，调用
+   `PriorInputProjectionDigest.FromCells` 对照 `Spec.PriorInput` 的独立 expected digest。
+   不再传递完整 projection 对象；digest 的旧 body/domain、缓存键和持久格式保持。
 6. Runtime 的 route key 是 exact `(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`；null 也是 exact key，
    没有 wildcard 或 default fallback。
 7. Cadence是per-Ref repo-owned R/expected Timeline policy authority。Timeline仍按first-safe B分区，所有writer

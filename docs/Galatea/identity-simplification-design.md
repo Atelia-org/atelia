@@ -1,6 +1,6 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)已实现并通过本地验证，尚未部署。下一切片是[前置输入对象简化](recap-prior-input-simplification-plan.md)（规划完成），随后再推进 §6.1/§6.3 联合格式迁移。首轮代码见 §10，首轮 E2E 见 §11。
+> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；下一阶段为 §6.1/§6.3 联合格式迁移。首轮代码见 §10，首轮 E2E 见 §11。
 >
 > 日期：2026-09-14。代码基线：`277baeea`。本文区分目标设计、当前实现和历史验证；不继承其他工作单的实施授权。
 
@@ -139,7 +139,7 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 ## 6. 后续切片：先移除重复身份，再整理缓存
 
-§5 已发布验证；§6.2 已独立实现和本地验证，待部署。下一阶段先做[前置输入对象简化](recap-prior-input-simplification-plan.md)：以 PreviousCells 为实际内容，删除重复的 PriorInputProjection 对象、Manager→Runtime 转运及完整 wrapper，保留现有 digest 算法与所有持久字节。该切片零格式变化，不需要先实施整图迁移，也不算完成 §6.3 的 hash 合并。
+§5 已发布验证；§6.2 已独立实现和本地验证，待部署。[前置输入对象简化](recap-prior-input-simplification-plan.md)已删除重复的 PriorInputProjection 对象、Manager→Runtime 转运及完整 wrapper；Manager、Runtime、Getter 共用 `PriorInputProjectionDigest.FromCells`，以 PreviousCells 为实际内容，保留现有 digest 算法与所有持久字节。该切片零格式变化，无需数据迁移，也不算完成 §6.3 的 hash 合并。
 
 随后 §6.1 与 §6.3 开发可分工作包，但采用一个目标格式组合、一次派生数据转换和发布，不上线中间格式。这避免为了先删 DescriptorDigest、再改结果主键而重编码同一数据图两次。
 
@@ -200,7 +200,7 @@ ConnectionFingerprint 的替代需要单独决定 endpoint/reasoning 改配的�
 
 ## 8. 实施入口、验证与完成定义
 
-§5 与 §6.2 已完成代码实施，以下第一切片验证入口保留供回归参考，不是待实施清单。第二切片验收见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)；下一实施入口为[前置输入对象简化计划](recap-prior-input-simplification-plan.md)，§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11，本次规划没有执行新的部署或真实会话操作。
+§5 与 §6.2 已完成代码实施，以下第一切片验证入口保留供回归参考，不是待实施清单。第二切片验收见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)；第三切片见[前置输入对象简化实施记录](recap-prior-input-simplification-plan.md)，§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11；本次前置输入切片没有执行新的部署或真实会话操作。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 
