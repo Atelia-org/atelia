@@ -1,0 +1,67 @@
+[
+  {
+    "path": "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.json",
+    "length": 441,
+    "sha256": "14f39de2aeeba29852ece6ac6fe93e55ecedeeefd15614a75f740f4fe79abe9c"
+  },
+  {
+    "path": "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.lock",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "control/recap-grid/v1/refs/000000000400001f/timelines/31c9aaeabf0c7fdbc987538775addccb/control.json",
+    "length": 12051,
+    "sha256": "96d02c62c10d631caf2fe19220950a53a15e25f58a4c0997f395142554066e9f"
+  },
+  {
+    "path": "control/recap-grid/v1/refs/000000000400001f/timelines/31c9aaeabf0c7fdbc987538775addccb/lifetime.lock",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "control/recap-grid/v1/refs/000000000400001f/timelines/31c9aaeabf0c7fdbc987538775addccb/writer.lock",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "derived/history-timeline/v2/locks/000000000400001f.lock",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "derived/history-timeline/v2/refs/000000000400001f/locator.json",
+    "length": 103,
+    "sha256": "93309e9fca9d8813c47dac3d33c099c116ea7e13b13a738eb1fd339cfbb59905"
+  },
+  {
+    "path": "derived/history-timeline/v2/refs/000000000400001f/timelines/31c9aaeabf0c7fdbc987538775addccb.sqlite",
+    "length": 94208,
+    "sha256": "3a8b07fd1131daa26f7740b73f0fbda653ac02ec9e3b705084bdca34468a5408"
+  },
+  {
+    "path": "derived/recap-grid/v1/grid.sqlite",
+    "length": 49152,
+    "sha256": "90e16f28ecbd640fb383bfd81d5aefc6c6382b4b20a50d8a9380528d3f3ca72e"
+  },
+  {
+    "path": "derived/recap-grid/v1/lifetime.lock",
+    "length": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "events/buckets/000000/00000001.rbf",
+    "length": 17936,
+    "sha256": "44fe4f49045b901c3baab8220f14d54309757ad514a175cb23c05bc4d35c4fb0"
+  },
+  {
+    "path": "refs/objects/000000000400001f/segments/00000001.rbf",
+    "length": 4096,
+    "sha256": "891addeeb5eb4beb811eb6c354e785bd7cb5ea884971f384a45dd12cf8ee5e7a"
+  },
+  {
+    "path": "refs/ref-op-log.rbf",
+    "length": 260,
+    "sha256": "522c3c9c43febe52d48a19db8bc110f6354d1e2880fc5d129eaf90cfc76fe21c"
+  }
+]

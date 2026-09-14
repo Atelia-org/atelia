@@ -1,0 +1,114 @@
+using System.IO.Compression;
+using System.Text.Json;
+using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Control;
+using Xunit;
+
+namespace Atelia.SessionJournal.RecapGrid.Manager.Tests;
+
+public sealed partial class ManagerVerticalTests {
+    [Fact]
+    public void GenerateRowIdentityV2FixedFixture() {
+        string output = Environment.GetEnvironmentVariable("ATELIA_ROW_FIXTURE_OUTPUT")
+            ?? throw new InvalidOperationException("Set ATELIA_ROW_FIXTURE_OUTPUT to a fresh output directory.");
+        Assert.False(Directory.Exists(output));
+        Directory.CreateDirectory(output);
+        Fixture fixture = CreateOverlayFixture(initialTurns: 2, laterTurns: 2);
+        string path = fixture.Path;
+        object expected;
+        using (fixture.Journal) {
+            HistoryTimelineSelectedRow oldTail = fixture.Rows[^1];
+            var moved = Assert.IsType<SessionTurnRetractionResult.Moved>(
+                fixture.Journal.RewindLatestCompletedTurn(fixture.Journal.ReadCurrentHead()!.Value));
+            using (HistoryTimelineHandle timeline = Assert.IsType<HistoryTimelineOpenResult.Opened>(
+                       HistoryTimelineFactory.Open(fixture.Journal.ReadView, _estimator)).Handle) {
+                var reconciled = Assert.IsType<HistoryTimelineReconcileResult.Reconciled>(
+                    timeline.Coordinator.ReconcileSelectedPath(fixture.TimelineHead, fixture.Journal.ReadView));
+                Assert.NotEqual(oldTail.Descriptor.RowId, reconciled.Head.HeadRowId);
+            }
+            fixture.Journal.SendAsync(moved.NewHead, "fixed-v2-sibling-observation").GetAwaiter().GetResult();
+            (TimelineHeadRef head, IReadOnlyList<HistoryTimelineSelectedRow> newRows) = CommitAllRows(fixture.Journal);
+            Assert.NotEmpty(newRows);
+            HistoryTimelineSelectedRow through;
+            using (HistoryTimelineReaderHandle timeline = Assert.IsType<HistoryTimelineReaderOpenResult.Opened>(
+                       HistoryTimelineMaintenance.OpenReader(path, fixture.Journal.BranchRefId)).Handle) {
+                through = Assert.IsType<HistoryTimelineReaderRowResult.Selected>(
+                    timeline.Reader.ReadSelectedRow(head, head.HeadRowId!.Value)).Row;
+                Assert.IsType<HistoryTimelineReaderRowResult.NotOnSelectedPath>(
+                    timeline.Reader.ReadSelectedRow(head, oldTail.Descriptor.RowId));
+            }
+            fixture = fixture with { TimelineHead = head, Rows = newRows };
+            ControlHeadRef final;
+            var corpus = new List<object>();
+            Assert.Throws<ArgumentException>(() => new RecapGridControlRegistrationBundle([], [], []));
+            corpus.Add(new { name = "empty", kind = "constructor-rejection", exception = "ArgumentException" });
+            using (RecapGridControlHandle control = OpenControl(fixture)) {
+                RecapGridControlSnapshot snapshot = Assert.IsType<RecapGridControlSnapshotResult.Available>(
+                    control.Reader.ReadSnapshot()).Snapshot;
+                FamilyDefinition family = snapshot.Families[0];
+                MaintainerDefinitionRevision definition = snapshot.Definitions[0];
+                GridBuildRecipe nonempty = GridBuildRecipe.CreateFull(head.TimelineId, through.Descriptor.RowId,
+                    fixture.RetroRecipe!.Target);
+                GridBuildRecipe emptyBootstrap = GridBuildRecipe.CreateFull(head.TimelineId, null, nonempty.Target);
+                (string Name, RecapGridControlRegistrationBundle Bundle, bool Apply)[] cases = [
+                    ("family-only", new([family], [], []), true),
+                    ("definition-only", new([], [definition], []), true),
+                    ("recipe-null-witness", new([], [], [new(emptyBootstrap, null)]), false),
+                    ("recipe-nonempty-witness", new([], [], [new(nonempty, through.Witness)]), true)
+                ];
+                long sequence = 1;
+                foreach (var entry in cases) {
+                    byte[] bytes = ControlOperationCanonicalizer.EncodeRegistration(entry.Bundle);
+                    var operation = RecapGridControlOperation.Create("row-identity-v2-" + entry.Name,
+                        sequence++, new string('a', 64));
+                    if (entry.Apply) {
+                        ControlHeadRef before = Assert.IsType<RecapGridControlSnapshotResult.Available>(
+                            control.Reader.ReadSnapshot()).Snapshot.Head;
+                        Assert.IsType<RecapGridControlOperationResult.Applied>(control.Coordinator.ApplyRegistrationBundle(
+                            before, head, operation, entry.Bundle));
+                    }
+                    corpus.Add(new {
+                        name = entry.Name, kind = "registration", applied = entry.Apply,
+                        operationId = "row-identity-v2-" + entry.Name, executionSequence = operation.ExecutionSequence,
+                        operationKey = operation.OperationKey, runtimeIdentityDigest = new string('a', 64),
+                        commandBase64 = Convert.ToBase64String(bytes),
+                        commandDigest = ControlOperationCanonicalizer.RegistrationDigest(entry.Bundle),
+                        familyCanonicalBase64 = entry.Bundle.Families.Select(value => Convert.ToBase64String(value.ToCanonicalBytes())).ToArray(),
+                        definitionCanonicalBase64 = entry.Bundle.Definitions.Select(value => Convert.ToBase64String(value.ToCanonicalBytes())).ToArray(),
+                        recipeCanonicalBase64 = entry.Bundle.Recipes.Select(value => Convert.ToBase64String(value.Recipe.ToCanonicalBytes())).ToArray(),
+                        bootstrapRowId = entry.Bundle.Recipes.FirstOrDefault()?.BootstrapWitness?.RowId.Value,
+                        bootstrapDescriptorDigest = entry.Bundle.Recipes.FirstOrDefault()?.BootstrapWitness?.DescriptorDigest.Value
+                    });
+                }
+                corpus.Add(new { name = "promotion", kind = "promotion", applied = false,
+                    recipeDigest = nonempty.Digest.Value,
+                    commandDigest = ControlOperationCanonicalizer.PromotionDigest(nonempty.Digest) });
+                final = Assert.IsType<RecapGridControlSnapshotResult.Available>(control.Reader.ReadSnapshot()).Snapshot.Head;
+                expected = new {
+                    sourceCommit = "3c1fd372", refId = fixture.Journal.BranchRefId.ToHexString(),
+                    timelineId = head.TimelineId.Value, timelineSchemaVersion = 2, controlSchemaVersion = 3,
+                    timelineHeadBase64 = Convert.ToBase64String(head.ToCanonicalBytes()),
+                    controlHead = final, oldUnselectedRowId = oldTail.Descriptor.RowId.Value,
+                    currentHeadRowId = through.Descriptor.RowId.Value,
+                    currentDescriptorBase64 = Convert.ToBase64String(through.Descriptor.ToCanonicalBytes()),
+                    newRecipeDigest = nonempty.Digest.Value,
+                    newRecipeCanonicalBase64 = Convert.ToBase64String(nonempty.ToCanonicalBytes()),
+                    bootstrapRowId = through.Descriptor.RowId.Value,
+                    bootstrapDescriptorDigest = through.Descriptor.DescriptorDigest.Value
+                };
+            }
+            string backup = Path.Combine(output, "control-backup");
+            Assert.IsType<RecapGridControlBackupResult.Created>(RecapGridControlMaintenance.Backup(
+                path, fixture.Journal.BranchRefId, final, backup));
+            ZipFile.CreateFromDirectory(backup, Path.Combine(output, "control-backup.zip"));
+            Directory.Delete(backup, recursive: true);
+            Assert.IsType<HistoryTimelineInspectResult.Available>(
+                HistoryTimelineMaintenance.Verify(path, fixture.Journal.BranchRefId));
+            File.WriteAllText(Path.Combine(output, "commands.json"), JsonSerializer.Serialize(corpus,
+                new JsonSerializerOptions { WriteIndented = true }));
+        }
+        File.WriteAllText(Path.Combine(output, "expected.json"), JsonSerializer.Serialize(expected,
+            new JsonSerializerOptions { WriteIndented = true }));
+        ZipFile.CreateFromDirectory(path, Path.Combine(output, "repository.zip"));
+    }
+}
