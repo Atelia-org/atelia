@@ -13,7 +13,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     public static TheoryData<int, string> LegacyStates {
         get {
             var cases = new TheoryData<int, string>();
-            foreach (int version in new[] { 1, 2 }) {
+            foreach (int version in new[] { 1, 2, 3 }) {
                 foreach (string state in new[] {
                     "Queued", "Binding", "Started", "OutcomeUnknown", "Accepted",
                     "TerminalCompleted", "TerminalFailed", "Quarantined", "Leased", "Consumed"
@@ -56,6 +56,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
+    [InlineData(3)]
     public void DryRun_IsBytePreservingAndCreatesNoBackup(int version) {
         using var fixture = new MigrationFixture("Leased", version);
         byte[] before = File.ReadAllBytes(fixture.DatabasePath);
@@ -89,6 +90,8 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     [InlineData(1, true)]
     [InlineData(2, false)]
     [InlineData(2, true)]
+    [InlineData(3, false)]
+    [InlineData(3, true)]
     public void CommitBoundary_RetryRecognizesWholeOldOrNewFormat(int version, bool afterCommit) {
         using var fixture = new MigrationFixture("Consumed", version);
         Action<string> fail = _ => throw new IOException("injected upgrade failure");
@@ -98,7 +101,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Throws<IOException>(() => fixture.Upgrade(apply: true, hooks));
         Assert.Equal(afterCommit ? 4L : version,
             Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
-        Assert.Equal(afterCommit || version == 2 ? 0L : 1L, Scalar(fixture.DatabasePath,
+        Assert.Equal(afterCommit || version is 2 or 3 ? 0L : 1L, Scalar(fixture.DatabasePath,
             "SELECT count(*) FROM pragma_table_info('outbound_mail') WHERE name = 'frozen_route_policy_fingerprint';"));
         Assert.Equal(afterCommit ? fixture.BusinessRows : fixture.LegacyRows,
             ReadBusinessRows(fixture.DatabasePath, normalize: afterCommit));
@@ -161,6 +164,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     [InlineData(2, "Started")]
     [InlineData(2, "OutcomeUnknown")]
     [InlineData(2, "Accepted")]
+    [InlineData(3, "Accepted")]
     public async Task UpgradedActiveMail_InspectsOriginalIdentityWithoutStartingAgain(int version, string state) {
         using var fixture = new MigrationFixture(state, version);
         _ = fixture.Upgrade(apply: true);

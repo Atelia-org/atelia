@@ -1564,6 +1564,32 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Empty(store.ReadSnapshot().InternalMailOutboxes);
     }
 
+    [Fact]
+    public void InternalMailOutbox_TargetReadFailsClosedOnMalformedLogicalShape() {
+        using var directory = new StoreDirectory();
+        using GalateaDelegationSqliteStore store =
+            GalateaDelegationSqliteStore.CreateNew(
+                directory.Path, Owner(), Baseline(), Limits());
+        _ = store.CaptureActionBatch(new(
+            Address(762), Sha('a'), 12, "extractor-contract-v1", [
+                Mail("peer", "message")
+            ], [
+                new GalateaInternalMailTarget(
+                    "peer-user", "peer-repository", "sender-name")
+            ]
+        ));
+        string databasePath = System.IO.Path.Combine(directory.Path,
+            GalateaDelegationSqliteStore.DatabaseFileName);
+        ExecuteSql(databasePath, """
+            UPDATE internal_mail_outbox
+            SET expected_session_head = 'ej1:00000000000000030000000100000000'
+            WHERE target_user_id = 'peer-user';
+            """);
+
+        Assert.Throws<InvalidDataException>(() =>
+            store.ReadInternalMailOutboxesForTarget("peer-user"));
+    }
+
     private static GalateaDelegationStoreOwner Owner() =>
         new("user", "repository-id");
 

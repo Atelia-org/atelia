@@ -11,9 +11,16 @@ internal sealed partial class GalateaDelegationSqliteStore {
             using SqliteConnection connection = OpenVerifiedConnection();
             using SqliteTransaction transaction =
                 connection.BeginTransaction(deferred: true);
+            // A target delivery gate treats an empty result as proof that no
+            // sender-side blocker exists. Do not allow this narrow query to
+            // bypass the store's full durable-state validation.
+            GalateaDelegationStateSnapshot snapshot = ReadSnapshotCore(
+                connection,
+                transaction
+            );
             IReadOnlyList<GalateaInternalMailOutboxSnapshot> result =
                 GalateaDelegationStateSnapshot.Freeze(
-                    ReadInternalMailOutboxes(connection, transaction)
+                    snapshot.InternalMailOutboxes
                         .Where(value => string.Equals(value.TargetUserId,
                             targetUserId, StringComparison.Ordinal))
                 );
@@ -34,6 +41,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
         quarantineCode: null
     );
 
+    /// <summary>
+    /// Releases a bound row only after exact Journal proof says the Observation
+    /// was not appended. Callers must not use this as a generic retry reset.
+    /// </summary>
     internal GalateaInternalMailOutboxSnapshot ResetInternalMailObservation(
         string dispatchId,
         long expectedRowRevision
@@ -44,6 +55,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
         observationAddress: null, quarantineCode: null
     );
 
+    /// <summary>
+    /// Marks durable delivery only from exact Journal proof of the bound
+    /// Observation. Completion success is not part of this state transition.
+    /// </summary>
     internal GalateaInternalMailOutboxSnapshot CompleteInternalMailObservation(
         string dispatchId,
         long expectedRowRevision,
