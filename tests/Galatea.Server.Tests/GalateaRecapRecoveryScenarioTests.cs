@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
@@ -108,7 +109,8 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         Assert.Equal(frozen.CanonicalBytes, reopenedRequest.CanonicalBytes);
         Assert.Equal(frozen.Manifest.Commitment, reopenedRequest.Manifest.Commitment);
         Assert.NotEmpty(frozen.Manifest.Plan.ExactContextInputs);
-        Assert.Equal(frozen.Manifest.Plan.ExactContextInputs, reopenedRequest.Manifest.Plan.ExactContextInputs);
+        Assert.Equal(JsonSerializer.Serialize(frozen.Manifest.Plan.ExactContextInputs),
+            JsonSerializer.Serialize(reopenedRequest.Manifest.Plan.ExactContextInputs));
         GalateaRecapFixture.AssertAdopted(reopenedRequest, 3);
         SessionJournalAuditEvent[] recoveredAudit = ReadAudit(lab.SessionDirectory);
         Assert.Equal(frozenPrepared, recoveredAudit.Single(entry => entry.Address == frozenPrepared.Address));

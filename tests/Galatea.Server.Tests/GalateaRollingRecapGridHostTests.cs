@@ -223,7 +223,6 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal(fixture.World.LogicalColumnId,
             worldBefore.LogicalColumnId);
         Assert.Equal(fixture.World.Digest, worldBefore.DefinitionDigest);
-        byte[] worldCanonicalBefore = worldBefore.ToCanonicalBytes();
         ControlHeadRef partialControl = ReadControlSnapshot(fixture).Head;
         TimelineHeadRef partialTimeline = ReadTimelineHead(
             fixture.Path,
@@ -235,6 +234,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         RecapGridMissingAssignmentProgress missing = Assert.Single(
             frontier.OrderedMissing
         );
+        var missingSlot = new CellSlot(missing.RecipeDigest, missing.RowId, missing.LogicalColumnId);
         Assert.Equal(fixture.Autobiography.LogicalColumnId,
             missing.LogicalColumnId);
         RecapCompletionTelemetryEvent[] modelAEvents = completionA
@@ -255,7 +255,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             value => value.DefinitionDigest == fixture.Autobiography.Digest
         );
         Assert.Equal("failed", failedEvent.ProviderOutcome);
-        Assert.Equal(missing.Slot, failedEvent.Slot);
+        Assert.Equal(missingSlot, failedEvent.Slot);
 
         var factoryB = new RoutedCompletionFactory(
             agentAnswer: "agent-b",
@@ -307,13 +307,13 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Null(modelBEvent.RouteKey.SemanticModelId);
         Assert.Equal(fixture.Autobiography.Digest,
             modelBEvent.DefinitionDigest);
-        Assert.Equal(missing.Slot, modelBEvent.Slot);
+        Assert.Equal(missingSlot, modelBEvent.Slot);
         Assert.Equal(partialTimeline,
             ReadTimelineHead(fixture.Path, fixture.RefId));
         Assert.Equal(partialControl, ReadControlSnapshot(fixture).Head);
         (RecapCellArtifact worldAfter, RecapCellArtifact autobiography) =
             ReadHeadCells(fixture);
-        Assert.Equal(worldCanonicalBefore, worldAfter.ToCanonicalBytes());
+        Assert.Equal(worldBefore, worldAfter);
         Assert.Equal("autobiography-from-b", autobiography.Content);
         Assert.Equal(RecapCellOutcome.Updated, autobiography.Outcome);
         Assert.IsType<RecapGridBuildProgressResult.Complete>(
@@ -625,6 +625,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private static RecapCellArtifact[] ReadAllCells(
         RollingRepository fixture
     ) {
+        using var store = Assert.IsType<RecapGridStoreReaderOpenResult.Opened>(
+            RecapGridStoreFactory.OpenReader(fixture.Path)).Handle;
         var result = new List<RecapCellArtifact>();
         RecapGridStoreExportCursor? cursor = null;
         do {
@@ -633,13 +635,12 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             >(RecapGridStoreMaintenance.Export(
                 fixture.Path,
                 cursor,
-                includeContent: true
+                includeContent: false
             )).Value;
             result.AddRange(page.Items
                 .Where(static item => item.Kind == "cell")
-                .Select(static item => RecapCellArtifact.DecodeCanonical(
-                    item.Canonical!
-                )));
+                .Select(item => Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+                    store.Reader.ReadCell(new CellId(item.Key))).Value));
             cursor = page.NextCursor;
         } while (cursor is not null);
         return result.ToArray();

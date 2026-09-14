@@ -190,10 +190,10 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
     }
 
     [Fact]
-    public void PreviousFourMiBCanonicalPageCanExceedTheReportLimit() {
+    public void FourMiBJsonPageCanExceedTheReportLimit() {
         const int previousMaximumPageBytes = 4 * 1024 * 1024;
         RecapGridStoreExportItem[] items = AdversarialItems(previousMaximumPageBytes);
-        int canonicalBytes = items.Sum(static item => item.JsonUtf8Bytes);
+        int jsonBytes = items.Sum(static item => item.JsonUtf8Bytes);
         var page = new RecapGridStoreExportPage(
             items,
             ParseCellCursor(items[^1].Key),
@@ -206,7 +206,7 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
 
         Assert.Equal(128, items.Length);
         Assert.InRange(
-            canonicalBytes,
+            jsonBytes,
             previousMaximumPageBytes - 64 * 1024,
             previousMaximumPageBytes
         );
@@ -220,7 +220,7 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
     [Fact]
     public void MaximumItemAdversarialPageFitsTheSharedReportEnvelope() {
         RecapGridStoreExportItem[] items = AdversarialItems(RecapGridStoreLimits.MaximumPageBytes);
-        int canonicalBytes = items.Sum(static item => item.JsonUtf8Bytes);
+        int jsonBytes = items.Sum(static item => item.JsonUtf8Bytes);
         RecapGridStoreExportCursor cursor = ParseCellCursor(items[^1].Key);
         var page = new RecapGridStoreExportPage(
             items,
@@ -237,7 +237,7 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
             items.Length
         );
         Assert.InRange(
-            canonicalBytes,
+            jsonBytes,
             RecapGridStoreLimits.MaximumPageBytes - 64 * 1024,
             RecapGridStoreLimits.MaximumPageBytes
         );
@@ -305,8 +305,13 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
                     historyRowId = new string('b', 64), logicalColumnId = "case.culprit" },
                 definitionDigest = new string('c', 64), outcome = "updated", content
             }, options);
-            int available = pageBytes / 128 - Encode(string.Empty).Length;
-            byte[] projection = Encode(new string('\u9ffe', available / 3));
+            int emptyBytes = Encode(string.Empty).Length;
+            // Align the U+9FFE run with base64 triples: 6b++ expands when the
+            // outer report escapes '+'. JSON metadata changes must not turn
+            // this worst-case envelope test into a benign base64 alignment.
+            int padding = (3 - (emptyBytes - 2) % 3) % 3;
+            int available = pageBytes / 128 - emptyBytes - padding;
+            byte[] projection = Encode(new string('x', padding) + new string('\u9ffe', available / 3));
             return new RecapGridStoreExportItem("cell", id, projection.Length, projection);
         }).ToArray();
     }
