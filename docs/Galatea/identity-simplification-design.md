@@ -1,8 +1,8 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；后续采用“丢弃旧 Recap，全部重构完成后统一重建”；当前正在实施[Store 简化计划](recap-store-simplification-plan.md)，验证待补。首轮代码见 §10，首轮 E2E 见 §11。
+> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；后续采用“丢弃旧 Recap，全部重构完成后统一重建”；[Store 简化](recap-store-simplification-plan.md)已实现，25 个项目的 1,771 项本地测试通过，尚未部署。首轮代码见 §10，首轮 E2E 见 §11。
 >
-> 日期：2026-09-14。首轮代码基线：`277baeea`；本次规划基线：`4f718d87`。本文区分目标设计、当前实现和历史验证；本次正在实施 Store 代码与测试、维护文档，不执行清库、部署或真实模型重建。
+> 日期：2026-09-14。首轮代码基线：`277baeea`；本次规划基线：`4f718d87`。本文区分目标设计、当前实现和历史验证；本次已完成 Store 代码、测试与文档维护，不执行清库、部署或真实模型重建。
 
 ## 1. 目标与最小模型
 
@@ -68,7 +68,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 | RequestAdapterFingerprint | delete | 删除执行硬门槛及当前身份字段，不用另一个手工标签或常量 hash 替代 |
 | ConnectionFingerprint | defer | 第一切片保持当前行为；改变 endpoint/reasoning 后如何恢复是另一项产品选择 |
 | HistoryRowId + DescriptorDigest | merge | 保留一个不可变 HistoryRowId，暂沿用现有 RowId 算法；无需顺便换 UUID |
-| CellDigest / RowViewDigest | simplify，实施中 | 改普通 CellId/RowResultId，保留唯一约束、前驱及成员 FK |
+| CellDigest / RowViewDigest | simplify，已完成 | 改普通 CellId/RowResultId，保留唯一约束、前驱及成员 FK |
 | Content / Projection / Evaluation 三层摘要 | delete | 用普通 CellSlot 关联工作与首个结果，不计算新的缓存 hash；前驱和规则由不可变关系确定并校验 |
 | Control ResultIdentity | delete | 回执返回稳定操作/回执 ID，保留命令匹配与已应用结果 |
 | ControlStateDigest | defer | 可从在线 CAS 移除；需确认所有写入都递增 generation，再独立处理 |
@@ -142,13 +142,13 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 ## 6. 后续路线：丢弃旧缓存，完成重构后统一重建
 
-已完成的前置输入切片见[实施记录](recap-prior-input-simplification-plan.md)，它在当时保持了旧 digest 和持久格式。以下是后继目标，不把新决定追溯成已实施行为。
+已完成的前置输入切片见[实施记录](recap-prior-input-simplification-plan.md)，它在当时保持了旧 digest 和持久格式。其后 Store 切片已按新的可丢弃缓存要求完成；下文分别标明已完成部分与后继目标。
 
 ### 6.1 Timeline 行身份：后续单独收口
 
 仍计划保留一个不可变 HistoryRowId，删除同一 descriptor 的第二个 DescriptorDigest。暂沿用现有 RowId 算法，不重新划分历史或改变 row frontier。
 
-下一 Store 切片直接使用现有 HistoryRowId；Timeline、Cadence、Control 的持久格式先不动。旧 Store 无需保留，因此不再需要把 Timeline 与 Cell/Row 整图转换绑定成一次实现。
+已完成的 Store 切片直接使用现有 HistoryRowId；Timeline、Cadence、Control 的持久格式保持。旧 Store 无需保留，因此不再需要把 Timeline 与 Cell/Row 整图转换绑定成一次实现。
 
 未来真正删除 DescriptorDigest 时，只处理仍保留的 Timeline/Cadence/Control 引用及实际受影响的命令。包含 recipe/bootstrap 的 registration 编码会变化，不能因旧 Recap 可清空就改写或丢掉 receipt。届时依据实际命令与仍支持执行的分支定稿最小处置；不提前建设通用迁移器或旧命令框架。
 
@@ -158,9 +158,9 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 这部分生效事实和规则图不属于可丢弃的 Recap 内容。清空 Store 不授权清空 Control、改变命令匹配或改写 Journal 工具结果。
 
-### 6.3 当前实施：Store 与构建位置
+### 6.3 Store 与构建位置：已完成
 
-详细工作包见[Store 简化计划](recap-store-simplification-plan.md)。最小目标为：
+详细实现与验证见[Store 简化计划](recap-store-simplification-plan.md)。已落地的模型为：
 
 ```text
 CellSlot = (RecipeDigest, HistoryRowId, LogicalColumnId)
@@ -188,7 +188,7 @@ ConnectionFingerprint、Prepared 局部 hash、ControlStateDigest、tool catalog
 | Grid Store 的旧 cells、rows、members、fulfilled 标记及旧缓存命中 | 整体丢弃，不做 old→new 转换、prior 逆向映射或孤立结果保留 |
 | Journal 原始历史、Prepared 正文、raw tool result、执行序号 | 保持原字节与既有恢复语义 |
 | Control 规则、recipe、操作回执，相关配置 | 保留；格式改动另按实际消费者处理 |
-| Timeline 行、Cadence、前驱与分区关系 | 下一 Store 切片保持；不能把“清 Recap”解释成清整个 derived 目录 |
+| Timeline 行、Cadence、前驱与分区关系 | 本次 Store 切片保持；不能把“清 Recap”解释成清整个 derived 目录 |
 
 最终步骤是：所有代码完成 → 在旧状态仍可读时收敛必要的 pending 操作 → 停服并保留完整匹配快照 → 初始化新 Store → 最后统一 LLM 重建 → 检查后恢复正常使用。当前 Store 位于 `derived/recap-grid/v1/grid.sqlite`，目录版本不等于数据库 schema；优先复用现有离线 Reset/锁与实例更换机制，不新增常驻迁移服务。
 
@@ -202,7 +202,7 @@ Prepared 保存的 ContextSnapshot 正文没有 Cell/Row/Store ID。旧冻结请
 
 ## 8. 实施入口、验证与完成定义
 
-当前实施入口为[Store 简化计划](recap-store-simplification-plan.md)，工作包 A/B/C 实施中，最终验证待补。已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
+当前实施入口为[Store 简化计划](recap-store-simplification-plan.md)，工作包 A/B/C 已完成，实际提交与验证见其 §7。已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 

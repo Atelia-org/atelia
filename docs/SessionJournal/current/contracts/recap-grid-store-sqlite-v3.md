@@ -1,6 +1,6 @@
 # RecapGrid Store SQLite v3
 
-状态：2026-09-14 实施中，集成验证待补；本轮设计与验收入口为 [Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)。
+状态：2026-09-14 已实现并通过本地验证，尚未部署；本轮设计与验收入口为 [Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)。
 
 本说明记录当前 Store 模型与 operator 边界。旧 [v2 合同](recap-grid-store-sqlite-v2.md)保留其批准历史，
 不作为 v3 的 schema/API 合同；旧数据不转换。DDL 的唯一 owner 是

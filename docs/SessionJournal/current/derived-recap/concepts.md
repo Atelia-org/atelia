@@ -1,6 +1,6 @@
 # RecapGrid current concepts
 
-状态：WP-08 formal source cutover Complete；Store v3 简化正在实施，验证见[Store 计划](../../../Galatea/recap-store-simplification-plan.md)。raw selected `RefId` Parent lineage仍是唯一历史事实源。
+状态：WP-08 formal source cutover Complete；Store v3 简化已实现并通过本地验证，验证见[Store 计划](../../../Galatea/recap-store-simplification-plan.md)。raw selected `RefId` Parent lineage仍是唯一历史事实源。
 
 1. HistoryTimeline、Cadence、Control 与 RecapGrid Store 是独立 companion authorities；都不能替代 raw history。
 2. Timeline row 绑定 exact raw range、partition policy、descriptor digest 与 previous-row chain。

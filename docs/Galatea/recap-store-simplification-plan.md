@@ -1,8 +1,8 @@
 # RecapGrid Store 简化：实施计划
 
-> 状态：设计已批准，工作包 A/B/C 实施中；集成验证与最终提交记录待补。设计经过三视角独立审查、交叉质询和剩余争议裁决。
-> 日期：2026-09-14；源码基线：`4f718d87`。
-> 承接[身份简化总设计](identity-simplification-design.md)。本轮实施代码与测试、维护文档；真实清库、部署与 LLM 重建留到全部重构完成后。
+> 状态：工作包 A/B/C 已实现并通过本地验证：25 个项目、1,771 项通过，0 失败、0 跳过；尚未部署。设计经过三视角独立审查、交叉质询和剩余争议裁决。
+> 日期：2026-09-14；设计基线：`4f718d87`；实施基线：`e7693a64`。
+> 承接[身份简化总设计](identity-simplification-design.md)。本轮代码、测试与文档已完成；真实清库、部署与 LLM 重建留到全部重构完成后。
 
 ## 1. 最小模型与需求来源
 
@@ -132,7 +132,7 @@ Getter 的旧 `PriorInputAligned` 替换为 `PriorSourceAligned`，定义为来�
 
 现有旧 Journal/Control 固定样本原字节保留；允许在隔离测试副本重置其旧 Store，不为让新测试通过而改写冻结正文或工具回执。旧 Store 的 hash golden 退出新模型，不能批量更新成另一串 hash 冒充简化。保留 Timeline/Control/Prepared 的现行格式证据。
 
-重 .NET 验证串行使用 `--no-restore -m:1 -nr:false`，测试按最终符号影响覆盖 Abstractions/Store/Manager/Runtime/Getter/Hosting/WalkingSkeleton、相关 public surface、Online/AgentControl、CLI、Galatea；Server/CLI 独立 build。Galatea 用 [E2E 指南](e2e-testing.md#离线与非-live-命令)的精确 Live 类过滤。这里是待执行验收，不引用上个切片的 1,454 项作为本切片完成证据。
+重 .NET 验证串行使用 `--no-restore -m:1 -nr:false`，测试按最终符号影响覆盖 Abstractions/Store/Manager/Runtime/Getter/Hosting/WalkingSkeleton、相关 public surface、Online/AgentControl、CLI、Galatea；Server/CLI 独立 build。Galatea 用 [E2E 指南](e2e-testing.md#离线与非-live-命令)的精确 Live 类过滤。实际验收结果见 §7，不引用上个切片的 1,454 项作为本切片完成证据。
 
 ## 5. 所有重构完成后的真实重建
 
@@ -155,11 +155,11 @@ Getter 的旧 `PriorInputAligned` 替换为 `PriorSourceAligned`，定义为来�
 | 跨 recipe 内容等价缓存与旧 provenance 含义 | delete / simplify | 用户接受更低复用率；来源诊断不再声称正文等价，不留诊断 hash |
 | 事务、first-winner、行前沿、Overlay 显式复用 | keep | 真实并发/中断和逐行输入消费者仍需要 |
 | Control 字节不变就保证所有 pending 无影响 | 撤回 | promotion 先查 Store proof 后查 receipt；最终清库前正常收敛相关操作 |
-| Timeline/Control 同时改、规则版本注册器 | defer | 下一 Store 切片无需它们；涉及保留数据/命令时再独立设计 |
+| Timeline/Control 同时改、规则版本注册器 | defer | 本次 Store 切片无需它们；涉及保留数据/命令时再独立设计 |
 
-预计删除独立 EvaluationKey、Content/Prior/Evaluation 三种 digest、两种内容寻址结果 ID 的计算和整对象持久 canonical 链；增加普通 CellSlot 与两种普通结果 ID。旧 Store 数据转换阶段完全取消，没有额外产品裁决阻塞本切片。
+本切片已删除独立 EvaluationKey、Content/Prior/Evaluation 三种 digest、两种内容寻址结果 ID 的计算和整对象持久 canonical 链；增加普通 CellSlot 与两种普通结果 ID。旧 Store 数据转换阶段完全取消，没有额外产品裁决阻塞本切片。
 
-## 7. 实施记录（集成验证待补）
+## 7. 实施记录与验证
 
 当前实施采用 `CellSlot` sealed record、32 位随机结果 ID 与 SQL v3；实体名 `RecapCellArtifact/RecapRowView`
 保留，成功 Store put 返回 `Winner`。完整的当前数据/API/operator 入口见
@@ -170,5 +170,68 @@ CLI 导出使用临时 JSON 投影的 `JsonUtf8Bytes/Json/FulfilledRowResultId`�
 `jsonBase64/fulfilledRowResultId`；selection 输出 `rowResultId`。Galatea missing-work 只保留
 ordinal、rowId、recipeDigest、logicalColumnId，不再输出 evaluationKey。
 
-最终代码提交、各测试项目实际通过数、Server/CLI build 与独立 review 结论由集成完成后填写。
-本节不引用历史切片通过数，不声明真实部署、清库或模型重建已经完成。
+本轮主要提交：
+
+| 工作包 | 提交与结果 |
+|---|---|
+| A：模型/SQL | `ed9b113a`：Slot、普通 ID、actual winner、SQL v3 单份表示；`fdcb7c98` 收口 ID 命名 |
+| B：构建与执行 | `775dfa0f`：Manager/Runtime/Hosting 全链 Slot 与实际 winner；`9d0a7c3b`：Getter 来源诊断与四轴预算 |
+| C：消费者与验收 | `cf067cbc`：CLI/Galatea 与模块边界；`700c9ce6`：Abstractions 新合同；`2c5033f7`：恢复/Reset 边界；`9f0f139b` 完成集成测试尾修 |
+| 文档 | `3478540d`：当前 v3 说明与历史边界；本节补最终验证，完整实现范围为 `e7693a64..9f0f139b` |
+
+三个实现包均经过独立只读 review，主线程复核跨包接缝。审阅中发现并修复：Row reader 隐式读取正文绕过
+Getter 预算，现只读成员元数据；新增 bootstrap gate 错拒合法 partial fulfillment，现恢复既有 through 语义。
+SQL 字段物化的非法值在读取边界转换为 typed Invalid，不把调用者参数错误吞成 Store 损坏。当前无未收口实质 findings。
+
+本轮串行验证共 **25 个项目、1,771 项通过，0 失败、0 跳过**；最终测试日志无 warning。
+
+| 测试项目（省略共同前缀 SessionJournal.RecapGrid） | 通过 |
+|---|---:|
+| Abstractions | 33 |
+| Store | 62 |
+| Manager | 83 |
+| Runtime | 69 |
+| Getter | 31 |
+| Hosting | 29 |
+| WalkingSkeleton | 27 |
+| Online | 33 |
+| AgentControl | 33 |
+| Control | 86 |
+| Cadence | 29 |
+| Galatea.RecapGrid | 9 |
+| 上述相关 public-surface 十项目 | 32 |
+| Analyzers.Style | 88 |
+| SessionJournal.Cli | 142 |
+| Galatea.Server（精确排除三类 Live） | 985 |
+
+public-surface 分项为 Store 5、Manager 3、Runtime 4、Getter 3、Hosting 7、Online 3、AgentControl 1、
+Control 3、Cadence 2、Galatea.RecapGrid 1。项目命令统一为
+`dotnet test tests/<项目>/<项目>.csproj --no-restore -m:1 -nr:false -- xUnit.MaxParallelThreads=4`。
+Server 清除 `ATELIA_RUN_GALATEA_NOTE_LIVE`、`ATELIA_RUN_GALATEA_LAB_LIVE`、`ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE`，
+使用精确过滤：
+
+```text
+FullyQualifiedName!~CharacterNoteTranscriptionLiveTests&FullyQualifiedName!~GalateaCodexDelegationLiveTests&FullyQualifiedName!~GalateaScenarioLabLiveTests
+```
+
+RecapGrid、Galatea.Server、SessionJournal.Cli 的独立 `dotnet build <csproj> --no-restore -m:1 -nr:false`
+均为 0 warning、0 error。`node --check prototypes/Galatea/wwwroot/assets/galatea.js` 通过；文档检查
+`python3 scripts/check_session_journal_docs.py` 为 39 files、0 diagnostics，`git diff --check` 通过。
+本轮本机测试日志为 `/tmp/recap-store-test-<项目>.log`，汇总为 `/tmp/recap-store-validation-final.json`；
+build 日志为 `/tmp/recap-store-production-build.log`、`/tmp/recap-store-build-Galatea.Server.log`、
+`/tmp/recap-store-build-SessionJournal.Cli.log`。这些临时日志不是仓库持久证据，以上命令可重跑。
+
+新增及迁移验收已覆盖实际 Manager→Runtime 的多行两列、跨 recipe 不隐式共享、并发/部分行首个结果、
+提交结果不明后的 assignment 观察、Overlay 保留 base Slot、零列前驱、旧 schema unsupported/显式 Reset、
+metadata-only row read 与四轴预算。旧 Journal/Control ZIP 原文件未改写。
+
+非空 v7 Prepared 的四个 Host 恢复场景全部通过：两种 dispatch 边界分别测试保留和 Reset Store；恢复保持
+canonical request、commitment、完整 ExactContextInputs，零 Recap 调用；Reset 后 fresh 请求从空 Store 经假 provider
+重建五行两列。另保留原有进程 kill 恢复测试，未把普通冷重开冒称进程崩溃。
+
+promotion 回归先真实构建并提交 Control receipt，再关闭 handles、Reset 测试 Store，同 operation 重试返回
+`budget-exceeded`，Control bytes 与 Journal head 不变。它证明实际工具的 proof-before-replay 顺序，
+不冒称 Journal failpoint 实验；真实清库前仍须按 §5 收敛 pending promotion。
+
+本轮不执行真实数据清空、部署、LLM 重建或 push。Timeline 身份合并与其他后续切片仍按总设计推进；
+全部完成后才统一处理真实 Store。

@@ -1,6 +1,6 @@
 # RecapGrid 前置输入简化：设计与实施记录
 
-> 状态：历史前置切片已实施并通过本地验证；代码提交 `258125fd`，验证结果见 §8；尚未部署。当前 Store v3 实施将删除本切片保留的 digest 入口，不能把下文历史验证当作新格式证据。
+> 状态：历史前置切片已实施并通过本地验证；代码提交 `258125fd`，验证结果见 §8；尚未部署。后继 Store v3 已删除本切片当时保留的 digest 入口，不能把下文历史验证当作新格式证据。
 > 日期：2026-09-14；规划源码基线：`f53ac2e2`；实施基线：`606f3c04`。
 > 承接[身份简化总设计](identity-simplification-design.md)。本文 §1–5、§7–8 保留 `258125fd` 当时的无格式变更合同与验证；后续已按用户新决定改为清旧 Recap、全部重构后统一重建，见 §6。
 
@@ -129,11 +129,11 @@ API 与调用方一次收口，不提交需要长期保留两种 batch 构造形
 
 用户在本切片完成后明确接受：旧 Recap 内容和缓存命中可以全部放弃，所有重构代码完成后最后统一调用 LLM 重建，不要求正文相同。原先的整图 converter、old projection→正文映射、保全部孤立 winner 与一次旧格式转换要求已撤销。
 
-下一实施入口为[Store 简化计划](recap-store-simplification-plan.md)：普通随机 Cell/Row ID、`CellSlot(recipe, historyRow, column)`、SQL 一份持久数据。它将删除本切片暂留的 `FromCells`、Content/Prior/Evaluation digest 和独立 EvaluationKey，取消跨 recipe 的自动内容等价复用；保留同 Slot 首个结果、行前沿、显式 Overlay Reuse 及必要关系校验。
+后继 [Store 切片](recap-store-simplification-plan.md)已实现并通过本地验证：普通随机 Cell/Row ID、`CellSlot(recipe, historyRow, column)`、SQL 一份持久数据。它已删除本切片当时暂留的 `FromCells`、Content/Prior/Evaluation digest 和独立 EvaluationKey，取消跨 recipe 的自动内容等价复用；保留同 Slot 首个结果、行前沿、显式 Overlay Reuse 及必要关系校验。
 
 Timeline、Cadence、Control 格式先保持，后续再单独收口仍保留数据的身份。Journal、Prepared 固定正文、规则和 Control 生效回执不属于可清缓存。最终清库前还须正常收敛依赖旧 Store proof 的 pending promotion，具体条件见[总设计 §7](identity-simplification-design.md#7-保留范围与最终重建边界)。
 
-本轮只更新后续文档，不删除数据或调用模型。下面的旧 digest golden 与 1,454 项结果是已完成切片的历史证据，不是新 Store 的兼容要求或完成证据。
+本节记录后续调整，Store 的实际提交与 1,771 项验证见其实施记录；真实数据尚未清理或重建。下面的旧 digest golden 与 1,454 项结果是前置输入切片的历史证据，不是新 Store 的兼容要求或完成证据。
 
 ## 7. 当时的辩证裁决
 

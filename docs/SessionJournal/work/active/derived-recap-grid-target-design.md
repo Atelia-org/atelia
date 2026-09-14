@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：WP-00至WP-08 complete，independent closure Closed；2026-09-14 Store v3 简化实施中，验证待补。
+状态：WP-00至WP-08 complete，independent closure Closed；2026-09-14 Store v3 简化已实现，25 个项目的 1,771 项本地测试通过。
 
 当前 CellSlot、普通结果 ID、SQL 单份数据与新来源诊断以[Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)和当前源码为准。本文已同步对应 Shape/Rule；末尾旧工作包与审查记录只认证当时实现。
 
