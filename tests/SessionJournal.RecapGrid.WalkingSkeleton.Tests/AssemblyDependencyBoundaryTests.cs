@@ -1182,7 +1182,7 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void HistoryTimelineV2HasNoImmutableTrieOrLifetimeCapSource() {
+    public void HistoryTimelineKeepsMutableSelectedPathWithoutImmutableTrieOrLifetimeCap() {
         string root = FindRepositoryRoot();
         string timelineRoot = Path.Combine(
             root,
@@ -1199,7 +1199,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
 
         Assert.Contains(
-            "internal const int SchemaVersion = 2;",
+            "internal const int SchemaVersion = 3;",
             combined,
             StringComparison.Ordinal
         );
