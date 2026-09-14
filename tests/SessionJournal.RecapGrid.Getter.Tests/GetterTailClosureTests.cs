@@ -302,7 +302,7 @@ public sealed partial class GetterVerticalTests {
             fixture.TimelineHead.TimelineId
         );
         byte[] current = File.ReadAllBytes(paths.StatePath);
-        byte[] prefix = "{\"schemaVersion\":3,"u8.ToArray();
+        byte[] prefix = "{\"schemaVersion\":4,"u8.ToArray();
         Assert.True(current.AsSpan().StartsWith(prefix));
         byte[] unsupported = [
             .. "{\"schemaVersion\":99,"u8.ToArray(),
