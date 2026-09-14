@@ -13,6 +13,7 @@ using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Hosting;
+using Atelia.SessionJournal.RecapGrid.Runtime;
 using Atelia.SessionJournal.RecapGrid.Store;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -948,6 +949,74 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
+    public async Task MissingCreateIfMissing_HistoryGrowthBuildsAndAdoptsBothRecapColumns() {
+        var factory = new TwoTurnCompletionFactory();
+        factory.Client.MainResponse = string.Concat(Enumerable.Repeat(" clue", 32_000));
+        factory.Client.AllowRecap = true;
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
+        RecapGridControlRegistrationBundle bundle = CreateGalateaV6Bundle();
+        int routeLoads = 0;
+        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
+            () => {
+                Interlocked.Increment(ref routeLoads);
+                return RecapGridRouteManifest.Create([
+                    new RecapGridRouteManifestEntry(
+                        new RecapCompletionRouteKey(
+                            bundle.Families[0].Digest,
+                            RecapRewriterProtocolV3.RuntimeProtocolId,
+                            null),
+                        "test",
+                        maximumConcurrency: 1,
+                        dispatchTimeout: TimeSpan.FromSeconds(30))
+                ]);
+            },
+            new CompletionConnectionsFileConfig(config.Connections, "test"),
+            factory,
+            config.RecapGrid!.AgentControlProfiles
+        );
+        var composition = new GalateaRecapGridComposition(
+            completion,
+            estimators: [new O200kBaseHistoryUnitLoadEstimator()]
+        );
+        await using var service = new GalateaHostService(
+            config,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            composition
+        );
+        UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        AssertFirstTurnReadyRepository(session.Engine);
+        Assert.Equal(0, factory.CreateCallCount);
+
+        // Cross the production 60k interval while retaining the production 24k tail.
+        // Do not replace the provisioned Cadence, Timeline, Control, or Store.
+        for (int index = 1; index <= 4; index++) {
+            GalateaLiveTurn turn = service.StartTurn(
+                session, $"clue {index}", new GalateaTurnOptions("test"));
+            await service.RunTurnAsync(session, turn, CancellationToken.None);
+            service.FinishTurn(session, turn);
+            Assert.Equal("completed", turn.Status);
+        }
+
+        Assert.Equal(4, factory.Client.MainDispatchCallCount);
+        Assert.True(factory.Client.RecapDispatchCallCount >= 2);
+        Assert.Equal(1, routeLoads);
+        CompletionRequest request = Assert.IsType<CompletionRequest>(factory.Client.LastMainRequest);
+        Assert.Contains(request.PromptPrefix.SharedContextMessages,
+            message => message is ObservationMessage observation
+                && observation.Content is not null
+                && observation.Content.Contains("galatea.world-understanding", StringComparison.Ordinal)
+                && observation.Content.Contains("recap evidence", StringComparison.Ordinal));
+        Assert.Contains(request.PromptPrefix.SharedContextMessages,
+            message => message is ActionMessage action
+                && action.GetFlattenedText().Contains("galatea.first-person-autobiography", StringComparison.Ordinal)
+                && action.GetFlattenedText().Contains("recap evidence", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ExistingRawOnly_FirstFreshReconcilesRenderedPromptOnceAndProviderUsesIt() {
         if (!OperatingSystem.IsLinux()) { return; }
         var factory = new TwoTurnCompletionFactory();
@@ -1285,6 +1354,9 @@ public sealed class GalateaSessionProvisioningTests {
     private sealed class TwoTurnCompletionClient : ICompletionClient {
         private int _mainDispatchCallCount;
         private int _recapDispatchCallCount;
+        internal string? MainResponse { get; set; }
+        internal bool AllowRecap { get; set; }
+        internal CompletionRequest? LastMainRequest { get; private set; }
 
         public string Name => "galatea-first-turn-bootstrap-test";
         public string ApiSpecId => "openai-chat-v1";
@@ -1311,6 +1383,12 @@ public sealed class GalateaSessionProvisioningTests {
             );
             if (isRecap) {
                 Interlocked.Increment(ref _recapDispatchCallCount);
+                if (AllowRecap) {
+                    return Task.FromResult(new CompletionResult(
+                        new ActionMessage([new ActionBlock.Text("recap evidence")]),
+                        new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
+                    ));
+                }
                 throw new InvalidOperationException(
                     "A first-turn raw-only repository must not dispatch recap work."
                 );
@@ -1319,7 +1397,8 @@ public sealed class GalateaSessionProvisioningTests {
                 ref _mainDispatchCallCount
             );
             MainSystemPrompts.Enqueue(request.PromptPrefix.SystemPrompt);
-            string response = $"answer {call}";
+            LastMainRequest = request;
+            string response = MainResponse ?? $"answer {call}";
             observer?.OnTextDelta(response);
             return Task.FromResult(new CompletionResult(
                 new ActionMessage([new ActionBlock.Text(response)]),
