@@ -162,7 +162,7 @@ public sealed class AssemblyDependencyBoundaryTests {
                 ?.Contains("PublicSurface", StringComparison.Ordinal) is true
         );
         Assert.Equal(
-            "Atelia.SessionJournal.RecapGrid.Store.SchemaV2.sql",
+            "Atelia.SessionJournal.RecapGrid.Store.SchemaV3.sql",
             (string?)recapGridDocument.Descendants("EmbeddedResource")
                 .Single().Attribute("LogicalName")
         );
@@ -1005,7 +1005,10 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-            "Atelia.SessionJournal.HistoryTimeline",
+            // RG0001 permits only the three immutable Timeline coordinate
+            // types needed for SQL materialization; authority APIs stay closed.
+            "HistoryTimelineMaintenance",
+            "HistoryTimelineReader",
             "HistoryTimelineFactory",
             "HistoryTimelineCoordinator",
             "SessionJournalReadView",
@@ -1018,7 +1021,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             "MaximumRowViewCount",
             "MaximumRowViewMemberCount",
             "MaximumFulfilledViewCount",
-            "SchemaV1.sql"
+            "SchemaV1.sql",
+            "SchemaV2.sql"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
