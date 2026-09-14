@@ -39,6 +39,17 @@ internal enum GalateaDurableMailState {
     Quarantined
 }
 
+/// <summary>
+/// Sender-side durable state for one character-to-character delivery. This is
+/// deliberately separate from the Codex delegation state machine.
+/// </summary>
+internal enum GalateaInternalMailState {
+    Pending,
+    ObservationBound,
+    Delivered,
+    Quarantined
+}
+
 internal enum GalateaReplyNoticeKind {
     Reply,
     DeliveryFailure
@@ -142,7 +153,15 @@ internal sealed record GalateaDelegationCaptureRequest(
     string VisibleActionSha256,
     int VisibleActionUtf8Bytes,
     string ExtractorContractId,
-    IReadOnlyList<SendMailIntent> Intents
+    IReadOnlyList<SendMailIntent> Intents,
+    IReadOnlyList<GalateaInternalMailTarget?>? InternalTargets = null
+);
+
+/// <summary>Already-resolved, immutable target locator supplied by the host.</summary>
+internal sealed record GalateaInternalMailTarget(
+    string TargetUserId,
+    string TargetSessionRepositoryId,
+    string FromCharacterName
 );
 
 internal enum GalateaDelegationCaptureDisposition {
@@ -187,6 +206,23 @@ internal sealed record GalateaOutboundMailSnapshot(
     int RecoveryFailureCount,
     string? RecoveryLastCode,
     long? NextRetryAtUnixTimeMilliseconds,
+    long Revision
+);
+
+internal sealed record GalateaInternalMailOutboxSnapshot(
+    string DispatchId,
+    string SourceActionAddress,
+    long CaptureSequence,
+    int ArtifactOrdinal,
+    string TargetUserId,
+    string TargetSessionRepositoryId,
+    string FromCharacterName,
+    string MessageId,
+    GalateaInternalMailState State,
+    string? ExpectedSessionHead,
+    string? RenderedObservation,
+    string? ObservationAddress,
+    string? QuarantineCode,
     long Revision
 );
 
@@ -240,6 +276,7 @@ internal sealed record GalateaDelegationStateSnapshot(
     GalateaRouteBindingSnapshot Route,
     IReadOnlyList<GalateaActionCaptureSnapshot> Captures,
     IReadOnlyList<GalateaOutboundMailSnapshot> Mails,
+    IReadOnlyList<GalateaInternalMailOutboxSnapshot> InternalMailOutboxes,
     IReadOnlyList<GalateaReplyNoticeSnapshot> Notices,
     GalateaReplyLeaseSnapshot? ActiveLease
 ) {

@@ -8,7 +8,7 @@ namespace Atelia.Galatea.Server;
 /// Explicitly constructed durable delegation current-state authority.
 /// </summary>
 internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
-    internal const int SchemaVersion = 3;
+    internal const int SchemaVersion = 4;
     internal const int ApplicationId = 0x47444C47; // "GDLG"
     internal const string DatabaseFileName = "delegation-state.sqlite3";
     internal const string LockFileName = "delegation-state.lock";
@@ -384,7 +384,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
                 actual.Add(reader.GetString(0));
             }
         }
-        string[] expected = [
+        var expected = new List<string> {
             "table:delegation_meta",
             "table:action_capture",
             "table:outbound_mail",
@@ -397,7 +397,12 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "index:ux_reply_notice_completion",
             "index:ux_reply_lease_one_active",
             "index:ux_reply_lease_item_notice"
-        ];
+        };
+        if (expectedVersion >= 4) {
+            expected.Add("table:internal_mail_outbox");
+            expected.Add("index:ux_internal_mail_message_id");
+            expected.Add("index:ix_internal_mail_target_state");
+        }
         if (!actual.SetEquals(expected)) {
             throw new InvalidDataException(
                 "Delegation SQLite schema object set is not exact."
@@ -429,6 +434,14 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "terminal_code", "recovery_failure_count",
             "recovery_last_code", "next_retry_at_ms", "revision"
         ], expectedVersion, "frozen_route_policy_fingerprint"));
+        if (expectedVersion >= 4) {
+            RequireExactColumns(connection, "internal_mail_outbox", [
+                "dispatch_id", "target_user_id", "target_session_repository_id",
+                "from_character_name", "message_id", "state",
+                "expected_session_head", "rendered_observation",
+                "observation_address", "quarantine_code", "revision"
+            ]);
+        }
         RequireExactColumns(connection, "route_binding", ColumnsForVersion([
             "singleton", "state", "binding_operation_id", "thread_id",
             "policy_fingerprint", "active_dispatch_id",
@@ -449,17 +462,27 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         RequireExactColumns(connection, "reply_lease_item", [
             "lease_id", "ordinal", "notice_id"
         ]);
-        foreach (string table in new[] {
+        IEnumerable<string> strictTables = new[] {
             "delegation_meta", "action_capture", "outbound_mail",
             "route_binding", "reply_notice", "reply_lease",
             "reply_lease_item"
-        }) {
+        };
+        if (expectedVersion >= 4) {
+            strictTables = strictTables.Append("internal_mail_outbox");
+        }
+        foreach (string table in strictTables) {
             RequireStrictTable(connection, table);
         }
         RequireExactIndexColumns(connection, "ux_action_capture_sequence",
             ["capture_sequence"]);
         RequireExactIndexColumns(connection, "ux_outbound_source_ordinal",
             ["source_action_address", "artifact_ordinal"]);
+        if (expectedVersion >= 4) {
+            RequireExactIndexColumns(connection, "ux_internal_mail_message_id",
+                ["message_id"]);
+            RequireExactIndexColumns(connection, "ix_internal_mail_target_state",
+                ["target_user_id", "state"], requireUnique: false);
+        }
         RequireExactIndexColumns(connection, "ux_reply_notice_completion",
             ["completion_sequence"]);
         RequireExactIndexColumns(connection, "ux_reply_lease_one_active",
@@ -472,6 +495,11 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         RequireExactForeignKeys(connection, "route_binding", [
             "active_dispatch_id->outbound_mail.dispatch_id:RESTRICT"
         ]);
+        if (expectedVersion >= 4) {
+            RequireExactForeignKeys(connection, "internal_mail_outbox", [
+                "dispatch_id->outbound_mail.dispatch_id:RESTRICT"
+            ]);
+        }
         RequireExactForeignKeys(connection, "reply_notice", [
             "dispatch_id->outbound_mail.dispatch_id:RESTRICT"
         ]);
@@ -545,7 +573,8 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
     private static void RequireExactIndexColumns(
         SqliteConnection connection,
         string index,
-        IReadOnlyList<string> expected
+        IReadOnlyList<string> expected,
+        bool requireUnique = true
     ) {
         var actual = new List<string>();
         using SqliteCommand command = connection.CreateCommand();
@@ -565,8 +594,9 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         definition.Parameters.AddWithValue("$index", index);
         string? sql = definition.ExecuteScalar() as string;
         if (sql is null
-            || !sql.StartsWith("CREATE UNIQUE INDEX ",
-                StringComparison.Ordinal)
+            || !(requireUnique
+                ? sql.StartsWith("CREATE UNIQUE INDEX ", StringComparison.Ordinal)
+                : sql.StartsWith("CREATE INDEX ", StringComparison.Ordinal))
             || (string.Equals(index, "ux_reply_lease_one_active",
                     StringComparison.Ordinal)
                 && !sql.EndsWith("WHERE active_slot IS NOT NULL",

@@ -77,6 +77,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
             connection,
             transaction
         );
+        List<GalateaInternalMailOutboxSnapshot> internalMailOutboxes =
+            ReadInternalMailOutboxes(connection, transaction);
         List<GalateaReplyNoticeSnapshot> notices = ReadNotices(
             connection,
             transaction
@@ -96,6 +98,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             route,
             captures,
             mails,
+            internalMailOutboxes,
             notices,
             activeLease
         );
@@ -108,6 +111,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             route,
             GalateaDelegationStateSnapshot.Freeze(captures),
             GalateaDelegationStateSnapshot.Freeze(mails),
+            GalateaDelegationStateSnapshot.Freeze(internalMailOutboxes),
             GalateaDelegationStateSnapshot.Freeze(notices),
             activeLease
         );
@@ -224,6 +228,50 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 ReadNullableString(reader, 18),
                 reader.IsDBNull(19) ? null : reader.GetInt64(19),
                 reader.GetInt64(20)
+            ));
+        }
+        return result;
+    }
+
+    private static List<GalateaInternalMailOutboxSnapshot>
+        ReadInternalMailOutboxes(
+        SqliteConnection connection,
+        SqliteTransaction? transaction
+    ) {
+        var result = new List<GalateaInternalMailOutboxSnapshot>();
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT outbox.dispatch_id, mail.source_action_address,
+                   capture.capture_sequence, mail.artifact_ordinal,
+                   outbox.target_user_id, outbox.target_session_repository_id,
+                   outbox.from_character_name, outbox.message_id, outbox.state,
+                   outbox.expected_session_head, outbox.rendered_observation,
+                   outbox.observation_address, outbox.quarantine_code,
+                   outbox.revision
+            FROM internal_mail_outbox AS outbox
+            JOIN outbound_mail AS mail ON mail.dispatch_id = outbox.dispatch_id
+            JOIN action_capture AS capture
+              ON capture.source_action_address = mail.source_action_address
+            ORDER BY capture.capture_sequence, mail.artifact_ordinal;
+            """;
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read()) {
+            result.Add(new GalateaInternalMailOutboxSnapshot(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt64(2),
+                reader.GetInt32(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                ParseExact<GalateaInternalMailState>(reader.GetString(8)),
+                ReadNullableString(reader, 9),
+                ReadNullableString(reader, 10),
+                ReadNullableString(reader, 11),
+                ReadNullableString(reader, 12),
+                reader.GetInt64(13)
             ));
         }
         return result;
@@ -377,6 +425,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaRouteBindingSnapshot route,
         IReadOnlyList<GalateaActionCaptureSnapshot> captures,
         IReadOnlyList<GalateaOutboundMailSnapshot> mails,
+        IReadOnlyList<GalateaInternalMailOutboxSnapshot> internalMailOutboxes,
         IReadOnlyList<GalateaReplyNoticeSnapshot> notices,
         GalateaReplyLeaseSnapshot? activeLease
     ) {
@@ -465,6 +514,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     StringComparison.Ordinal)))) {
             throw Corrupt("An outbound mail has no action capture.");
         }
+        ValidateInternalMailOutboxes(mails, internalMailOutboxes);
         long candidateBytes = mails.Sum(static mail => checked(
             (long)StrictUtf8.GetByteCount(mail.Recipient)
             + StrictUtf8.GetByteCount(mail.Subject ?? string.Empty)
@@ -474,7 +524,14 @@ internal sealed partial class GalateaDelegationSqliteStore {
             + StrictUtf8.GetByteCount(mail.EvidenceQuote ?? string.Empty)
             + 128
         ));
-        if (candidateBytes
+        long internalReservation = internalMailOutboxes.Sum(outbox => {
+            GalateaOutboundMailSnapshot mail = mails.Single(value =>
+                string.Equals(value.DispatchId, outbox.DispatchId,
+                    StringComparison.Ordinal));
+            return EstimateInternalMailReservation(mail.Recipient,
+                mail.Subject, mail.Body!, outbox);
+        });
+        if (candidateBytes + internalReservation
                 > GalateaDelegationStateBounds.MaximumCandidateUtf8Bytes) {
             throw Corrupt("Durable candidate byte capacity was exceeded.");
         }
@@ -513,6 +570,86 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
         ValidateInboxCapacity(limits, route, mails, notices);
     }
+
+    private static void ValidateInternalMailOutboxes(
+        IReadOnlyList<GalateaOutboundMailSnapshot> mails,
+        IReadOnlyList<GalateaInternalMailOutboxSnapshot> outboxes
+    ) {
+        if (outboxes.Count > mails.Count
+            || outboxes.Select(static value => value.DispatchId)
+                .Distinct(StringComparer.Ordinal).Count() != outboxes.Count
+            || outboxes.Select(static value => value.MessageId)
+                .Distinct(StringComparer.Ordinal).Count() != outboxes.Count) {
+            throw Corrupt("Internal mail outbox identities are not unique.");
+        }
+        foreach (GalateaInternalMailOutboxSnapshot outbox in outboxes) {
+            GalateaOutboundMailSnapshot? mail = mails.SingleOrDefault(value =>
+                string.Equals(value.DispatchId, outbox.DispatchId,
+                    StringComparison.Ordinal));
+            if (mail is null || mail.IsCodexRouted
+                || !string.Equals(mail.SourceActionAddress,
+                    outbox.SourceActionAddress, StringComparison.Ordinal)
+                || mail.ArtifactOrdinal != outbox.ArtifactOrdinal
+                || outbox.CaptureSequence < 1 || outbox.Revision < 0
+                || !IsCanonicalMessageId(outbox.MessageId)) {
+                throw Corrupt("An internal mail outbox row has invalid identity.");
+            }
+            try {
+                ValidateInternalMailTarget(new(
+                    outbox.TargetUserId,
+                    outbox.TargetSessionRepositoryId,
+                    outbox.FromCharacterName
+                ));
+            }
+            catch (ArgumentException exception) {
+                throw Corrupt("An internal mail target is invalid.", exception);
+            }
+            bool valid = outbox.State switch {
+                GalateaInternalMailState.Pending =>
+                    outbox.ExpectedSessionHead is null
+                    && outbox.RenderedObservation is null
+                    && outbox.ObservationAddress is null
+                    && outbox.QuarantineCode is null,
+                GalateaInternalMailState.ObservationBound =>
+                    IsCanonicalAddress(outbox.ExpectedSessionHead)
+                    && outbox.RenderedObservation is not null
+                    && outbox.ObservationAddress is null
+                    && outbox.QuarantineCode is null,
+                GalateaInternalMailState.Delivered =>
+                    IsCanonicalAddress(outbox.ExpectedSessionHead)
+                    && outbox.RenderedObservation is not null
+                    && IsCanonicalAddress(outbox.ObservationAddress)
+                    && outbox.QuarantineCode is null,
+                GalateaInternalMailState.Quarantined =>
+                    IsCanonicalAddress(outbox.ExpectedSessionHead)
+                    && outbox.RenderedObservation is not null
+                    && outbox.ObservationAddress is null
+                    && outbox.QuarantineCode is not null,
+                _ => false
+            };
+            if (!valid) {
+                throw Corrupt("An internal mail outbox state shape is invalid.");
+            }
+            if (outbox.RenderedObservation is not null) {
+                try {
+                    RequireText(outbox.RenderedObservation,
+                        GalateaDelegationStateBounds.MaximumObservationUtf8Bytes,
+                        nameof(outbox.RenderedObservation), allowLineBreaks: true);
+                }
+                catch (ArgumentException exception) {
+                    throw Corrupt("An internal mail rendered observation is invalid.", exception);
+                }
+            }
+            if (outbox.QuarantineCode is not null) {
+                try { RequireFailureToken(outbox.QuarantineCode, nameof(outbox.QuarantineCode)); }
+                catch (ArgumentException exception) { throw Corrupt("An internal mail quarantine code is invalid.", exception); }
+            }
+        }
+    }
+
+    private static bool IsCanonicalMessageId(string? value) => value is { Length: 32 }
+        && value.All(static character => character is >= '0' and <= '9'
+            or >= 'a' and <= 'f');
 
     private static void ValidateInboxCapacity(
         GalateaDelegationStoreLimits limits,

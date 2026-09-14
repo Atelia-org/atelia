@@ -8,7 +8,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             CREATE TABLE delegation_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 3),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 4),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -87,6 +87,32 @@ internal sealed partial class GalateaDelegationSqliteStore {
 
             CREATE UNIQUE INDEX ux_outbound_source_ordinal
             ON outbound_mail(source_action_address, artifact_ordinal);
+
+            CREATE TABLE internal_mail_outbox (
+                dispatch_id TEXT NOT NULL PRIMARY KEY
+                    REFERENCES outbound_mail(dispatch_id) ON DELETE RESTRICT,
+                target_user_id TEXT NOT NULL,
+                target_session_repository_id TEXT NOT NULL,
+                from_character_name TEXT NOT NULL,
+                message_id TEXT NOT NULL CHECK(
+                    length(message_id) = 32
+                    AND message_id NOT GLOB '*[^0-9a-f]*'
+                ),
+                state TEXT NOT NULL CHECK(state IN (
+                    'Pending', 'ObservationBound', 'Delivered', 'Quarantined'
+                )),
+                expected_session_head TEXT NULL,
+                rendered_observation TEXT NULL,
+                observation_address TEXT NULL,
+                quarantine_code TEXT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 0)
+            ) STRICT;
+
+            CREATE UNIQUE INDEX ux_internal_mail_message_id
+            ON internal_mail_outbox(message_id);
+
+            CREATE INDEX ix_internal_mail_target_state
+            ON internal_mail_outbox(target_user_id, state);
 
             CREATE TABLE route_binding (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),

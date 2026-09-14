@@ -86,14 +86,19 @@ internal abstract record GalateaOutboundMailExtractionReconcileResult {
 internal sealed class GalateaOutboundMailExtractionReconciler {
     private readonly GalateaDelegationSqliteStore _store;
     private readonly IOutboundMailExtractor _extractor;
+    private readonly Func<SendMailIntent, GalateaInternalMailTarget?>?
+        _resolveInternalTarget;
 
     internal GalateaOutboundMailExtractionReconciler(
         GalateaDelegationSqliteStore store,
-        IOutboundMailExtractor extractor
+        IOutboundMailExtractor extractor,
+        Func<SendMailIntent, GalateaInternalMailTarget?>?
+            resolveInternalTarget = null
     ) {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _extractor = extractor
             ?? throw new ArgumentNullException(nameof(extractor));
+        _resolveInternalTarget = resolveInternalTarget;
     }
 
     internal async ValueTask<GalateaOutboundMailExtractionReconcileResult>
@@ -210,7 +215,11 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
             target.VisibleTextSha256,
             target.VisibleTextUtf8Bytes,
             _extractor.ContractId,
-            intents
+            intents,
+            _resolveInternalTarget is null ? null :
+                GalateaDelegationStateSnapshot.Freeze(
+                    intents.Select(intent => _resolveInternalTarget(intent))
+                )
         );
         GalateaDelegationCaptureResult capture =
             _store.CaptureActionBatch(request);

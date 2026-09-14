@@ -9,6 +9,22 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaDelegationCaptureRequest request
     ) {
         ValidateCaptureRequest(request);
+        if (request.InternalTargets is not null) {
+            for (int ordinal = 0; ordinal < request.Intents.Count; ordinal++) {
+                if (request.InternalTargets[ordinal] is { } target) {
+                    if (string.Equals(request.Intents[ordinal].Recipient,
+                            GalateaDelegateConfigReader.CanonicalRecipient,
+                            StringComparison.Ordinal)
+                        || string.Equals(target.TargetUserId, _owner.UserId,
+                            StringComparison.Ordinal)) {
+                        throw new ArgumentException(
+                            "Internal mail targets must be non-Codex peers.",
+                            nameof(request)
+                        );
+                    }
+                }
+            }
+        }
         lock (_gate) {
             ThrowIfNotWritable();
             using (SqliteConnection connection = OpenVerifiedConnection()) {
@@ -91,6 +107,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             dispatchIds[ordinal],
                             request.Intents[ordinal]
                         );
+                        if (request.InternalTargets?[ordinal] is { } target) {
+                            InsertInternalMailOutbox(
+                                connection,
+                                transaction,
+                                dispatchIds[ordinal],
+                                target,
+                                Guid.NewGuid().ToString("N")
+                            );
+                        }
                     }
                     return new GalateaDelegationCaptureResult(
                         GalateaDelegationCaptureDisposition.Captured,
@@ -106,6 +131,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             request.SourceActionAddress,
                             StringComparison.Ordinal)
                         && value.ArtifactCount == request.Intents.Count)
+                    && InternalTargetsPublished(snapshot, result, request)
             );
         }
     }
@@ -1226,6 +1252,54 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.ExecuteNonQuery();
     }
 
+    private static void InsertInternalMailOutbox(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string dispatchId,
+        GalateaInternalMailTarget target,
+        string messageId
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO internal_mail_outbox(
+                dispatch_id, target_user_id, target_session_repository_id,
+                from_character_name, message_id, state,
+                expected_session_head, rendered_observation,
+                observation_address, quarantine_code, revision
+            ) VALUES (
+                $dispatch, $targetUser, $targetRepository, $from, $message,
+                'Pending', NULL, NULL, NULL, NULL, 0
+            );
+            """;
+        command.Parameters.AddWithValue("$dispatch", dispatchId);
+        command.Parameters.AddWithValue("$targetUser", target.TargetUserId);
+        command.Parameters.AddWithValue("$targetRepository", target.TargetSessionRepositoryId);
+        command.Parameters.AddWithValue("$from", target.FromCharacterName);
+        command.Parameters.AddWithValue("$message", messageId);
+        command.ExecuteNonQuery();
+    }
+
+    private static bool InternalTargetsPublished(
+        GalateaDelegationStateSnapshot snapshot,
+        GalateaDelegationCaptureResult result,
+        GalateaDelegationCaptureRequest request
+    ) {
+        if (request.InternalTargets is null) { return true; }
+        for (int ordinal = 0; ordinal < request.InternalTargets.Count; ordinal++) {
+            if (request.InternalTargets[ordinal] is not { } target) { continue; }
+            string dispatchId = result.DispatchIds[ordinal];
+            if (!snapshot.InternalMailOutboxes.Any(value =>
+                    string.Equals(value.DispatchId, dispatchId, StringComparison.Ordinal)
+                    && string.Equals(value.TargetUserId, target.TargetUserId, StringComparison.Ordinal)
+                    && string.Equals(value.TargetSessionRepositoryId, target.TargetSessionRepositoryId, StringComparison.Ordinal)
+                    && string.Equals(value.FromCharacterName, target.FromCharacterName, StringComparison.Ordinal))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static GalateaOutboundMailSnapshot ReadMailRequired(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1332,16 +1406,67 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 + TextExtractorUtf8.GetByteCount(intent.InReplyToMessageId ?? string.Empty)
                 + TextExtractorUtf8.GetByteCount(intent.EvidenceQuote)
                 + 128));
+        long existingInternalReservation = ReadInternalMailOutboxes(
+            connection, transaction).Sum(outbox => {
+            GalateaOutboundMailSnapshot mail = ReadMailRequired(
+                connection, transaction, outbox.DispatchId);
+            return EstimateInternalMailReservation(mail.Recipient,
+                mail.Subject, mail.Body!, outbox);
+        });
+        long addedInternalReservation = request.Intents.Select(
+            (intent, ordinal) => request.InternalTargets?[ordinal] is { } target
+                ? EstimateInternalMailReservation(intent.Recipient,
+                    intent.Subject, intent.Body, target, messageId: null)
+                : 0L).Sum();
         if (captures >= GalateaDelegationStateBounds.MaximumCandidateCount
             || count > GalateaDelegationStateBounds.MaximumCandidateCount
                 - request.Intents.Count
-            || bytes > GalateaDelegationStateBounds.MaximumCandidateUtf8Bytes
-                - addedBytes
+            || bytes + existingInternalReservation
+                > GalateaDelegationStateBounds.MaximumCandidateUtf8Bytes
+                    - addedBytes - addedInternalReservation
             || admitted > limits.MaximumQueuedMails - addedRouted) {
             throw new InvalidOperationException(
                 "The durable delegation candidate capacity is full."
             );
         }
+    }
+
+    private static long EstimateInternalMailReservation(
+        string recipient,
+        string? subject,
+        string body,
+        GalateaInternalMailTarget target,
+        string? messageId
+    ) => EstimateInternalMailReservation(recipient, subject, body,
+        target.TargetUserId, target.TargetSessionRepositoryId,
+        target.FromCharacterName, messageId);
+
+    private static long EstimateInternalMailReservation(
+        string recipient,
+        string? subject,
+        string body,
+        GalateaInternalMailOutboxSnapshot outbox
+    ) => EstimateInternalMailReservation(recipient, subject, body,
+        outbox.TargetUserId, outbox.TargetSessionRepositoryId,
+        outbox.FromCharacterName, outbox.MessageId);
+
+    private static long EstimateInternalMailReservation(
+        string recipient,
+        string? subject,
+        string body,
+        string targetUserId,
+        string targetSessionRepositoryId,
+        string fromCharacterName,
+        string? messageId
+    ) {
+        MailboxMessage envelope = MailboxMessage.FromCanonicalEnvelope(
+            messageId ?? new string('0', 32), fromCharacterName, recipient,
+            subject, body);
+        return checked((long)TextExtractorUtf8.GetByteCount(targetUserId)
+            + TextExtractorUtf8.GetByteCount(targetSessionRepositoryId)
+            + TextExtractorUtf8.GetByteCount(
+                GalateaMailboxObservationEnvelope.Wrap(envelope))
+            + 128);
     }
 
     private static void RequireInboxReservationCapacity(
@@ -1447,6 +1572,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
             ArgumentNullException.ThrowIfNull(intent);
             ValidateIntent(intent);
         }
+        if (request.InternalTargets is not null) {
+            if (request.InternalTargets.Count != request.Intents.Count) {
+                throw new ArgumentException(
+                    "internalTargets must have one entry per intent.",
+                    nameof(request)
+                );
+            }
+            foreach (GalateaInternalMailTarget? target in request.InternalTargets) {
+                if (target is null) { continue; }
+                ValidateInternalMailTarget(target);
+            }
+        }
     }
 
     private static void ValidateIntent(SendMailIntent intent) {
@@ -1464,6 +1601,23 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
         RequireText(intent.EvidenceQuote, GalateaMailboxBounds.MaximumEvidenceUtf8Bytes,
             nameof(intent.EvidenceQuote), allowLineBreaks: true);
+    }
+
+    private static void ValidateInternalMailTarget(
+        GalateaInternalMailTarget target
+    ) {
+        ArgumentNullException.ThrowIfNull(target);
+        RequireBoundedText(target.TargetUserId, nameof(target.TargetUserId));
+        RequireBoundedText(
+            target.TargetSessionRepositoryId,
+            nameof(target.TargetSessionRepositoryId)
+        );
+        RequireText(
+            target.FromCharacterName,
+            GalateaMailboxBounds.MaximumRecipientUtf8Bytes,
+            nameof(target.FromCharacterName),
+            allowLineBreaks: false
+        );
     }
 
     private static void RequireText(

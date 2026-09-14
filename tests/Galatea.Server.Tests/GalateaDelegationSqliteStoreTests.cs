@@ -1502,6 +1502,68 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 directory.Path, owner, limits));
     }
 
+    [Fact]
+    public void InternalMailOutbox_CaptureFreezesTargetAndRowCasLifecycle() {
+        using var directory = new StoreDirectory();
+        using GalateaDelegationSqliteStore store =
+            GalateaDelegationSqliteStore.CreateNew(
+                directory.Path, Owner(), Baseline(), Limits());
+        GalateaDelegationCaptureResult capture = store.CaptureActionBatch(new(
+            Address(760), Sha('a'), 12, "extractor-contract-v1", [
+                Mail("peer", "message")
+            ], [
+                new GalateaInternalMailTarget(
+                    "peer-user", "peer-repository", "sender-name")
+            ]
+        ));
+
+        GalateaDelegationStateSnapshot captured = store.ReadSnapshot();
+        GalateaOutboundMailSnapshot artifact = Assert.Single(captured.Mails);
+        Assert.False(artifact.IsCodexRouted);
+        Assert.Equal(GalateaDurableMailState.Unrouted, artifact.State);
+        GalateaInternalMailOutboxSnapshot pending = Assert.Single(
+            store.ReadInternalMailOutboxesForTarget("peer-user"));
+        Assert.Equal(capture.DispatchIds[0], pending.DispatchId);
+        Assert.Equal(GalateaInternalMailState.Pending, pending.State);
+        Assert.Matches("^[0-9a-f]{32}$", pending.MessageId);
+
+        GalateaInternalMailOutboxSnapshot bound =
+            store.BindInternalMailObservation(
+                pending.DispatchId, pending.Revision, Address(2),
+                "<inbound-mail>message</inbound-mail>");
+        Assert.Equal(GalateaInternalMailState.ObservationBound, bound.State);
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            store.CompleteInternalMailObservation(
+                bound.DispatchId, pending.Revision, Address(3)));
+        GalateaInternalMailOutboxSnapshot delivered =
+            store.CompleteInternalMailObservation(
+                bound.DispatchId, bound.Revision, Address(3));
+        Assert.Equal(GalateaInternalMailState.Delivered, delivered.State);
+        Assert.Equal(Address(3), delivered.ObservationAddress);
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            store.ResetInternalMailObservation(
+                delivered.DispatchId, delivered.Revision));
+    }
+
+    [Fact]
+    public void InternalMailOutbox_DuplicateCaptureDoesNotBackfillOrReplaceTarget() {
+        using var directory = new StoreDirectory();
+        using GalateaDelegationSqliteStore store =
+            GalateaDelegationSqliteStore.CreateNew(
+                directory.Path, Owner(), Baseline(), Limits());
+        GalateaDelegationCaptureRequest withoutTarget = Capture(
+            Address(761), [Mail("peer", "message")]);
+        _ = store.CaptureActionBatch(withoutTarget);
+        GalateaDelegationCaptureResult existing = store.CaptureActionBatch(
+            withoutTarget with {
+                InternalTargets = [new GalateaInternalMailTarget(
+                    "peer-user", "peer-repository", "sender-name")]
+            });
+        Assert.Equal(GalateaDelegationCaptureDisposition.AlreadyCaptured,
+            existing.Disposition);
+        Assert.Empty(store.ReadSnapshot().InternalMailOutboxes);
+    }
+
     private static GalateaDelegationStoreOwner Owner() =>
         new("user", "repository-id");
 

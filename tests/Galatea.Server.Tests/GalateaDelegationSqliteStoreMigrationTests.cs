@@ -41,7 +41,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Equal((long)version, Scalar(result.BackupPath, "PRAGMA user_version;"));
         Assert.Equal(fixture.LegacyRows, ReadBusinessRows(result.BackupPath, normalize: false));
         Assert.Equal(fixture.BusinessRows, ReadBusinessRows(fixture.DatabasePath));
-        Assert.Equal(3L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal(4L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         using (GalateaDelegationSqliteStore store = fixture.Open()) {
             Assert.Equal(fixture.Snapshot, JsonSerializer.Serialize(store.ReadSnapshot()));
         }
@@ -67,6 +67,23 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Equal((long)fixture.LegacyVersion, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
     }
 
+    [Fact]
+    public void V3Upgrade_RebuildsMetaCheckAndAddsOnlyEmptyInternalOutbox() {
+        using var fixture = new MigrationFixture("Queued", version: 3);
+        Assert.Throws<InvalidDataException>(() => fixture.Open());
+        Assert.Equal("DryRunReady", fixture.Upgrade(apply: false).Outcome);
+        Assert.Equal(3L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+
+        GalateaDelegationStoreUpgradeResult result = fixture.Upgrade(apply: true);
+
+        Assert.Equal("Upgraded", result.Outcome);
+        Assert.Equal(4L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal(0L, Scalar(fixture.DatabasePath,
+            "SELECT COUNT(*) FROM internal_mail_outbox;"));
+        using GalateaDelegationSqliteStore store = fixture.Open();
+        Assert.Empty(store.ReadSnapshot().InternalMailOutboxes);
+    }
+
     [Theory]
     [InlineData(1, false)]
     [InlineData(1, true)]
@@ -79,7 +96,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             ? new GalateaDelegationStoreTestHooks(AfterCommitBeforeReturn: fail)
             : new GalateaDelegationStoreTestHooks(BeforeCommit: fail);
         Assert.Throws<IOException>(() => fixture.Upgrade(apply: true, hooks));
-        Assert.Equal(afterCommit ? 3L : version,
+        Assert.Equal(afterCommit ? 4L : version,
             Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(afterCommit || version == 2 ? 0L : 1L, Scalar(fixture.DatabasePath,
             "SELECT count(*) FROM pragma_table_info('outbound_mail') WHERE name = 'frozen_route_policy_fingerprint';"));
@@ -374,6 +391,55 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
 
     private static void CreateLegacy(string sourcePath, string targetPath, int version) {
         using SqliteConnection target = Connect(targetPath, SqliteOpenMode.ReadWriteCreate);
+        if (version == 3) {
+            using (SqliteConnection source = Connect(sourcePath, SqliteOpenMode.ReadOnly)) {
+                source.BackupDatabase(target);
+            }
+            using SqliteCommand downgrade = target.CreateCommand();
+            downgrade.CommandText = """
+                DROP INDEX ix_internal_mail_target_state;
+                DROP INDEX ux_internal_mail_message_id;
+                DROP TABLE internal_mail_outbox;
+                ALTER TABLE delegation_meta RENAME TO delegation_meta_v4;
+                CREATE TABLE delegation_meta (
+                    singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
+                    schema_version INTEGER NOT NULL CHECK(schema_version = 3),
+                    user_id TEXT NOT NULL,
+                    session_repository_id TEXT NOT NULL,
+                    capture_frontier_segment_number INTEGER NOT NULL
+                        CHECK(capture_frontier_segment_number BETWEEN 1 AND 4294967295),
+                    capture_frontier_tail_offset INTEGER NOT NULL
+                        CHECK(capture_frontier_tail_offset >= 4 AND capture_frontier_tail_offset % 4 = 0),
+                    baseline_selected_head TEXT NULL,
+                    maximum_queued_mails INTEGER NOT NULL CHECK(maximum_queued_mails >= 1),
+                    maximum_task_utf8_bytes INTEGER NOT NULL CHECK(maximum_task_utf8_bytes >= 1),
+                    maximum_reply_utf8_bytes INTEGER NOT NULL CHECK(maximum_reply_utf8_bytes >= 1),
+                    maximum_inbox_replies INTEGER NOT NULL CHECK(maximum_inbox_replies >= 1),
+                    maximum_inbox_utf8_bytes INTEGER NOT NULL
+                        CHECK(maximum_inbox_utf8_bytes >= maximum_reply_utf8_bytes),
+                    next_completion_sequence INTEGER NOT NULL CHECK(next_completion_sequence >= 1),
+                    revision INTEGER NOT NULL CHECK(revision >= 0)
+                ) STRICT;
+                INSERT INTO delegation_meta (
+                    singleton, schema_version, user_id, session_repository_id,
+                    capture_frontier_segment_number, capture_frontier_tail_offset,
+                    baseline_selected_head, maximum_queued_mails,
+                    maximum_task_utf8_bytes, maximum_reply_utf8_bytes,
+                    maximum_inbox_replies, maximum_inbox_utf8_bytes,
+                    next_completion_sequence, revision
+                ) SELECT singleton, 3, user_id, session_repository_id,
+                    capture_frontier_segment_number, capture_frontier_tail_offset,
+                    baseline_selected_head, maximum_queued_mails,
+                    maximum_task_utf8_bytes, maximum_reply_utf8_bytes,
+                    maximum_inbox_replies, maximum_inbox_utf8_bytes,
+                    next_completion_sequence, revision
+                FROM delegation_meta_v4;
+                DROP TABLE delegation_meta_v4;
+                PRAGMA user_version = 3;
+                """;
+            downgrade.ExecuteNonQuery();
+            return;
+        }
         using (SqliteCommand ddl = target.CreateCommand()) {
             // V2 differs from the captured V1 DDL only in its version and
             // the three retired route-policy columns. Keep this legacy fixture
