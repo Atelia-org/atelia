@@ -28,7 +28,7 @@
 | per-user 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |
 | SessionJournal / RecapGrid authority | [当前架构与代码地图](../SessionJournal/current/architecture-and-code-map.md) |
-| 简化 Galatea / RecapGrid 身份与恢复校验 | [设计与实施记录](identity-simplification-design.md)：adapter 门槛已删除并完成 E2E；[Control 回执简化](control-receipt-simplification-plan.md)已实现、本地验证通过，尚未部署；后续为 Timeline/Store 联合简化 |
+| 简化 Galatea / RecapGrid 身份与恢复校验 | [设计与实施记录](identity-simplification-design.md)：adapter 与 Control 回执切片已实现；下一切片为[前置输入对象简化](recap-prior-input-simplification-plan.md)（规划完成，无持久格式变化），后续再做 Timeline/Store 联合迁移 |
 | RecapGrid operator CLI | [SessionJournal.Cli 指南](../../prototypes/SessionJournal.Cli/README.md) |
 
 ## 源码与验证入口

@@ -1,6 +1,6 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)已实现并通过本地验证，尚未部署。后续为 §6.1/§6.3 的联合格式与迁移设计。首轮代码见 §10，首轮 E2E 见 §11。
+> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)已实现并通过本地验证，尚未部署。下一切片是[前置输入对象简化](recap-prior-input-simplification-plan.md)（规划完成），随后再推进 §6.1/§6.3 联合格式迁移。首轮代码见 §10，首轮 E2E 见 §11。
 >
 > 日期：2026-09-14。代码基线：`277baeea`。本文区分目标设计、当前实现和历史验证；不继承其他工作单的实施授权。
 
@@ -139,7 +139,9 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 ## 6. 后续切片：先移除重复身份，再整理缓存
 
-§5 已发布验证；§6.2 已独立实现和本地验证，待部署。下一阶段 §6.1 与 §6.3 开发可分工作包，但采用一个目标格式组合、一次派生数据转换和发布，不上线中间格式。这避免为了先删 DescriptorDigest、再改结果主键而重编码同一数据图两次。
+§5 已发布验证；§6.2 已独立实现和本地验证，待部署。下一阶段先做[前置输入对象简化](recap-prior-input-simplification-plan.md)：以 PreviousCells 为实际内容，删除重复的 PriorInputProjection 对象、Manager→Runtime 转运及完整 wrapper，保留现有 digest 算法与所有持久字节。该切片零格式变化，不需要先实施整图迁移，也不算完成 §6.3 的 hash 合并。
+
+随后 §6.1 与 §6.3 开发可分工作包，但采用一个目标格式组合、一次派生数据转换和发布，不上线中间格式。这避免为了先删 DescriptorDigest、再改结果主键而重编码同一数据图两次。
 
 ### 6.1 合并 Timeline 行身份
 
@@ -151,9 +153,9 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 转换输入不能从 digest 反推：旧 EvaluationKey 仅存 prior projection digest，没有 projection 正文表。迁移工具从旧 RowView 及成员建立临时 `oldProjectionDigest → ordered(columnId, content)` 映射，FirstRow 单独编码，然后转换需要保留的 cell、row、previous/member/fulfilled 引用。映射只存在于离线转换工具，不成为新的运行时注册库。
 
-保留集合包括所有已引用/已选结果，以及仍可能由未完成构建再次查询的已提交 first-winner cell；“尚未挂入 RowView”不等于可丢弃缓存。无法证明可丢弃或无法恢复所需 prior 输入时，副本转换停止并报告，不靠重新调用模型补洞。已证明不可达且不再参与恢复的纯缓存项可以不迁，不要求跨 store 复用率或所有历史缓存命中保持不变。
+默认保留全部现存 cell/row，包括未挂入 RowView 的已提交 first-winner；不为此次转换先实现精确可达性 GC。任一所需 prior 输入无法恢复时，副本转换停止并报告，不靠重新调用模型补洞。只有出现具体数据障碍时再单独决定能否丢弃某组缓存，不把自动清理加入默认迁移路径，也不新增跨 store 全局去重。
 
-还有一个迁移前提：旧 registration command 的编码含 bootstrap DescriptorDigest，改它会令 `TryReplay` 的 CommandDigest 不匹配，receipt 又没有完整命令可供逆向转换。**先通过正常恢复收敛所有仍需执行/回放的旧 Control 操作，再停服迁移并复查。** 清点包括该数据集所有仍允许执行的持久 ref/分支、未打开的会话，以及已持久化但尚未调用 Control 的工具命令；不能只看当前网页或只查 receipt 表。
+还有一个迁移前提：含 recipe 的旧 registration command 编码包含 bootstrap DescriptorDigest，删字段即使旧值为 null 也会令 CommandDigest 改变；receipt 没有完整命令可供逆向转换。**先盘点，再正常收敛仍需执行/回放且目标 command/runtime 编码确实变化的操作，停服迁移前复查。** 清点包括该数据集所有仍允许执行的持久 ref/分支、未打开的会话，以及已持久化但尚未调用 Control 的工具命令；不能只看当前网页或只查 receipt 表。空 recipes 的 family/definition 注册与 promotion 未必改变编码，用固定 old/new 命令语料确认，无需为不受影响的操作引入额外执行前提。
 
 无法收敛时不得重执行、改写 receipt 摘要或只凭 operationId 跳过命令检查；暂缓该数据集转换，另行处理具体未决操作。已完成历史仅作审计读取，不借迁移从旧历史重新复活已不受支持的 pending 操作。本设计不为该迁移新增旧命令执行兼容框架。
 
@@ -173,6 +175,8 @@ AgentControl 当前输出升级为 schemaVersion 2 与 operationKey；已有 Jou
 
 Cell/RowResult 用 store 内不可变主键；保留 cell 对 evaluation cache key 的唯一约束，以及 row 对 `(ref,timeline,recipe,row)` 的唯一约束、previous/member FK。不同 store 的 ID 不相互解析，保留 store 实例边界。
 
+普通 ID 的具体表达与分配归属在联合实施前定稿：整数 ID 须显式处理 store 作用域，随机 ID 也不取消实例绑定。cell 同 cache key 即使竞争者内容不同，也返回首个已提交结果 AlreadyFilled。row 同 assignment、同成员/前驱等业务内容时返回已存 row，不能把候选新 ID 纳入 whole-canonical 相等后误判冲突；只有 row 的成员、前驱等业务差异才拒绝。新 schema 可收敛为 SQL 列/成员关系这一份持久表示，完整 canonical 只作导出投影；不要改了 ID 却继续维护两份全量对象权威。
+
 EvaluationCacheKey 在当前 store 内覆盖 `(HistoryRowId, Definition内容键, FirstRow | ordered(columnId, UTF8 content))`；不要只使用 previous RowViewId，不能混淆列顺序、空内容和 FirstRow。两个不同构建来源产生相同内容时由该键自然复用，不引入跨 store 全局去重。规则修改不要求操作者记得手工 bump version。Definition/Recipe 可暂保留一个内部内容标识，避免额外引入版本注册服务。
 
 把 ContentDigest、PriorProjectionDigest、EvaluationKeyDigest 的公开类型、序列化对象和层层对账合并，不能仅在末端新包一层 cache key。内部编码稳定规则只服务缓存，普通 operator JSON 的属性顺序/空白不进入身份。
@@ -191,11 +195,12 @@ ConnectionFingerprint 的替代需要单独决定 endpoint/reasoning 改配的�
 - 上述多文件转换不能假装一条 SQLite transaction 就原子升级完毕。选完整目录副本作为迁移/回退单位；转换成功后整体切换，失败恢复原副本。不新增常驻迁移协调服务。
 - §6.2 保持命令身份，通过旧格式读取与正常写入升级；不套用旧操作收敛和整图转换前提。实际部署仍保留完整快照和匹配数据回退边界。
 - 迁移不调用 provider；保持历史内容、前驱、已选择结果、操作回执与执行序号。仅改变键与引用表达。
+- 当前 Prepared 直接保存上下文正文，不含 Grid Cell/RowView/Store ID；联合迁移不改写 Journal、旧 raw tool result 或 Prepared。以非空冻结请求 canonical/commitment 保真和零 recap 调用验证该边界。
 - 旧程序不能打开新写入格式时，部署回退需恢复匹配快照；不能只回退二进制，也不能暗示升级后产生的新轮次会自动保留在旧快照里。
 
 ## 8. 实施入口、验证与完成定义
 
-§5 与 §6.2 已完成代码实施，以下第一切片验证入口保留供回归参考，不是待实施清单。第二切片验收见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)；§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11，本次 Control 实施没有执行新的部署或真实会话操作。
+§5 与 §6.2 已完成代码实施，以下第一切片验证入口保留供回归参考，不是待实施清单。第二切片验收见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)；下一实施入口为[前置输入对象简化计划](recap-prior-input-simplification-plan.md)，§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11，本次规划没有执行新的部署或真实会话操作。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 

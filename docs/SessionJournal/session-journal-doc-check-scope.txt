@@ -33,6 +33,7 @@ docs/Galatea/codex-delegation-recovery-refactor-plan.md
 docs/Galatea/user-home-design.md
 docs/Galatea/identity-simplification-design.md
 docs/Galatea/control-receipt-simplification-plan.md
+docs/Galatea/recap-prior-input-simplification-plan.md
 docs/Galatea/character-note-transcription.md
 docs/SessionJournal/current/contracts/galatea-root-config-v9.md
 
