@@ -284,7 +284,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         );
         string validState = File.ReadAllText(controlState);
         string unsupportedState = validState.Replace(
-            "\"schemaVersion\":3",
+            "\"schemaVersion\":4",
             "\"schemaVersion\":999",
             StringComparison.Ordinal
         );
