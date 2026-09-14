@@ -420,8 +420,10 @@ public sealed partial class GetterVerticalTests {
             paths.StatePath
         ));
         HistorySegmentDescriptor bootstrap = fixture.Rows[^1].Descriptor;
-        state = state.WithDefinition(additionalDefinition)
-            .WithRecipe(new RegisteredGridRecipe(
+        if (!state.Definitions.ContainsKey(additionalDefinition.Digest.Value)) {
+            state = state.WithDefinition(additionalDefinition);
+        }
+        state = state.WithRecipe(new RegisteredGridRecipe(
                 recipe,
                 new RegisteredRecipeBootstrap(
                     fixture.TimelineHead,
