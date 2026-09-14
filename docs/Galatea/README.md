@@ -28,8 +28,8 @@
 | per-user 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |
 | SessionJournal / RecapGrid authority | [当前架构与代码地图](../SessionJournal/current/architecture-and-code-map.md) |
-| 简化 Galatea / RecapGrid 身份与恢复校验 | [设计与实施记录](identity-simplification-design.md)：前三切片及 [Store 简化](recap-store-simplification-plan.md)已实现；[Timeline 单一行身份](timeline-row-identity-simplification-plan.md)已实现并通过 2,001 项本地测试，尚未部署。旧 Recap 不转换，全部重构完成后最后统一重建 |
-| RecapGrid operator CLI | [SessionJournal.Cli 指南](../../prototypes/SessionJournal.Cli/README.md) |
+| 简化 Galatea / RecapGrid 身份与恢复校验 | [设计与实施记录](identity-simplification-design.md)：前三切片及 [Store 简化](recap-store-simplification-plan.md)已实现；[Timeline 单一行身份](timeline-row-identity-simplification-plan.md)记录代码验证及已完成的 Dev 数据升级、真实 Recap 重建 |
+| RecapGrid operator CLI | [构建与即时诊断](../../prototypes/SessionJournal.Cli/README.md#构建与即时诊断)：现有 V3 catalog、人工 route、订阅环境与 stderr 进度；[本轮设计与实施记录](recap-operations-usability-plan.md) |
 
 ## 源码与验证入口
 

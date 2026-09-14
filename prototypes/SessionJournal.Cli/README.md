@@ -101,30 +101,79 @@ length/SHA-256/runtime identity。built-in capability的semantic model为null时
 `--semantic-model-id`，wire中仍是explicit null；不存在wildcard/default fallback。生成后可把
 admission交给`init`，profile/route路径交给Galatea strict config。
 
-`build` 与 Fresh/NewRequest online 只在 lazy dispatch boundary 读取 strict route manifest
-和 Completion connections；route 按
-`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` exact 匹配，显式 `null` 也不
-fallback。`progress` 不构造 provider；`promote` 在同一进程用
-`--max-new-calls 0` 重证 head-through proof 后才执行 Promotion CAS；build 本身永不
-activate。`materialize` 只走 Getter strict `--nth-previous`。
-`build --call-log-dir <dir>`是显式opt-in；日志目录只在lazy dispatch实际构造recap
-client时materialize，每个实际provider call通过现有Completion call-log V10 seam写入一份日志。
-未传时行为不变；provider-free、无missing work或exact route未命中的路径不会仅因该选项创建日志目录。日志写入失败仍沿用
-`LoggingCompletionClient`的best-effort合同，不改变provider outcome。
+`recap-grid build --connections` 读取 Completion V3 catalog，可直接使用 Galatea 的 `connections.json`，
+不要求或虚构 `defaultConnectionId`，不猜测格式或回退 V2。`--routes` 使用 `RecapGridRouteManifest.ParseJson`：
+允许换行、缩进、属性顺序；缺失、重复、未知字段与无效值仍拒绝。route 按
+`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` exact 匹配，显式 `null` 也没有 fallback。
+Family/Definition/Recipe、admission 等持久 canonical 输入继续使用各自严格 codec。
 
-所有 CLI connections 入口共用 Completion-owned strict numeric V2 decoder：根必须显式
-包含 integer `"v": 2`、1..256 项与 exact `defaultConnectionId`，并且有意不接受caller-selected
-output cap；还可携带通用
-optional `selectableConnectionIds` 与 `bindings`。前者若存在，必须为 1..256 个
-exact existing connection IDs，exact unique 且包含 default；后者若存在，必须为最多
-256 项的 bounded key 到 exact existing connection ID 或 `null` 的映射。CLI 只消费 catalog/
-default/explicit command route，不把这些 host metadata 解释为 CLI allowlist。No-v 文件不会
-fallback；operator 应停服后把每项 endpoint source 收敛为`baseAddress` / `baseAddressEnv`
-exactly-one，再与V2 manifest及新binary一起发布。V1没有compatibility reader。
+`run-online-turn`、`llm-smoke` 等其他 CLI connections 入口保留各自 V2 合同：根有 integer `"v": 2`、
+1..256 项 `connections` 与 exact `defaultConnectionId`，可带 `selectableConnectionIds/bindings`，不接受
+caller-selected output cap。它们不会因为 build 支持 V3 而自动改读 Galatea catalog；V1 也没有兼容 reader。
+`build` 与 V2 入口均执行原有 catalog 配置验证，包括 `baseAddressEnv/apiKeyEnv` 解析；
+缺少这些变量仍可在没有 missing work 时拒绝配置。
+
+默认 CLI factory 支持 `openai-codex-responses`，沿 Completion 共用 subscription 装配读取：
+
+- 必需 `ATELIA_CODEX_SUBSCRIPTION_ACCOUNT_FINGERPRINT`，使用既有已 provision 的值；
+- 可选 `ATELIA_CODEX_SUBSCRIPTION_ORIGINATOR`，CLI 默认 `session-journal-cli`；
+- 可选 `ATELIA_CODEX_SUBSCRIPTION_AUTH_FILE`，若设置须为绝对路径；否则使用 Codex CLI 默认 auth file。
+
+CLI 仅在首次实际创建 Codex client 时读取 subscription 环境，认证读取沿既有 credential provider。
+无 missing work 或零调用预算重开不为此读取 subscription 环境/认证文件、也不构造 client；这不等于跳过普通
+catalog 的环境变量验证。非 Codex 使用普通 factory，测试或宿主的显式 factory 注入保持。Galatea 仍保留原启动时
+subscription 配置验证行为，默认 originator 仍是 `galatea`。
+
+`progress` 是不构造 provider 的纯读入口；`promote` 在同一进程用 `--max-new-calls 0` 重证
+head-through proof 后执行 Promotion CAS；build 本身不 activate。`materialize` 只走 Getter strict `--nth-previous`。
+`build --call-log-dir <dir>` 显式启用现有 Completion call log；目录只在实际构造 recap client 时 materialize。
+无 missing work 或 route 未命中时，不会仅因该选项创建日志目录；日志写入继续 best-effort，不改变 provider outcome。
+
+### 构建与即时诊断
+
+下面复用已配置的 route 和 V3 catalog，不新增 profile 或默认连接。先关闭该 repository 的其他 owner，
+使用已核验的 branch/ref；`<配置目录>` 可取 Galatea `config.json` 所在目录，route 路径以其中 `routeManifestPath` 为准。
+`build` 不接收 profile：当前构建读取已经注册的规则，已有 profile 仍用于各自的 bootstrap/历史工具恢复入口。
+
+```bash
+dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid progress \
+  --input '<session-repository>' --branch '<branch>' --live \
+  --max-recipe-row-steps 100 --max-new-calls 4 --max-elapsed-ms 600000
+
+dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid build \
+  --input '<session-repository>' --branch '<branch>' --confirm-ref '<refId>' --live \
+  --routes '<配置目录>/recap-grid-routes.json' --connections '<配置目录>/connections.json' \
+  --max-recipe-row-steps 100 --max-new-calls 4 --max-elapsed-ms 600000 \
+  > build-result.json 2> build-progress.log
+```
+
+示例的 4 次调用和 10 分钟是显式预算，不承诺足以完成任意历史。已有准备好的 CLI build 才使用 `--no-build`；
+直接运行 CLI DLL 也可避免构建日志混入 stdout。不重定向 stderr 时，可直接观察即时进度。
+
+stderr 进度统一以 `[recap-build]` 开头，按工作身份关联并发调用：
+
+| 事件 | 含义 |
+|---|---|
+| `request-start` | 进入本地 Runtime invoker 调用边界；不是服务器已接收请求的证明 |
+| `waiting` | 每 30 秒提示尚未结束的工作与等待耗时，不额外请求模型或重复扫描 Store |
+| `request-end` | Runtime 调用已结束/结算；尚不表示 cell 或 row 已提交 |
+| `row-committed` | Manager 取得当前行的已提交结果 |
+| `row-existing` | Manager 读取并沿用已有行结果 |
+| `summary` | 本次构建汇总；仍以 stdout 的最终业务结果解释完成或失败 |
+
+进度是 best-effort 操作信息；观察者输出异常不改写模型结果、Store 写入或取消/结果不确定语义。
+`NewCalls == 0` 或空 telemetry 本身不能证明从未发生外部调用，executor 异常时计数可能尚未汇总。
+
+进入 build 的业务结果输出路径后，stdout 只输出一份最终 JSON；stderr 不作为该 JSON 的一部分。
+派生结果的 `Code/Detail`、`Failures`、预算种类、`Proof/Receipt`、实际 stale head 与 settlement 信息保留。
+客户端构造与 route 加载失败保留受限长度的具体异常消息及底层原因，不只打印异常类型。
+若完整 telemetry evidence 会使报告超过字节上限，优先省略 evidence，保留原业务 status/result，并输出
+`evidenceOmitted/evidenceOmittedEventCount/evidenceDroppedEventCount`。参数或配置解析在进入业务结果前失败时，
+仍按 CLI 的错误规则在 stderr 报错，不伪造一个模型调用结果。
 
 Hosting的provider-free exact route inspection只报告configured connection/model/limits，
-不会构造provider client；只有settled runtime telemetry中的`ConnectionId`、model与provider
-才是actual dispatch evidence。这些字段是bounded operational evidence，不进入durable
+不会构造 provider client；Runtime 的 start/settled telemetry 记录所用连接与本地调用状态，
+不能仅凭 start、event 数量或空 evidence 判断网络已发送/未发送。这些字段是bounded operational evidence，不进入durable
 Family、Definition、Recipe 或 CellSlot。Cell/Row 使用 Store 分配的普通结果 ID。
 Runtime 日志直接携带 Slot、StoreIdentity 与必要前驱 ID，不再记录 EvaluationKey/PriorProjection digest。
 

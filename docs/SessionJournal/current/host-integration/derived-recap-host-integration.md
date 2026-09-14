@@ -27,6 +27,16 @@ Route manifest V2只把exact key绑定到connection id、并发与timeout。Comp
 caller-selected output cap；具体adapter在省略表示不限量/模型最大值时省略provider字段，否则只发送所选模型的
 provider-reported maximum。route切换因此不会遗留provider-incompatible token override。
 
+CLI `recap-grid build` 直接使用 V3 catalog 与人工 route `ParseJson`，借用单个 registry 给 RecapGrid host；
+其他 CLI 命令的 V2 connection 文件合同保持。CLI 默认 factory 延迟读取 Codex subscription 环境到实际 client 创建，
+Galatea 保留原启动验证。无 missing work 不读取 subscription 环境/认证或创建 client，但普通 catalog 的
+`baseAddressEnv/apiKeyEnv` 配置解析仍提前执行，不宣称整个环境无依赖。
+
+Runtime start/settled 与 Manager 行提交/已有行 callback 提供独立操作进度。CLI 在 stderr 输出 `[recap-build]`
+事件和 30 秒 waiting 提示，stdout 保留单份业务 JSON；模型完成不能代替 Store 提交证明。
+观察者异常不得改变结果。派生结果字段按实际类型保留，超量 telemetry evidence 可显式省略而不覆盖业务 status/result。
+具体命令与各事件语义见 [CLI 指南](../../../../prototypes/SessionJournal.Cli/README.md#构建与即时诊断)。
+
 ## Phase ordering
 
 - Fresh/NewRequest：创建per-turn Online，执行formal composite lifecycle，再以无Agent Control tool的runtime开始completion。

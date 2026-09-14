@@ -126,6 +126,13 @@ Delegation supervisor 在 host 启动时就分类每个 user 的状态。仅当 
 - 可选 `ATELIA_CODEX_SUBSCRIPTION_ORIGINATOR`，默认 `galatea`；
 - 可选 `ATELIA_CODEX_SUBSCRIPTION_AUTH_FILE`，配置时必须是绝对路径；未配置时读取 Codex CLI 的默认 auth file。
 
+正式 `recap-grid build` CLI 可直接读取本 V3 catalog，并以 `ParseJson` 读取现有 route 文件，允许人工格式化。
+CLI 使用共用 subscription factory，但只在实际创建 Codex client 时读取 subscription 环境；默认 originator 为
+`session-journal-cli`。无 missing work 不因此要求 subscription 环境/认证，普通 `apiKeyEnv/baseAddressEnv` 配置验证
+仍执行。Galatea 本身仍保留上述启动时配置校验。其他 CLI connections 入口（如 `run-online-turn/llm-smoke`）
+继续使用各自 V2 文件，不能直接替换成本 V3 catalog。示例和进度说明见
+[CLI 构建与即时诊断](../../prototypes/SessionJournal.Cli/README.md#构建与即时诊断)。
+
 Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听配置：`listenUrls` 交给 `UseUrls`；未配置时采用 host 的 URL 设置，显式 `Kestrel:Endpoints` 按框架规则生效。可以使用 `http://0.0.0.0:3510`，没有 Codex 专属的 loopback 限制。
 
 ## `delegates.json`
