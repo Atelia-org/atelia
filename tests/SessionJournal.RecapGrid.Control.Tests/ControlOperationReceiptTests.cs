@@ -974,12 +974,12 @@ public sealed partial class ControlVerticalTests {
             created
         );
         string current = File.ReadAllText(statePath);
-        Assert.StartsWith("{\"schemaVersion\":3,", current,
+        Assert.StartsWith("{\"schemaVersion\":4,", current,
             StringComparison.Ordinal);
         File.WriteAllText(
             statePath,
             "{\"schemaVersion\":1," + current[
-                "{\"schemaVersion\":3,".Length..]
+                "{\"schemaVersion\":4,".Length..]
         );
 
         RecapGridControlOpenResult.UnsupportedSchema unsupported =

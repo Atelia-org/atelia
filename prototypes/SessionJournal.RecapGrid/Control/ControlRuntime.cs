@@ -480,14 +480,11 @@ public sealed class RecapGridControlCoordinator {
                     state.Head
                 );
             }
-            HistorySegmentDescriptorDigest? descriptorDigest =
-                bootstrapWitness?.DescriptorDigest;
             var registered = new RegisteredGridRecipe(
                 recipe,
                 new RegisteredRecipeBootstrap(
                     expectedWholeTimelineHead,
-                    recipe.BootstrapThroughRowId,
-                    descriptorDigest
+                    recipe.BootstrapThroughRowId
                 )
             );
             ControlState next = state.WithRecipe(registered);
@@ -755,8 +752,7 @@ public sealed class RecapGridControlCoordinator {
                     recipe,
                     new RegisteredRecipeBootstrap(
                         expectedWholeTimelineHead,
-                        recipe.BootstrapThroughRowId,
-                        registration.BootstrapWitness?.DescriptorDigest
+                        recipe.BootstrapThroughRowId
                     )
                 ));
             }
@@ -1281,8 +1277,8 @@ public sealed class RecapGridControlCoordinator {
                 _timelineReader.ValidateWitness(expectedTimelineHead, witness);
             switch (validated) {
                 case HistoryTimelineReaderRowResult.Selected selected
-                    when selected.Row.Descriptor.DescriptorDigest
-                        == witness.DescriptorDigest:
+                    when selected.Row.Descriptor.RowId
+                        == witness.RowId:
                     break;
                 case HistoryTimelineReaderRowResult.NotOnSelectedPath missing:
                     return new RecapGridControlPutResult.NotOnSelectedPath(
@@ -1580,12 +1576,12 @@ public sealed class RecapGridControlCoordinator {
             );
         return selected switch {
             HistoryTimelineReaderRowResult.Selected row
-                when row.Row.Descriptor.DescriptorDigest
-                    == registered.Bootstrap.DescriptorDigest => null,
+                when row.Row.Descriptor.RowId
+                    == registered.Bootstrap.RowId => null,
             HistoryTimelineReaderRowResult.Selected
                 => new RecapGridControlActivateResult.Invalid(
-                    "BootstrapDescriptorMismatch",
-                    "The stored bootstrap descriptor differs from the selected row."
+                    "BootstrapRowMismatch",
+                    "The stored bootstrap row differs from the selected row."
                 ),
             HistoryTimelineReaderRowResult.NotOnSelectedPath missing
                 => new RecapGridControlActivateResult.BootstrapNotSelected(

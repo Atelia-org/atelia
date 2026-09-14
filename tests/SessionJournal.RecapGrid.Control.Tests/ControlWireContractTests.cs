@@ -9,13 +9,13 @@ namespace Atelia.SessionJournal.RecapGrid.Control.Tests;
 
 public sealed partial class ControlVerticalTests {
     [Fact]
-    public void CurrentV3WholeStateCanonicalBytesAreExactGolden() {
+    public void CurrentV4WholeStateCanonicalBytesAreExactGolden() {
         ControlState state = ControlState.CreateEmpty(
             new RefId(1),
             new TimelineId("00112233445566778899aabbccddeeff"),
             new ControlInstanceId("0123456789abcdef0123456789abcdef"),
             generation: 7);
-        const string Expected = """{"schemaVersion":3,"head":{"instanceId":"0123456789abcdef0123456789abcdef","refId":1,"timelineId":"00112233445566778899aabbccddeeff","generation":7,"stateDigest":"89765b862a79aef4c438e0096cdb245ceccdbba6e60f7f0063a32277eb2cf78e","activeRecipeDigest":null},"families":[],"definitions":[],"recipes":[],"operationReceipts":[]}""";
+        const string Expected = """{"schemaVersion":4,"head":{"instanceId":"0123456789abcdef0123456789abcdef","refId":1,"timelineId":"00112233445566778899aabbccddeeff","generation":7,"stateDigest":"aeb3c3d009ae67907a9018194eb3c67e2e710df488681bb11683b70874d322d1","activeRecipeDigest":null},"families":[],"definitions":[],"recipes":[],"operationReceipts":[]}""";
         Assert.Equal(Expected, Encoding.UTF8.GetString(state.CanonicalBytes));
         Assert.Equal(state.Head, ControlState.Decode(state.CanonicalBytes).Head);
     }
@@ -23,12 +23,12 @@ public sealed partial class ControlVerticalTests {
     [Fact]
     public void FutureSchemaRequiresCompleteStrictLeadingDiscriminator() {
         string[] unsupported = [
-            "{\"schemaVersion\":4}",
-            "{\"schemaVersion\":4,\"future\":{\"shape\":true}}"
+            "{\"schemaVersion\":5}",
+            "{\"schemaVersion\":5,\"future\":{\"shape\":true}}"
         ];
         foreach (string json in unsupported) {
             Assert.Equal(
-                4,
+                5,
                 Assert.Throws<ControlUnsupportedSchemaException>(() =>
                     ControlState.Decode(Encoding.UTF8.GetBytes(json))
                 ).Version
@@ -36,20 +36,20 @@ public sealed partial class ControlVerticalTests {
         }
 
         string[] invalid = [
-            "{\"schemaVersion\":4",
-            "{\"schemaVersion\":4,}",
-            "{\"schemaVersion\":4}[]",
-            "{\"schemaVersion\":4,\"schemaVersion\":4}",
-            "{\"schemaVersion\":4,\"SchemaVersion\":4}",
-            "{\"schemaVersion\":4,\"future\":1,\"future\":2}",
-            "{\"schemaVersion\":4,\"future\":1,\"Future\":2}",
-            "{\"SchemaVersion\":4}",
-            "{\"\\u0073chemaVersion\":4}",
-            "{\"future\":true,\"schemaVersion\":4}",
+            "{\"schemaVersion\":5",
+            "{\"schemaVersion\":5,}",
+            "{\"schemaVersion\":5}[]",
+            "{\"schemaVersion\":5,\"schemaVersion\":5}",
+            "{\"schemaVersion\":5,\"SchemaVersion\":5}",
+            "{\"schemaVersion\":5,\"future\":1,\"future\":2}",
+            "{\"schemaVersion\":5,\"future\":1,\"Future\":2}",
+            "{\"SchemaVersion\":5}",
+            "{\"\\u0073chemaVersion\":5}",
+            "{\"future\":true,\"schemaVersion\":5}",
             "{\"schemaVersion\":\"3\"}",
             "{\"schemaVersion\":null}",
-            "{\"schemaVersion\":4.0}",
-            "{\"schemaVersion\":4e0}",
+            "{\"schemaVersion\":5.0}",
+            "{\"schemaVersion\":5e0}",
             "{\"schemaVersion\":2147483648}",
             "{\"schemaVersion\":2}"
         ];
@@ -109,7 +109,7 @@ public sealed partial class ControlVerticalTests {
             created
         );
         byte[] future = Encoding.UTF8.GetBytes(
-            "{\"schemaVersion\":4,\"future\":{\"shape\":true}}"
+            "{\"schemaVersion\":5,\"future\":{\"shape\":true}}"
         );
 
         using (RecapGridControlHandle handle = Assert.IsType<
@@ -121,7 +121,7 @@ public sealed partial class ControlVerticalTests {
                )).Handle) {
             File.WriteAllBytes(statePath, future);
             Assert.Equal(
-                4,
+                5,
                 Assert.IsType<
                     RecapGridControlSnapshotResult.UnsupportedSchema
                 >(handle.Reader.ReadSnapshot()).SchemaVersion
@@ -136,45 +136,45 @@ public sealed partial class ControlVerticalTests {
             Assert.Equal(future, File.ReadAllBytes(statePath));
         }
 
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlCreateResult.ControlUnsupportedSchema
         >(RecapGridControlFactory.Create(
             path,
             journal.BranchRefId,
             values.Admission
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlOpenResult.UnsupportedSchema
         >(RecapGridControlFactory.Open(
             path,
             journal.BranchRefId,
             values.Admission
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlReaderOpenResult.UnsupportedSchema
         >(RecapGridControlFactory.OpenReader(
             path,
             journal.BranchRefId
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlInspectResult.UnsupportedSchema
         >(RecapGridControlMaintenance.Inspect(
             path,
             journal.BranchRefId
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlInspectResult.UnsupportedSchema
         >(RecapGridControlMaintenance.Verify(
             path,
             journal.BranchRefId
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlExportResult.UnsupportedSchema
         >(RecapGridControlMaintenance.Export(
             path,
             journal.BranchRefId
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlBackupResult.ControlUnsupportedSchema
         >(RecapGridControlMaintenance.Backup(
             path,
@@ -182,7 +182,7 @@ public sealed partial class ControlVerticalTests {
             created,
             Path.Combine(path, "unsupported-backup")
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlAdminResult.ControlUnsupportedSchema
         >(RecapGridControlMaintenance.Restore(
             path,
@@ -190,7 +190,7 @@ public sealed partial class ControlVerticalTests {
             created,
             backup
         )).SchemaVersion);
-        Assert.Equal(4, Assert.IsType<
+        Assert.Equal(5, Assert.IsType<
             RecapGridControlAdminResult.ControlUnsupportedSchema
         >(RecapGridControlMaintenance.Reinitialize(
             path,

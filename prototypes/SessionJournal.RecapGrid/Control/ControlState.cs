@@ -11,7 +11,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 namespace Atelia.SessionJournal.RecapGrid.Control;
 
 internal sealed class ControlState {
-    internal const int SchemaVersion = 3;
+    internal const int SchemaVersion = 4;
     private readonly SortedDictionary<string, FamilyDefinition> _families;
     private readonly SortedDictionary<string, MaintainerDefinitionRevision>
         _definitions;
@@ -258,7 +258,7 @@ internal sealed class ControlState {
             throw new ControlUnsupportedSchemaException(version);
         }
         ControlFileDto dto = DecodeWire(bytes);
-        if (dto.SchemaVersion is not (2 or SchemaVersion)) {
+        if (dto.SchemaVersion is not (2 or 3 or SchemaVersion)) {
             throw new ControlUnsupportedSchemaException(dto.SchemaVersion);
         }
         return DecodeGraph(dto, bytes);
@@ -289,16 +289,50 @@ internal sealed class ControlState {
                     entry.CommandDigest, entry.OriginalInstanceId, entry.OriginalGeneration);
             }
             return new ControlFileDto(legacy.SchemaVersion, legacy.Head,
-                legacy.Families, legacy.Definitions, legacy.Recipes, receipts);
+                legacy.Families, legacy.Definitions, ProjectLegacyRecipes(legacy.Recipes), receipts);
+        }
+        if (bytes.StartsWith("{\"schemaVersion\":3,"u8)) {
+            LegacyControlFileV3Dto legacy = DecodeCanonical<LegacyControlFileV3Dto>(bytes);
+            VerifyDigest(legacy.Head, "atelia.recap-grid.control-state.v3",
+                new LegacyControlBodyV3Dto(
+                    legacy.SchemaVersion, legacy.Head.InstanceId, legacy.Head.RefId,
+                    legacy.Head.TimelineId, legacy.Head.Generation, legacy.Head.ActiveRecipeDigest,
+                    legacy.Families, legacy.Definitions, legacy.Recipes, legacy.OperationReceipts));
+            return new ControlFileDto(legacy.SchemaVersion, legacy.Head,
+                legacy.Families, legacy.Definitions, ProjectLegacyRecipes(legacy.Recipes),
+                legacy.OperationReceipts);
         }
         ControlFileDto current = DecodeCanonical<ControlFileDto>(bytes);
-        VerifyDigest(current.Head, "atelia.recap-grid.control-state.v3",
+        VerifyDigest(current.Head, "atelia.recap-grid.control-state.v4",
             new ControlBodyDto(
                 current.SchemaVersion, current.Head.InstanceId, current.Head.RefId,
                 current.Head.TimelineId, current.Head.Generation, current.Head.ActiveRecipeDigest,
                 current.Families, current.Definitions, current.Recipes, current.OperationReceipts));
         return current;
     }
+
+    // Validate the retired field only at the original wire boundary. It is not
+    // a second row identity in the running graph or in newly written states.
+    private static RecipeEntryDto[] ProjectLegacyRecipes(LegacyRecipeEntryDto[] recipes) =>
+        recipes.Select(static entry => {
+            LegacyRecipeBootstrapDto bootstrap = entry.Bootstrap;
+            if ((bootstrap.RowId is null) != (bootstrap.DescriptorDigest is null)) {
+                throw new ControlStoreException("RecipeBootstrapInvalid",
+                    "The legacy recipe bootstrap fields disagree about empty state.");
+            }
+            if (bootstrap.DescriptorDigest is not null) {
+                try {
+                    RecapGridControlOperation.RequireSha256(
+                        bootstrap.DescriptorDigest, nameof(bootstrap.DescriptorDigest));
+                }
+                catch (ArgumentException exception) {
+                    throw new ControlStoreException("RecipeBootstrapInvalid",
+                        "The legacy recipe bootstrap descriptor is invalid.", exception);
+                }
+            }
+            return new RecipeEntryDto(entry.Digest, entry.Value,
+                new RecipeBootstrapDto(bootstrap.TimelineHead, bootstrap.RowId));
+        }).ToArray();
 
     private static T DecodeCanonical<T>(ReadOnlySpan<byte> bytes) where T : class {
         T? dto;
@@ -379,14 +413,7 @@ internal sealed class ControlState {
             HistoryRowId? rowId = entry.Bootstrap.RowId is null
                 ? null
                 : new HistoryRowId(entry.Bootstrap.RowId);
-            HistorySegmentDescriptorDigest? descriptorDigest =
-                entry.Bootstrap.DescriptorDigest is null
-                    ? null
-                    : new HistorySegmentDescriptorDigest(
-                        entry.Bootstrap.DescriptorDigest
-                    );
-            if ((rowId is null) != (descriptorDigest is null)
-                || rowId != value.BootstrapThroughRowId
+            if (rowId != value.BootstrapThroughRowId
                 || value.TimelineId != head.TimelineId) {
                 throw new ControlStoreException(
                     "RecipeBootstrapInvalid",
@@ -399,8 +426,7 @@ internal sealed class ControlState {
                     value,
                     new RegisteredRecipeBootstrap(
                         head,
-                        rowId,
-                        descriptorDigest
+                        rowId
                     )
                 )
             );
@@ -481,7 +507,7 @@ internal sealed class ControlState {
                 || !reader.Read()
                 || reader.TokenType != JsonTokenType.Number
                 || !reader.TryGetInt32(out int version)
-                || version is 2 or SchemaVersion) {
+                || version is 2 or 3 or SchemaVersion) {
                 return null;
             }
 
@@ -554,7 +580,7 @@ internal sealed class ControlState {
             operationReceipts
         );
         ControlStateDigest digest = new(Hash(
-            "atelia.recap-grid.control-state.v3",
+            "atelia.recap-grid.control-state.v4",
             JsonSerializer.SerializeToUtf8Bytes(body, ControlJson.Options)
         ));
         ControlHeadRef head = new(
@@ -635,9 +661,7 @@ internal sealed class ControlState {
                 || registered.Bootstrap.TimelineHead.TimelineId
                     != timelineId
                 || registered.Bootstrap.RowId
-                    != recipe.BootstrapThroughRowId
-                || (registered.Bootstrap.RowId is null)
-                    != (registered.Bootstrap.DescriptorDigest is null)) {
+                    != recipe.BootstrapThroughRowId) {
                 throw new ControlStoreException(
                     "RecipeScopeInvalid",
                     "A recipe or bootstrap belongs to another Control scope."
@@ -744,8 +768,7 @@ internal sealed class ControlState {
             pair.Value.Recipe.ToCanonicalBytes(),
             new RecipeBootstrapDto(
                 TimelineHead(pair.Value.Bootstrap.TimelineHead),
-                pair.Value.Bootstrap.RowId?.Value,
-                pair.Value.Bootstrap.DescriptorDigest?.Value
+                pair.Value.Bootstrap.RowId?.Value
             )
         )).ToArray(),
         operationReceipts.Select(static pair => ReceiptDto(pair.Value))
@@ -957,8 +980,7 @@ internal sealed record RecipeEntryDto(
 );
 internal sealed record RecipeBootstrapDto(
     TimelineHeadDto TimelineHead,
-    string? RowId,
-    string? DescriptorDigest
+    string? RowId
 );
 internal sealed record ControlOperationReceiptDto(
     string OperationKey,
@@ -1018,7 +1040,37 @@ internal sealed record ControlOperationReceipt(
     long OriginalGeneration
 );
 
-// Codec-only v2 wire shapes. Never retained in a running ControlState.
+// Codec-only v2/v3 wire shapes. Never retained in a running ControlState.
+internal sealed record LegacyRecipeEntryDto(
+    string Digest,
+    byte[] Value,
+    LegacyRecipeBootstrapDto Bootstrap
+);
+internal sealed record LegacyRecipeBootstrapDto(
+    TimelineHeadDto TimelineHead,
+    string? RowId,
+    string? DescriptorDigest
+);
+internal sealed record LegacyControlBodyV3Dto(
+    int SchemaVersion,
+    string InstanceId,
+    ulong RefId,
+    string TimelineId,
+    long Generation,
+    string? ActiveRecipeDigest,
+    CanonicalEntryDto[] Families,
+    CanonicalEntryDto[] Definitions,
+    LegacyRecipeEntryDto[] Recipes,
+    ControlOperationReceiptDto[] OperationReceipts
+);
+internal sealed record LegacyControlFileV3Dto(
+    int SchemaVersion,
+    ControlHeadDto Head,
+    CanonicalEntryDto[] Families,
+    CanonicalEntryDto[] Definitions,
+    LegacyRecipeEntryDto[] Recipes,
+    ControlOperationReceiptDto[] OperationReceipts
+);
 internal sealed record LegacyControlOperationReceiptV2Dto(
     string OperationKey,
     long ExecutionSequence,
@@ -1037,7 +1089,7 @@ internal sealed record LegacyControlBodyV2Dto(
     string? ActiveRecipeDigest,
     CanonicalEntryDto[] Families,
     CanonicalEntryDto[] Definitions,
-    RecipeEntryDto[] Recipes,
+    LegacyRecipeEntryDto[] Recipes,
     LegacyControlOperationReceiptV2Dto[] OperationReceipts
 );
 internal sealed record LegacyControlFileV2Dto(
@@ -1045,7 +1097,7 @@ internal sealed record LegacyControlFileV2Dto(
     ControlHeadDto Head,
     CanonicalEntryDto[] Families,
     CanonicalEntryDto[] Definitions,
-    RecipeEntryDto[] Recipes,
+    LegacyRecipeEntryDto[] Recipes,
     LegacyControlOperationReceiptV2Dto[] OperationReceipts
 );
 

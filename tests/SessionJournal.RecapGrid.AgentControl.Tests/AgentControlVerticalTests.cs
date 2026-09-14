@@ -436,6 +436,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 one!.Families[0].ToCanonicalBytes(),
                 two!.Families[0].ToCanonicalBytes()
             );
+            Assert.Empty(one.Recipes);
             Assert.Equal(
                 one.ToCanonicalCommandBytes(),
                 two.ToCanonicalCommandBytes()

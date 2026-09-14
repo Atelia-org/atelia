@@ -825,7 +825,6 @@ public sealed partial class ControlVerticalTests : IDisposable {
             values.Recipe,
             new RegisteredRecipeBootstrap(
                 timelineHead,
-                null,
                 null
             )
         );
@@ -843,7 +842,6 @@ public sealed partial class ControlVerticalTests : IDisposable {
             overlay,
             new RegisteredRecipeBootstrap(
                 timelineHead,
-                null,
                 null
             )
         );
@@ -1111,7 +1109,6 @@ public sealed partial class ControlVerticalTests : IDisposable {
             current,
             new RegisteredRecipeBootstrap(
                 timelineHead,
-                null,
                 null
             )
         ));
@@ -1128,7 +1125,6 @@ public sealed partial class ControlVerticalTests : IDisposable {
                 current,
                 new RegisteredRecipeBootstrap(
                     timelineHead,
-                    null,
                     null
                 )
             ));
@@ -1146,7 +1142,6 @@ public sealed partial class ControlVerticalTests : IDisposable {
                     overDepth,
                     new RegisteredRecipeBootstrap(
                         timelineHead,
-                        null,
                         null
                     )
                 ))).Code
@@ -1454,7 +1449,7 @@ public sealed partial class ControlVerticalTests : IDisposable {
             source.OperationReceipts
         );
         string digest = Hash(
-            "atelia.recap-grid.control-state.v3",
+            "atelia.recap-grid.control-state.v4",
             JsonSerializer.SerializeToUtf8Bytes(body, ControlJson.Options)
         );
         return source with {

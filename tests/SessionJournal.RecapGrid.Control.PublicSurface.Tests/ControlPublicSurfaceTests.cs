@@ -104,6 +104,12 @@ public sealed class ControlPublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void RegisteredBootstrapExposesOneRowIdentity() {
+        Assert.Equal(new[] { "IsEmpty", "RowId", "TimelineHead" },
+            typeof(RegisteredRecipeBootstrap).GetProperties().Select(value => value.Name).Order().ToArray());
+    }
+
+    [Fact]
     public void PublicFactoryAndHandlesExposeNoBackendSelector() {
         Type[] exported = typeof(RecapGridControlFactory)
             .Assembly.GetExportedTypes()

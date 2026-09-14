@@ -583,17 +583,14 @@ internal sealed record ControlAdmissionDto(
 public sealed class RegisteredRecipeBootstrap {
     internal RegisteredRecipeBootstrap(
         TimelineHeadRef timelineHead,
-        HistoryRowId? rowId,
-        HistorySegmentDescriptorDigest? descriptorDigest
+        HistoryRowId? rowId
     ) {
         TimelineHead = timelineHead;
         RowId = rowId;
-        DescriptorDigest = descriptorDigest;
     }
 
     public TimelineHeadRef TimelineHead { get; }
     public HistoryRowId? RowId { get; }
-    public HistorySegmentDescriptorDigest? DescriptorDigest { get; }
     public bool IsEmpty => RowId is null;
 }
 

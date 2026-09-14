@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.HistoryTimeline;
 using Xunit;
 
 namespace Atelia.SessionJournal.RecapGrid.Control.Tests;
@@ -13,6 +14,11 @@ public sealed partial class ControlVerticalTests {
     private string ExtractLegacyControl() {
         string path = NewPath();
         ZipFile.ExtractToDirectory(Path.Combine(LegacyFixtureDirectory, "repository.zip"), path);
+        ControlState original = ControlState.Decode(
+            File.ReadAllBytes(Path.Combine(LegacyFixtureDirectory, "control.json")));
+        Assert.IsType<HistoryTimelineUpgradeResult.Upgraded>(
+            HistoryTimelineMaintenance.UpgradeSchemaV2(path, original.Head.RefId,
+                original.Head.TimelineId));
         return path;
     }
 
@@ -65,7 +71,7 @@ public sealed partial class ControlVerticalTests {
             head = applied.Head;
         }
         byte[] upgraded = File.ReadAllBytes(statePath);
-        Assert.StartsWith("{\"schemaVersion\":3,", Encoding.UTF8.GetString(upgraded));
+        Assert.StartsWith("{\"schemaVersion\":4,", Encoding.UTF8.GetString(upgraded));
         Assert.DoesNotContain("resultIdentity", Encoding.UTF8.GetString(upgraded));
         using (RecapGridControlHandle handle = Assert.IsType<RecapGridControlOpenResult.Opened>(
             RecapGridControlFactory.Open(path, journal.BranchRefId, values.Admission)).Handle) {
@@ -298,7 +304,7 @@ public sealed partial class ControlVerticalTests {
     }
 
     [Fact]
-    public void CurrentV3RejectsLegacyReceiptField() {
+    public void CurrentV4RejectsLegacyReceiptField() {
         ControlState legacy = ControlState.Decode(File.ReadAllBytes(Path.Combine(LegacyFixtureDirectory, "control.json")));
         ControlState current = legacy.WithGenerationAndReceipts(legacy.Head.InstanceId, 2, legacy.OperationReceipts);
         string malformed = Encoding.UTF8.GetString(current.CanonicalBytes).Replace(

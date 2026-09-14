@@ -22,8 +22,7 @@ internal static class ControlOperationCanonicalizer {
                     value.ToCanonicalBytes()).ToArray(),
                 bundle.Recipes.Select(static value => new RecipeCommandDto(
                     value.Recipe.ToCanonicalBytes(),
-                    value.BootstrapWitness?.RowId.Value,
-                    value.BootstrapWitness?.DescriptorDigest.Value
+                    value.BootstrapWitness?.RowId.Value
                 )).ToArray()
             ),
             ControlJson.Options
@@ -49,8 +48,7 @@ internal static class ControlOperationCanonicalizer {
 
     private sealed record RecipeCommandDto(
         byte[] Recipe,
-        string? BootstrapRowId,
-        string? BootstrapDescriptorDigest
+        string? BootstrapRowId
     );
 
     private sealed record PromotionCommandDto(
