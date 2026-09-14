@@ -391,15 +391,9 @@ public sealed partial class RecapGridContextHandle {
             previous.Value,
             previousCells
         );
-        PriorInputProjection projection;
+        PriorInputProjectionDigest projectionDigest;
         try {
-            projection = PriorInputProjection.Create(
-                previousCells.Select(static cell =>
-                    new PriorProjectedContent(
-                        cell.LogicalColumnId,
-                        cell.ContentDigest
-                    ))
-            );
+            projectionDigest = PriorInputProjectionDigest.FromCells(previousCells);
         }
         catch (Exception) {
             return RecapGridProvenanceStatus.Incomplete;
@@ -407,7 +401,7 @@ public sealed partial class RecapGridContextHandle {
         return current.Cells.All(cell =>
                 cell.EvaluationKey.PriorInput
                     is PriorInputReference.Projection prior
-                && prior.Digest == projection.Digest)
+                && prior.Digest == projectionDigest)
             ? RecapGridProvenanceStatus.Verified
             : RecapGridProvenanceStatus.NotSatisfied;
     }

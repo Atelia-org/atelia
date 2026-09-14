@@ -213,9 +213,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             [bootstrapCell]
         );
         var projection = new PriorInputReference.Projection(
-            PriorInputProjection.Create([
-                new PriorProjectedContent(column, bootstrapCell.ContentDigest)
-            ]).Digest
+            PriorInputProjectionDigest.FromCells([bootstrapCell])
         );
         var earlierDescriptor = new HistorySegmentDescriptorDigest(
             new string('2', 64)

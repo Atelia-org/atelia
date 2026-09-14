@@ -364,19 +364,13 @@ public sealed class CanonicalContractTests {
             definition.MaxContentUtf8Bytes
         );
         RecapRowView first = RecapRowView.Create(spec, [cell]);
-        PriorInputProjection firstProjection = PriorInputProjection.Create(
-            [new PriorProjectedContent(
-                definition.LogicalColumnId,
-                cell.ContentDigest
-            )]
-        );
-        PriorInputProjection secondProjection = PriorInputProjection.Create(
-            [new PriorProjectedContent(
-                definition.LogicalColumnId,
-                cell.ContentDigest
-            )]
-        );
-        Assert.Equal(firstProjection.Digest, secondProjection.Digest);
+        RecapCellArtifact differentSource = RecapCellArtifact.Create(
+            definition.LogicalColumnId, definition.Digest,
+            EvaluationKey.Create(HistoryDigest('3'), definition.Digest, PriorInputReference.FirstRow.Value),
+            RecapCellOutcome.KeepUnchanged, cell.Content, definition.MaxContentUtf8Bytes);
+        Assert.NotEqual(cell.CellDigest, differentSource.CellDigest);
+        Assert.Equal(PriorInputProjectionDigest.FromCells([cell]),
+            PriorInputProjectionDigest.FromCells([differentSource]));
     }
 
     [Fact]
@@ -427,7 +421,7 @@ public sealed class CanonicalContractTests {
                 value.Definition.Digest.Value,
                 value.Target.Digest.Value,
                 value.Recipe.Digest.Value,
-                value.Projection.Digest.Value,
+                value.Projection.Value,
                 value.Evaluation.Digest.Value,
                 value.Cell.ContentDigest.Value,
                 value.Cell.CellDigest.Value,
@@ -449,12 +443,6 @@ public sealed class CanonicalContractTests {
             value.Recipe.ToCanonicalBytes(),
             GridBuildRecipe.DecodeCanonical(
                 value.Recipe.ToCanonicalBytes()
-            ).ToCanonicalBytes()
-        );
-        Assert.Equal(
-            value.Projection.ToCanonicalBytes(),
-            PriorInputProjection.DecodeCanonical(
-                value.Projection.ToCanonicalBytes()
             ).ToCanonicalBytes()
         );
         Assert.Equal(
@@ -510,7 +498,6 @@ public sealed class CanonicalContractTests {
         Assert.All(new[] {
             value.Target.ToCanonicalBytes(),
             value.Recipe.ToCanonicalBytes(),
-            value.Projection.ToCanonicalBytes(),
             value.Evaluation.ToCanonicalBytes(),
             value.Cell.ToCanonicalBytes(),
             value.Fulfilled.ToCanonicalBytes()
@@ -529,7 +516,7 @@ public sealed class CanonicalContractTests {
             value.Definition.Digest.Value,
             value.Target.Digest.Value,
             value.Recipe.Digest.Value,
-            value.Projection.Digest.Value,
+            value.Projection.Value,
             value.Evaluation.Digest.Value,
             value.Cell.ContentDigest.Value,
             value.Cell.CellDigest.Value,
@@ -540,7 +527,6 @@ public sealed class CanonicalContractTests {
             + "551f58efc84fc7164e4f7aad1c1f0e4cb38dfa00de77c0e41bcda24028df51d6\n"
             + "111b651063cd05c6c75fb9dc819936cbcb33bf1919f32f22c99356fa13278731\n"
             + "7fd854fa376c08cc22bd3e57c970eef98e2bf344141a945ec3c3f96af38a32cd\n"
-            + "436ac01f8031b636eeaf77b02aa1fd4df81f4bb98decae7cf7b01907adced7a2\n"
             + "4f1506dca06b9a785801dce0ce7ca6e37d42fda05fa78fa3ac1766bc2c0db6b4\n"
             + "962adc4d5e174799ff321155f48fd7945fe53e32128f65779a106b0318de6b19\n"
             + "e051374b7f1e7fc9bb64dbba8f5e97b4041ee79ca67474409a453201a2f17629\n"
@@ -550,7 +536,6 @@ public sealed class CanonicalContractTests {
                 CanonicalSha(value.Definition.ToCanonicalBytes()),
                 CanonicalSha(value.Target.ToCanonicalBytes()),
                 CanonicalSha(value.Recipe.ToCanonicalBytes()),
-                CanonicalSha(value.Projection.ToCanonicalBytes()),
                 CanonicalSha(value.Evaluation.ToCanonicalBytes()),
                 CanonicalSha(value.Cell.ToCanonicalBytes()),
                 CanonicalSha(value.View.ToCanonicalBytes()),
@@ -734,7 +719,7 @@ public sealed class CanonicalContractTests {
         EvaluationKey projected = EvaluationKey.Create(
             value.Evaluation.HistorySegmentDigest,
             value.Definition.Digest,
-            new PriorInputReference.Projection(value.Projection.Digest)
+            new PriorInputReference.Projection(value.Projection)
         );
         Assert.NotEqual(first.Digest, projected.Digest);
         Assert.IsType<PriorInputReference.FirstRow>(
@@ -743,7 +728,7 @@ public sealed class CanonicalContractTests {
             ).PriorInput
         );
         Assert.Equal(
-            value.Projection.Digest,
+            value.Projection,
             Assert.IsType<PriorInputReference.Projection>(
                 EvaluationKey.DecodeCanonical(
                     projected.ToCanonicalBytes()
@@ -860,7 +845,7 @@ public sealed class CanonicalContractTests {
             )]
         ));
         var projected = new PriorInputReference.Projection(
-            value.Projection.Digest
+            value.Projection
         );
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
             value.Recipe,
@@ -1019,12 +1004,7 @@ public sealed class CanonicalContractTests {
             "X had access to the service passage.",
             definition.MaxContentUtf8Bytes
         );
-        PriorInputProjection projection = PriorInputProjection.Create([
-            new PriorProjectedContent(
-                definition.LogicalColumnId,
-                cell.ContentDigest
-            )
-        ]);
+        PriorInputProjectionDigest projection = PriorInputProjectionDigest.FromCells([cell]);
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
             Coordinate(recipe, RowId('a'), HistoryDigest('b')),
@@ -1091,7 +1071,7 @@ public sealed class CanonicalContractTests {
         MaintainerDefinitionRevision Definition,
         BuildTarget Target,
         GridBuildRecipe Recipe,
-        PriorInputProjection Projection,
+        PriorInputProjectionDigest Projection,
         EvaluationKey Evaluation,
         RecapCellArtifact Cell,
         RowBuildSpec Spec,

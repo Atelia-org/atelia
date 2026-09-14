@@ -10,7 +10,7 @@ using Xunit;
 
 namespace Atelia.SessionJournal.RecapGrid.Manager.Tests;
 
-public sealed class ManagerVerticalTests : IDisposable {
+public sealed partial class ManagerVerticalTests : IDisposable {
     private readonly List<string> _paths = [];
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
 

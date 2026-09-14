@@ -876,7 +876,6 @@ public sealed class HostingTests {
             spec,
             previousView: null,
             previousCells: Array.Empty<RecapCellArtifact>(),
-            priorProjection: null,
             [new FrozenRecapCellWork(
                 0,
                 logical,

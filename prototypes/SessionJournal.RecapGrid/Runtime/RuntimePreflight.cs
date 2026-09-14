@@ -288,8 +288,7 @@ public sealed partial class RecapCompletionRuntime {
         switch (batch.Spec.PriorInput) {
             case PriorInputReference.FirstRow:
                 if (batch.PreviousView is not null
-                    || batch.PreviousCells.Count != 0
-                    || batch.PriorProjection is not null) {
+                    || batch.PreviousCells.Count != 0) {
                     return new RuntimePreflightResult.Rejected(
                         "FirstRowPriorInvalid",
                         "A first-row batch must not carry previous view state."
@@ -299,7 +298,6 @@ public sealed partial class RecapCompletionRuntime {
 
             case PriorInputReference.Projection expected:
                 if (batch.PreviousView is null
-                    || batch.PriorProjection is null
                     || batch.PreviousCells.Count
                         != batch.PreviousView.OrderedCells.Count) {
                     return new RuntimePreflightResult.Rejected(
@@ -307,10 +305,7 @@ public sealed partial class RecapCompletionRuntime {
                         "A projected batch requires one exact previous view and its cells."
                     );
                 }
-                var projected = new PriorProjectedContent[
-                    batch.PreviousCells.Count
-                ];
-                for (int index = 0; index < projected.Length; index++) {
+                for (int index = 0; index < batch.PreviousCells.Count; index++) {
                     RecapCellArtifact cell = batch.PreviousCells[index];
                     RecapRowViewCell member =
                         batch.PreviousView.OrderedCells[index];
@@ -323,17 +318,10 @@ public sealed partial class RecapCompletionRuntime {
                             "Previous cells do not exactly materialize the previous view."
                         );
                     }
-                    projected[index] = new PriorProjectedContent(
-                        cell.LogicalColumnId,
-                        cell.ContentDigest
-                    );
                 }
-                PriorInputProjection rebuilt =
-                    PriorInputProjection.Create(projected);
-                if (expected.Digest != rebuilt.Digest
-                    || batch.PriorProjection.Digest != rebuilt.Digest
-                    || !batch.PriorProjection.ToCanonicalBytes()
-                        .SequenceEqual(rebuilt.ToCanonicalBytes())) {
+                PriorInputProjectionDigest actual =
+                    PriorInputProjectionDigest.FromCells(batch.PreviousCells);
+                if (expected.Digest != actual) {
                     return new RuntimePreflightResult.Rejected(
                         "PriorProjectionMismatch",
                         "The prior projection differs from the ordered previous-cell loop."

@@ -6,8 +6,7 @@ namespace Atelia.SessionJournal.RecapGrid.Manager;
 public sealed partial class RecapGridManager {
     private sealed record DerivedRowPlan(
         RowBuildSpec Spec,
-        IReadOnlyList<RecapCellArtifact> PreviousCells,
-        PriorInputProjection? Projection
+        IReadOnlyList<RecapCellArtifact> PreviousCells
     );
 
     private (DerivedRowPlan?, RecapGridBuildResult?) DeriveRowPlan(
@@ -25,7 +24,6 @@ public sealed partial class RecapGridManager {
                 "Candidate row provenance does not match Timeline order."
             ));
         }
-        PriorInputProjection? projection = null;
         PriorInputReference prior = PriorInputReference.FirstRow.Value;
         RowViewDigest? previousDigest = null;
         IReadOnlyList<RecapCellArtifact> previousCells = [];
@@ -43,13 +41,9 @@ public sealed partial class RecapGridManager {
                 ));
             }
             previousCells = previousRow.Cells;
-            projection = PriorInputProjection.Create(
-                previousCells.Select(cell => new PriorProjectedContent(
-                    cell.LogicalColumnId,
-                    cell.ContentDigest
-                ))
+            prior = new PriorInputReference.Projection(
+                PriorInputProjectionDigest.FromCells(previousCells)
             );
-            prior = new PriorInputReference.Projection(projection.Digest);
             previousDigest = previousRow.View.Digest;
         }
 
@@ -111,8 +105,7 @@ public sealed partial class RecapGridManager {
             };
             return (new DerivedRowPlan(
                 spec,
-                previousCells,
-                projection
+                previousCells
             ), null);
         }
         catch (Exception exception) when (IsContractFailure(exception)) {

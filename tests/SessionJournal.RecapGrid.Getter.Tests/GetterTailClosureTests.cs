@@ -682,12 +682,7 @@ public sealed partial class GetterVerticalTests {
                 ).Value;
                 PriorInputReference prior =
                     new PriorInputReference.Projection(
-                        PriorInputProjection.Create([
-                            new PriorProjectedContent(
-                                previousCell.LogicalColumnId,
-                                previousCell.ContentDigest
-                            )
-                        ]).Digest
+                        PriorInputProjectionDigest.FromCells([previousCell])
                     );
                 EvaluationKey evaluation = EvaluationKey.Create(
                     row.Descriptor.DescriptorDigest,

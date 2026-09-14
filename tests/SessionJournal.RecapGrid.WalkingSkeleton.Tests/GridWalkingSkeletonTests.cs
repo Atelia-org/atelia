@@ -58,14 +58,13 @@ public sealed class GridWalkingSkeletonTests {
             culpritCell,
             worldCell
         );
-        PriorInputProjection prior = Projection(
-            firstView,
+        PriorInputProjectionDigest prior = PriorInputProjectionDigest.FromCells([
             culpritCell,
             worldCell
-        );
+        ]);
 
         HistorySegmentDescriptorDigest secondHistory = HistoryDigest('2');
-        var priorReference = new PriorInputReference.Projection(prior.Digest);
+        var priorReference = new PriorInputReference.Projection(prior);
         EvaluationKey secondCulprit = EvaluationKey.Create(
             secondHistory,
             fixture.Culprit.Digest,
@@ -101,7 +100,7 @@ public sealed class GridWalkingSkeletonTests {
         Assert.All(
             secondSpec.OrderedAssignments,
             assignment => Assert.Equal(
-                prior.Digest,
+                prior,
                 Assert.IsType<PriorInputReference.Projection>(
                     Assert.IsType<RowBuildAssignment.Evaluate>(assignment)
                         .EvaluationKey.PriorInput
@@ -113,37 +112,26 @@ public sealed class GridWalkingSkeletonTests {
     [Fact]
     public void ContentEquivalentViewsShareProjectionIdentity() {
         Fixture fixture = CreateFixture();
-        ContentDigest culprit = ContentDigestFor(
-            "same culprit conclusion"
-        );
-        ContentDigest world = ContentDigestFor("same world conclusion");
-        PriorInputProjection first = PriorInputProjection.Create(
-            [
-                new PriorProjectedContent(
-                    fixture.Culprit.LogicalColumnId,
-                    culprit
-                ),
-                new PriorProjectedContent(
-                    fixture.World.LogicalColumnId,
-                    world
-                )
-            ]
-        );
-        PriorInputProjection second = PriorInputProjection.Create(
-            [
-                new PriorProjectedContent(
-                    fixture.Culprit.LogicalColumnId,
-                    culprit
-                ),
-                new PriorProjectedContent(
-                    fixture.World.LogicalColumnId,
-                    world
-                )
-            ]
-        );
+        MaintainerDefinitionRevision changedCulprit = Maintainer(
+            "culprit", fixture.Family.Digest, "A different definition with the same result.");
+        RecapCellArtifact[] first = [
+            Cell(fixture.Culprit, EvaluationKey.Create(HistoryDigest('1'),
+                fixture.Culprit.Digest, PriorInputReference.FirstRow.Value), "same culprit conclusion"),
+            Cell(fixture.World, EvaluationKey.Create(HistoryDigest('1'),
+                fixture.World.Digest, PriorInputReference.FirstRow.Value), "same world conclusion")
+        ];
+        RecapCellArtifact[] second = [
+            Cell(changedCulprit, EvaluationKey.Create(HistoryDigest('2'),
+                changedCulprit.Digest, PriorInputReference.FirstRow.Value), "same culprit conclusion"),
+            Cell(fixture.World, EvaluationKey.Create(HistoryDigest('2'),
+                fixture.World.Digest, PriorInputReference.FirstRow.Value), "same world conclusion")
+        ];
 
-        Assert.Equal(first.Digest, second.Digest);
-        Assert.Equal(first.ToCanonicalBytes(), second.ToCanonicalBytes());
+        Assert.NotEqual(first[0].DefinitionDigest, second[0].DefinitionDigest);
+        Assert.NotEqual(first[0].CellDigest, second[0].CellDigest);
+        Assert.NotEqual(first[1].CellDigest, second[1].CellDigest);
+        Assert.Equal(PriorInputProjectionDigest.FromCells(first),
+            PriorInputProjectionDigest.FromCells(second));
     }
 
     [Fact]
@@ -215,13 +203,8 @@ public sealed class GridWalkingSkeletonTests {
             historicalWorld,
             "The service passage remains the only access route."
         );
-        PriorInputProjection prior = PriorInputProjection.Create([
-            new PriorProjectedContent(
-                fixture.World.LogicalColumnId,
-                historicalCell.ContentDigest
-            )
-        ]);
-        var currentPrior = new PriorInputReference.Projection(prior.Digest);
+        var currentPrior = new PriorInputReference.Projection(
+            PriorInputProjectionDigest.FromCells([historicalCell]));
         EvaluationKey currentSuspect = EvaluationKey.Create(
             HistoryDigest('2'),
             suspect.Digest,
@@ -441,31 +424,6 @@ public sealed class GridWalkingSkeletonTests {
         spec,
         cells
     );
-
-    private static PriorInputProjection Projection(
-        RecapRowView view,
-        params RecapCellArtifact[] cells
-    ) => PriorInputProjection.Create(
-        cells.Select(static cell => new PriorProjectedContent(
-            cell.LogicalColumnId,
-            cell.ContentDigest
-        ))
-    );
-
-    private static ContentDigest ContentDigestFor(string content) {
-        FamilyDefinition family = CreateFixture().Family;
-        MaintainerDefinitionRevision definition = Maintainer(
-            "temp",
-            family.Digest,
-            "temp"
-        );
-        EvaluationKey key = EvaluationKey.Create(
-            HistoryDigest('f'),
-            definition.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        return Cell(definition, key, content).ContentDigest;
-    }
 
     private static HistorySegmentDescriptorDigest HistoryDigest(char value)
         => new(new string(value, 64));

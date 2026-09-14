@@ -161,7 +161,6 @@ internal static class RuntimeTestFixture {
             spec,
             previousView: null,
             previousCells: Array.Empty<RecapCellArtifact>(),
-            priorProjection: null,
             work
         );
     }
@@ -303,11 +302,8 @@ internal static class RuntimeTestFixture {
             priorSpec,
             [priorCell]
         );
-        PriorInputProjection projection = PriorInputProjection.Create([
-            new PriorProjectedContent(logical, priorCell.ContentDigest)
-        ]);
         var priorReference = new PriorInputReference.Projection(
-            projection.Digest
+            PriorInputProjectionDigest.FromCells([priorCell])
         );
         HistorySegmentDescriptor currentDescriptor = Descriptor(
             timelineId,
@@ -360,7 +356,6 @@ internal static class RuntimeTestFixture {
             currentSpec,
             previousView,
             [priorCell],
-            projection,
             [new FrozenRecapCellWork(
                 0,
                 logical,
@@ -441,14 +436,8 @@ internal static class RuntimeTestFixture {
             priorSpec,
             [priorCell]
         );
-        PriorInputProjection projection = PriorInputProjection.Create([
-            new PriorProjectedContent(
-                priorLogical,
-                priorCell.ContentDigest
-            )
-        ]);
         var priorReference = new PriorInputReference.Projection(
-            projection.Digest
+            PriorInputProjectionDigest.FromCells([priorCell])
         );
         HistorySegmentDescriptor descriptor = Descriptor(
             timelineId,
@@ -517,7 +506,6 @@ internal static class RuntimeTestFixture {
             spec,
             previousView,
             [priorCell],
-            projection,
             [new FrozenRecapCellWork(
                 1,
                 newLogical,

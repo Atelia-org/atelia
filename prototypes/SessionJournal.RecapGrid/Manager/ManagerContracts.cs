@@ -109,7 +109,6 @@ public sealed class FrozenRowBatch {
         RowBuildSpec spec,
         RecapRowView? previousView,
         IReadOnlyList<RecapCellArtifact> previousCells,
-        PriorInputProjection? priorProjection,
         IReadOnlyList<FrozenRecapCellWork> orderedMissingWork
     ) {
         TimelineHead = timelineHead;
@@ -120,7 +119,6 @@ public sealed class FrozenRowBatch {
         Spec = spec;
         PreviousView = previousView;
         PreviousCells = previousCells;
-        PriorProjection = priorProjection;
         OrderedMissingWork = orderedMissingWork;
     }
 
@@ -132,7 +130,6 @@ public sealed class FrozenRowBatch {
     public RowBuildSpec Spec { get; }
     public RecapRowView? PreviousView { get; }
     public IReadOnlyList<RecapCellArtifact> PreviousCells { get; }
-    public PriorInputProjection? PriorProjection { get; }
     public IReadOnlyList<FrozenRecapCellWork> OrderedMissingWork { get; }
 }
 

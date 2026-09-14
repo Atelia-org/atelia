@@ -179,7 +179,6 @@ public sealed partial class RecapGridManager {
         RowBuildSpec spec = derived!.Spec;
         IReadOnlyList<RecapCellArtifact> previousCells =
             derived.PreviousCells;
-        PriorInputProjection? projection = derived.Projection;
 
         RecapGridMissingResult missingRead =
             _store.Reader.FindMissingAssignments(spec);
@@ -280,7 +279,6 @@ public sealed partial class RecapGridManager {
                 spec,
                 previousRow?.View,
                 previousCells,
-                projection,
                 Array.AsReadOnly(orderedWork)
             );
             RecapCellBatchExecutionResult execution;

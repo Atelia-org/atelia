@@ -225,12 +225,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
             PriorInputReference prior = previous is null
                 ? PriorInputReference.FirstRow.Value
                 : new PriorInputReference.Projection(
-                    PriorInputProjection.Create([
-                        new PriorProjectedContent(
-                            cells[^1].LogicalColumnId,
-                            cells[^1].ContentDigest
-                        )
-                    ]).Digest
+                    PriorInputProjectionDigest.FromCells([cells[^1]])
                 );
             EvaluationKey key = EvaluationKey.Create(
                 descriptor.DescriptorDigest,
