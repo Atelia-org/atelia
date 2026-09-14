@@ -86,7 +86,7 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 
 ## atelia-completion 拆仓任务入口
 
-用户已选择将 Diagnostics、Completion.Abstractions、Completion、Completion.Tools 迁到一个新仓。范围见 [atelia-completion 实施方案](docs/plans/atelia-completion-extraction-plan.md)，实际进展见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)。新仓及候选包验证已完成，用户已推送 GitHub，等待 NuGet policy；尚未发布，Atelia 引用尚未切换。涉及此任务时区分计划和实际验收状态。
+Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至独立仓并发布 `0.1.0-preview.1`；本仓默认从 nuget.org restore，显式源码联调使用 `UseCompletionSources` / `CompletionSourceRoot`。日常入口见 [Completion 依赖](docs/completion-dependency.md)，版本与来源以 `eng/CompletionDependency.props` 为准。拆仓范围见 [实施方案](docs/plans/atelia-completion-extraction-plan.md)，阶段证据见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)；DramaBoard 的 P4 接入尚未实施。
 
 ---
 

@@ -1,7 +1,7 @@
 # atelia-completion 分阶段拆仓实施方案
 
-> 状态：2026-09-14 已开始实施；P0/P1 本地证据完成，用户已创建并推送 GitHub 新仓，等待 NuGet policy 与后续发布。详见 [验收记录](atelia-completion-extraction-validation.md)。用户选择方案 1：一个新仓、四个现有项目。
-> 本文是迁移实施入口；阶段任务不是已执行证据。当前用户要求先准备并推送新仓，再由用户创建 NuGet policy，preview 发布及后续工作等待用户交回；不从文档推导额外发布权限。
+> 状态：2026-09-14 P0–P3 拆仓交付完成。四包 `0.1.0-preview.1` 已发布，公开还原/签名/符号验证通过，Atelia 已合入公开包引用并完成默认路径复验；证据见 [验收记录](atelia-completion-extraction-validation.md)。P4 DramaBoard 接入未开始，是后续独立消费者里程碑。
+> 本文保留阶段要求，不替代实际验收证据。用户已完成 NuGet policy 并交回继续 P2/P3；发布按会话授权完成，不从文档推导额外权限。
 > 只读调查基准：Atelia `60eb58a11649ba6097c15918c58566068ea68b0d`，DramaBoard `d3d6cefc5b4faee652e12fd47d3ed5626b226efb`；两仓调查时干净。实施前重新固定基准，不假定这些 HEAD 仍是最新。
 > 精简裁决见 [审视记录](atelia-completion-extraction-review.md)；实施者以本文为准，无须复盘讨论过程。
 
