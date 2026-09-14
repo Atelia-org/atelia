@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
+using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
@@ -16,23 +18,28 @@ internal static class GalateaSessionRepositoryProvisioner {
     private const int ErrorInvalidArgument = 22;
     private const int ErrorFunctionNotImplemented = 38;
     private const int ErrorOperationNotSupported = 95;
+    internal const RecapGridControlPermission RequiredBootstrapPermissions =
+        RecapGridControlPermission.Create
+        | RecapGridControlPermission.RegisterFamily
+        | RecapGridControlPermission.RegisterDefinition
+        | RecapGridControlPermission.RegisterRecipe
+        | RecapGridControlPermission.Activate;
 
     internal static SessionJournalEngine CreateAndPublish(
         string finalPath,
         SessionCreateOptions options,
         RecapGridControlAdmission admission,
+        GalateaRecapGridAssetParameters assetParameters,
         GalateaSessionProvisioningTestHooks? hooks = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(finalPath);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(admission);
-        if ((admission.Permissions & RecapGridControlPermission.Create)
-                != RecapGridControlPermission.Create) {
-            throw new InvalidOperationException(
-                "The current Agent Control profile does not authorize "
-                + "Control creation."
-            );
-        }
+        ArgumentNullException.ThrowIfNull(assetParameters);
+        RequireBootstrapPermissions(admission);
+        RecapGridControlRegistrationBundle bundle = CreateInitialBundle(
+            assetParameters
+        );
 
         string normalizedFinalPath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(finalPath)
@@ -59,6 +66,7 @@ internal static class GalateaSessionRepositoryProvisioner {
             BootstrapAndValidate(
                 candidate,
                 admission,
+                bundle,
                 hooks,
                 ownership
             );
@@ -130,6 +138,7 @@ internal static class GalateaSessionRepositoryProvisioner {
     private static void BootstrapAndValidate(
         SessionJournalEngine candidate,
         RecapGridControlAdmission admission,
+        RecapGridControlRegistrationBundle bundle,
         GalateaSessionProvisioningTestHooks? hooks,
         CandidateOwnership ownership
     ) {
@@ -169,12 +178,40 @@ internal static class GalateaSessionRepositoryProvisioner {
             candidate.Path
         );
 
-        ValidateCandidate(candidate, estimator, ownership);
+        TimelineHeadRef timelineHead = ValidateTimeline(
+            candidate,
+            estimator,
+            ownership
+        );
+        RecapGridStoreCreateResult store = RecapGridStoreFactory.Create(
+            candidate.Path
+        );
+        RequireCreated("Store", store);
+        hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+            "Store",
+            candidate.Path
+        );
+
+        GridBuildRecipe recipe = RegisterInitialAssetsAndActivate(
+            candidate,
+            admission,
+            timelineHead,
+            bundle,
+            hooks,
+            ownership
+        );
+        ValidateCandidate(candidate, estimator, bundle, recipe, ownership);
+        hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+            "Validation",
+            candidate.Path
+        );
     }
 
     private static void ValidateCandidate(
         SessionJournalEngine candidate,
         O200kBaseHistoryUnitLoadEstimator estimator,
+        RecapGridControlRegistrationBundle bundle,
+        GridBuildRecipe recipe,
         CandidateOwnership ownership
     ) {
         SessionExecutionBoundaryInspection boundary =
@@ -205,18 +242,8 @@ internal static class GalateaSessionRepositoryProvisioner {
             estimator,
             ownership
         );
-        ValidateControl(candidate, timelineHead, ownership);
-        RecapGridStoreReaderOpenResult store =
-            RecapGridStoreFactory.OpenReader(candidate.Path);
-        if (store is RecapGridStoreReaderOpenResult.Opened openedStore) {
-            DisposeHandle(openedStore.Handle, ownership);
-            throw InvalidCandidate("RecapGrid Store is not absent");
-        }
-        if (store is not RecapGridStoreReaderOpenResult.Absent) {
-            throw InvalidCandidate(
-                $"Store validation returned {store.GetType().Name}"
-            );
-        }
+        ValidateControl(candidate, timelineHead, bundle, recipe, ownership);
+        ValidateStore(candidate, ownership);
         ValidateGetter(candidate, rawHead, estimator, ownership);
     }
 
@@ -294,6 +321,8 @@ internal static class GalateaSessionRepositoryProvisioner {
     private static void ValidateControl(
         SessionJournalEngine candidate,
         TimelineHeadRef timelineHead,
+        RecapGridControlRegistrationBundle bundle,
+        GridBuildRecipe recipe,
         CandidateOwnership ownership
     ) {
         RecapGridControlReaderOpenResult opened =
@@ -314,18 +343,176 @@ internal static class GalateaSessionRepositoryProvisioner {
                 || snapshot.Snapshot.Head.RefId != candidate.BranchRefId
                 || snapshot.Snapshot.Head.TimelineId
                     != timelineHead.TimelineId
-                || snapshot.Snapshot.Head.Generation != 0
-                || snapshot.Snapshot.Head.ActiveRecipeDigest is not null
-                || snapshot.Snapshot.Families.Count != 0
-                || snapshot.Snapshot.Definitions.Count != 0
-                || snapshot.Snapshot.Recipes.Count != 0) {
-                throw InvalidCandidate("Control is not exact and empty");
+                || snapshot.Snapshot.Head.Generation != 5
+                || snapshot.Snapshot.Head.ActiveRecipeDigest != recipe.Digest
+                || snapshot.Snapshot.Families.Count != 1
+                || snapshot.Snapshot.Definitions.Count != 2
+                || snapshot.Snapshot.Recipes.Count != 1
+                || !snapshot.Snapshot.Families[0].ToCanonicalBytes()
+                    .SequenceEqual(bundle.Families[0].ToCanonicalBytes())
+                || bundle.Definitions.Any(expected => !snapshot.Snapshot
+                    .Definitions.Any(actual => actual.Digest == expected.Digest
+                        && actual.ToCanonicalBytes().SequenceEqual(
+                            expected.ToCanonicalBytes()
+                        )))
+                || snapshot.Snapshot.ActiveRecipe is not {
+                    Recipe: { } activeRecipe
+                }
+                || !activeRecipe.ToCanonicalBytes().SequenceEqual(
+                    recipe.ToCanonicalBytes()
+                )
+                || activeRecipe.Target.Digest != recipe.Target.Digest) {
+                throw InvalidCandidate(
+                    "Control does not contain the exact active V6 recipe"
+                );
             }
         }
         finally {
             DisposeHandle(handle, ownership);
         }
     }
+
+    private static void ValidateStore(
+        SessionJournalEngine candidate,
+        CandidateOwnership ownership
+    ) {
+        RecapGridStoreReaderOpenResult opened =
+            RecapGridStoreFactory.OpenReader(candidate.Path);
+        if (opened is not RecapGridStoreReaderOpenResult.Opened available) {
+            throw InvalidCandidate(
+                $"Store validation returned {opened.GetType().Name}"
+            );
+        }
+        try {
+            if (available.Handle.Identity.InstanceId.Value is null
+                || available.Handle.Identity.SchemaVersion < 1) {
+                throw InvalidCandidate("Store identity is invalid");
+            }
+        }
+        finally {
+            DisposeHandle(available.Handle, ownership);
+        }
+    }
+
+    private static GridBuildRecipe RegisterInitialAssetsAndActivate(
+        SessionJournalEngine candidate,
+        RecapGridControlAdmission admission,
+        TimelineHeadRef timelineHead,
+        RecapGridControlRegistrationBundle bundle,
+        GalateaSessionProvisioningTestHooks? hooks,
+        CandidateOwnership ownership
+    ) {
+        RecapGridControlOpenResult opened = RecapGridControlFactory.Open(
+            candidate.Path,
+            candidate.BranchRefId,
+            admission
+        );
+        if (opened is not RecapGridControlOpenResult.Opened available) {
+            throw InvalidCandidate(
+                $"Control mutation open returned {opened.GetType().Name}"
+            );
+        }
+        RecapGridControlHandle handle = available.Handle;
+        try {
+            RecapGridControlSnapshotResult read =
+                handle.Reader.ReadSnapshot();
+            if (read is not RecapGridControlSnapshotResult.Available current) {
+                throw InvalidCandidate(
+                    $"Control mutation snapshot returned {read.GetType().Name}"
+                );
+            }
+            ControlHeadRef head = current.Snapshot.Head;
+            foreach (FamilyDefinition family in bundle.Families) {
+                head = RequireStored(
+                    "Family",
+                    handle.Coordinator.PutFamilyDefinition(head, family)
+                );
+            }
+            foreach (MaintainerDefinitionRevision definition
+                     in bundle.Definitions) {
+                head = RequireStored(
+                    "Definition",
+                    handle.Coordinator.PutMaintainerDefinition(
+                        head,
+                        definition
+                    )
+                );
+            }
+            hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+                "AssetRegistration",
+                candidate.Path
+            );
+
+            GridBuildRecipe recipe = CreateInitialFullRecipe(
+                timelineHead,
+                bundle
+            );
+            head = RequireStored(
+                "Recipe",
+                handle.Coordinator.PutBuildRecipe(
+                    head,
+                    timelineHead,
+                    recipe,
+                    bootstrapWitness: null
+                )
+            );
+            hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+                "Recipe",
+                candidate.Path
+            );
+
+            RequireActivated(
+                "Activation",
+                handle.Coordinator.CompareExchangeActiveRecipe(
+                    head,
+                    timelineHead,
+                    recipe.Digest,
+                    RecapGridControlActivationPurpose.Direct
+                )
+            );
+            hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+                "Activation",
+                candidate.Path
+            );
+            return recipe;
+        }
+        finally {
+            DisposeHandle(handle, ownership);
+        }
+    }
+
+    private static RecapGridControlRegistrationBundle CreateInitialBundle(
+        GalateaRecapGridAssetParameters parameters
+    ) {
+        if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
+                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                parameters,
+                out RecapGridControlRegistrationBundle? bundle)
+            || bundle is null
+            || bundle.Families.Count != 1
+            || bundle.Definitions.Count != 2
+            || bundle.Recipes.Count != 0) {
+            throw new InvalidOperationException(
+                "The Galatea V6 initial RecapGrid asset is unavailable "
+                + "or invalid."
+            );
+        }
+        return bundle;
+    }
+
+    private static GridBuildRecipe CreateInitialFullRecipe(
+        TimelineHeadRef timelineHead,
+        RecapGridControlRegistrationBundle bundle
+    ) => GridBuildRecipe.CreateFull(
+        timelineHead.TimelineId,
+        bootstrapThroughRowId: null,
+        BuildTarget.Create(bundle.Definitions.Select(
+            static definition => new BuildTargetColumn(
+                definition.LogicalColumnId,
+                definition.Digest
+            )
+        ))
+    );
 
     private static void ValidateGetter(
         SessionJournalEngine candidate,
@@ -375,11 +562,44 @@ internal static class GalateaSessionRepositoryProvisioner {
             RecapGridCadenceCreateResult.Created => true,
             HistoryTimelineCreateResult.Created => true,
             RecapGridControlCreateResult.Created => true,
+            RecapGridStoreCreateResult.Created => true,
             _ => false
         };
         if (!created) {
             throw InvalidCandidate(
                 $"{component} create returned {result.GetType().Name}"
+            );
+        }
+    }
+
+    private static void RequireBootstrapPermissions(
+        RecapGridControlAdmission admission
+    ) {
+        if ((admission.Permissions & RequiredBootstrapPermissions)
+                != RequiredBootstrapPermissions) {
+            throw new InvalidOperationException(
+                "The current Agent Control profile does not authorize "
+                + "complete first-turn RecapGrid provisioning."
+            );
+        }
+    }
+
+    private static ControlHeadRef RequireStored(
+        string component,
+        RecapGridControlPutResult result
+    ) => result is RecapGridControlPutResult.Stored stored
+        ? stored.Head
+        : throw InvalidCandidate(
+            $"{component} registration returned {result.GetType().Name}"
+        );
+
+    private static void RequireActivated(
+        string component,
+        RecapGridControlActivateResult result
+    ) {
+        if (result is not RecapGridControlActivateResult.Applied) {
+            throw InvalidCandidate(
+                $"{component} returned {result.GetType().Name}"
             );
         }
     }

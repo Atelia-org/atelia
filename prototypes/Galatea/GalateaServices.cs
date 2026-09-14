@@ -14,6 +14,7 @@ using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.RecapGrid;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
@@ -3407,13 +3408,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         "Galatea first-turn bootstrap has no current "
                         + "Agent Control profile."
                     );
-                if ((admission.Permissions
-                        & RecapGridControlPermission.Create)
-                    != RecapGridControlPermission.Create) {
+                if ((admission.Permissions & GalateaSessionRepositoryProvisioner
+                        .RequiredBootstrapPermissions)
+                    != GalateaSessionRepositoryProvisioner
+                        .RequiredBootstrapPermissions) {
                     throw new GalateaSessionUnavailableException(
                         "session-unprovisioned",
                         "The current Agent Control profile does not "
-                        + "authorize SessionJournal Control creation."
+                        + "authorize complete first-turn RecapGrid "
+                        + "provisioning."
                     );
                 }
                 CompletionConnectionConfig defaultConnection =
@@ -3427,6 +3430,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
                             defaultConnection.CompletionSurfaceId
                         ),
                         admission,
+                        new GalateaRecapGridAssetParameters(
+                            user.CharacterName,
+                            user.PlayerName
+                        ),
                         SessionProvisioningHooksForTest
                     );
             }
