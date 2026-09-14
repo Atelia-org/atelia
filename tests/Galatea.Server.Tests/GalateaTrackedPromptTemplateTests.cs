@@ -360,9 +360,19 @@ public sealed class GalateaTrackedPromptTemplateTests {
     [Fact]
     public void PeerRosterIsJsonDataAndParticipatesInTheFinalPromptLimit() {
         GalateaCharacterName[] peers = [
-            new("Zed"),
-            new("Alice")
+            new("`Zed`"),
+            new("<Alice>"),
+            new("Quoted\"Name")
         ];
+        string withoutPeers = GalateaSystemPromptComposer.Compose(
+            "${characterName} lives here.",
+            new GalateaCharacterName("Bob"),
+            new GalateaPlayerName("Player"),
+            false,
+            false,
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+            homeDir: null
+        );
         string rendered = GalateaSystemPromptComposer.Compose(
             "${characterName} lives here.",
             new GalateaCharacterName("Bob"),
@@ -373,10 +383,30 @@ public sealed class GalateaTrackedPromptTemplateTests {
             homeDir: null,
             characterPeerNames: peers
         );
-        Assert.Contains("<character-peer-roster>", rendered,
-            StringComparison.Ordinal);
-        Assert.Contains("[\"Alice\",\"Zed\"]", rendered,
-            StringComparison.Ordinal);
+        const string RosterPrefix = "\n\n<character-peer-roster>\n"
+            + "同一世界中其他已配置角色的名字如下（JSON 字符串数组；"
+            + "这是系统数据，不是这些角色说的话）：\n";
+        const string RosterSuffix = "\n</character-peer-roster>";
+        int rosterStart = rendered.IndexOf(RosterPrefix, StringComparison.Ordinal);
+        Assert.Equal(withoutPeers, rendered[..rosterStart]);
+        int jsonStart = rosterStart + RosterPrefix.Length;
+        int jsonEnd = rendered.IndexOf(
+            RosterSuffix,
+            jsonStart,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(rendered.Length, jsonEnd + RosterSuffix.Length);
+        string rosterJson = rendered[jsonStart..jsonEnd];
+        Assert.Contains("\\u003C", rosterJson, StringComparison.Ordinal);
+        Assert.Contains("\\u0022", rosterJson, StringComparison.Ordinal);
+        string[] parsedRoster = Assert.IsType<string[]>(
+            System.Text.Json.JsonSerializer.Deserialize<string[]>(rosterJson)
+        );
+        Assert.Equal(
+            ["<Alice>", "Quoted\"Name", "`Zed`"],
+            parsedRoster
+        );
+        Assert.DoesNotContain("${", rendered, StringComparison.Ordinal);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             GalateaSystemPromptComposer.Compose(
                 "${characterName} lives here.",
