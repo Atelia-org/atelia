@@ -58,7 +58,7 @@ public sealed class PromotionStoreResetTests : IDisposable {
             Assert.IsType<RecapGridBuildResult.Fulfilled>(await manager.Manager.BuildAsync(request, executor,
                 TestContext.Current.CancellationToken));
             RecapGridBuildProgressResult.Complete progress = Assert.IsType<RecapGridBuildProgressResult.Complete>(
-                manager.Manager.InspectBuildProgress(request));
+                manager.Manager.InspectBuildProgress(request, TestContext.Current.CancellationToken));
             Assert.True(progress.FulfillmentPresent);
             Assert.NotNull(progress.Proof);
         }
