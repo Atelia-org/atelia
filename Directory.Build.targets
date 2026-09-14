@@ -1,4 +1,17 @@
 <Project>
+  <Target Name="ValidateCompletionSourceConfiguration" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(UseCompletionSources)' != 'true' AND '$(UseCompletionSources)' != 'false'"
+           Text="UseCompletionSources must be true or false." />
+    <Error Condition="'$(UseCompletionSources)' == 'true' AND '$(CompletionSourceRoot)' == ''"
+           Text="UseCompletionSources=true requires CompletionSourceRoot to be the absolute path of an atelia-completion checkout." />
+    <Error Condition="'$(UseCompletionSources)' == 'true' AND '$(CompletionSourceRoot)' != '' AND !$([System.IO.Path]::IsPathFullyQualified('$(CompletionSourceRoot)'))"
+           Text="CompletionSourceRoot must be an absolute path." />
+    <Error Condition="'$(UseCompletionSources)' == 'true' AND (!Exists('$(CompletionSourceRoot)/src/Diagnostics/Diagnostics.csproj') OR !Exists('$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj') OR !Exists('$(CompletionSourceRoot)/src/Completion/Completion.csproj') OR !Exists('$(CompletionSourceRoot)/src/Completion.Tools/Completion.Tools.csproj'))"
+           Text="CompletionSourceRoot must contain the four atelia-completion projects: $(CompletionSourceRoot)" />
+  </Target>
+  <Target Name="RejectCompletionSourcePack" BeforeTargets="Pack;GenerateNuspec;_IntermediatePack" Condition="'$(UseCompletionSources)' == 'true'">
+    <Error Text="Packing a consumer with UseCompletionSources=true is unsupported. Pack atelia-completion with a unique version first, then pack this repository with UseCompletionSources=false and CompletionPackageVersion set to that version." />
+  </Target>
   <Target Name="ValidateStorageSourceConfiguration" BeforeTargets="CollectPackageReferences;PrepareForBuild">
     <Error Condition="'$(UseStorageSources)' != 'true' AND '$(UseStorageSources)' != 'false'"
            Text="UseStorageSources must be true or false." />

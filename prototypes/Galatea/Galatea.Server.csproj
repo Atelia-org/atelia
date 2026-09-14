@@ -11,8 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/Completion/Completion.csproj" />
-    <ProjectReference Include="../../src/Completion.Tools/Completion.Tools.csproj" />
+    <PackageReference Include="Atelia.Completion" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion/Completion.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
+    <PackageReference Include="Atelia.Completion.Tools" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Tools/Completion.Tools.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="../Galatea.Prompts/Galatea.Prompts.csproj" />
     <ProjectReference Include="../Galatea.RecapGrid/Galatea.RecapGrid.csproj" />
     <ProjectReference Include="../MemoPod/MemoPod.csproj" />

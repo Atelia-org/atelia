@@ -1,5 +1,6 @@
 <Project>
   <Import Project="$(MSBuildThisFileDirectory)eng/StorageDependency.props" />
+  <Import Project="$(MSBuildThisFileDirectory)eng/CompletionDependency.props" />
   <!-- Global analyzer/reference settings -->
   <ItemGroup>
     <!-- Global custom analyzer (exclude the analyzer project itself). Use MSBuildThisFileDirectory to anchor path at repo root -->

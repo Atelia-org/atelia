@@ -120,27 +120,28 @@ public sealed class MemoPodArchitectureTests {
         );
         XDocument project = XDocument.Load(projectPath);
 
-        string[] projectReferences = project.Descendants("ProjectReference")
-            .Select(static element => Path.GetFileNameWithoutExtension(
-                (string?)element.Attribute("Include")
-                    ?? throw new InvalidDataException(
-                        "ProjectReference must have Include."
-                    )
-            ))
-            .ToArray();
-        Assert.Contains("Completion.Abstractions", projectReferences);
-        Assert.All(
-            projectReferences,
-            static reference => Assert.Contains(
-                reference,
-                new[] { "Completion.Abstractions", "Diagnostics" }
-            )
+        XElement sourceReference = Assert.Single(project.Descendants("ProjectReference"));
+        Assert.Equal(
+            "$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj",
+            ((string?)sourceReference.Attribute("Include"))?.Replace('\\', '/')
         );
         Assert.Equal(
-            projectReferences.Length,
-            projectReferences.Distinct(StringComparer.Ordinal).Count()
+            "'$(UseCompletionSources)' == 'true'",
+            (string?)sourceReference.Attribute("Condition")
         );
-        Assert.Empty(project.Descendants("PackageReference"));
+        XElement packageReference = Assert.Single(project.Descendants("PackageReference"));
+        Assert.Equal(
+            "Atelia.Completion.Abstractions",
+            (string?)packageReference.Attribute("Include")
+        );
+        Assert.Equal(
+            "$(CompletionPackageVersion)",
+            (string?)packageReference.Attribute("Version")
+        );
+        Assert.Equal(
+            "'$(UseCompletionSources)' != 'true'",
+            (string?)packageReference.Attribute("Condition")
+        );
         Assert.Equal(
             new[] {
                 "Atelia.MemoPod.CrashHarness",

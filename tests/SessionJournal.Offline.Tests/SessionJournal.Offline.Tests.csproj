@@ -19,7 +19,8 @@
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <PackageReference Include="Atelia.EventJournal" Version="$(StoragePackageVersion)" Condition="'$(UseStorageSources)' != 'true'" />
     <ProjectReference Include="$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj" Condition="'$(UseStorageSources)' == 'true'" />
-    <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
+    <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
   </ItemGroup>
 
 </Project>

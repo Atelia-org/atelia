@@ -34,7 +34,36 @@ public sealed class MemoPodDebugAppArchitectureTests {
                 .Order(StringComparer.Ordinal)
                 .ToArray()
         );
-        Assert.Empty(project.Descendants("PackageReference"));
+        Assert.Equal(
+            ["Atelia.Completion", "Atelia.Completion.Abstractions"],
+            project.Descendants("PackageReference")
+                .Select(static element => (string)element.Attribute("Include")!)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        foreach (string name in new[] { "Completion", "Completion.Abstractions" }) {
+            XElement sourceReference = Assert.Single(
+                project.Descendants("ProjectReference"),
+                element => ((string?)element.Attribute("Include"))?.Replace('\\', '/')
+                    == $"$(CompletionSourceRoot)/src/{name}/{name}.csproj"
+            );
+            Assert.Equal(
+                "'$(UseCompletionSources)' == 'true'",
+                (string?)sourceReference.Attribute("Condition")
+            );
+            XElement packageReference = Assert.Single(
+                project.Descendants("PackageReference"),
+                element => (string?)element.Attribute("Include") == $"Atelia.{name}"
+            );
+            Assert.Equal(
+                "$(CompletionPackageVersion)",
+                (string?)packageReference.Attribute("Version")
+            );
+            Assert.Equal(
+                "'$(UseCompletionSources)' != 'true'",
+                (string?)packageReference.Attribute("Condition")
+            );
+        }
         Assert.Equal(
             ["Atelia.MemoPod.Tests"],
             project.Descendants("InternalsVisibleTo")

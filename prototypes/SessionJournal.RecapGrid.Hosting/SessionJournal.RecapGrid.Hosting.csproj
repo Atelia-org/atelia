@@ -9,8 +9,10 @@
   <ItemGroup>
     <ProjectReference Include="../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
-    <ProjectReference Include="../../src/Completion/Completion.csproj" />
-    <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
+    <PackageReference Include="Atelia.Completion" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion/Completion.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
+    <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
   </ItemGroup>
 
   <ItemGroup>

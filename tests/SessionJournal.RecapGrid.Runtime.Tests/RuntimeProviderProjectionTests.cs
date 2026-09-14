@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
@@ -53,48 +55,121 @@ public sealed class RuntimeProviderProjectionTests {
         Assert.Empty(required.PromptPrefix.OutputContract.Tools);
         Assert.Null(required.PromptPrefix.OutputContract.AllowParallelToolCalls);
 
-        AssertOpenAiChat(required);
-        AssertOpenAiResponses(required);
-        AssertAnthropic(required);
-        AssertGemini(required);
+        await AssertOpenAiChatAsync(required, options.InvocationOptions);
+        await AssertOpenAiResponsesAsync(required, options.InvocationOptions);
+        await AssertAnthropicAsync(required, options.InvocationOptions);
+        await AssertGeminiAsync(required, options.InvocationOptions);
     }
 
-    private static void AssertOpenAiChat(CompletionRequest required) {
-        OpenAIChatApiRequest requiredApi = OpenAIChatMessageConverter
-            .ConvertToApiRequest(required, OpenAIChatDialects.Strict);
-        Assert.Null(requiredApi.Tools);
-        Assert.Null(requiredApi.ToolChoice);
-        Assert.Null(requiredApi.ParallelToolCalls);
+    private static async Task AssertOpenAiChatAsync(
+        CompletionRequest required,
+        CompletionInvocationOptions invocationOptions
+    ) {
+        JsonElement wire = await CaptureWireAsync(
+            required,
+            invocationOptions,
+            static http => new OpenAIChatClient(null, http, OpenAIChatDialects.Strict),
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+        );
+        Assert.False(wire.TryGetProperty("tools", out _));
+        Assert.False(wire.TryGetProperty("tool_choice", out _));
+        Assert.False(wire.TryGetProperty("parallel_tool_calls", out _));
     }
 
-    private static void AssertOpenAiResponses(CompletionRequest required) {
-        var options = new OpenAIResponsesClientOptions {
-            IncludeEncryptedReasoning = false
+    private static async Task AssertOpenAiResponsesAsync(
+        CompletionRequest required,
+        CompletionInvocationOptions invocationOptions
+    ) {
+        JsonElement wire = await CaptureWireAsync(
+            required,
+            invocationOptions,
+            static http => new OpenAIResponsesClient(null, http, new OpenAIResponsesClientOptions {
+                IncludeEncryptedReasoning = false
+            }),
+            "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n"
+        );
+        Assert.False(wire.TryGetProperty("tools", out _));
+        Assert.False(wire.TryGetProperty("tool_choice", out _));
+    }
+
+    private static async Task AssertAnthropicAsync(
+        CompletionRequest required,
+        CompletionInvocationOptions invocationOptions
+    ) {
+        JsonElement wire = await CaptureWireAsync(
+            required,
+            invocationOptions,
+            static http => new AnthropicClient(null, http, enablePromptCaching: true),
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{}}\n\n"
+                + "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"
+                + "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+            "{\"max_tokens\":4096}"
+        );
+        Assert.False(wire.TryGetProperty("tools", out _));
+        Assert.False(wire.TryGetProperty("tool_choice", out _));
+        Assert.Contains("cache_control", wire.GetRawText(), StringComparison.Ordinal);
+    }
+
+    private static async Task AssertGeminiAsync(
+        CompletionRequest required,
+        CompletionInvocationOptions invocationOptions
+    ) {
+        JsonElement wire = await CaptureWireAsync(
+            required,
+            invocationOptions,
+            static http => new GeminiClient(null, http),
+            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[]},\"finishReason\":\"STOP\"}]}\n\n",
+            "{\"outputTokenLimit\":4096}"
+        );
+        Assert.False(wire.TryGetProperty("tools", out _));
+        Assert.False(wire.TryGetProperty("toolConfig", out _));
+    }
+
+    // Exercise the shipped public clients with the real Runtime request. Only
+    // provider HTTP responses are controlled; this is an offline wire contract test.
+    private static async Task<JsonElement> CaptureWireAsync(
+        CompletionRequest required,
+        CompletionInvocationOptions invocationOptions,
+        Func<HttpClient, ICompletionClient> createClient,
+        string responseBody,
+        string? modelMetadata = null
+    ) {
+        using var handler = new CapturingHttpHandler(responseBody, modelMetadata);
+        using var http = new HttpClient(handler) {
+            BaseAddress = new Uri("https://provider.invalid/")
         };
-        OpenAIResponsesApiRequest requiredApi = OpenAIResponsesMessageConverter
-            .ConvertToApiRequest(required, options);
-        Assert.Null(requiredApi.Tools);
-        Assert.Null(requiredApi.ToolChoice);
+        ICompletionClient client = createClient(http);
+        CompletionResult result = await client.StreamCompletionAsync(
+            required, invocationOptions, observer: null, CancellationToken.None
+        );
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        using JsonDocument document = JsonDocument.Parse(Assert.Single(handler.PostBodies));
+        return document.RootElement.Clone();
     }
 
-    private static void AssertAnthropic(CompletionRequest required) {
-        AnthropicApiRequest requiredApi = AnthropicMessageConverter
-            .ConvertToApiRequest(
-                required,
-                modelMaximumTokens: 4_096,
-                enablePromptCaching: true
-            );
-        Assert.Null(requiredApi.Tools);
-        Assert.Null(requiredApi.ToolChoice);
-        string json = JsonSerializer.Serialize(requiredApi);
-        Assert.Contains("cache_control", json, StringComparison.Ordinal);
-    }
+    private sealed class CapturingHttpHandler(
+        string responseBody,
+        string? modelMetadata
+    ) : HttpMessageHandler {
+        internal List<string> PostBodies { get; } = [];
 
-    private static void AssertGemini(CompletionRequest required) {
-        GeminiGenerateContentRequest requiredApi = GeminiMessageConverter
-            .ConvertToApiRequest(required, modelMaximumTokens: 4_096);
-        Assert.Null(requiredApi.Tools);
-        Assert.Null(requiredApi.ToolConfig);
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        ) {
+            if (request.Method == HttpMethod.Get) {
+                Assert.NotNull(modelMetadata);
+                return new HttpResponseMessage(HttpStatusCode.OK) {
+                    Content = new StringContent(modelMetadata, Encoding.UTF8, "application/json")
+                };
+            }
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.NotNull(request.Content);
+            PostBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
+            return new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(responseBody, Encoding.UTF8, "text/event-stream")
+            };
+        }
     }
 
     private sealed class CapturingInvoker : IRecapCompletionInvoker {

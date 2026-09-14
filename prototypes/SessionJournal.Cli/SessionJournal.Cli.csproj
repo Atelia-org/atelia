@@ -16,7 +16,8 @@
     <ProjectReference Include="../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
     <ProjectReference Include="../SessionJournal.Offline/SessionJournal.Offline.csproj" />
-    <ProjectReference Include="../../src/Completion/Completion.csproj" />
+    <PackageReference Include="Atelia.Completion" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion/Completion.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
   </ItemGroup>
 

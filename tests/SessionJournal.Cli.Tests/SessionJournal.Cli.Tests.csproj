@@ -19,8 +19,10 @@
     <ProjectReference Include="../../prototypes/Galatea.RecapGrid/Galatea.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj" />
-    <ProjectReference Include="../../src/Completion/Completion.csproj" />
-    <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
+    <PackageReference Include="Atelia.Completion" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion/Completion.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
+    <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
+    <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
