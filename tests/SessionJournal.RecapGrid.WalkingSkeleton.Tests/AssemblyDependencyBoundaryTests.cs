@@ -162,7 +162,7 @@ public sealed class AssemblyDependencyBoundaryTests {
                 ?.Contains("PublicSurface", StringComparison.Ordinal) is true
         );
         Assert.Equal(
-            "Atelia.SessionJournal.RecapGrid.Store.SchemaV3.sql",
+            "Atelia.SessionJournal.RecapGrid.Store.SchemaV4.sql",
             (string?)recapGridDocument.Descendants("EmbeddedResource")
                 .Single().Attribute("LogicalName")
         );
