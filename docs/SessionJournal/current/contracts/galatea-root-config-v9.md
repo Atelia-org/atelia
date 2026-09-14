@@ -58,9 +58,9 @@ V8 → V9 需要 operator 显式增加每个 homeDir、预先创建可写目录�
 并把 delegates version 改为 3、删除 route.cwd、将 allowedRoots 指向计划使用的 home 根。
 配置 loader 与 bootstrap 不自动迁移旧 JSON。
 
-create-if-missing 的 SessionJournal bootstrap 仍只创建 raw/Cadence/empty Timeline/empty
-Control，不创建 Store、asset、recipe 或 provider effect；普通 GetSessionAsync() 从不 repair
-既有 session path。若 operator 要把已有 raw-only/partial session 完整启用 RecapGrid，必须使用
+create-if-missing 的 SessionJournal bootstrap 只对完全不存在的 path 在 private staging 中创建 raw/Cadence/empty Timeline/Control、
+Store、以该 user names 展开的 V6 asset、empty-Timeline full recipe 与 active recipe；它不读取 route、不创建 Completion client，
+也没有 provider effect。普通 GetSessionAsync() 从不 repair 既有 session path。若 operator 要把已有 raw-only/partial session 完整启用 RecapGrid，必须使用
 [已有 SessionJournal 的 RecapGrid 显式升级](../../../Galatea/recap-grid-existing-session-upgrade.md)的停服、
 备份、bounded build 与 promote 流程；这不是 V9 config migration 的隐式副作用。
 

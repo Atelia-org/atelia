@@ -162,6 +162,46 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
+    public async Task MissingCreateIfMissing_UsesConfiguredNamesForActiveRecapTarget() {
+        const string CharacterName = "姬澄(Galatea-02)";
+        const string PlayerName = "刘世超";
+        var factory = new CountingCompletionClientFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            characterName: CharacterName,
+            playerName: PlayerName
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaRecapGridTargetExpectation expected =
+            GalateaRecapGridTargetExpectation.ForNames(
+                new GalateaCharacterName(CharacterName),
+                new GalateaPlayerName(PlayerName)
+            );
+        Assert.Equal(expected.TargetDigest, session.TargetExpectation.TargetDigest);
+
+        using RecapGridControlReaderHandle control = Assert.IsType<
+            RecapGridControlReaderOpenResult.Opened
+        >(RecapGridControlFactory.OpenReader(
+            session.Engine.Path,
+            session.Engine.BranchRefId
+        )).Handle;
+        RegisteredGridRecipe active = Assert.IsType<RegisteredGridRecipe>(
+            Assert.IsType<RecapGridControlSnapshotResult.Available>(
+                control.Reader.ReadSnapshot()
+            ).Snapshot.ActiveRecipe
+        );
+        Assert.Equal(expected.TargetDigest, active.Recipe.Target.Digest);
+        Assert.Equal(0, factory.CreateCallCount);
+    }
+
+    [Fact]
     public async Task MissingExistingOnly_FailsWithoutCreatingPath() {
         await using var host = GalateaTestHost.CreateMissingSession(
             new CountingCompletionClientFactory(),

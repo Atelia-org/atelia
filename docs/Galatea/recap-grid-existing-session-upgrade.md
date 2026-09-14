@@ -9,7 +9,7 @@
 
 | 情形 | Galatea 正常 bootstrap 做什么 | 是否有 provider effect | 后续动作 |
 |:--|:--|:--|:--|
-| 新账号、create-if-missing，且 final session path 不存在 | 在 private staging 中创建 raw 三个 setup event、Cadence、empty Timeline、empty Control；验证 Store/asset/recipe 都不存在后才原子发布 | 没有 | 它是可聊天的 raw-only session；若要完整 RecapGrid，停服后按本文的显式 operator 链继续 |
+| 新账号、create-if-missing，且 final session path 不存在 | 在 private staging 中创建 raw 三个 setup event、Cadence、empty Timeline、Control、Store、按该 user names 展开的 V6 asset、empty-Timeline full recipe 与 active recipe；全部验证并关闭 handle 后原子发布 | 没有 | 它已具备完整 RecapGrid 结构；没有历史行时首轮 context 仍是 raw-only，后续由正式 Online pass 按需维护 |
 | 已有 raw-only 或受支持的 partial session | 不做任何 repair、adopt、Store 创建或 provider 调用 | 没有 | 只有 operator 可以按本流程创建 Store、登记 asset/recipe、构建和提升 |
 
 登录本身不创建 session；首次需要 session 的 authenticated GetSessionAsync() 才可触发第一行的 create-if-missing bootstrap。它绝不修补已有 path。不要把“可 raw-only 聊天”误称为“RecapGrid 已启用”。

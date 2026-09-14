@@ -70,9 +70,9 @@
 `sessionProvisioning` 只有两种闭合策略：
 
 - `existing-only` 只打开已经 provision 的 repository；
-- `create-if-missing` 只会为完全不存在的 `sessionDir` 原子创建首轮 raw-only repository。
+- `create-if-missing` 只会为完全不存在的 `sessionDir` 原子创建首轮 repository：raw 三个 setup event、Cadence、empty Timeline、Control、Store、该 user 的 V6 asset、empty-Timeline full recipe 与 active recipe 在同一 private staging 完成后才发布。
 
-后者不补写已有空目录、残缺 repository 或 RecapGrid 派生产物。maintenance mode 也不会创建 session。
+这不会读取 route、创建 Completion client 或调用 provider；空 Timeline 的首轮上下文仍是 raw-only。它也绝不补写已有空目录、残缺 repository 或既有 RecapGrid 派生产物。maintenance mode 不会创建 session。
 
 `serverAgentUserIds` 省略或 `[]` 时禁用所有服务端自动轮次；列出的 user 必须存在且不能重复。自动轮次始终使用该 user 的 `defaultConnectionId`，浏览器中当前选中的连接仅影响人工请求。
 
@@ -213,7 +213,7 @@ dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- 
   --route-output '<配置目录>/recap-grid-routes.json'
 ```
 
-将 `config.json` 的 `routeManifestPath`、`agentControlProfileFiles` 和 `currentAgentControlProfileId` 对应到上述 route/profile 输出。profile 是启动必需的 bootstrap admission；但完整 RecapGrid 是可选增强：没有 active recipe 的 existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent 仍会调用其 Completion connection。普通 `GetSessionAsync()` 不会 repair 已有 repository。新账号的 staging bootstrap 只建立 raw/Cadence/empty Timeline/empty Control，Store、asset、recipe 与 activation 仍由 operator 拥有；不会调用 provider。
+将 `config.json` 的 `routeManifestPath`、`agentControlProfileFiles` 和 `currentAgentControlProfileId` 对应到上述 route/profile 输出。profile 是启动必需的 bootstrap admission；existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent 仍会调用其 Completion connection。普通 `GetSessionAsync()` 不会 repair 已有 repository。对完全不存在的 new session，staging bootstrap 会一并建立 Store、该 user 的 asset、empty-Timeline full recipe 和 active recipe；整个过程仍不会读取 route、创建 Completion client 或调用 provider。因为还没有历史行，首轮 context 仍是 raw-only。
 
 对已有 raw-only/partial session 的完整启用，必须停服、备份、先做 strict read-only audit，再使用专用 bounded admission 走 `init`、受限 `timeline sync`、`control provision-asset`、compose/put recipe、有界 candidate build 与 `control promote`。`build` 才是 provider effect，direct `activate` 不能取代 promotion；未知结果绝不自动重试。完整、按当前 CLI 参数编写的流程见[已有 SessionJournal 的 RecapGrid 显式升级](recap-grid-existing-session-upgrade.md)。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name` 和 `--player-name`。scaffold 不会创建 provider、Timeline、Control 或 Store，Galatea 的 route manifest 读取允许上述 JSON 格式化；其他持久产物仍使用各自的 canonical 格式。
 

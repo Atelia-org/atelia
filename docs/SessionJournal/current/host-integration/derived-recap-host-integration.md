@@ -55,7 +55,7 @@ enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed 
 1. Online在PreObservation允许的boundary执行 Timeline reconcile和bounded seal；必要时完成一次bounded
    offline audit。
 2. Getter以同一repository/Ref/Timeline/Control/Store authority执行pure-read Resolve。
-3. empty Timeline或no-active直接返回raw-only，且不打开Store、Manager或provider。
+3. empty Timeline或no-active直接返回raw-only，且不打开Manager或provider；new-session bootstrap 已有 Store 与 active empty-Timeline recipe 仍不改变这个首轮上下文结论。
 4. non-empty active且current fulfillment缺失时才lazy创建Manager，先InspectProgress，再按budget Build
    `LiveActive`。
 5. candidate build不自动activate；promotion在fresh head-through fulfillment上以zero-new-call重证后执行
@@ -69,17 +69,18 @@ enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed 
 - Galatea：strict RecapGrid config包含deferred route manifest、bounded profile catalog与exact bootstrap profile；
   historical profiles保留用于frozen recovery，禁止fallback；fresh/NewRequest不注入`recap_grid_control`。
   `create-if-missing`只在unpublished same-parent session candidate中，
-  以`GalateaFirstTurnBootstrapPolicy`创建并验证Cadence、empty Timeline与empty Control，使首轮进入formal raw-only；existing
-  repository与maintenance path均不补写。
+  以`GalateaFirstTurnBootstrapPolicy`创建并验证Cadence、empty Timeline、Control、Store、按该 user names 展开的 V6 asset、
+  empty-Timeline full recipe 与 active recipe；它不读取 route、不创建 Completion client 或 dispatch provider，因此首轮 context
+  仍是formal raw-only。existing repository与maintenance path均不补写。
 - Galatea在session attach之后提供两条彼此独立的纯读观察链：`RecentTurnsResponseV1.recapGridReadiness`来自Getter Resolve，
   仅Unfulfilled时调用Manager InspectProgress；`GET /api/v1/recap-cadence-progress`则从exact Cadence policy、
   selected Timeline head row与同一captured raw head测量recent suffix的PlanningUnit/HistoryLoad进度。
   后者不进入recent/SSE grammar；两条service inspection区段的provider/build/write均为零。
 
 HTTP cadence route先复用既有`GetSessionAsync`。`create-if-missing`用户第一次直接GET missing repository时，
-该session attach会先执行既有structural SessionJournal/Cadence/Timeline/Control bootstrap；因此整个route不承诺
+该session attach会先执行既有 SessionJournal/Cadence/Timeline/Control/Store/asset/recipe structural bootstrap；因此整个route不承诺
 zero-write。attach/bootstrap完成后，cadence service inspector才在per-session `TurnLock`内纯读，且不创建
-Completion client、Online、Manager或Store；busy在任何Engine/Timeline/Cadence read前返回typed 503。
+Completion client、Online或Manager；busy在任何Engine/Timeline/Cadence read前返回typed 503。
 DTO把HistoryLoad编码为canonical decimal string，显式给出B（recap interval）、R（minimum recent reserve）、
 threshold和remaining。未选first replay-safe boundary时`B+R`只是ideal threshold；选中boundary后，
 `measured boundary load + R`才是包含overshoot的effective threshold。tracked browser在初始recent、terminal
@@ -90,8 +91,9 @@ context-window load。
 
 ## Boundaries
 
-- built-in assets、Store、recipe与activation必须由operator显式provision/register/compose/activate；Galatea的missing-session
-  bootstrap只auto-create首轮structural三域，不是full Grid provisioning，也不读取route或dispatch provider。
+- 对既有 path，built-in assets、Store、recipe与activation只可由operator显式provision/register/compose/build/promote；
+  Galatea的missing-session bootstrap则在private staging内provider-free地创建该 user 的完整 empty-Timeline Grid（含 active recipe），
+  不读取route或dispatch provider。它不是既有 repository 的repair入口。
 - `recap_grid_control`的receipt支持幂等replay与indeterminate settlement，但不把uncertain external effects
   描述成exactly-once。
 - old v4-v8/rebuild legacy roots inert；只有formal legacy-root operator可以archive/delete。

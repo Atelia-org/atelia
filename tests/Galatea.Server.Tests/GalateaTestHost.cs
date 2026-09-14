@@ -209,7 +209,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             "test ${characterName} system prompt",
         bool maintenanceMode = false,
         bool deleteFilesOnDispose = true,
-        RecapGridAgentControlProfile? agentControlProfile = null
+        RecapGridAgentControlProfile? agentControlProfile = null,
+        string characterName = "Galatea",
+        string playerName = "刘世超"
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
@@ -252,7 +254,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 callLogDirectory: null,
                 maintenanceMode,
                 agentControlProfile,
-                sessionProvisioning
+                sessionProvisioning,
+                characterName: characterName,
+                playerName: playerName
             );
             return new GalateaTestHost(
                 tempRoot,
@@ -527,7 +531,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
         string? memoRecallConnectionId = null,
-        IReadOnlyList<string>? serverAgentUserIds = null
+        IReadOnlyList<string>? serverAgentUserIds = null,
+        string characterName = "Galatea",
+        string playerName = "刘世超"
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
@@ -545,8 +551,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 new GalateaUserFileConfig(
                     TestUserId,
                     TestPassword,
-                    "Galatea",
-                    "刘世超",
+                    characterName,
+                    playerName,
                     absoluteSessionDirectory,
                     Path.Combine(
                         configurationDirectory,
