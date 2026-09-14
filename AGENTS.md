@@ -84,6 +84,10 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 
 存储库日常开发入口见 [存储库依赖](docs/storage-dependency.md)：普通 build/test 直接从 nuget.org restore，无须 Prepare；源码联调显式设置 `UseStorageSources` 和 `StorageSourceRoot`。本地开发包使用唯一版本和显式自定义 NuGet 配置。版本与源码身份以 `eng/StorageDependency.props` 为准。
 
+## atelia-completion 拆仓任务入口
+
+用户已选择将 Diagnostics、Completion.Abstractions、Completion、Completion.Tools 迁到一个新仓。范围见 [atelia-completion 实施方案](docs/plans/atelia-completion-extraction-plan.md)，实际进展见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)。新仓及候选包验证已完成，用户已推送 GitHub，等待 NuGet policy；尚未发布，Atelia 引用尚未切换。涉及此任务时区分计划和实际验收状态。
+
 ---
 
 ## 目标分解树
