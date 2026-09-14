@@ -49,19 +49,20 @@ internal static class Program {
                 ?? throw new InvalidDataException(
                     "Store crash fixture could not be opened."
                 );
-            (RowBuildSpec spec, RecapCellArtifact cell, RecapRowView view,
-                FulfilledViewKey fulfilled) = Values();
+            (RowBuildSpec spec, RecapCellDraft draft, FulfilledViewKey fulfilled) = Values();
             switch (operation) {
                 case "cell":
-                    _ = handle.Writer.PutCell(cell);
+                    _ = handle.Writer.PutCell(spec, draft);
                     break;
                 case "row-view":
-                    _ = handle.Writer.PutRowView(spec, view);
+                    _ = handle.Writer.PutRowView(spec, [(handle.Reader.TryReadCell(draft.Slot) as RecapGridStoreReadResult<RecapCellArtifact>.Found)?.Value
+                        ?? throw new InvalidDataException("Missing stored cell")]);
                     break;
                 case "fulfilled":
                     _ = handle.Writer.PutFulfilled(
                         fulfilled,
-                        view.Digest
+                        (handle.Reader.ReadViewAt(spec.Coordinate.AssignmentKey) as RecapGridStoreReadResult<RecapRowView>.Found)?.Value.Id
+                        ?? throw new InvalidDataException("Missing stored row")
                     );
                     break;
                 default:
@@ -103,72 +104,21 @@ internal static class Program {
         _ => throw new InvalidOperationException()
     };
 
-    internal static (
-        RowBuildSpec Spec,
-        RecapCellArtifact Cell,
-        RecapRowView View,
-        FulfilledViewKey Fulfilled
-    ) Values() {
+    internal static (RowBuildSpec Spec, RecapCellDraft Draft, FulfilledViewKey Fulfilled) Values() {
         var timeline = new TimelineId("00112233445566778899aabbccddeeff");
         var definition = new MaintainerDefinitionDigest(new string('a', 64));
         var column = new LogicalColumnId("case.culprit");
         var rowId = new HistoryRowId(new string('c', 64));
-        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
-            timeline,
-            rowId,
-            BuildTarget.Create([new BuildTargetColumn(column, definition)])
-        );
-        var descriptor = new HistorySegmentDescriptorDigest(new string('b', 64));
-        EvaluationKey evaluation = EvaluationKey.Create(
-            descriptor,
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact cell = RecapCellArtifact.Create(
-            column,
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            "crash fixture answer",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            recipe,
-            new RowViewCoordinate(
-                new RefId(1),
-                timeline,
-                rowId,
-                descriptor,
-                recipe.Digest,
-                recipe.Target.Digest,
-                previousHistoryRowId: null,
-                previousViewDigest: null,
-                bootstrapCompleted: true
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(column, evaluation)]
-        );
-        RecapRowView view = RecapRowView.Create(spec, [cell]);
-        var head = new TimelineHeadRef(
-            timeline,
-            new RefId(1),
-            null,
-            new string('d', 64),
-            null,
-            0,
-            HistoryTimelineSelectedPath.EmptyDigest,
-            generation: 1
-        );
-        return (
-            spec,
-            cell,
-            view,
-            FulfilledViewKey.Create(
-                head.RefId,
-                head,
-                view.RowDescriptorDigest,
-                recipe
-            )
-        );
+        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(timeline, rowId,
+            BuildTarget.Create([new BuildTargetColumn(column, definition)]));
+        var slot = new CellSlot(recipe.Digest, rowId, column);
+        RowBuildSpec spec = RowBuildSpec.CreateFull(recipe, new RowViewCoordinate(
+            new RefId(1), timeline, rowId, new HistorySegmentDescriptorDigest(rowId.Value), recipe.Digest,
+            recipe.Target.Digest, null, null, bootstrapCompleted: true), [new RowBuildAssignment.Evaluate(slot)]);
+        var head = new TimelineHeadRef(timeline, new RefId(1), null, new string('d', 64), null,
+            0, HistoryTimelineSelectedPath.EmptyDigest, generation: 1);
+        return (spec, RecapCellDraft.Create(slot, definition, RecapCellOutcome.Updated,
+            "crash fixture answer", RecapGridLimits.MaximumContentUtf8Bytes),
+            FulfilledViewKey.Create(head.RefId, head, spec.HistorySegmentDigest, recipe));
     }
 }

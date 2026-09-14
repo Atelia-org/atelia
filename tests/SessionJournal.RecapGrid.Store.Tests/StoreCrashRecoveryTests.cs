@@ -38,16 +38,14 @@ public sealed class StoreCrashRecoveryTests : IDisposable {
         Assert.IsType<RecapGridStoreCreateResult.Created>(
             RecapGridStoreFactory.Create(repository)
         );
-        (RowBuildSpec spec, RecapCellArtifact cell, RecapRowView view,
-            FulfilledViewKey fulfilled) = Values();
+        RowBuildSpec spec = StoreFixture.Spec();
+        FulfilledViewKey fulfilled = StoreFixture.Fulfilled(spec);
         if (operation is "row-view" or "fulfilled") {
             using RecapGridStoreHandle setup = Open(repository);
-            Assert.IsType<RecapGridCellPutResult.Inserted>(
-                setup.Writer.PutCell(cell)
-            );
+            RecapCellArtifact stored = StoreFixture.Put(setup, spec, "crash fixture answer");
             if (operation == "fulfilled") {
                 Assert.IsType<RecapGridRowViewPutResult.Inserted>(
-                    setup.Writer.PutRowView(spec, view)
+                    setup.Writer.PutRowView(spec, [stored])
                 );
             }
         }
@@ -59,9 +57,9 @@ public sealed class StoreCrashRecoveryTests : IDisposable {
         );
         using RecapGridStoreHandle reopened = Open(repository);
         bool present = operation switch {
-            "cell" => reopened.Reader.TryReadCell(cell.EvaluationKey)
+            "cell" => reopened.Reader.TryReadCell(((RowBuildAssignment.Evaluate)spec.OrderedAssignments[0]).Slot)
                 is RecapGridStoreReadResult<RecapCellArtifact>.Found,
-            "row-view" => reopened.Reader.ReadView(view.Digest)
+            "row-view" => reopened.Reader.ReadViewAt(spec.Coordinate.AssignmentKey)
                 is RecapGridStoreReadResult<RecapRowView>.Found,
             "fulfilled" => reopened.Reader.ReadFulfilled(fulfilled)
                 is RecapGridStoreReadResult<RecapGridFulfilledView>.Found,
@@ -82,11 +80,9 @@ public sealed class StoreCrashRecoveryTests : IDisposable {
         Assert.IsType<RecapGridStoreCreateResult.Created>(
             RecapGridStoreFactory.Create(repository)
         );
-        RecapCellArtifact cell = Values().Cell;
+        RowBuildSpec spec = StoreFixture.Spec();
         using (RecapGridStoreHandle setup = Open(repository)) {
-            Assert.IsType<RecapGridCellPutResult.Inserted>(
-                setup.Writer.PutCell(cell)
-            );
+            StoreFixture.Put(setup, spec, "crash fixture answer");
         }
         IReadOnlyDictionary<string, byte[]> outsideBefore =
             SnapshotOutsideGridRoot(repository);
@@ -228,75 +224,6 @@ public sealed class StoreCrashRecoveryTests : IDisposable {
                 File.ReadAllBytes,
                 StringComparer.Ordinal
             );
-    }
-
-    private static (
-        RowBuildSpec Spec,
-        RecapCellArtifact Cell,
-        RecapRowView View,
-        FulfilledViewKey Fulfilled
-    ) Values() {
-        var timeline = new TimelineId("00112233445566778899aabbccddeeff");
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        var column = new LogicalColumnId("case.culprit");
-        var rowId = new HistoryRowId(new string('c', 64));
-        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
-            timeline,
-            rowId,
-            BuildTarget.Create([new BuildTargetColumn(column, definition)])
-        );
-        var descriptor = new HistorySegmentDescriptorDigest(new string('b', 64));
-        EvaluationKey evaluation = EvaluationKey.Create(
-            descriptor,
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact cell = RecapCellArtifact.Create(
-            column,
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            "crash fixture answer",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            recipe,
-            new RowViewCoordinate(
-                new RefId(1),
-                timeline,
-                rowId,
-                descriptor,
-                recipe.Digest,
-                recipe.Target.Digest,
-                previousHistoryRowId: null,
-                previousViewDigest: null,
-                bootstrapCompleted: true
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(column, evaluation)]
-        );
-        RecapRowView view = RecapRowView.Create(spec, [cell]);
-        var head = new TimelineHeadRef(
-            timeline,
-            new RefId(1),
-            null,
-            new string('d', 64),
-            null,
-            0,
-            HistoryTimelineSelectedPath.EmptyDigest,
-            generation: 1
-        );
-        return (
-            spec,
-            cell,
-            view,
-            FulfilledViewKey.Create(
-                head.RefId,
-                head,
-                view.RowDescriptorDigest,
-                recipe
-            )
-        );
     }
 
     public void Dispose() {

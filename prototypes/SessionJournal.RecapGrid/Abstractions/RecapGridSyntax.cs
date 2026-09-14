@@ -19,11 +19,6 @@ public static class RecapGridLimits {
     public const int MaximumColumnCount = 128;
     public const int MaximumTargetCanonicalUtf8Bytes = 64 * 1024;
     public const int MaximumRecipeCanonicalUtf8Bytes = 128 * 1024;
-    public const int MaximumProjectionCanonicalUtf8Bytes = 64 * 1024;
-    public const int MaximumCellArtifactCanonicalUtf8Bytes =
-        MaximumContentUtf8Bytes + 128 * 1024;
-    public const int MaximumRowViewCanonicalUtf8Bytes = 512 * 1024;
-    public const int MaximumFulfilledViewKeyCanonicalUtf8Bytes = 16 * 1024;
 }
 
 internal static class RecapGridSyntax {

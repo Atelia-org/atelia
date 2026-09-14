@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace Atelia.SessionJournal.RecapGrid.Store;
 
 internal sealed class SqliteRecapGridStore {
-    internal const int SchemaVersion = 2;
+    internal const int SchemaVersion = 3;
     internal const int ApplicationId = 0x41544752;
     private const long SqliteNativeMaximumPageCountRequest = 4_294_967_294L;
 
@@ -55,7 +55,7 @@ internal sealed class SqliteRecapGridStore {
                     singleton, schema_version, store_instance_id,
                     cell_count, row_view_count,
                     row_view_member_count, fulfilled_view_count
-                ) VALUES (1, 2, $instance, 0, 0, 0, 0);
+                ) VALUES (1, 3, $instance, 0, 0, 0, 0);
                 """;
             metadata.Parameters.AddWithValue("$instance", instance.Value);
             metadata.ExecuteNonQuery();
@@ -211,11 +211,11 @@ internal sealed class SqliteRecapGridStore {
                 _ => null
             };
             bool exhausted = phase switch {
-                0 => ExportDigestTable(
+                0 => ExportIdTable(
                     connection,
                     transaction,
                     "cell_artifact",
-                    "cell_digest",
+                    "cell_id",
                     "cell",
                     digestAfter,
                     includeContent,
@@ -223,11 +223,11 @@ internal sealed class SqliteRecapGridStore {
                     ref totalBytes,
                     ref last
                 ),
-                1 => ExportDigestTable(
+                1 => ExportIdTable(
                     connection,
                     transaction,
                     "row_view",
-                    "view_digest",
+                    "row_result_id",
                     "row-view",
                     digestAfter,
                     includeContent,
@@ -256,72 +256,54 @@ internal sealed class SqliteRecapGridStore {
         );
     }
 
-    internal RecapCellArtifact? ReadCellByEvaluationKey(
-        EvaluationKey key
-    ) {
-        ArgumentNullException.ThrowIfNull(key);
+    internal RecapCellArtifact? ReadCellBySlot(CellSlot slot) {
+        ArgumentNullException.ThrowIfNull(slot);
         using SqliteConnection connection = OpenVerifiedConnection();
-        RecapCellArtifact? cell = ReadCellByEvaluationKeyCore(
-            connection,
-            transaction: null,
-            key.Digest
-        );
-        if (cell is not null && !cell.EvaluationKey.ToCanonicalBytes()
-                .SequenceEqual(key.ToCanonicalBytes())) {
-            throw new InvalidDataException(
-                "An evaluation-key digest is bound to different canonical bytes."
-            );
-        }
-        return cell;
+        return ReadCellBySlotCore(connection, null, slot);
     }
 
-    internal RecapCellArtifact? ReadCellByDigest(CellDigest digest) {
+    internal RecapCellArtifact? ReadCellById(CellId digest) {
         if (digest.Value is null) {
             throw new ArgumentException(
-                "CellDigest must not be default.",
+                "CellId must not be default.",
                 nameof(digest)
             );
         }
         using SqliteConnection connection = OpenVerifiedConnection();
-        return ReadCellByDigestCore(connection, transaction: null, digest);
+        return ReadCellByIdCore(connection, transaction: null, digest);
     }
 
     internal RecapGridMissingResult FindMissing(RowBuildSpec spec) {
         ArgumentNullException.ThrowIfNull(spec);
         using SqliteConnection connection = OpenVerifiedConnection();
-        var missing = new List<EvaluationKey>();
+        var missing = new List<CellSlot>();
         foreach (RowBuildAssignment assignment in spec.OrderedAssignments) {
             switch (assignment) {
                 case RowBuildAssignment.Evaluate evaluate:
-                    RecapCellArtifact? winner = ReadCellByEvaluationKeyCore(
+                    RecapCellArtifact? winner = ReadCellBySlotCore(
                         connection,
                         transaction: null,
-                        evaluate.EvaluationKey.Digest
+                        evaluate.Slot
                     );
                     if (winner is null) {
-                        missing.Add(evaluate.EvaluationKey);
+                        missing.Add(evaluate.Slot);
                     }
-                    else if (!winner.EvaluationKey.ToCanonicalBytes()
-                            .SequenceEqual(
-                                evaluate.EvaluationKey.ToCanonicalBytes()
-                            )) {
-                        throw new InvalidDataException(
-                            "An EvaluationKey digest is bound to different canonical bytes."
-                        );
+                    else if (winner.DefinitionDigest != spec.Recipe.Target.OrderedColumns
+                        .Single(value => value.LogicalColumnId == evaluate.LogicalColumnId).DefinitionDigest) {
+                        throw new InvalidDataException("A Cell winner has the wrong definition for its slot.");
                     }
                     break;
                 case RowBuildAssignment.Reuse reuse:
-                    RecapCellArtifact? reused = ReadCellByDigestCore(
+                    RecapCellArtifact? reused = ReadCellByIdCore(
                         connection,
                         transaction: null,
-                        reuse.Cell.CellDigest
+                        reuse.Cell.Id
                     );
                     if (reused is null
-                        || !reused.ToCanonicalBytes().SequenceEqual(
-                            reuse.Cell.ToCanonicalBytes())) {
+                        || reused != reuse.Cell) {
                         return new RecapGridMissingResult.PrerequisiteMissing(
                             reuse.LogicalColumnId,
-                            reuse.Cell.CellDigest
+                            reuse.Cell.Id
                         );
                     }
                     break;
@@ -338,10 +320,10 @@ internal sealed class SqliteRecapGridStore {
             );
     }
 
-    internal RecapRowView? ReadRowView(RowViewDigest digest) {
+    internal RecapRowView? ReadRowView(RowResultId digest) {
         if (digest.Value is null) {
             throw new ArgumentException(
-                "RowViewDigest must not be default.",
+                "RowResultId must not be default.",
                 nameof(digest)
             );
         }
@@ -358,7 +340,7 @@ internal sealed class SqliteRecapGridStore {
     internal RecapGridFulfilledView? ReadFulfilled(FulfilledViewKey key) {
         ArgumentNullException.ThrowIfNull(key);
         using SqliteConnection connection = OpenVerifiedConnection();
-        RowViewDigest? digest = ReadFulfilledCore(
+        RowResultId? digest = ReadFulfilledCore(
             connection,
             transaction: null,
             key
@@ -366,7 +348,7 @@ internal sealed class SqliteRecapGridStore {
         return digest is null ? null : new RecapGridFulfilledView(digest.Value);
     }
 
-    internal RecapGridCellPutResult PutCell(RecapCellArtifact proposed) {
+    internal RecapGridCellPutResult PutCell(RowBuildSpec spec, RecapCellDraft proposed) {
         ArgumentNullException.ThrowIfNull(proposed);
         if (_readOnly) {
             return new RecapGridCellPutResult.Rejected("StoreReadOnly");
@@ -385,30 +367,26 @@ internal sealed class SqliteRecapGridStore {
                     writeConnection = OpenVerifiedConnection();
                 using WriteTransaction transaction =
                     BeginWriteTransaction(connection);
-                RecapCellArtifact? winner = ReadCellByEvaluationKeyCore(
-                    connection,
-                    transaction,
-                    proposed.EvaluationKey.Digest
-                );
+                if (!DraftMatchesSpec(spec, proposed)) {
+                    transaction.Rollback();
+                    return new RecapGridCellPutResult.Rejected("CellSpecMismatch");
+                }
+                if (!TryValidatePredecessor(connection, transaction, spec, out _, out string? previousError)) {
+                    transaction.Rollback();
+                    return new RecapGridCellPutResult.Rejected(previousError!);
+                }
+                RecapCellArtifact? winner = ReadCellBySlotCore(connection, transaction, proposed.Slot);
                 if (winner is not null) {
                     transaction.Rollback();
-                    if (!winner.EvaluationKey.ToCanonicalBytes()
-                            .SequenceEqual(
-                                proposed.EvaluationKey.ToCanonicalBytes()
-                            )) {
-                        (code, detail) = LatchInvalid(new StoreException(
-                            "EvaluationKeyDigestCollision",
-                            "An EvaluationKey digest is bound to different canonical bytes."
-                        ));
-                        return new RecapGridCellPutResult.Invalid(
-                            code,
-                            detail
-                        );
+                    if (winner.DefinitionDigest != proposed.DefinitionDigest) {
+                        return new RecapGridCellPutResult.Invalid("CellDefinitionMismatch", "The stored winner differs from the immutable slot definition.");
                     }
                     return new RecapGridCellPutResult.AlreadyFilled(winner);
                 }
+                var stored = new RecapCellArtifact(CellId.Generate(), proposed.Slot,
+                    proposed.DefinitionDigest, proposed.Outcome, proposed.Content);
                 StoreCounts counts = ReadCounts(connection, transaction);
-                InsertCell(connection, transaction, proposed);
+                InsertCell(connection, transaction, stored);
                 WriteCounts(
                     connection,
                     transaction,
@@ -421,7 +399,7 @@ internal sealed class SqliteRecapGridStore {
                 transaction.Commit(_hooks.AfterCellNativeCommitReturn);
                 committed = true;
                 _hooks.AfterCellCommit?.Invoke();
-                return new RecapGridCellPutResult.Inserted();
+                return new RecapGridCellPutResult.Inserted(stored);
             }
             catch (StoreCommitBusyRolledBackException) {
                 if (attempt == _limits.MaximumCommitAttempts) {
@@ -451,10 +429,10 @@ internal sealed class SqliteRecapGridStore {
             catch (Exception) when (commitAttempted || committed) {
                 writeConnection?.Dispose();
                 RecapCellArtifact? observed = TryObserveCell(
-                    proposed.EvaluationKey.Digest
+                    proposed.Slot
                 );
                 return new RecapGridCellPutResult.CommitIndeterminate(
-                    proposed.EvaluationKey.Digest,
+                    proposed.Slot,
                     observed
                 );
             }
@@ -468,10 +446,10 @@ internal sealed class SqliteRecapGridStore {
 
     internal RecapGridRowViewPutResult PutRowView(
         RowBuildSpec spec,
-        RecapRowView proposed
+        IReadOnlyList<RecapCellArtifact> selectedCells
     ) {
         ArgumentNullException.ThrowIfNull(spec);
-        ArgumentNullException.ThrowIfNull(proposed);
+        ArgumentNullException.ThrowIfNull(selectedCells);
         if (_readOnly) {
             return new RecapGridRowViewPutResult.Rejected("StoreReadOnly");
         }
@@ -499,90 +477,28 @@ internal sealed class SqliteRecapGridStore {
                     return new RecapGridRowViewPutResult
                         .PrerequisiteMissing("SelectedCellUnavailable");
                 }
+                RecapRowView proposed;
                 try {
-                    _ = RecapRowView.DecodeCanonical(
-                        spec,
-                        selected,
-                        proposed.ToCanonicalBytes()
-                    );
-                }
-                catch (InvalidDataException) {
-                    transaction.Rollback();
-                    return new RecapGridRowViewPutResult.Rejected(
-                        "RowViewSpecMismatch"
-                    );
-                }
-                RowViewDigest? assignedDigest =
-                    ReadRowViewAssignmentDigest(
-                        connection,
-                        transaction,
-                        proposed.Coordinate.AssignmentKey
-                    );
-                if (assignedDigest is { } assigned) {
-                    RecapRowView assignedView = ReadRowViewCore(
-                        connection,
-                        transaction,
-                        assigned
-                    ) ?? throw new InvalidDataException(
-                        "A row-view assignment references a missing RowView."
-                    );
-                    transaction.Rollback();
-                    return assignedView.ToCanonicalBytes().SequenceEqual(
-                        proposed.ToCanonicalBytes()
-                    )
-                        ? new RecapGridRowViewPutResult.AlreadyPresent()
-                        : LatchRowViewInvalid(
-                            "RowViewAssignmentConflict",
-                            "A row-view assignment is already bound to another exact value."
-                        );
-                }
-                RecapRowView? existing = ReadRowViewCore(
-                    connection,
-                    transaction,
-                    proposed.Digest
-                );
-                if (existing is not null) {
-                    transaction.Rollback();
-                    return existing.ToCanonicalBytes().SequenceEqual(
-                        proposed.ToCanonicalBytes()
-                    )
-                        ? new RecapGridRowViewPutResult.AlreadyPresent()
-                        : LatchRowViewInvalid(
-                            "RowViewDigestCollision",
-                            "A RowView digest is bound to different canonical bytes."
-                        );
-                }
-                RecapRowView? predecessor = null;
-                if (proposed.PreviousViewDigest is { } previous) {
-                    predecessor = ReadRowViewAtCore(
-                        connection,
-                        transaction,
-                        new RowViewAssignmentKey(
-                            proposed.RefId,
-                            proposed.TimelineId,
-                            proposed.RecipeDigest,
-                            proposed.PreviousHistoryRowId!.Value
-                        )
-                    );
-                    if (predecessor is null) {
+                    if (!selected.SequenceEqual(selectedCells)) {
                         transaction.Rollback();
-                        return new RecapGridRowViewPutResult
-                            .PrerequisiteMissing(
-                                "PreviousAssignmentUnavailable"
-                            );
+                        return new RecapGridRowViewPutResult.Rejected("RowViewSpecMismatch");
                     }
-                    if (predecessor.Digest != previous
-                        || predecessor.RefId != proposed.RefId
-                        || predecessor.TimelineId != proposed.TimelineId
-                        || predecessor.RecipeDigest != proposed.RecipeDigest
-                        || predecessor.HistoryRowId
-                            != proposed.PreviousHistoryRowId
-                        || predecessor.TargetDigest != proposed.TargetDigest) {
-                        transaction.Rollback();
-                        return new RecapGridRowViewPutResult.Rejected(
-                            "PreviousAssignmentMismatch"
-                        );
-                    }
+                    proposed = RecapRowView.Create(RowResultId.Generate(), spec, selected);
+                }
+                catch (ArgumentException) {
+                    transaction.Rollback();
+                    return new RecapGridRowViewPutResult.Rejected("RowViewSpecMismatch");
+                }
+                RecapRowView? assigned = ReadRowViewAtCore(connection, transaction, spec.Coordinate.AssignmentKey);
+                if (assigned is not null) {
+                    transaction.Rollback();
+                    return assigned.HasSameAssignment(proposed)
+                        ? new RecapGridRowViewPutResult.AlreadyPresent(assigned)
+                        : LatchRowViewInvalid("RowViewAssignmentConflict", "A row assignment has different members or predecessor.");
+                }
+                if (!TryValidatePredecessor(connection, transaction, spec, out RecapRowView? predecessor, out string? previousError)) {
+                    transaction.Rollback();
+                    return new RecapGridRowViewPutResult.PrerequisiteMissing(previousError!);
                 }
                 bool expectedBootstrapCompleted =
                     spec.Recipe.Kind == GridBuildRecipeKind.Full
@@ -619,7 +535,7 @@ internal sealed class SqliteRecapGridStore {
                 transaction.Commit(_hooks.AfterRowViewNativeCommitReturn);
                 committed = true;
                 _hooks.AfterRowViewCommit?.Invoke();
-                return new RecapGridRowViewPutResult.Inserted();
+                return new RecapGridRowViewPutResult.Inserted(proposed);
             }
             catch (StoreCommitBusyRolledBackException) {
                 if (attempt == _limits.MaximumCommitAttempts) {
@@ -649,11 +565,8 @@ internal sealed class SqliteRecapGridStore {
             catch (Exception) when (commitAttempted || committed) {
                 writeConnection?.Dispose();
                 return new RecapGridRowViewPutResult.CommitIndeterminate(
-                    proposed.Coordinate.AssignmentKey,
-                    proposed.Digest,
-                    TryObserveRowViewAt(
-                        proposed.Coordinate.AssignmentKey
-                    )?.Digest
+                    spec.Coordinate.AssignmentKey,
+                    TryObserveRowViewAt(spec.Coordinate.AssignmentKey)
                 );
             }
             catch (Exception exception) when (IsStoreFailure(exception)) {
@@ -666,12 +579,12 @@ internal sealed class SqliteRecapGridStore {
 
     internal RecapGridFulfilledPutResult PutFulfilled(
         FulfilledViewKey key,
-        RowViewDigest viewDigest
+        RowResultId viewDigest
     ) {
         ArgumentNullException.ThrowIfNull(key);
         if (viewDigest.Value is null) {
             throw new ArgumentException(
-                "RowViewDigest must not be default.",
+                "RowResultId must not be default.",
                 nameof(viewDigest)
             );
         }
@@ -692,7 +605,7 @@ internal sealed class SqliteRecapGridStore {
                     writeConnection = OpenVerifiedConnection();
                 using WriteTransaction transaction =
                     BeginWriteTransaction(connection);
-                RowViewDigest? existing = ReadFulfilledCore(
+                RowResultId? existing = ReadFulfilledCore(
                     connection,
                     transaction,
                     key
@@ -840,10 +753,10 @@ internal sealed class SqliteRecapGridStore {
             or IOException
             or OverflowException;
 
-    private RecapCellArtifact? TryObserveCell(EvaluationKeyDigest key) {
+    private RecapCellArtifact? TryObserveCell(CellSlot key) {
         try {
             using SqliteConnection connection = OpenVerifiedConnection();
-            return ReadCellByEvaluationKeyCore(connection, null, key);
+            return ReadCellBySlotCore(connection, null, key);
         }
         catch {
             return null;
@@ -860,7 +773,7 @@ internal sealed class SqliteRecapGridStore {
         }
     }
 
-    private RowViewDigest? TryObserveFulfilled(FulfilledViewKey key) {
+    private RowResultId? TryObserveFulfilled(FulfilledViewKey key) {
         try {
             using SqliteConnection connection = OpenVerifiedConnection();
             return ReadFulfilledCore(connection, null, key);
@@ -893,16 +806,16 @@ internal sealed class SqliteRecapGridStore {
             RowBuildAssignment assignment = spec.OrderedAssignments[index];
             RecapCellArtifact? cell = assignment switch {
                 RowBuildAssignment.Evaluate evaluate
-                    => ReadCellByEvaluationKeyCore(
+                    => ReadCellBySlotCore(
                         connection,
                         transaction,
-                        evaluate.EvaluationKey.Digest
+                        evaluate.Slot
                     ),
                 RowBuildAssignment.Reuse reuse
-                    => ReadCellByDigestCore(
+                    => ReadCellByIdCore(
                         connection,
                         transaction,
-                        reuse.Cell.CellDigest
+                        reuse.Cell.Id
                     ),
                 _ => null
             };
@@ -911,18 +824,13 @@ internal sealed class SqliteRecapGridStore {
             }
             bool exact = assignment switch {
                 RowBuildAssignment.Evaluate evaluate
-                    => cell.EvaluationKey.ToCanonicalBytes().SequenceEqual(
-                        evaluate.EvaluationKey.ToCanonicalBytes()
-                    ),
-                RowBuildAssignment.Reuse reuse
-                    => cell.ToCanonicalBytes().SequenceEqual(
-                        reuse.Cell.ToCanonicalBytes()
-                    ),
+                    => cell.Slot == evaluate.Slot,
+                RowBuildAssignment.Reuse reuse => cell == reuse.Cell,
                 _ => false
             };
             if (!exact) {
                 throw new InvalidDataException(
-                    "A RowBuild assignment digest is bound to different canonical bytes."
+                    "A row assignment differs from its stored Cell."
                 );
             }
             cells[index] = cell;
@@ -930,506 +838,262 @@ internal sealed class SqliteRecapGridStore {
         return cells;
     }
 
-    private static void InsertRowView(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        RecapRowView view
-    ) {
+    private static bool DraftMatchesSpec(RowBuildSpec spec, RecapCellDraft draft) {
+        for (int index = 0; index < spec.OrderedAssignments.Count; index++) {
+            if (spec.OrderedAssignments[index] is RowBuildAssignment.Evaluate evaluate
+                && evaluate.Slot == draft.Slot
+                && spec.DefinitionAt(index) == draft.DefinitionDigest) { return true; }
+        }
+        return false;
+    }
+
+    private static bool TryValidatePredecessor(SqliteConnection connection, SqliteTransaction? transaction,
+        RowBuildSpec spec, out RecapRowView? predecessor, out string? error) {
+        predecessor = null;
+        error = null;
+        if (spec.PreviousRowResultId is not { } previous) { return true; }
+        predecessor = ReadRowViewAtCore(connection, transaction,
+            new RowViewAssignmentKey(spec.RefId, spec.TimelineId, spec.RecipeDigest, spec.PreviousHistoryRowId!.Value));
+        if (predecessor is null) { error = "PreviousAssignmentUnavailable"; return false; }
+        if (predecessor.Id != previous || predecessor.TargetDigest != spec.TargetDigest) {
+            error = "PreviousAssignmentMismatch";
+            return false;
+        }
+        return true;
+    }
+
+    private static void InsertRowView(SqliteConnection connection, SqliteTransaction? transaction, RecapRowView view) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO row_view(
-                view_digest, ref_id, timeline_id, history_row_id,
-                row_descriptor_digest, recipe_digest, target_digest,
-                previous_history_row_id, previous_view_digest,
-                bootstrap_completed, canonical
-            ) VALUES (
-                $view, $ref, $timeline, $row, $descriptor, $recipe, $target,
-                $previousRow, $previousView, $bootstrap, $canonical
-            );
+            INSERT INTO row_view(row_result_id,ref_id,timeline_id,history_row_id,row_descriptor_digest,
+                recipe_digest,target_digest,previous_history_row_id,previous_row_result_id,bootstrap_completed)
+            VALUES($id,$ref,$timeline,$row,$descriptor,$recipe,$target,$previousRow,$previous,$bootstrap);
             """;
-        command.Parameters.AddWithValue("$view", view.Digest.Value);
+        command.Parameters.AddWithValue("$id", view.Id.Value);
         command.Parameters.AddWithValue("$ref", view.RefId.ToHexString());
         command.Parameters.AddWithValue("$timeline", view.TimelineId.Value);
         command.Parameters.AddWithValue("$row", view.HistoryRowId.Value);
-        command.Parameters.AddWithValue(
-            "$descriptor",
-            view.RowDescriptorDigest.Value
-        );
+        command.Parameters.AddWithValue("$descriptor", view.RowDescriptorDigest.Value);
         command.Parameters.AddWithValue("$recipe", view.RecipeDigest.Value);
         command.Parameters.AddWithValue("$target", view.TargetDigest.Value);
-        command.Parameters.AddWithValue(
-            "$previousRow",
-            (object?)view.PreviousHistoryRowId?.Value ?? DBNull.Value
-        );
-        command.Parameters.AddWithValue(
-            "$previousView",
-            (object?)view.PreviousViewDigest?.Value ?? DBNull.Value
-        );
-        command.Parameters.AddWithValue(
-            "$bootstrap",
-            view.BootstrapCompleted ? 1 : 0
-        );
-        command.Parameters.AddWithValue("$canonical", view.ToCanonicalBytes());
+        command.Parameters.AddWithValue("$previousRow", (object?)view.PreviousHistoryRowId?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("$previous", (object?)view.PreviousRowResultId?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("$bootstrap", view.BootstrapCompleted ? 1 : 0);
         command.ExecuteNonQuery();
     }
 
-    private static void InsertRowViewMembers(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        RecapRowView view
-    ) {
+    private static void InsertRowViewMembers(SqliteConnection connection, SqliteTransaction? transaction, RecapRowView view) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO row_view_member(
-                view_digest, column_ordinal, logical_column_id,
-                definition_digest, cell_digest
-            ) VALUES ($view, $ordinal, $column, $definition, $cell);
+            INSERT INTO row_view_member(row_result_id,column_ordinal,logical_column_id,definition_digest,cell_id)
+            VALUES($row,$ordinal,$column,$definition,$cell);
             """;
-        SqliteParameter viewParameter = command.Parameters.Add(
-            "$view",
-            SqliteType.Text
-        );
-        SqliteParameter ordinalParameter = command.Parameters.Add(
-            "$ordinal",
-            SqliteType.Integer
-        );
-        SqliteParameter columnParameter = command.Parameters.Add(
-            "$column",
-            SqliteType.Text
-        );
-        SqliteParameter definitionParameter = command.Parameters.Add(
-            "$definition",
-            SqliteType.Text
-        );
-        SqliteParameter cellParameter = command.Parameters.Add(
-            "$cell",
-            SqliteType.Text
-        );
+        var row = command.Parameters.Add("$row", SqliteType.Text);
+        var ordinal = command.Parameters.Add("$ordinal", SqliteType.Integer);
+        var column = command.Parameters.Add("$column", SqliteType.Text);
+        var definition = command.Parameters.Add("$definition", SqliteType.Text);
+        var cell = command.Parameters.Add("$cell", SqliteType.Text);
         for (int index = 0; index < view.OrderedCells.Count; index++) {
             RecapRowViewCell member = view.OrderedCells[index];
-            viewParameter.Value = view.Digest.Value;
-            ordinalParameter.Value = index;
-            columnParameter.Value = member.LogicalColumnId.Value;
-            definitionParameter.Value = member.DefinitionDigest.Value;
-            cellParameter.Value = member.CellDigest.Value;
+            row.Value = view.Id.Value;
+            ordinal.Value = index;
+            column.Value = member.LogicalColumnId.Value;
+            definition.Value = member.DefinitionDigest.Value;
+            cell.Value = member.CellId.Value;
             command.ExecuteNonQuery();
         }
     }
 
-    private static RowViewDigest? ReadRowViewAssignmentDigest(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        RowViewAssignmentKey key
-    ) {
+    private static RowResultId? ReadRowViewAssignmentId(SqliteConnection connection, SqliteTransaction? transaction,
+        RowViewAssignmentKey key) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT view_digest
-            FROM row_view
-            WHERE ref_id = $ref
-              AND timeline_id = $timeline
-              AND recipe_digest = $recipe
-              AND history_row_id = $row;
+            SELECT row_result_id FROM row_view WHERE ref_id=$ref AND timeline_id=$timeline
+                AND recipe_digest=$recipe AND history_row_id=$row;
             """;
         command.Parameters.AddWithValue("$ref", key.RefId.ToHexString());
         command.Parameters.AddWithValue("$timeline", key.TimelineId.Value);
         command.Parameters.AddWithValue("$recipe", key.RecipeDigest.Value);
         command.Parameters.AddWithValue("$row", key.HistoryRowId.Value);
-        object? result = command.ExecuteScalar();
-        return result is string value ? new RowViewDigest(value) : null;
+        return command.ExecuteScalar() is string value ? DecodeStoredValue(() => new RowResultId(value)) : null;
     }
 
-    private static RecapRowView? ReadRowViewAtCore(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        RowViewAssignmentKey key
-    ) {
-        RowViewDigest? digest = ReadRowViewAssignmentDigest(
-            connection,
-            transaction,
-            key
-        );
-        if (digest is null) {
-            return null;
-        }
-        RecapRowView view = ReadRowViewCore(
-            connection,
-            transaction,
-            digest.Value
-        ) ?? throw new InvalidDataException(
-            "A row-view assignment references a missing RowView."
-        );
+    private static RecapRowView? ReadRowViewAtCore(SqliteConnection connection, SqliteTransaction? transaction,
+        RowViewAssignmentKey key) {
+        RowResultId? id = ReadRowViewAssignmentId(connection, transaction, key);
+        if (id is null) { return null; }
+        RecapRowView view = ReadRowViewCore(connection, transaction, id.Value)
+            ?? throw new InvalidDataException("A row assignment references a missing result.");
         if (view.Coordinate.AssignmentKey != key) {
-            throw new InvalidDataException(
-                "A row-view assignment locator differs from its canonical value."
-            );
+            throw new InvalidDataException("A row assignment differs from its stored coordinate.");
         }
         return view;
     }
 
-    private static RecapRowView? ReadRowViewCore(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        RowViewDigest digest
-    ) {
+    private static RecapRowView? ReadRowViewCore(SqliteConnection connection, SqliteTransaction? transaction, RowResultId id)
+        => DecodeStoredValue(() => ReadRowViewFields(connection, transaction, id));
+
+    private static RecapRowView? ReadRowViewFields(SqliteConnection connection, SqliteTransaction? transaction, RowResultId id) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT ref_id, timeline_id, history_row_id,
-                   row_descriptor_digest, recipe_digest, target_digest,
-                   previous_history_row_id, previous_view_digest,
-                   bootstrap_completed,
-                   length(canonical), canonical
-            FROM row_view WHERE view_digest = $view;
+            SELECT ref_id,timeline_id,history_row_id,row_descriptor_digest,recipe_digest,target_digest,
+                previous_history_row_id,previous_row_result_id,bootstrap_completed
+            FROM row_view WHERE row_result_id=$id;
             """;
-        command.Parameters.AddWithValue("$view", digest.Value);
-        using SqliteDataReader reader = command.ExecuteReader();
-        if (!reader.Read()) {
-            return null;
+        command.Parameters.AddWithValue("$id", id.Value);
+        RowViewCoordinate coordinate;
+        using (SqliteDataReader reader = command.ExecuteReader()) {
+            if (!reader.Read()) { return null; }
+            coordinate = new RowViewCoordinate(ParseRef(reader.GetString(0)),
+                new(reader.GetString(1)), new(reader.GetString(2)), new(reader.GetString(3)),
+                new(reader.GetString(4)), new(reader.GetString(5)),
+                reader.IsDBNull(6) ? null : new Atelia.SessionJournal.HistoryTimeline.HistoryRowId(reader.GetString(6)),
+                reader.IsDBNull(7) ? null : new RowResultId(reader.GetString(7)),
+                reader.GetInt64(8) switch { 0 => false, 1 => true, _ => throw new InvalidDataException("Invalid bootstrap flag.") });
         }
-        long length = reader.GetInt64(9);
-        if (length is < 1
-            or > RecapGridLimits.MaximumRowViewCanonicalUtf8Bytes) {
-            throw new InvalidDataException(
-                "A RowView canonical payload exceeds its byte bound."
-            );
-        }
-        byte[] canonical = reader.GetFieldValue<byte[]>(10);
-        RecapRowView view = RecapRowView.DecodeCanonical(canonical);
-        if (canonical.Length != length
-            || view.Digest != digest
-            || !string.Equals(reader.GetString(0), view.RefId.ToHexString(),
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(1), view.TimelineId.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(2), view.HistoryRowId.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(3),
-                view.RowDescriptorDigest.Value, StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(4), view.RecipeDigest.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(5), view.TargetDigest.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                view.PreviousHistoryRowId?.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                reader.IsDBNull(7) ? null : reader.GetString(7),
-                view.PreviousViewDigest?.Value,
-                StringComparison.Ordinal)
-            || reader.GetInt32(8) != (view.BootstrapCompleted ? 1 : 0)) {
-            throw new InvalidDataException(
-                "A RowView locator differs from its canonical payload."
-            );
-        }
-        reader.Close();
         using SqliteCommand members = connection.CreateCommand();
         members.Transaction = transaction;
         members.CommandText = """
-            SELECT m.column_ordinal, m.logical_column_id,
-                   m.definition_digest, m.cell_digest,
-                   c.logical_column_id, c.definition_digest,
-                   length(c.canonical), c.canonical
-            FROM row_view_member AS m
-            LEFT JOIN cell_artifact AS c ON c.cell_digest = m.cell_digest
-            WHERE m.view_digest = $view
-            ORDER BY m.column_ordinal;
+            SELECT m.column_ordinal,m.logical_column_id,m.definition_digest,m.cell_id,
+                c.logical_column_id,c.definition_digest,c.history_row_id
+            FROM row_view_member AS m LEFT JOIN cell_artifact AS c ON c.cell_id=m.cell_id
+            WHERE m.row_result_id=$id ORDER BY m.column_ordinal;
             """;
-        members.Parameters.AddWithValue("$view", digest.Value);
-        using SqliteDataReader memberReader = members.ExecuteReader();
-        int index = 0;
-        while (memberReader.Read()) {
-            if (index >= view.OrderedCells.Count
-                || memberReader.GetInt32(0) != index) {
-                throw new InvalidDataException(
-                    "A RowView member ordinal is invalid."
-                );
+        members.Parameters.AddWithValue("$id", id.Value);
+        var values = new List<RecapRowViewCell>();
+        using (SqliteDataReader reader = members.ExecuteReader()) {
+            while (reader.Read()) {
+                if (values.Count >= RecapGridLimits.MaximumColumnCount || reader.GetInt64(0) != values.Count) {
+                    throw new InvalidDataException("A row member count or ordinal is invalid.");
+                }
+                if (reader.IsDBNull(4) || reader.IsDBNull(5) || reader.IsDBNull(6)
+                    || reader.GetString(1) != reader.GetString(4)
+                    || reader.GetString(2) != reader.GetString(5)
+                    || reader.GetString(6) != coordinate.HistoryRowId.Value) {
+                    throw new InvalidDataException("A row member differs from its cell or history row.");
+                }
+                values.Add(new RecapRowViewCell(new(reader.GetString(1)), new(reader.GetString(2)), new(reader.GetString(3))));
             }
-            RecapRowViewCell expected = view.OrderedCells[index];
-            if (memberReader.IsDBNull(4)
-                || memberReader.IsDBNull(5)
-                || memberReader.IsDBNull(6)
-                || memberReader.IsDBNull(7)) {
-                throw new InvalidDataException(
-                    "A RowView member references a missing Cell."
-                );
-            }
-            long cellLength = memberReader.GetInt64(6);
-            byte[] cellBytes = memberReader.GetFieldValue<byte[]>(7);
-            if (cellLength is < 1
-                or > RecapGridLimits.MaximumCellArtifactCanonicalUtf8Bytes
-                || cellBytes.Length != cellLength) {
-                throw new InvalidDataException(
-                    "A RowView member Cell exceeds its canonical bound."
-                );
-            }
-            RecapCellArtifact cell = RecapCellArtifact.DecodeCanonical(
-                cellBytes
-            );
-            if (!string.Equals(memberReader.GetString(1),
-                    expected.LogicalColumnId.Value, StringComparison.Ordinal)
-                || !string.Equals(memberReader.GetString(2),
-                    expected.DefinitionDigest.Value, StringComparison.Ordinal)
-                || !string.Equals(memberReader.GetString(3),
-                    expected.CellDigest.Value, StringComparison.Ordinal)
-                || !string.Equals(memberReader.GetString(4),
-                    cell.LogicalColumnId.Value, StringComparison.Ordinal)
-                || !string.Equals(memberReader.GetString(5),
-                    cell.DefinitionDigest.Value, StringComparison.Ordinal)
-                || cell.LogicalColumnId != expected.LogicalColumnId
-                || cell.DefinitionDigest != expected.DefinitionDigest
-                || cell.CellDigest != expected.CellDigest) {
-                throw new InvalidDataException(
-                    "A RowView member differs from its Cell or manifest."
-                );
-            }
-            index++;
         }
-        if (index != view.OrderedCells.Count) {
-            throw new InvalidDataException(
-                "A RowView member set is incomplete."
-            );
-        }
-        return view;
+        return new RecapRowView(id, coordinate, values);
     }
 
-    private static void InsertFulfilled(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        FulfilledViewKey key,
-        RowViewDigest viewDigest
-    ) {
+    private static Atelia.EventJournal.RefId ParseRef(string value) {
+        StoreSyntax.RequireLowerHex(value, 16, nameof(value));
+        return new Atelia.EventJournal.RefId(ulong.Parse(value, System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private static void InsertFulfilled(SqliteConnection connection, SqliteTransaction? transaction,
+        FulfilledViewKey key, RowResultId id) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO fulfilled_view_ref(
-                ref_id, timeline_id, timeline_head_generation,
-                through_row_descriptor_digest, recipe_digest,
-                key_canonical, view_digest
-            ) VALUES (
-                $ref, $timeline, $generation, $through, $recipe,
-                $canonical, $view
-            );
+            INSERT INTO fulfilled_view_ref(ref_id,timeline_id,timeline_head_generation,
+                through_row_descriptor_digest,recipe_digest,row_result_id)
+            VALUES($ref,$timeline,$generation,$through,$recipe,$id);
             """;
+        BindFulfilled(command, key);
+        command.Parameters.AddWithValue("$id", id.Value);
+        command.ExecuteNonQuery();
+    }
+
+    private static void BindFulfilled(SqliteCommand command, FulfilledViewKey key) {
         command.Parameters.AddWithValue("$ref", key.RefId.ToHexString());
         command.Parameters.AddWithValue("$timeline", key.TimelineId.Value);
-        command.Parameters.AddWithValue(
-            "$generation",
-            key.TimelineHeadGeneration
-        );
-        command.Parameters.AddWithValue(
-            "$through",
-            key.ThroughRowDescriptorDigest.Value
-        );
+        command.Parameters.AddWithValue("$generation", key.TimelineHeadGeneration);
+        command.Parameters.AddWithValue("$through", key.ThroughRowDescriptorDigest.Value);
         command.Parameters.AddWithValue("$recipe", key.RecipeDigest.Value);
-        command.Parameters.AddWithValue("$canonical", key.ToCanonicalBytes());
-        command.Parameters.AddWithValue("$view", viewDigest.Value);
-        command.ExecuteNonQuery();
     }
 
-    private static RowViewDigest? ReadFulfilledCore(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        FulfilledViewKey expected
-    ) {
+    private static RowResultId? ReadFulfilledCore(SqliteConnection connection, SqliteTransaction? transaction,
+        FulfilledViewKey key) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT length(key_canonical), key_canonical, view_digest
-            FROM fulfilled_view_ref
-            WHERE ref_id = $ref
-              AND timeline_id = $timeline
-              AND timeline_head_generation = $generation
-              AND through_row_descriptor_digest = $through
-              AND recipe_digest = $recipe;
+            SELECT row_result_id FROM fulfilled_view_ref WHERE ref_id=$ref AND timeline_id=$timeline
+                AND timeline_head_generation=$generation AND through_row_descriptor_digest=$through AND recipe_digest=$recipe;
             """;
-        command.Parameters.AddWithValue(
-            "$ref",
-            expected.RefId.ToHexString()
-        );
-        command.Parameters.AddWithValue(
-            "$timeline",
-            expected.TimelineId.Value
-        );
-        command.Parameters.AddWithValue(
-            "$generation",
-            expected.TimelineHeadGeneration
-        );
-        command.Parameters.AddWithValue(
-            "$through",
-            expected.ThroughRowDescriptorDigest.Value
-        );
-        command.Parameters.AddWithValue(
-            "$recipe",
-            expected.RecipeDigest.Value
-        );
-        using SqliteDataReader reader = command.ExecuteReader();
-        if (!reader.Read()) {
-            return null;
-        }
-        long length = reader.GetInt64(0);
-        if (length is < 1
-            or > RecapGridLimits.MaximumFulfilledViewKeyCanonicalUtf8Bytes) {
-            throw new InvalidDataException(
-                "A fulfilled-view key exceeds its canonical byte bound."
-            );
-        }
-        byte[] canonical = reader.GetFieldValue<byte[]>(1);
-        FulfilledViewKey key = FulfilledViewKey.DecodeCanonical(canonical);
-        if (canonical.Length != length
-            || !canonical.SequenceEqual(expected.ToCanonicalBytes())
-            || key.RefId != expected.RefId
-            || key.TimelineId != expected.TimelineId
-            || key.TimelineHeadGeneration
-                != expected.TimelineHeadGeneration
-            || key.ThroughRowDescriptorDigest
-                != expected.ThroughRowDescriptorDigest
-            || key.RecipeDigest != expected.RecipeDigest) {
-            throw new InvalidDataException(
-                "A fulfilled-view locator differs from its canonical key."
-            );
-        }
-        RowViewDigest viewDigest = new(reader.GetString(2));
-        reader.Close();
-        RecapRowView view = ReadRowViewCore(
-            connection,
-            transaction,
-            viewDigest
-        ) ?? throw new InvalidDataException(
-            "A fulfilled-view reference targets a missing RowView."
-        );
-        if (view.RefId != key.RefId
-            || view.TimelineId != key.TimelineId
-            || view.RecipeDigest != key.RecipeDigest
-            || view.RowDescriptorDigest
-                != key.ThroughRowDescriptorDigest) {
-            throw new InvalidDataException(
-                "A fulfilled-view reference targets a differently scoped RowView."
-            );
-        }
-        return viewDigest;
+        BindFulfilled(command, key);
+        if (command.ExecuteScalar() is not string value) { return null; }
+        var id = DecodeStoredValue(() => new RowResultId(value));
+        ValidateFulfilledTarget(connection, transaction, key, id);
+        return id;
     }
 
-    private static void InsertCell(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        RecapCellArtifact cell
-    ) {
+    private static void ValidateFulfilledTarget(SqliteConnection connection, SqliteTransaction? transaction,
+        FulfilledViewKey key, RowResultId id) {
+        RecapRowView view = ReadRowViewCore(connection, transaction, id)
+            ?? throw new InvalidDataException("A fulfillment references a missing row.");
+        if (view.RefId != key.RefId || view.TimelineId != key.TimelineId
+            || view.RecipeDigest != key.RecipeDigest || view.RowDescriptorDigest != key.ThroughRowDescriptorDigest) {
+            throw new InvalidDataException("A fulfillment differs from its row scope.");
+        }
+    }
+
+    private static void InsertCell(SqliteConnection connection, SqliteTransaction? transaction, RecapCellArtifact cell) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO cell_artifact(
-                cell_digest, evaluation_key_digest,
-                history_segment_digest, logical_column_id,
-                definition_digest, content_digest, canonical
-            ) VALUES (
-                $cell, $evaluation, $history, $column,
-                $definition, $content, $canonical
-            );
+            INSERT INTO cell_artifact(cell_id,recipe_digest,history_row_id,logical_column_id,definition_digest,outcome,content)
+            VALUES($id,$recipe,$row,$column,$definition,$outcome,$content);
             """;
-        command.Parameters.AddWithValue("$cell", cell.CellDigest.Value);
-        command.Parameters.AddWithValue(
-            "$evaluation",
-            cell.EvaluationKey.Digest.Value
-        );
-        command.Parameters.AddWithValue(
-            "$history",
-            cell.EvaluationKey.HistorySegmentDigest.Value
-        );
-        command.Parameters.AddWithValue(
-            "$column",
-            cell.LogicalColumnId.Value
-        );
-        command.Parameters.AddWithValue(
-            "$definition",
-            cell.DefinitionDigest.Value
-        );
-        command.Parameters.AddWithValue(
-            "$content",
-            cell.ContentDigest.Value
-        );
-        command.Parameters.AddWithValue("$canonical", cell.ToCanonicalBytes());
+        command.Parameters.AddWithValue("$id", cell.Id.Value);
+        BindSlot(command, cell.Slot);
+        command.Parameters.AddWithValue("$definition", cell.DefinitionDigest.Value);
+        command.Parameters.AddWithValue("$outcome", (int)cell.Outcome);
+        command.Parameters.AddWithValue("$content", cell.Content);
         command.ExecuteNonQuery();
     }
 
-    private static RecapCellArtifact? ReadCellByEvaluationKeyCore(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        EvaluationKeyDigest digest
-    ) => ReadCellCore(
-        connection,
-        transaction,
-        "evaluation_key_digest",
-        digest.Value
-    );
+    private static void BindSlot(SqliteCommand command, CellSlot slot) {
+        command.Parameters.AddWithValue("$recipe", slot.RecipeDigest.Value);
+        command.Parameters.AddWithValue("$row", slot.HistoryRowId.Value);
+        command.Parameters.AddWithValue("$column", slot.LogicalColumnId.Value);
+    }
 
-    private static RecapCellArtifact? ReadCellByDigestCore(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        CellDigest digest
-    ) => ReadCellCore(
-        connection,
-        transaction,
-        "cell_digest",
-        digest.Value
-    );
-
-    private static RecapCellArtifact? ReadCellCore(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        string keyColumn,
-        string key
-    ) {
+    private static RecapCellArtifact? ReadCellBySlotCore(SqliteConnection connection, SqliteTransaction? transaction, CellSlot slot) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"""
-            SELECT cell_digest, evaluation_key_digest,
-                   history_segment_digest, logical_column_id,
-                   definition_digest, content_digest,
-                   length(canonical), canonical
-            FROM cell_artifact
-            WHERE {keyColumn} = $key;
-            """;
-        command.Parameters.AddWithValue("$key", key);
+        command.CommandText = CellSelect + " WHERE recipe_digest=$recipe AND history_row_id=$row AND logical_column_id=$column;";
+        BindSlot(command, slot);
+        return ReadCellValue(command);
+    }
+
+    private static RecapCellArtifact? ReadCellByIdCore(SqliteConnection connection, SqliteTransaction? transaction, CellId id) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = CellSelect + " WHERE cell_id=$id;";
+        command.Parameters.AddWithValue("$id", id.Value);
+        return ReadCellValue(command);
+    }
+
+    private const string CellSelect = "SELECT cell_id,recipe_digest,history_row_id,logical_column_id,definition_digest,outcome,length(CAST(content AS BLOB)),CAST(content AS BLOB) FROM cell_artifact";
+    private static RecapCellArtifact? ReadCellValue(SqliteCommand command)
+        => DecodeStoredValue(() => ReadCellFields(command));
+
+    private static RecapCellArtifact? ReadCellFields(SqliteCommand command) {
         using SqliteDataReader reader = command.ExecuteReader();
-        if (!reader.Read()) {
-            return null;
-        }
+        if (!reader.Read()) { return null; }
         long length = reader.GetInt64(6);
-        if (length is < 1
-            or > RecapGridLimits.MaximumCellArtifactCanonicalUtf8Bytes) {
-            throw new InvalidDataException(
-                "A Cell canonical payload exceeds its byte bound."
-            );
+        if (length is < 0 or > RecapGridLimits.MaximumContentUtf8Bytes) {
+            throw new InvalidDataException("A cell content exceeds its UTF-8 byte bound.");
         }
-        byte[] canonical = reader.GetFieldValue<byte[]>(7);
-        if (canonical.Length != length) {
-            throw new InvalidDataException(
-                "A Cell canonical payload length differs from its locator."
-            );
+        string content;
+        try { content = new System.Text.UTF8Encoding(false, true).GetString(reader.GetFieldValue<byte[]>(7)); }
+        catch (System.Text.DecoderFallbackException exception) {
+            throw new InvalidDataException("Cell content is not valid UTF-8.", exception);
         }
-        RecapCellArtifact cell = RecapCellArtifact.DecodeCanonical(canonical);
-        if (!string.Equals(reader.GetString(0), cell.CellDigest.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(1),
-                cell.EvaluationKey.Digest.Value, StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(2),
-                cell.EvaluationKey.HistorySegmentDigest.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(3), cell.LogicalColumnId.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(4), cell.DefinitionDigest.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(5), cell.ContentDigest.Value,
-                StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                "A Cell locator differs from its canonical payload."
-            );
+        if (RecapGridSyntax.Utf8Length(content) != length) {
+            throw new InvalidDataException("Cell content is not valid UTF-8.");
         }
-        return cell;
+        return new RecapCellArtifact(new(reader.GetString(0)),
+            new CellSlot(new(reader.GetString(1)), new(reader.GetString(2)), new(reader.GetString(3))),
+            new(reader.GetString(4)), (RecapCellOutcome)reader.GetInt32(5), content);
     }
 
     private SqliteConnection OpenVerifiedConnection() {
@@ -1866,16 +1530,42 @@ internal sealed class SqliteRecapGridStore {
     private static string ReadSchemaSql() {
         Assembly assembly = typeof(SqliteRecapGridStore).Assembly;
         using Stream stream = assembly.GetManifestResourceStream(
-            "Atelia.SessionJournal.RecapGrid.Store.SchemaV2.sql"
+            "Atelia.SessionJournal.RecapGrid.Store.SchemaV3.sql"
         )
             ?? throw new InvalidOperationException(
-                "The RecapGrid Store V2 schema resource is missing."
+                "The RecapGrid Store V3 schema resource is missing."
             );
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
 
-    private static bool ExportDigestTable(
+    private static byte[] ExportCellJson(RecapCellArtifact cell) => RecapGridCanonical.Encode(new {
+        schemaVersion = SchemaVersion,
+        id = cell.Id.Value,
+        slot = new { recipeDigest = cell.Slot.RecipeDigest.Value, historyRowId = cell.Slot.HistoryRowId.Value,
+            logicalColumnId = cell.Slot.LogicalColumnId.Value },
+        definitionDigest = cell.DefinitionDigest.Value,
+        outcome = cell.Outcome == RecapCellOutcome.Updated ? "updated" : "keep-unchanged",
+        content = cell.Content
+    });
+
+    private static byte[] ExportRowJson(RecapRowView row) => RecapGridCanonical.Encode(new {
+        schemaVersion = SchemaVersion, id = row.Id.Value,
+        refId = row.RefId.Packed, timelineId = row.TimelineId.Value, historyRowId = row.HistoryRowId.Value,
+        rowDescriptorDigest = row.RowDescriptorDigest.Value, recipeDigest = row.RecipeDigest.Value,
+        targetDigest = row.TargetDigest.Value, previousHistoryRowId = row.PreviousHistoryRowId?.Value,
+        previousRowResultId = row.PreviousRowResultId?.Value, bootstrapCompleted = row.BootstrapCompleted,
+        orderedCells = row.OrderedCells.Select(static cell => new {
+            logicalColumnId = cell.LogicalColumnId.Value, definitionDigest = cell.DefinitionDigest.Value, cellId = cell.CellId.Value
+        }).ToArray()
+    });
+
+    private static byte[] ExportFulfilledJson(FulfilledViewKey key) => RecapGridCanonical.Encode(new {
+        refId = key.RefId.Packed, timelineId = key.TimelineId.Value, timelineHeadGeneration = key.TimelineHeadGeneration,
+        throughRowDescriptorDigest = key.ThroughRowDescriptorDigest.Value, recipeDigest = key.RecipeDigest.Value
+    });
+
+    private static bool ExportIdTable(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string table,
@@ -1909,20 +1599,10 @@ internal sealed class SqliteRecapGridStore {
                 return false;
             }
             byte[] canonical = kind == "cell"
-                ? (ReadCellByDigestCore(
-                    connection,
-                    transaction,
-                    new CellDigest(key)
-                ) ?? throw new InvalidDataException(
-                    "A Cell disappeared during export."
-                )).ToCanonicalBytes()
-                : (ReadRowViewCore(
-                    connection,
-                    transaction,
-                    new RowViewDigest(key)
-                ) ?? throw new InvalidDataException(
-                    "A RowView disappeared during export."
-                )).ToCanonicalBytes();
+                ? ExportCellJson(ReadCellByIdCore(connection, transaction, DecodeStoredValue(() => new CellId(key)))
+                    ?? throw new InvalidDataException("A Cell disappeared during export."))
+                : ExportRowJson(ReadRowViewCore(connection, transaction, DecodeStoredValue(() => new RowResultId(key)))
+                    ?? throw new InvalidDataException("A RowView disappeared during export."));
             if (!TryAddExportItem(
                     items,
                     ref totalBytes,
@@ -1934,7 +1614,7 @@ internal sealed class SqliteRecapGridStore {
                     ))) {
                 return false;
             }
-            last = RecapGridStoreExportCursor.CreateDigest(kind, key);
+            last = RecapGridStoreExportCursor.CreateId(kind, key);
         }
         return keys.Count < queryLimit;
     }
@@ -1956,7 +1636,7 @@ internal sealed class SqliteRecapGridStore {
             ? """
                 SELECT ref_id, timeline_id, timeline_head_generation,
                        through_row_descriptor_digest, recipe_digest,
-                       key_canonical, view_digest
+                       row_result_id
                 FROM fulfilled_view_ref
                 WHERE (ref_id, timeline_id, timeline_head_generation,
                        through_row_descriptor_digest, recipe_digest)
@@ -1968,7 +1648,7 @@ internal sealed class SqliteRecapGridStore {
             : """
                 SELECT ref_id, timeline_id, timeline_head_generation,
                        through_row_descriptor_digest, recipe_digest,
-                       key_canonical, view_digest
+                       row_result_id
                 FROM fulfilled_view_ref
                 WHERE (ref_id, timeline_id, timeline_head_generation,
                        through_row_descriptor_digest, recipe_digest)
@@ -1994,8 +1674,7 @@ internal sealed class SqliteRecapGridStore {
                     reader.GetInt64(2),
                     reader.GetString(3),
                     reader.GetString(4),
-                    reader.GetFieldValue<byte[]>(5),
-                    reader.GetString(6)
+                    reader.GetString(5)
                 ));
             }
         }
@@ -2003,9 +1682,9 @@ internal sealed class SqliteRecapGridStore {
             if (items.Count >= RecapGridStoreLimits.MaximumPageItems) {
                 return false;
             }
-            (FulfilledViewKey key, RowViewDigest viewDigest) =
+            (FulfilledViewKey key, RowResultId viewDigest) =
                 ValidateFulfilledPhysicalRow(connection, transaction, row);
-            byte[] canonical = key.ToCanonicalBytes();
+            byte[] canonical = ExportFulfilledJson(key);
             RecapGridStoreExportCursor cursor =
                 RecapGridStoreExportCursor.CreateFulfilled(
                     row.RefId,
@@ -2036,13 +1715,13 @@ internal sealed class SqliteRecapGridStore {
         ref int totalBytes,
         RecapGridStoreExportItem item
     ) {
-        if (item.CanonicalBytes is < 1
+        if (item.JsonUtf8Bytes is < 1
             or > RecapGridStoreLimits.MaximumPageBytes) {
             throw new InvalidDataException(
                 "An export item exceeds the page byte bound."
             );
         }
-        int nextBytes = checked(totalBytes + item.CanonicalBytes);
+        int nextBytes = checked(totalBytes + item.JsonUtf8Bytes);
         if (items.Count > 0
             && nextBytes > RecapGridStoreLimits.MaximumPageBytes) {
             return false;
@@ -2058,16 +1737,16 @@ internal sealed class SqliteRecapGridStore {
     ) {
         string? after = null;
         while (true) {
-            List<CellDigest> page = ReadDigestPage<CellDigest>(
+            List<CellId> page = ReadIdPage<CellId>(
                 connection,
                 transaction,
                 "cell_artifact",
-                "cell_digest",
+                "cell_id",
                 after,
-                static value => new CellDigest(value)
+                static value => new CellId(value)
             );
-            foreach (CellDigest digest in page) {
-                _ = ReadCellByDigestCore(connection, transaction, digest)
+            foreach (CellId digest in page) {
+                _ = ReadCellByIdCore(connection, transaction, digest)
                     ?? throw new InvalidDataException(
                         "A Cell disappeared during verification."
                     );
@@ -2085,15 +1764,15 @@ internal sealed class SqliteRecapGridStore {
     ) {
         string? after = null;
         while (true) {
-            List<RowViewDigest> page = ReadDigestPage<RowViewDigest>(
+            List<RowResultId> page = ReadIdPage<RowResultId>(
                 connection,
                 transaction,
                 "row_view",
-                "view_digest",
+                "row_result_id",
                 after,
-                static value => new RowViewDigest(value)
+                static value => new RowResultId(value)
             );
-            foreach (RowViewDigest digest in page) {
+            foreach (RowResultId digest in page) {
                 RecapRowView view = ReadRowViewCore(
                     connection,
                     transaction,
@@ -2101,7 +1780,7 @@ internal sealed class SqliteRecapGridStore {
                 ) ?? throw new InvalidDataException(
                     "A RowView disappeared during verification."
                 );
-                if (view.PreviousViewDigest is { } previous) {
+                if (view.PreviousRowResultId is { } previous) {
                     RecapRowView predecessor = ReadRowViewAtCore(
                         connection,
                         transaction,
@@ -2114,7 +1793,7 @@ internal sealed class SqliteRecapGridStore {
                     ) ?? throw new InvalidDataException(
                         "A RowView predecessor assignment is missing."
                     );
-                    if (predecessor.Digest != previous
+                    if (predecessor.Id != previous
                         || predecessor.TargetDigest != view.TargetDigest
                         || predecessor.BootstrapCompleted
                             && !view.BootstrapCompleted) {
@@ -2143,7 +1822,7 @@ internal sealed class SqliteRecapGridStore {
                 ? """
                     SELECT ref_id, timeline_id, timeline_head_generation,
                            through_row_descriptor_digest, recipe_digest,
-                           key_canonical, view_digest
+                           row_result_id
                     FROM fulfilled_view_ref
                     WHERE (ref_id, timeline_id, timeline_head_generation,
                            through_row_descriptor_digest, recipe_digest)
@@ -2155,7 +1834,7 @@ internal sealed class SqliteRecapGridStore {
                 : """
                     SELECT ref_id, timeline_id, timeline_head_generation,
                            through_row_descriptor_digest, recipe_digest,
-                           key_canonical, view_digest
+                           row_result_id
                     FROM fulfilled_view_ref
                     WHERE (ref_id, timeline_id, timeline_head_generation,
                            through_row_descriptor_digest, recipe_digest)
@@ -2186,8 +1865,7 @@ internal sealed class SqliteRecapGridStore {
                         reader.GetInt64(2),
                         reader.GetString(3),
                         reader.GetString(4),
-                        reader.GetFieldValue<byte[]>(5),
-                        reader.GetString(6)
+                        reader.GetString(5)
                     ));
                 }
             }
@@ -2212,57 +1890,17 @@ internal sealed class SqliteRecapGridStore {
         }
     }
 
-    private static (FulfilledViewKey Key, RowViewDigest ViewDigest)
+    private static (FulfilledViewKey Key, RowResultId ViewDigest)
         ValidateFulfilledPhysicalRow(
             SqliteConnection connection,
             SqliteTransaction transaction,
             FulfilledPhysicalRow row
         ) {
-        if (row.Canonical.Length is < 1
-            or > RecapGridLimits.MaximumFulfilledViewKeyCanonicalUtf8Bytes) {
-            throw new InvalidDataException(
-                "A fulfilled-view key exceeds its canonical byte bound."
-            );
-        }
-        FulfilledViewKey key = FulfilledViewKey.DecodeCanonical(row.Canonical);
-        if (!string.Equals(
-                row.RefId,
-                key.RefId.ToHexString(),
-                StringComparison.Ordinal)
-            || !string.Equals(
-                row.TimelineId,
-                key.TimelineId.Value,
-                StringComparison.Ordinal)
-            || row.Generation != key.TimelineHeadGeneration
-            || !string.Equals(
-                row.Through,
-                key.ThroughRowDescriptorDigest.Value,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                row.Recipe,
-                key.RecipeDigest.Value,
-                StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                "A fulfilled-view physical locator differs from its canonical key."
-            );
-        }
-        var viewDigest = new RowViewDigest(row.ViewDigest);
-        RecapRowView view = ReadRowViewCore(
-            connection,
-            transaction,
-            viewDigest
-        ) ?? throw new InvalidDataException(
-            "A fulfilled-view reference targets a missing RowView."
-        );
-        if (view.TimelineId != key.TimelineId
-            || view.RecipeDigest != key.RecipeDigest
-            || view.RowDescriptorDigest
-                != key.ThroughRowDescriptorDigest) {
-            throw new InvalidDataException(
-                "A fulfilled-view reference targets a differently scoped RowView."
-            );
-        }
-        return (key, viewDigest);
+        var key = DecodeStoredValue(() => new FulfilledViewKey(ParseRef(row.RefId), new(row.TimelineId), row.Generation,
+            new(row.Through), new(row.Recipe)));
+        var id = DecodeStoredValue(() => new RowResultId(row.ViewDigest));
+        ValidateFulfilledTarget(connection, transaction, key, id);
+        return (key, id);
     }
 
     private sealed record FulfilledPhysicalRow(
@@ -2271,11 +1909,18 @@ internal sealed class SqliteRecapGridStore {
         long Generation,
         string Through,
         string Recipe,
-        byte[] Canonical,
         string ViewDigest
     );
 
-    private static List<T> ReadDigestPage<T>(
+    // Translate malformed SQL values only; public input validation stays outside this boundary.
+    private static T DecodeStoredValue<T>(Func<T> materialize) {
+        try { return materialize(); }
+        catch (Exception exception) when (exception is ArgumentException or FormatException) {
+            throw new InvalidDataException("A stored RecapGrid value is malformed.", exception);
+        }
+    }
+
+    private static List<T> ReadIdPage<T>(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string table,
@@ -2294,7 +1939,7 @@ internal sealed class SqliteRecapGridStore {
         var page = new List<T>();
         using SqliteDataReader reader = command.ExecuteReader();
         while (reader.Read()) {
-            page.Add(factory(reader.GetString(0)));
+            page.Add(DecodeStoredValue(() => factory(reader.GetString(0))));
         }
         return page;
     }

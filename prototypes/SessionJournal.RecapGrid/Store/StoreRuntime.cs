@@ -300,24 +300,24 @@ public sealed class RecapGridStoreReader {
     }
 
     public RecapGridStoreReadResult<RecapCellArtifact> TryReadCell(
-        EvaluationKey evaluationKey
+        CellSlot slot
     ) {
-        ArgumentNullException.ThrowIfNull(evaluationKey);
+        ArgumentNullException.ThrowIfNull(slot);
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         if (operation is null) {
             return new RecapGridStoreReadResult<RecapCellArtifact>.Disposed();
         }
-        return Read(() => _store.ReadCellByEvaluationKey(evaluationKey));
+        return Read(() => _store.ReadCellBySlot(slot));
     }
 
     public RecapGridStoreReadResult<RecapCellArtifact> ReadCell(
-        CellDigest cellDigest
+        CellId cellDigest
     ) {
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         if (operation is null) {
             return new RecapGridStoreReadResult<RecapCellArtifact>.Disposed();
         }
-        return Read(() => _store.ReadCellByDigest(cellDigest));
+        return Read(() => _store.ReadCellById(cellDigest));
     }
 
     internal RecapGridMissingResult FindMissingAssignments(RowBuildSpec spec) {
@@ -345,7 +345,7 @@ public sealed class RecapGridStoreReader {
     }
 
     public RecapGridStoreReadResult<RecapRowView> ReadView(
-        RowViewDigest digest
+        RowResultId digest
     ) {
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         if (operation is null) {
@@ -478,29 +478,29 @@ internal sealed class RecapGridStoreWriter {
         _lifetime = lifetime;
     }
 
-    public RecapGridCellPutResult PutCell(RecapCellArtifact cell) {
+    public RecapGridCellPutResult PutCell(RowBuildSpec spec, RecapCellDraft cell) {
         ArgumentNullException.ThrowIfNull(cell);
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         return operation is null
             ? new RecapGridCellPutResult.Disposed()
-            : _store.PutCell(cell);
+            : _store.PutCell(spec, cell);
     }
 
     public RecapGridRowViewPutResult PutRowView(
         RowBuildSpec spec,
-        RecapRowView view
+        IReadOnlyList<RecapCellArtifact> selectedCells
     ) {
         ArgumentNullException.ThrowIfNull(spec);
-        ArgumentNullException.ThrowIfNull(view);
+        ArgumentNullException.ThrowIfNull(selectedCells);
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         return operation is null
             ? new RecapGridRowViewPutResult.Disposed()
-            : _store.PutRowView(spec, view);
+            : _store.PutRowView(spec, selectedCells);
     }
 
     public RecapGridFulfilledPutResult PutFulfilled(
         FulfilledViewKey key,
-        RowViewDigest viewDigest
+        RowResultId viewDigest
     ) {
         ArgumentNullException.ThrowIfNull(key);
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();

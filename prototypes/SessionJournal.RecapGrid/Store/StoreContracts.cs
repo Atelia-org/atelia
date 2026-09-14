@@ -127,13 +127,13 @@ public sealed record RecapGridStoreExportCursor {
             );
         }
         RecapGridStoreExportCursor cursor = bytes[1] switch {
-            CellKind when bytes.Length == 66 => CreateDigest(
+            CellKind when bytes.Length == 34 => CreateId(
                 "cell",
-                ReadLowerHex(bytes.AsSpan(2), 64, nameof(value))
+                ReadLowerHex(bytes.AsSpan(2), 32, nameof(value))
             ),
-            RowViewKind when bytes.Length == 66 => CreateDigest(
+            RowViewKind when bytes.Length == 34 => CreateId(
                 "row-view",
-                ReadLowerHex(bytes.AsSpan(2), 64, nameof(value))
+                ReadLowerHex(bytes.AsSpan(2), 32, nameof(value))
             ),
             FulfilledKind when bytes.Length == 186 => CreateFulfilled(
                 ReadLowerHex(bytes.AsSpan(2, 16), 16, nameof(value)),
@@ -156,7 +156,7 @@ public sealed record RecapGridStoreExportCursor {
         return cursor;
     }
 
-    internal static RecapGridStoreExportCursor CreateDigest(
+    internal static RecapGridStoreExportCursor CreateId(
         string kind,
         string key
     ) {
@@ -164,11 +164,11 @@ public sealed record RecapGridStoreExportCursor {
             "cell" => CellKind,
             "row-view" => RowViewKind,
             _ => throw new InvalidDataException(
-                "Unknown digest export cursor kind."
+                "Unknown result export cursor kind."
             )
         };
-        key = StoreSyntax.RequireLowerHex(key, 64, nameof(key));
-        var bytes = new byte[66];
+        key = StoreSyntax.RequireLowerHex(key, 32, nameof(key));
+        var bytes = new byte[34];
         bytes[0] = WireVersion;
         bytes[1] = kindTag;
         WriteAscii(bytes.AsSpan(2), key);
@@ -280,9 +280,9 @@ public sealed record RecapGridStoreExportCursor {
 public sealed record RecapGridStoreExportItem(
     string Kind,
     string Key,
-    int CanonicalBytes,
-    byte[]? Canonical,
-    RowViewDigest? FulfilledViewDigest = null
+    int JsonUtf8Bytes,
+    byte[]? Json,
+    RowResultId? FulfilledRowResultId = null
 );
 
 public sealed record RecapGridStoreExportPage(
@@ -419,16 +419,16 @@ public abstract record RecapGridStoreReadResult<T> where T : class {
         : RecapGridStoreReadResult<T>;
 }
 
-internal sealed record RecapGridFulfilledView(RowViewDigest ViewDigest);
+internal sealed record RecapGridFulfilledView(RowResultId RowResultId);
 
 internal abstract record RecapGridMissingResult {
     private RecapGridMissingResult() { }
     public sealed record Complete : RecapGridMissingResult;
-    public sealed record Missing(IReadOnlyList<EvaluationKey> OrderedKeys)
+    public sealed record Missing(IReadOnlyList<CellSlot> OrderedSlots)
         : RecapGridMissingResult;
     public sealed record PrerequisiteMissing(
         LogicalColumnId LogicalColumnId,
-        CellDigest CellDigest
+        CellId CellId
     ) : RecapGridMissingResult;
     public sealed record Busy : RecapGridMissingResult;
     public sealed record Disposed : RecapGridMissingResult;
@@ -438,14 +438,14 @@ internal abstract record RecapGridMissingResult {
 
 internal abstract record RecapGridCellPutResult {
     private RecapGridCellPutResult() { }
-    public sealed record Inserted : RecapGridCellPutResult;
+    public sealed record Inserted(RecapCellArtifact Winner) : RecapGridCellPutResult;
     public sealed record AlreadyFilled(RecapCellArtifact Winner)
         : RecapGridCellPutResult;
     public sealed record Rejected(string Code) : RecapGridCellPutResult;
     public sealed record Busy : RecapGridCellPutResult;
     public sealed record Limit(string Name) : RecapGridCellPutResult;
     public sealed record CommitIndeterminate(
-        EvaluationKeyDigest IntendedKey,
+        CellSlot IntendedSlot,
         RecapCellArtifact? Observed
     ) : RecapGridCellPutResult;
     public sealed record Disposed : RecapGridCellPutResult;
@@ -455,8 +455,8 @@ internal abstract record RecapGridCellPutResult {
 
 internal abstract record RecapGridRowViewPutResult {
     private RecapGridRowViewPutResult() { }
-    public sealed record Inserted : RecapGridRowViewPutResult;
-    public sealed record AlreadyPresent : RecapGridRowViewPutResult;
+    public sealed record Inserted(RecapRowView Winner) : RecapGridRowViewPutResult;
+    public sealed record AlreadyPresent(RecapRowView Winner) : RecapGridRowViewPutResult;
     public sealed record Rejected(string Code) : RecapGridRowViewPutResult;
     public sealed record PrerequisiteMissing(string Code)
         : RecapGridRowViewPutResult;
@@ -464,8 +464,7 @@ internal abstract record RecapGridRowViewPutResult {
     public sealed record Limit(string Name) : RecapGridRowViewPutResult;
     public sealed record CommitIndeterminate(
         RowViewAssignmentKey IntendedAssignment,
-        RowViewDigest Intended,
-        RowViewDigest? Observed
+        RecapRowView? Observed
     ) : RecapGridRowViewPutResult;
     public sealed record Disposed : RecapGridRowViewPutResult;
     public sealed record Invalid(string Code, string Detail)
@@ -483,7 +482,7 @@ internal abstract record RecapGridFulfilledPutResult {
     public sealed record Limit(string Name) : RecapGridFulfilledPutResult;
     public sealed record CommitIndeterminate(
         FulfilledViewKey Intended,
-        RowViewDigest? Observed
+        RowResultId? Observed
     ) : RecapGridFulfilledPutResult;
     public sealed record Disposed : RecapGridFulfilledPutResult;
     public sealed record Invalid(string Code, string Detail)

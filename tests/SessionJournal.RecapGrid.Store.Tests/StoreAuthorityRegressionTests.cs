@@ -1,445 +1,179 @@
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Store;
-using Atelia.EventJournal;
 using Microsoft.Data.Sqlite;
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using Xunit;
 
 namespace Atelia.SessionJournal.RecapGrid.Store.Tests;
 
 public sealed class StoreAuthorityRegressionTests : IDisposable {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "atelia-recap-grid-store-authority-tests",
-        Guid.NewGuid().ToString("N")
-    );
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "atelia-recap-grid-authority", Guid.NewGuid().ToString("N"));
 
-    [Fact]
-    public void PutCellRejectsEvaluationDigestBoundToDifferentCanonicalKey() {
+    [Theory]
+    [InlineData("member-ordinal-gap")]
+    [InlineData("member-orphan")]
+    [InlineData("member-column")]
+    [InlineData("cell-outcome")]
+    [InlineData("fulfilled-orphan")]
+    [InlineData("truncate")]
+    public void VerifyAndExportRejectBrokenSqlRelations(string kind) {
         Create();
-        RecapCellArtifact stored = Cell('b', "stored");
-        RecapCellArtifact proposed = Cell('c', "proposed");
-        using RecapGridStoreHandle handle = Open();
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(stored)
-        );
-        Corrupt(
-            "UPDATE cell_artifact SET evaluation_key_digest = $value;",
-            proposed.EvaluationKey.Digest.Value
-        );
-        byte[] before = DatabaseBytes();
-
-        Assert.IsType<RecapGridCellPutResult.Invalid>(
-            handle.Writer.PutCell(proposed)
-        );
-        Assert.Equal(before, DatabaseBytes());
-    }
-
-    [Fact]
-    public void EvaluateAssignmentDigestCollisionIsStickyInvalid() {
-        Create();
-        RecapCellArtifact stored = Cell('b', "stored");
-        (RowBuildSpec spec, RecapCellArtifact proposed, RecapRowView view) =
-            FirstRow('c', "proposed");
-        using RecapGridStoreHandle handle = Open();
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(stored)
-        );
-        Corrupt(
-            "UPDATE cell_artifact SET evaluation_key_digest = $value;",
-            proposed.EvaluationKey.Digest.Value
-        );
-        byte[] before = DatabaseBytes();
-
-        RecapGridRowViewPutResult.Invalid invalid = Assert.IsType<
-            RecapGridRowViewPutResult.Invalid
-        >(handle.Writer.PutRowView(spec, view));
-        Assert.Equal(before, DatabaseBytes());
-        Assert.Equal(
-            invalid.Code,
-            Assert.IsType<RecapGridCellPutResult.Invalid>(
-                handle.Writer.PutCell(Cell('d', "after latch"))
-            ).Code
-        );
-    }
-
-    [Fact]
-    public void ReuseAssignmentDigestCollisionIsStickyInvalid() {
-        Create();
-        var timeline = new TimelineId("00112233445566778899aabbccddeeff");
-        var columnX = new LogicalColumnId("case.culprit");
-        var columnY = new LogicalColumnId("case.motive");
-        var definitionX = new MaintainerDefinitionDigest(new string('a', 64));
-        var definitionY = new MaintainerDefinitionDigest(new string('b', 64));
-        BuildTarget target = BuildTarget.Create([
-            new BuildTargetColumn(columnX, definitionX),
-            new BuildTargetColumn(columnY, definitionY)
-        ]);
-        GridBuildRecipe full = GridBuildRecipe.CreateFull(
-            timeline,
-            new HistoryRowId(new string('c', 64)),
-            target
-        );
-        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
-            full,
-            new HistoryRowId(new string('d', 64)),
-            target,
-            [columnX]
-        );
-        var descriptor = new HistorySegmentDescriptorDigest(new string('d', 64));
-        EvaluationKey evaluationX = EvaluationKey.Create(
-            descriptor,
-            definitionX,
-            PriorInputReference.FirstRow.Value
-        );
-        EvaluationKey evaluationY = EvaluationKey.Create(
-            descriptor,
-            definitionY,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact cellX = RecapCellArtifact.Create(
-            columnX,
-            definitionX,
-            evaluationX,
-            RecapCellOutcome.Updated,
-            "x",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RecapCellArtifact storedY = RecapCellArtifact.Create(
-            columnY,
-            definitionY,
-            evaluationY,
-            RecapCellOutcome.Updated,
-            "stored-y",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RecapCellArtifact intendedY = RecapCellArtifact.Create(
-            columnY,
-            definitionY,
-            evaluationY,
-            RecapCellOutcome.Updated,
-            "intended-y",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(
-            overlay,
-            new RowViewCoordinate(
-                new RefId(1),
-                timeline,
-                new HistoryRowId(new string('d', 64)),
-                descriptor,
-                overlay.Digest,
-                target.Digest,
-                previousHistoryRowId: null,
-                previousViewDigest: null,
-                bootstrapCompleted: true
-            ),
-            PriorInputReference.FirstRow.Value,
-            [
-                new RowBuildAssignment.Evaluate(columnX, evaluationX),
-                new RowBuildAssignment.Reuse(columnY, intendedY)
-            ]
-        );
-        RecapRowView view = RecapRowView.Create(spec, [cellX, intendedY]);
-        using RecapGridStoreHandle handle = Open();
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(cellX)
-        );
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(storedY)
-        );
-        Corrupt(
-            "UPDATE cell_artifact SET cell_digest = $value WHERE logical_column_id = 'case.motive';",
-            intendedY.CellDigest.Value
-        );
-        byte[] before = DatabaseBytes();
-
-        Assert.IsType<RecapGridRowViewPutResult.Invalid>(
-            handle.Writer.PutRowView(spec, view)
-        );
-        Assert.Equal(before, DatabaseBytes());
-    }
-
-    [Fact]
-    public void BootstrapCompletionCannotRegressAlongExactAssignmentChain() {
-        Create();
-        var timeline = new TimelineId("00112233445566778899aabbccddeeff");
-        var column = new LogicalColumnId("case.culprit");
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        BuildTarget target = BuildTarget.Create([
-            new BuildTargetColumn(column, definition)
-        ]);
-        GridBuildRecipe baseRecipe = GridBuildRecipe.CreateFull(
-            timeline,
-            RowId('1'),
-            target
-        );
-        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
-            baseRecipe,
-            RowId('3'),
-            target,
-            [column]
-        );
-        var bootstrapDescriptor = new HistorySegmentDescriptorDigest(
-            new string('3', 64)
-        );
-        EvaluationKey bootstrapEvaluation = EvaluationKey.Create(
-            bootstrapDescriptor,
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact bootstrapCell = RecapCellArtifact.Create(
-            column,
-            definition,
-            bootstrapEvaluation,
-            RecapCellOutcome.Updated,
-            "bootstrap",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RowBuildSpec bootstrapSpec = RowBuildSpec.CreateOverlayBootstrap(
-            overlay,
-            new RowViewCoordinate(
-                new RefId(1), timeline, RowId('3'), bootstrapDescriptor,
-                overlay.Digest, target.Digest, null, null,
-                bootstrapCompleted: true
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(column, bootstrapEvaluation)]
-        );
-        RecapRowView bootstrapView = RecapRowView.Create(
-            bootstrapSpec,
-            [bootstrapCell]
-        );
-        var projection = new PriorInputReference.Projection(
-            PriorInputProjectionDigest.FromCells([bootstrapCell])
-        );
-        var earlierDescriptor = new HistorySegmentDescriptorDigest(
-            new string('2', 64)
-        );
-        EvaluationKey earlierEvaluation = EvaluationKey.Create(
-            earlierDescriptor,
-            definition,
-            projection
-        );
-        RecapCellArtifact earlierCell = RecapCellArtifact.Create(
-            column,
-            definition,
-            earlierEvaluation,
-            RecapCellOutcome.Updated,
-            "earlier",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RowBuildSpec regressingSpec = RowBuildSpec.CreateOverlayBootstrap(
-            overlay,
-            new RowViewCoordinate(
-                new RefId(1), timeline, RowId('2'), earlierDescriptor,
-                overlay.Digest, target.Digest, RowId('3'),
-                bootstrapView.Digest, bootstrapCompleted: false
-            ),
-            projection,
-            [new RowBuildAssignment.Evaluate(column, earlierEvaluation)]
-        );
-        RecapRowView regressingView = RecapRowView.Create(
-            regressingSpec,
-            [earlierCell]
-        );
-
-        using RecapGridStoreHandle handle = Open();
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(bootstrapCell)
-        );
-        Assert.IsType<RecapGridRowViewPutResult.Inserted>(
-            handle.Writer.PutRowView(bootstrapSpec, bootstrapView)
-        );
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(earlierCell)
-        );
-        Assert.Equal(
-            "BootstrapRecurrenceMismatch",
-            Assert.IsType<RecapGridRowViewPutResult.Rejected>(
-                handle.Writer.PutRowView(regressingSpec, regressingView)
-            ).Code
-        );
+        RowBuildSpec spec = StoreFixture.Spec();
+        using (RecapGridStoreHandle handle = Open()) {
+            RecapCellArtifact cell = StoreFixture.Put(handle, spec);
+            RecapRowView view = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(spec, [cell])).Winner;
+            Assert.IsType<RecapGridFulfilledPutResult.Inserted>(handle.Writer.PutFulfilled(StoreFixture.Fulfilled(spec), view.Id));
+        }
+        if (kind == "truncate") {
+            using var stream = new FileStream(new StorePaths(_root).DatabasePath, FileMode.Open, FileAccess.Write, FileShare.None);
+            stream.SetLength(stream.Length / 2);
+            stream.Flush(flushToDisk: true);
+        }
+        else {
+            Execute("PRAGMA ignore_check_constraints = ON; " + (kind switch {
+                "member-ordinal-gap" => "UPDATE row_view_member SET column_ordinal = 1;",
+                "member-orphan" => "DELETE FROM cell_artifact;",
+                "member-column" => "UPDATE row_view_member SET logical_column_id = 'case.other';",
+                "cell-outcome" => "UPDATE cell_artifact SET outcome = 99;",
+                "fulfilled-orphan" => "UPDATE fulfilled_view_ref SET row_result_id = '11111111111111111111111111111111';",
+                _ => throw new ArgumentOutOfRangeException(nameof(kind))
+            }));
+        }
+        Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(RecapGridStoreMaintenance.Verify(_root));
+        Assert.IsType<RecapGridStoreExportResult.Invalid>(RecapGridStoreMaintenance.Export(_root));
     }
 
     [Theory]
-    [InlineData("cell-locator")]
-    [InlineData("view-locator")]
-    [InlineData("member-ordinal-gap")]
-    [InlineData("member-extra")]
-    [InlineData("member-orphan")]
-    [InlineData("fulfilled-physical")]
-    [InlineData("unknown-schema")]
-    [InlineData("truncate")]
-    public void VerifyAndExportFailClosedForPhysicalCorruption(string kind) {
+    [InlineData("cell-id")]
+    [InlineData("slot-recipe")]
+    public void MalformedStoredCellFieldsReturnInvalidWithoutChangingDatabase(string field) {
         Create();
-        (RowBuildSpec spec, RecapCellArtifact cell, RecapRowView view) =
-            FirstRow('c', "graph");
-        GridBuildRecipe recipe = FullRecipe();
-        var head = new TimelineHeadRef(
-            recipe.TimelineId,
-            new RefId(1),
-            null,
-            new string('d', 64),
-            null,
-            0,
-            HistoryTimelineSelectedPath.EmptyDigest,
-            generation: 1
-        );
-        FulfilledViewKey key = FulfilledViewKey.Create(
-            head.RefId,
-            head,
-            view.RowDescriptorDigest,
-            recipe
-        );
-        using (RecapGridStoreHandle handle = Open()) {
-            Assert.IsType<RecapGridCellPutResult.Inserted>(
-                handle.Writer.PutCell(cell)
-            );
-            Assert.IsType<RecapGridRowViewPutResult.Inserted>(
-                handle.Writer.PutRowView(spec, view)
-            );
-            Assert.IsType<RecapGridFulfilledPutResult.Inserted>(
-                handle.Writer.PutFulfilled(key, view.Digest)
-            );
+        RecapCellArtifact cell;
+        using (RecapGridStoreHandle setup = Open()) cell = StoreFixture.Put(setup, StoreFixture.Spec());
+        Execute(field switch {
+            "cell-id" => "UPDATE cell_artifact SET cell_id = 'short';",
+            "slot-recipe" => "UPDATE cell_artifact SET recipe_digest = 'not-a-recipe';",
+            _ => throw new ArgumentOutOfRangeException(nameof(field))
+        });
+        string path = new StorePaths(_root).DatabasePath;
+        byte[] before = File.ReadAllBytes(path);
+        using (RecapGridStoreReaderHandle reader = Assert.IsType<RecapGridStoreReaderOpenResult.Opened>(
+            RecapGridStoreFactory.OpenReader(_root)).Handle) {
+            RecapGridStoreReadResult<RecapCellArtifact> result = field == "cell-id"
+                ? reader.Reader.TryReadCell(cell.Slot)
+                : reader.Reader.ReadCell(cell.Id);
+            Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Invalid>(result);
         }
-        ApplyGraphCorruption(kind, cell, view, key);
-
-        if (kind == "unknown-schema") {
-            Assert.IsType<RecapGridStoreVerifyResult.UnsupportedSchema>(
-                RecapGridStoreMaintenance.Verify(_root)
-            );
-            Assert.IsType<RecapGridStoreExportResult.UnsupportedSchema>(
-                RecapGridStoreMaintenance.Export(_root)
-            );
-            return;
-        }
-        Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(
-            RecapGridStoreMaintenance.Verify(_root)
-        );
-        Assert.IsType<RecapGridStoreExportResult.Invalid>(
-            RecapGridStoreMaintenance.Export(_root)
-        );
+        var invalid = Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(RecapGridStoreMaintenance.Verify(_root));
+        Assert.True(invalid.Incomplete);
+        Assert.NotEmpty(invalid.Errors);
+        Assert.StartsWith("GridStoreInvalid: ", invalid.Errors[0]);
+        Assert.Equal(before, File.ReadAllBytes(path));
     }
 
     [Fact]
-    public void CreatedStoreMatchesIndependentV2LogicalSchemaFingerprint() {
+    public void FullVerificationDetectsCounterMismatch() {
         Create();
+        using (RecapGridStoreHandle handle = Open()) StoreFixture.Put(handle, StoreFixture.Spec());
+        Execute("UPDATE store_metadata SET cell_count = 9;");
+        Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(RecapGridStoreMaintenance.Verify(_root));
+    }
 
+    [Fact]
+    public void SchemaUsesSingleSqlAuthorityAndEnforcesSlotAndForeignKeys() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        RowBuildSpec spec = StoreFixture.Spec();
+        RecapCellArtifact cell = StoreFixture.Put(handle, spec);
         using SqliteConnection connection = OpenRaw();
         connection.Open();
-        var transcript = new StringBuilder();
-        using (SqliteCommand identity = connection.CreateCommand()) {
-            identity.CommandText = """
-                SELECT
-                    (SELECT application_id FROM pragma_application_id),
-                    (SELECT user_version FROM pragma_user_version),
-                    singleton,
-                    schema_version,
-                    length(store_instance_id),
-                    store_instance_id = lower(store_instance_id),
-                    store_instance_id NOT GLOB '*[^0-9a-f]*',
-                    cell_count,
-                    row_view_count,
-                    row_view_member_count,
-                    fulfilled_view_count
-                FROM store_metadata;
-                """;
-            using SqliteDataReader reader = identity.ExecuteReader();
-            Assert.True(reader.Read());
-            long[] identityShape = [
-                reader.GetInt64(0),
-                reader.GetInt64(1),
-                reader.GetInt64(2),
-                reader.GetInt64(3),
-                reader.GetInt64(4),
-                reader.GetInt64(5),
-                reader.GetInt64(6),
-                reader.GetInt64(7),
-                reader.GetInt64(8),
-                reader.GetInt64(9),
-                reader.GetInt64(10)
-            ];
-            Assert.Equal(new long[] {
-                1_096_042_322L,
-                2,
-                1,
-                2,
-                32,
-                1,
-                1,
-                0,
-                0,
-                0,
-                0
-            }, identityShape);
-            AppendFingerprintField(
-                transcript,
-                reader.GetInt64(0).ToString(CultureInfo.InvariantCulture)
-            );
-            AppendFingerprintField(
-                transcript,
-                reader.GetInt64(1).ToString(CultureInfo.InvariantCulture)
-            );
-            for (int index = 2; index < 11; index++) {
-                AppendFingerprintField(
-                    transcript,
-                    reader.GetInt64(index).ToString(
-                        CultureInfo.InvariantCulture
-                    )
-                );
-            }
-            Assert.False(reader.Read());
+        using (SqliteCommand columns = connection.CreateCommand()) {
+            columns.CommandText = "SELECT name FROM pragma_table_info('cell_artifact') UNION ALL SELECT name FROM pragma_table_info('row_view') UNION ALL SELECT name FROM pragma_table_info('fulfilled_view_ref');";
+            using SqliteDataReader reader = columns.ExecuteReader();
+            var names = new List<string>();
+            while (reader.Read()) names.Add(reader.GetString(0));
+            Assert.DoesNotContain("canonical", names);
+            Assert.DoesNotContain("key_canonical", names);
+            Assert.DoesNotContain("evaluation_key_digest", names);
+            Assert.DoesNotContain("content_digest", names);
+            Assert.Contains("cell_id", names);
+            Assert.Contains("row_result_id", names);
         }
+        using SqliteCommand duplicate = connection.CreateCommand();
+        duplicate.CommandText = "INSERT INTO cell_artifact SELECT '11111111111111111111111111111111', recipe_digest, history_row_id, logical_column_id, definition_digest, outcome, content FROM cell_artifact;";
+        Assert.Throws<SqliteException>(() => duplicate.ExecuteNonQuery());
+        using SqliteCommand fk = connection.CreateCommand();
+        fk.CommandText = "PRAGMA foreign_keys = ON; INSERT INTO row_view_member(row_result_id, column_ordinal, logical_column_id, definition_digest, cell_id) VALUES ('11111111111111111111111111111111', 0, 'case.culprit', $definition, $cell);";
+        fk.Parameters.AddWithValue("$definition", cell.DefinitionDigest.Value);
+        fk.Parameters.AddWithValue("$cell", cell.Id.Value);
+        Assert.Throws<SqliteException>(() => fk.ExecuteNonQuery());
+    }
 
-        using (SqliteCommand persistentPragmas = connection.CreateCommand()) {
-            persistentPragmas.CommandText = """
-                SELECT
-                    (SELECT page_size FROM pragma_page_size),
-                    (SELECT journal_mode FROM pragma_journal_mode);
-                """;
-            using SqliteDataReader reader = persistentPragmas.ExecuteReader();
-            Assert.True(reader.Read());
-            Assert.Equal(4096, reader.GetInt64(0));
-            Assert.Equal("delete", reader.GetString(1));
-            Assert.False(reader.Read());
+    [Fact]
+    public void SameAssignmentWithDifferentCoordinateIsConflictAndLatchesInvalid() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        RowBuildSpec spec = StoreFixture.Spec();
+        RecapCellArtifact cell = StoreFixture.Put(handle, spec);
+        RecapRowView stored = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(spec, [cell])).Winner;
+        var coordinate = new RowViewCoordinate(spec.RefId, spec.TimelineId, spec.HistoryRowId,
+            new HistorySegmentDescriptorDigest(new string('e', 64)), spec.RecipeDigest, spec.TargetDigest,
+            null, null, bootstrapCompleted: true);
+        RowBuildSpec conflicting = RowBuildSpec.CreateFull(spec.Recipe, coordinate, spec.OrderedAssignments);
+        var invalid = Assert.IsType<RecapGridRowViewPutResult.Invalid>(handle.Writer.PutRowView(conflicting, [cell]));
+        Assert.Equal("RowViewAssignmentConflict", invalid.Code);
+        Assert.Equal(invalid.Code, Assert.IsType<RecapGridCellPutResult.Invalid>(
+            handle.Writer.PutCell(spec, StoreFixture.Draft(spec))).Code);
+        using RecapGridStoreHandle reopened = Open();
+        Assert.Equal(stored.Id, Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+            reopened.Reader.ReadViewAt(spec.Coordinate.AssignmentKey)).Value.Id);
+    }
+
+    [Fact]
+    public void ReadViewMaterializesOnlyMetadataWhileCellAndFullVerifyEnforceContentLimit() {
+        Create();
+        RowBuildSpec spec = StoreFixture.Spec();
+        CellId cellId;
+        RowResultId rowId;
+        using (RecapGridStoreHandle setup = Open()) {
+            RecapCellArtifact cell = StoreFixture.Put(setup, spec);
+            cellId = cell.Id;
+            rowId = Assert.IsType<RecapGridRowViewPutResult.Inserted>(setup.Writer.PutRowView(spec, [cell])).Winner.Id;
         }
-
-        var names = new List<string>();
-        using (SqliteCommand schema = connection.CreateCommand()) {
-            schema.CommandText = """
-                SELECT type, name, tbl_name, sql
-                FROM sqlite_schema
-                WHERE name NOT LIKE 'sqlite_%'
-                ORDER BY type, name;
-                """;
-            using SqliteDataReader reader = schema.ExecuteReader();
-            while (reader.Read()) {
-                names.Add(reader.GetString(1));
-                for (int index = 0; index < 4; index++) {
-                    AppendFingerprintField(
-                        transcript,
-                        reader.GetString(index)
-                    );
-                }
-            }
+        using (SqliteConnection connection = OpenRaw()) {
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "UPDATE cell_artifact SET content = $content;";
+            command.Parameters.AddWithValue("$content", new string('x', RecapGridLimits.MaximumContentUtf8Bytes + 1));
+            Assert.Equal(1, command.ExecuteNonQuery());
         }
+        using RecapGridStoreHandle reopened = Open();
+        RecapRowView row = Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(reopened.Reader.ReadView(rowId)).Value;
+        Assert.Equal(cellId, Assert.Single(row.OrderedCells).CellId);
+        Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Invalid>(reopened.Reader.ReadCell(cellId));
+        Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(RecapGridStoreMaintenance.Verify(_root));
+    }
 
-        Assert.Equal(new[] {
-            "cell_artifact",
-            "fulfilled_view_ref",
-            "row_view",
-            "row_view_member",
-            "store_metadata"
-        }, names);
-        Assert.Equal(
-            "3b14f5e58f4012f699b9314b96f145dc43e878fbbc7e8d25574991319281343c",
-            Convert.ToHexStringLower(SHA256.HashData(
-                Encoding.UTF8.GetBytes(transcript.ToString())
-            ))
-        );
+    [Fact]
+    public void LegacySchemaOpenIsReadOnlyUnsupportedAndExplicitResetNeedsNoLegacyReader() {
+        Directory.CreateDirectory(_root);
+        StorePaths paths = new(_root);
+        Directory.CreateDirectory(Path.GetDirectoryName(paths.DatabasePath)!);
+        using (var connection = new SqliteConnection($"Data Source={paths.DatabasePath};Pooling=False")) {
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            // Deliberately not a decodable old graph: the version boundary must run before graph reads.
+            command.CommandText = "PRAGMA application_id = 1096042322; PRAGMA user_version = 2; CREATE TABLE old_state(value TEXT); INSERT INTO old_state VALUES ('preserved');";
+            command.ExecuteNonQuery();
+        }
+        byte[] before = File.ReadAllBytes(paths.DatabasePath);
+        Assert.Equal(2, Assert.IsType<RecapGridStoreOpenResult.UnsupportedSchema>(RecapGridStoreFactory.Open(_root)).SchemaVersion);
+        Assert.Equal(2, Assert.IsType<RecapGridStoreReaderOpenResult.UnsupportedSchema>(RecapGridStoreFactory.OpenReader(_root)).SchemaVersion);
+        Assert.Equal(before, File.ReadAllBytes(paths.DatabasePath));
+        var witness = Assert.IsType<RecapGridStorePrepareResetResult.Prepared>(RecapGridStoreMaintenance.PrepareReset(_root)).Witness;
+        Assert.Equal(3, Assert.IsType<RecapGridStoreResetResult.Reset>(RecapGridStoreMaintenance.Reset(_root, witness)).Identity.SchemaVersion);
+        Assert.IsType<RecapGridStoreVerifyResult.Healthy>(RecapGridStoreMaintenance.Verify(_root));
+        using RecapGridStoreHandle handle = Open();
+        StoreFixture.Put(handle, StoreFixture.Spec());
     }
 
     [Theory]
@@ -520,28 +254,20 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         Assert.StartsWith("GridStoreInvalid: ", unhealthy.Errors[0]);
     }
 
+
     private void Create() {
         Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
+        Assert.IsType<RecapGridStoreCreateResult.Created>(RecapGridStoreFactory.Create(_root));
     }
-
-    private RecapGridStoreHandle Open() => Assert.IsType<
-        RecapGridStoreOpenResult.Opened
-    >(RecapGridStoreFactory.Open(_root)).Handle;
-
-    private SqliteConnection OpenRaw() => new(
-        $"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False;Foreign Keys=False"
-    );
-
-    private static void AppendFingerprintField(
-        StringBuilder transcript,
-        string value
-    ) => transcript.Append(Encoding.UTF8.GetByteCount(value))
-        .Append(':')
-        .Append(value);
-
+    private RecapGridStoreHandle Open() => Assert.IsType<RecapGridStoreOpenResult.Opened>(RecapGridStoreFactory.Open(_root)).Handle;
+    private SqliteConnection OpenRaw() => new($"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False;Foreign Keys=False");
+    private void Execute(string sql) {
+        using SqliteConnection connection = OpenRaw();
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
     private void ApplySchemaIdentityMutation(string mutation) {
         using SqliteConnection connection = OpenRaw();
         connection.Open();
@@ -561,7 +287,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
                     singleton, schema_version, store_instance_id,
                     cell_count, row_view_count,
                     row_view_member_count, fulfilled_view_count
-                ) VALUES (2, 2, '00112233445566778899aabbccddeeff',
+                ) VALUES (2, 3, '00112233445566778899aabbccddeeff',
                     0, 0, 0, 0);
                 """,
             "metadata-singleton" => """
@@ -570,7 +296,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
                 """,
             "metadata-schema-version" => """
                 PRAGMA ignore_check_constraints = ON;
-                UPDATE store_metadata SET schema_version = 3;
+                UPDATE store_metadata SET schema_version = 99;
                 """,
             "metadata-instance-id" =>
                 "UPDATE store_metadata SET store_instance_id = 'bad';",
@@ -582,165 +308,8 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         command.ExecuteNonQuery();
     }
 
-    private void Corrupt(string sql, string value) {
-        using SqliteConnection connection = OpenRaw();
-        connection.Open();
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = sql;
-        command.Parameters.AddWithValue("$value", value);
-        Assert.Equal(1, command.ExecuteNonQuery());
-    }
-
-    private void ApplyGraphCorruption(
-        string kind,
-        RecapCellArtifact cell,
-        RecapRowView view,
-        FulfilledViewKey key
-    ) {
-        if (kind == "truncate") {
-            string path = new StorePaths(_root).DatabasePath;
-            using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Write,
-                FileShare.None
-            );
-            stream.SetLength(Math.Max(1, stream.Length / 2));
-            stream.Flush(flushToDisk: true);
-            return;
-        }
-        using var connection = new SqliteConnection(
-            $"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False;Foreign Keys=False"
-        );
-        connection.Open();
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = kind switch {
-            "cell-locator" =>
-                "UPDATE cell_artifact SET logical_column_id = 'case.other';",
-            "view-locator" =>
-                $"UPDATE row_view SET target_digest = '{new string('0', 64)}';",
-            "member-ordinal-gap" =>
-                "UPDATE row_view_member SET column_ordinal = 1;",
-            "member-extra" => """
-                INSERT INTO row_view_member(
-                    view_digest, column_ordinal, logical_column_id,
-                    definition_digest, cell_digest
-                ) VALUES (
-                    $view, 1, 'case.extra', $definition, $cell
-                );
-                """,
-            "member-orphan" => "DELETE FROM cell_artifact;",
-            "fulfilled-physical" =>
-                "UPDATE fulfilled_view_ref SET key_canonical = $canonical;",
-            "unknown-schema" => "PRAGMA user_version = 99;",
-            _ => throw new ArgumentOutOfRangeException(nameof(kind))
-        };
-        command.Parameters.AddWithValue("$view", view.Digest.Value);
-        command.Parameters.AddWithValue("$definition", cell.DefinitionDigest.Value);
-        command.Parameters.AddWithValue("$cell", cell.CellDigest.Value);
-        var otherHead = new TimelineHeadRef(
-            key.TimelineId,
-            new RefId(2),
-            null,
-            new string('d', 64),
-            null,
-            0,
-            HistoryTimelineSelectedPath.EmptyDigest,
-            key.TimelineHeadGeneration
-        );
-        command.Parameters.AddWithValue(
-            "$canonical",
-            FulfilledViewKey.Create(
-                otherHead.RefId,
-                otherHead,
-                key.ThroughRowDescriptorDigest,
-                FullRecipe()
-            ).ToCanonicalBytes()
-        );
-        Assert.True(command.ExecuteNonQuery() >= 0);
-    }
-
-    private byte[] DatabaseBytes() => File.ReadAllBytes(
-        new StorePaths(_root).DatabasePath
-    );
-
-    private static RecapCellArtifact Cell(char descriptor, string content) {
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        EvaluationKey evaluation = EvaluationKey.Create(
-            new HistorySegmentDescriptorDigest(new string(descriptor, 64)),
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        return RecapCellArtifact.Create(
-            new LogicalColumnId("case.culprit"),
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            content,
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-    }
-
-    private static (RowBuildSpec Spec, RecapCellArtifact Cell,
-        RecapRowView View) FirstRow(char descriptorToken, string content) {
-        GridBuildRecipe recipe = FullRecipe();
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        var column = new LogicalColumnId("case.culprit");
-        var descriptor = new HistorySegmentDescriptorDigest(
-            new string(descriptorToken, 64)
-        );
-        EvaluationKey evaluation = EvaluationKey.Create(
-            descriptor,
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact cell = RecapCellArtifact.Create(
-            column,
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            content,
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            recipe,
-            new RowViewCoordinate(
-                new RefId(1),
-                recipe.TimelineId,
-                new HistoryRowId(new string(descriptorToken, 64)),
-                descriptor,
-                recipe.Digest,
-                recipe.Target.Digest,
-                previousHistoryRowId: null,
-                previousViewDigest: null,
-                bootstrapCompleted: true
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(column, evaluation)]
-        );
-        return (spec, cell, RecapRowView.Create(spec, [cell]));
-    }
-
-    private static GridBuildRecipe FullRecipe() {
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        return GridBuildRecipe.CreateFull(
-            new TimelineId("00112233445566778899aabbccddeeff"),
-            new HistoryRowId(new string('c', 64)),
-            BuildTarget.Create([
-                new BuildTargetColumn(
-                    new LogicalColumnId("case.culprit"),
-                    definition
-                )
-            ])
-        );
-    }
-
-    private static HistoryRowId RowId(char value)
-        => new(new string(value, 64));
 
     public void Dispose() {
-        if (Directory.Exists(_root)) {
-            Directory.Delete(_root, recursive: true);
-        }
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 }

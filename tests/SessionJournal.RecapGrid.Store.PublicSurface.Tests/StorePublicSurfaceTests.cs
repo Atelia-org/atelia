@@ -30,7 +30,7 @@ public sealed class StorePublicSurfaceTests : IDisposable {
             RecapGridStoreOpenResult.Opened
         >(RecapGridStoreFactory.Open(_root)).Handle;
         Assert.Equal(created.Identity, handle.Identity);
-        var missingDigest = new CellDigest(new string('a', 64));
+        var missingDigest = new CellId(new string('a', 32));
         Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Missing>(
             handle.Reader.ReadCell(missingDigest)
         );

@@ -108,131 +108,6 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
     }
 
     [Fact]
-    public void CanonicalCorruptionLatchesInvalidAndVerifyIsIncomplete() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        RecapCellArtifact cell = Cell('b', "answer");
-        using RecapGridStoreHandle handle = Assert.IsType<
-            RecapGridStoreOpenResult.Opened
-        >(RecapGridStoreFactory.Open(_root)).Handle;
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(cell)
-        );
-
-        using (SqliteConnection connection = OpenRaw()) {
-            connection.Open();
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "UPDATE cell_artifact SET canonical = X'00';";
-            Assert.Equal(1, command.ExecuteNonQuery());
-        }
-
-        RecapGridStoreReadResult<RecapCellArtifact>.Invalid invalid =
-            Assert.IsType<
-                RecapGridStoreReadResult<RecapCellArtifact>.Invalid
-            >(handle.Reader.TryReadCell(cell.EvaluationKey));
-        Assert.Equal(
-            invalid.Code,
-            Assert.IsType<RecapGridCellPutResult.Invalid>(
-                handle.Writer.PutCell(Cell('c', "other"))
-            ).Code
-        );
-        RecapGridStoreVerifyResult.Unhealthy unhealthy = Assert.IsType<
-            RecapGridStoreVerifyResult.Unhealthy
-        >(RecapGridStoreMaintenance.Verify(_root));
-        Assert.True(unhealthy.Incomplete);
-        Assert.NotEmpty(unhealthy.Errors);
-    }
-
-    [Fact]
-    public void AllThreePostCommitFailuresReturnObservedSettlement() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        (RowBuildSpec spec, RecapCellArtifact cell, RecapRowView view,
-            FulfilledViewKey key) = RowValues();
-        static void ThrowAfterCommit() => throw new IOException("injected");
-        using RecapGridStoreHandle handle = Assert.IsType<
-            RecapGridStoreOpenResult.Opened
-        >(RecapGridStoreFactory.OpenForTest(
-            _root,
-            StoreStorageLimits.Production,
-            new StorePersistenceTestHooks(
-                AfterCellCommit: ThrowAfterCommit,
-                AfterRowViewCommit: ThrowAfterCommit,
-                AfterFulfilledCommit: ThrowAfterCommit
-            )
-        )).Handle;
-
-        Assert.Equal(
-            cell.CellDigest,
-            Assert.IsType<RecapGridCellPutResult.CommitIndeterminate>(
-                handle.Writer.PutCell(cell)
-            ).Observed?.CellDigest
-        );
-        RecapGridRowViewPutResult.CommitIndeterminate rowSettlement =
-            Assert.IsType<RecapGridRowViewPutResult.CommitIndeterminate>(
-                handle.Writer.PutRowView(spec, view)
-            );
-        Assert.Equal(spec.Coordinate.AssignmentKey,
-            rowSettlement.IntendedAssignment);
-        Assert.Equal(view.Digest, rowSettlement.Intended);
-        Assert.Equal(view.Digest, rowSettlement.Observed);
-        Assert.Equal(
-            view.Digest,
-            Assert.IsType<RecapGridFulfilledPutResult.CommitIndeterminate>(
-                handle.Writer.PutFulfilled(key, view.Digest)
-            ).Observed
-        );
-    }
-
-    [Fact]
-    public void AllThreeNativeCommitReturnFailuresReturnObservedSettlement() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        (RowBuildSpec spec, RecapCellArtifact cell, RecapRowView view,
-            FulfilledViewKey key) = RowValues();
-        static void ThrowAfterNativeCommit()
-            => throw new IOException("injected after native COMMIT return");
-        using RecapGridStoreHandle handle = Assert.IsType<
-            RecapGridStoreOpenResult.Opened
-        >(RecapGridStoreFactory.OpenForTest(
-            _root,
-            StoreStorageLimits.Production,
-            new StorePersistenceTestHooks(
-                AfterCellNativeCommitReturn: ThrowAfterNativeCommit,
-                AfterRowViewNativeCommitReturn: ThrowAfterNativeCommit,
-                AfterFulfilledNativeCommitReturn: ThrowAfterNativeCommit
-            )
-        )).Handle;
-
-        Assert.Equal(
-            cell.CellDigest,
-            Assert.IsType<RecapGridCellPutResult.CommitIndeterminate>(
-                handle.Writer.PutCell(cell)
-            ).Observed?.CellDigest
-        );
-        RecapGridRowViewPutResult.CommitIndeterminate rowSettlement =
-            Assert.IsType<RecapGridRowViewPutResult.CommitIndeterminate>(
-                handle.Writer.PutRowView(spec, view)
-            );
-        Assert.Equal(spec.Coordinate.AssignmentKey,
-            rowSettlement.IntendedAssignment);
-        Assert.Equal(view.Digest, rowSettlement.Intended);
-        Assert.Equal(view.Digest, rowSettlement.Observed);
-        Assert.Equal(
-            view.Digest,
-            Assert.IsType<RecapGridFulfilledPutResult.CommitIndeterminate>(
-                handle.Writer.PutFulfilled(key, view.Digest)
-            ).Observed
-        );
-    }
-
-    [Fact]
     public void SymlinkRepositoryRootIsRejectedWithoutExternalMutation() {
         string external = _root + "-external";
         string linked = _root + "-linked";
@@ -308,7 +183,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             RecapGridStoreMaintenance.Export(_root)
         );
         Assert.IsType<RecapGridCellPutResult.Busy>(
-            handle.Writer.PutCell(Cell('b', "answer"))
+            Put(handle, Cell('b', "answer"))
         );
         Assert.Equal(2, retries);
         using (SqliteCommand rollback = blocker.CreateCommand()) {
@@ -316,451 +191,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             rollback.ExecuteNonQuery();
         }
         Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(Cell('b', "answer"))
-        );
-    }
-
-    [Fact]
-    public void LifetimeCountIsNotAdmissionCappedAndQueryPlansUseIndexes() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        using RecapGridStoreHandle handle = Assert.IsType<
-            RecapGridStoreOpenResult.Opened
-        >(RecapGridStoreFactory.Open(_root)).Handle;
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(Cell('b', "one"))
-        );
-        Assert.IsType<RecapGridCellPutResult.Inserted>(
-            handle.Writer.PutCell(Cell('c', "two"))
-        );
-
-        using SqliteConnection connection = OpenRaw();
-        connection.Open();
-        foreach (string sql in new[] {
-                     "EXPLAIN QUERY PLAN SELECT canonical FROM cell_artifact WHERE evaluation_key_digest = $key;",
-                     "EXPLAIN QUERY PLAN SELECT canonical FROM row_view WHERE view_digest = $key;",
-                     "EXPLAIN QUERY PLAN SELECT view_digest FROM fulfilled_view_ref WHERE ref_id = $key AND timeline_id = $key AND timeline_head_generation = $generation AND through_row_descriptor_digest = $key AND recipe_digest = $key;",
-                     "EXPLAIN QUERY PLAN SELECT cell_digest FROM cell_artifact WHERE cell_digest >= '' ORDER BY cell_digest LIMIT 129;",
-                     "EXPLAIN QUERY PLAN SELECT cell_digest FROM cell_artifact WHERE cell_digest > $key ORDER BY cell_digest LIMIT 129;",
-                     "EXPLAIN QUERY PLAN SELECT view_digest FROM row_view WHERE view_digest >= '' ORDER BY view_digest LIMIT 129;",
-                     "EXPLAIN QUERY PLAN SELECT view_digest FROM row_view WHERE view_digest > $key ORDER BY view_digest LIMIT 129;",
-                     "EXPLAIN QUERY PLAN SELECT ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest FROM fulfilled_view_ref WHERE (ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest) >= ('', '', 0, '', '') ORDER BY ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest LIMIT 129;",
-                     "EXPLAIN QUERY PLAN SELECT ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest FROM fulfilled_view_ref WHERE (ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest) > ($ref, $timeline, $generation, $through, $recipe) ORDER BY ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest LIMIT 129;"
-                 }) {
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = sql;
-            command.Parameters.AddWithValue("$key", new string('0', 64));
-            command.Parameters.AddWithValue("$ref", "0000000000000000");
-            command.Parameters.AddWithValue(
-                "$timeline",
-                "00000000000000000000000000000000"
-            );
-            command.Parameters.AddWithValue("$generation", 0L);
-            command.Parameters.AddWithValue("$through", new string('0', 64));
-            command.Parameters.AddWithValue("$recipe", new string('0', 64));
-            string plan = string.Join(
-                "\n",
-                ReadPlan(command)
-            );
-            Assert.Contains("SEARCH", plan, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("SCAN ", plan, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(
-                "TEMP B-TREE",
-                plan,
-                StringComparison.OrdinalIgnoreCase
-            );
-        }
-    }
-
-    [Fact]
-    public void ExportIsBoundedAndHidesCanonicalContentByDefault() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        RecapCellArtifact cell = Cell('b', "private answer");
-        using (RecapGridStoreHandle handle = Assert.IsType<
-               RecapGridStoreOpenResult.Opened
-               >(RecapGridStoreFactory.Open(_root)).Handle) {
-            Assert.IsType<RecapGridCellPutResult.Inserted>(
-                handle.Writer.PutCell(cell)
-            );
-        }
-
-        RecapGridStoreExportPage hidden = Assert.IsType<
-            RecapGridStoreExportResult.Page
-        >(RecapGridStoreMaintenance.Export(_root)).Value;
-        RecapGridStoreExportItem item = Assert.Single(hidden.Items);
-        Assert.Equal("cell", item.Kind);
-        Assert.Null(item.Canonical);
-        Assert.False(hidden.Incomplete);
-        Assert.Null(hidden.NextCursor);
-
-        RecapGridStoreExportItem revealed = Assert.Single(
-            Assert.IsType<RecapGridStoreExportResult.Page>(
-                RecapGridStoreMaintenance.Export(
-                    _root,
-                    includeContent: true
-                )
-            ).Value.Items
-        );
-        Assert.Equal(cell.ToCanonicalBytes(), revealed.Canonical);
-        RecapGridStoreExportCursor created =
-            RecapGridStoreExportCursor.CreateDigest(item.Kind, item.Key);
-        RecapGridStoreExportCursor cursor =
-            RecapGridStoreExportCursor.Parse(created.Value);
-        Assert.True(cursor.IsCell);
-        Assert.Equal(item.Key, cursor.Key);
-        Assert.Throws<ArgumentException>(
-            () => RecapGridStoreExportCursor.Parse("not/canonical")
-        );
-    }
-
-    [Fact]
-    public void ExportContractedByteBoundStillPermitsMaximumItemPage() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        string content = new('\u9ffe', 5_196);
-        RecapCellArtifact[] cells = Enumerable.Range(1, 129)
-            .Select(index => Cell(index, content))
-            .ToArray();
-        InsertCellsRaw(cells);
-
-        RecapGridStoreExportPage first = Assert.IsType<
-            RecapGridStoreExportResult.Page
-        >(RecapGridStoreMaintenance.Export(
-            _root,
-            includeContent: true
-        )).Value;
-
-        Assert.Equal(RecapGridStoreLimits.MaximumPageItems, first.Items.Count);
-        Assert.InRange(
-            first.Items.Sum(static item => item.CanonicalBytes),
-            RecapGridStoreLimits.MaximumPageBytes - 64 * 1024,
-            RecapGridStoreLimits.MaximumPageBytes
-        );
-        Assert.True(first.Incomplete);
-        Assert.NotNull(first.NextCursor);
-
-        RecapGridStoreExportPage second = Assert.IsType<
-            RecapGridStoreExportResult.Page
-        >(RecapGridStoreMaintenance.Export(
-            _root,
-            first.NextCursor,
-            includeContent: true
-        )).Value;
-        Assert.Single(second.Items);
-        Assert.False(second.Incomplete);
-        Assert.Null(second.NextCursor);
-    }
-
-    [Fact]
-    public void ExportUsesTypedReversibleCursorAcrossMoreThanTwoPages() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        RecapCellArtifact[] cells = Enumerable.Range(1, 257)
-            .Select(static index => Cell(index, $"answer-{index}"))
-            .OrderBy(static cell => cell.CellDigest.Value, StringComparer.Ordinal)
-            .ToArray();
-        InsertCellsRaw(cells);
-
-        var exported = new List<string>();
-        RecapGridStoreExportCursor? cursor = null;
-        int pages = 0;
-        do {
-            RecapGridStoreExportPage page = Assert.IsType<
-                RecapGridStoreExportResult.Page
-            >(RecapGridStoreMaintenance.Export(_root, cursor)).Value;
-            pages++;
-            exported.AddRange(page.Items.Select(static item => item.Key));
-            if (!page.Incomplete) {
-                Assert.Null(page.NextCursor);
-                break;
-            }
-            cursor = RecapGridStoreExportCursor.Parse(
-                Assert.IsType<RecapGridStoreExportCursor>(
-                    page.NextCursor
-                ).Value
-            );
-        } while (true);
-
-        Assert.Equal(3, pages);
-        Assert.Equal(
-            cells.Select(static cell => cell.CellDigest.Value),
-            exported
-        );
-    }
-
-    [Fact]
-    public void FulfilledExportPreservesCompositeCursorAndViewDiagnosticsAcrossThreePages() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        (RowBuildSpec spec, RecapCellArtifact cell, _, _) =
-            RowValues();
-        using (RecapGridStoreHandle handle = Assert.IsType<
-               RecapGridStoreOpenResult.Opened
-               >(RecapGridStoreFactory.Open(_root)).Handle) {
-            Assert.IsType<RecapGridCellPutResult.Inserted>(
-                handle.Writer.PutCell(cell)
-            );
-        }
-        GridBuildRecipe recipe = Recipe();
-        var keys = new List<FulfilledViewKey>(257);
-        var views = new List<RecapRowView>(257);
-        for (int index = 1; index <= 257; index++) {
-            var refId = new RefId((ulong)index);
-            RowBuildSpec assignedSpec = RowBuildSpec.CreateFull(
-                recipe,
-                new RowViewCoordinate(
-                    refId,
-                    recipe.TimelineId,
-                    spec.HistoryRowId,
-                    spec.HistorySegmentDigest,
-                    recipe.Digest,
-                    recipe.Target.Digest,
-                    previousHistoryRowId: null,
-                    previousViewDigest: null,
-                    bootstrapCompleted: true
-                ),
-                spec.PriorInput,
-                spec.OrderedAssignments
-            );
-            RecapRowView assignedView = RecapRowView.Create(
-                assignedSpec,
-                [cell]
-            );
-            var head = new TimelineHeadRef(
-                recipe.TimelineId,
-                refId,
-                null,
-                new string('d', 64),
-                null,
-                0,
-                HistoryTimelineSelectedPath.EmptyDigest,
-                generation: index
-            );
-            views.Add(assignedView);
-            keys.Add(FulfilledViewKey.Create(
-                refId,
-                head,
-                assignedView.RowDescriptorDigest,
-                recipe
-            ));
-        }
-        using (SqliteConnection connection = OpenRaw()) {
-            connection.Open();
-            using SqliteTransaction transaction = connection.BeginTransaction();
-            for (int index = 0; index < keys.Count; index++) {
-                FulfilledViewKey key = keys[index];
-                RecapRowView view = views[index];
-                using (SqliteCommand insertView = connection.CreateCommand()) {
-                    insertView.Transaction = transaction;
-                    insertView.CommandText = """
-                        INSERT INTO row_view(
-                            view_digest, ref_id, timeline_id, history_row_id,
-                            row_descriptor_digest, recipe_digest, target_digest,
-                            previous_history_row_id, previous_view_digest,
-                            bootstrap_completed, canonical
-                        ) VALUES (
-                            $view, $ref, $timeline, $row, $descriptor, $recipe,
-                            $target, NULL, NULL, 1, $canonical
-                        );
-                        """;
-                    insertView.Parameters.AddWithValue("$view", view.Digest.Value);
-                    insertView.Parameters.AddWithValue("$ref", key.RefId.ToHexString());
-                    insertView.Parameters.AddWithValue("$timeline", key.TimelineId.Value);
-                    insertView.Parameters.AddWithValue("$row", view.HistoryRowId.Value);
-                    insertView.Parameters.AddWithValue(
-                        "$descriptor",
-                        view.RowDescriptorDigest.Value
-                    );
-                    insertView.Parameters.AddWithValue("$recipe", view.RecipeDigest.Value);
-                    insertView.Parameters.AddWithValue("$target", view.TargetDigest.Value);
-                    insertView.Parameters.AddWithValue("$canonical", view.ToCanonicalBytes());
-                    insertView.ExecuteNonQuery();
-                }
-                using (SqliteCommand insertMember = connection.CreateCommand()) {
-                    insertMember.Transaction = transaction;
-                    insertMember.CommandText = """
-                        INSERT INTO row_view_member(
-                            view_digest, column_ordinal, logical_column_id,
-                            definition_digest, cell_digest
-                        ) VALUES ($view, 0, $column, $definition, $cell);
-                        """;
-                    insertMember.Parameters.AddWithValue("$view", view.Digest.Value);
-                    insertMember.Parameters.AddWithValue(
-                        "$column",
-                        cell.LogicalColumnId.Value
-                    );
-                    insertMember.Parameters.AddWithValue(
-                        "$definition",
-                        cell.DefinitionDigest.Value
-                    );
-                    insertMember.Parameters.AddWithValue("$cell", cell.CellDigest.Value);
-                    insertMember.ExecuteNonQuery();
-                }
-                using SqliteCommand insert = connection.CreateCommand();
-                insert.Transaction = transaction;
-                insert.CommandText = """
-                    INSERT INTO fulfilled_view_ref(
-                        ref_id, timeline_id, timeline_head_generation,
-                        through_row_descriptor_digest, recipe_digest,
-                        key_canonical, view_digest
-                    ) VALUES (
-                        $ref, $timeline, $generation, $through, $recipe,
-                        $canonical, $view
-                    );
-                    """;
-                insert.Parameters.AddWithValue("$ref", key.RefId.ToHexString());
-                insert.Parameters.AddWithValue(
-                    "$timeline",
-                    key.TimelineId.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$generation",
-                    key.TimelineHeadGeneration
-                );
-                insert.Parameters.AddWithValue(
-                    "$through",
-                    key.ThroughRowDescriptorDigest.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$recipe",
-                    key.RecipeDigest.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$canonical",
-                    key.ToCanonicalBytes()
-                );
-                insert.Parameters.AddWithValue("$view", view.Digest.Value);
-                insert.ExecuteNonQuery();
-            }
-            using SqliteCommand count = connection.CreateCommand();
-            count.Transaction = transaction;
-            count.CommandText = """
-                UPDATE store_metadata
-                SET row_view_count = $count,
-                    row_view_member_count = $count,
-                    fulfilled_view_count = $count;
-                """;
-            count.Parameters.AddWithValue("$count", keys.Count);
-            Assert.Equal(1, count.ExecuteNonQuery());
-            transaction.Commit();
-        }
-
-        int expectedIndex = 0;
-        int pages = 0;
-        RecapGridStoreExportCursor? cursor = null;
-        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
-        var seenCursors = new HashSet<string>(StringComparer.Ordinal);
-        do {
-            RecapGridStoreExportPage page = Assert.IsType<
-                RecapGridStoreExportResult.Page
-            >(RecapGridStoreMaintenance.Export(
-                _root,
-                cursor,
-                includeContent: true
-            )).Value;
-            pages++;
-            foreach (RecapGridStoreExportItem item in page.Items
-                         .Where(static item => item.Kind == "fulfilled")) {
-                Assert.True(seenKeys.Add(item.Key));
-                byte[] canonical = Assert.IsType<byte[]>(item.Canonical);
-                FulfilledViewKey decoded =
-                    FulfilledViewKey.DecodeCanonical(canonical);
-                FulfilledViewKey expected = keys[expectedIndex];
-                Assert.Equal(expected.ToCanonicalBytes(), canonical);
-                Assert.Equal(expected.RefId, decoded.RefId);
-                Assert.Equal(
-                    RecapGridStoreExportCursor.CreateFulfilled(
-                        expected.RefId.ToHexString(),
-                        expected.TimelineId.Value,
-                        expected.TimelineHeadGeneration,
-                        expected.ThroughRowDescriptorDigest.Value,
-                        expected.RecipeDigest.Value
-                    ).Key,
-                    item.Key
-                );
-                Assert.Equal(
-                    views[expectedIndex].Digest,
-                    item.FulfilledViewDigest
-                );
-                expectedIndex++;
-            }
-            if (!page.Incomplete) {
-                Assert.Null(page.NextCursor);
-                break;
-            }
-            string cursorValue = Assert.IsType<
-                RecapGridStoreExportCursor
-            >(page.NextCursor).Value;
-            Assert.True(seenCursors.Add(cursorValue));
-            cursor = RecapGridStoreExportCursor.Parse(cursorValue);
-        } while (true);
-
-        Assert.Equal(5, pages);
-        Assert.Equal(keys.Count, expectedIndex);
-        Assert.Equal(keys.Count, seenKeys.Count);
-    }
-
-    [Fact]
-    public async Task TwoHandlesSettleToOneExactWinner() {
-        Directory.CreateDirectory(_root);
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(_root)
-        );
-        RecapCellArtifact cell = Cell('b', "winner");
-        using var barrier = new Barrier(2);
-        int firstOne = 0;
-        int firstTwo = 0;
-        Action beforeOne = () => {
-            if (Interlocked.Exchange(ref firstOne, 1) == 0) {
-                barrier.SignalAndWait();
-            }
-        };
-        Action beforeTwo = () => {
-            if (Interlocked.Exchange(ref firstTwo, 1) == 0) {
-                barrier.SignalAndWait();
-            }
-        };
-        using RecapGridStoreHandle one = OpenWithHooks(
-            new StorePersistenceTestHooks(BeforeCellBegin: beforeOne)
-        );
-        using RecapGridStoreHandle two = OpenWithHooks(
-            new StorePersistenceTestHooks(BeforeCellBegin: beforeTwo)
-        );
-        Task<RecapGridCellPutResult> taskOne = Task.Run(
-            () => one.Writer.PutCell(cell)
-        );
-        Task<RecapGridCellPutResult> taskTwo = Task.Run(
-            () => two.Writer.PutCell(cell)
-        );
-        await Task.WhenAll(taskOne, taskTwo);
-        RecapGridCellPutResult resultOne = await taskOne;
-        RecapGridCellPutResult resultTwo = await taskTwo;
-        Assert.Single(new[] { resultOne, resultTwo },
-            static result => result is RecapGridCellPutResult.Inserted);
-        RecapGridStoreHandle loser = resultOne
-            is RecapGridCellPutResult.Inserted ? two : one;
-        RecapGridCellPutResult loserResult = resultOne
-            is RecapGridCellPutResult.Inserted ? resultTwo : resultOne;
-        if (loserResult is RecapGridCellPutResult.Busy) {
-            loserResult = loser.Writer.PutCell(cell);
-        }
-        RecapGridCellPutResult.AlreadyFilled settled = Assert.IsType<
-            RecapGridCellPutResult.AlreadyFilled
-        >(loserResult);
-        Assert.Equal(
-            cell.ToCanonicalBytes(),
-            settled.Winner.ToCanonicalBytes()
+            Put(handle, Cell('b', "answer"))
         );
     }
 
@@ -781,7 +212,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             )
         );
         Task<RecapGridCellPutResult> put = Task.Run(
-            () => draining.Writer.PutCell(Cell('c', "drain"))
+            () => Put(draining, Cell('c', "drain"))
         );
         Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
         Task dispose = Task.Run(draining.Dispose);
@@ -793,57 +224,265 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         await dispose.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.IsType<RecapGridCellPutResult.Inserted>(await put);
         Assert.IsType<RecapGridCellPutResult.Disposed>(
-            draining.Writer.PutCell(Cell('d', "after dispose"))
+            Put(draining, Cell('d', "after dispose"))
         );
     }
 
-    private SqliteConnection OpenRaw() => new(
-        $"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False"
-    );
+    [Fact]
+    public void InvalidSqlValueLatchesInvalidAndVerifyIsIncomplete() {
+        Create();
+        using RecapGridStoreHandle handle = OpenWithHooks(new StorePersistenceTestHooks());
+        RecapCellArtifact cell = Assert.IsType<RecapGridCellPutResult.Inserted>(Put(handle, Cell('b', "answer"))).Winner;
+        using (SqliteConnection connection = OpenRaw()) {
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "PRAGMA ignore_check_constraints = ON; UPDATE cell_artifact SET outcome = 99;";
+            command.ExecuteNonQuery();
+        }
+        var invalid = Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Invalid>(handle.Reader.TryReadCell(cell.Slot));
+        Assert.Equal(invalid.Code, Assert.IsType<RecapGridCellPutResult.Invalid>(Put(handle, Cell('c', "other"))).Code);
+        var unhealthy = Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(RecapGridStoreMaintenance.Verify(_root));
+        Assert.True(unhealthy.Incomplete);
+        Assert.NotEmpty(unhealthy.Errors);
+    }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AllThreeCommitFailuresObserveBySlotAndAssignment(bool nativeReturn) {
+        Create();
+        RowBuildSpec spec = StoreFixture.Spec();
+        static void Throw() => throw new IOException("injected after COMMIT");
+        StorePersistenceTestHooks hooks = nativeReturn
+            ? new(AfterCellNativeCommitReturn: Throw, AfterRowViewNativeCommitReturn: Throw, AfterFulfilledNativeCommitReturn: Throw)
+            : new(AfterCellCommit: Throw, AfterRowViewCommit: Throw, AfterFulfilledCommit: Throw);
+        using RecapGridStoreHandle handle = OpenWithHooks(hooks);
+        var cellResult = Assert.IsType<RecapGridCellPutResult.CommitIndeterminate>(
+            handle.Writer.PutCell(spec, StoreFixture.Draft(spec)));
+        RecapCellArtifact cell = Assert.IsType<RecapCellArtifact>(cellResult.Observed);
+        Assert.Equal(((RowBuildAssignment.Evaluate)spec.OrderedAssignments[0]).Slot, cellResult.IntendedSlot);
+        Assert.Equal(cellResult.IntendedSlot, cell.Slot);
+        Assert.Equal(cell, Assert.IsType<RecapGridCellPutResult.AlreadyFilled>(
+            handle.Writer.PutCell(spec, StoreFixture.Draft(spec, "loser"))).Winner);
+        var rowResult = Assert.IsType<RecapGridRowViewPutResult.CommitIndeterminate>(handle.Writer.PutRowView(spec, [cell]));
+        RecapRowView view = Assert.IsType<RecapRowView>(rowResult.Observed);
+        Assert.Equal(spec.Coordinate.AssignmentKey, rowResult.IntendedAssignment);
+        Assert.Equal(view.Id, Assert.IsType<RecapGridRowViewPutResult.AlreadyPresent>(handle.Writer.PutRowView(spec, [cell])).Winner.Id);
+        Assert.Equal(view.Id, Assert.IsType<RecapGridFulfilledPutResult.CommitIndeterminate>(
+            handle.Writer.PutFulfilled(StoreFixture.Fulfilled(spec), view.Id)).Observed);
+    }
+
+    [Fact]
+    public async Task ConcurrentDifferentContentSettlesToOneStoredWinner() {
+        Create();
+        RowBuildSpec spec = StoreFixture.Spec();
+        using var barrier = new Barrier(2);
+        int firstOne = 0, firstTwo = 0;
+        using RecapGridStoreHandle one = OpenWithHooks(new StorePersistenceTestHooks(BeforeCellBegin: () => {
+            if (Interlocked.Exchange(ref firstOne, 1) == 0) barrier.SignalAndWait();
+        }));
+        using RecapGridStoreHandle two = OpenWithHooks(new StorePersistenceTestHooks(BeforeCellBegin: () => {
+            if (Interlocked.Exchange(ref firstTwo, 1) == 0) barrier.SignalAndWait();
+        }));
+        RecapGridCellPutResult[] results = await Task.WhenAll(
+            Task.Run(() => one.Writer.PutCell(spec, StoreFixture.Draft(spec, "one"))),
+            Task.Run(() => two.Writer.PutCell(spec, StoreFixture.Draft(spec, "two"))));
+        RecapCellArtifact winner = Assert.Single(results.OfType<RecapGridCellPutResult.Inserted>()).Winner;
+        for (int index = 0; index < results.Length; index++) {
+            RecapGridCellPutResult result = results[index];
+            if (result is RecapGridCellPutResult.Inserted) continue;
+            if (result is RecapGridCellPutResult.Busy) result = (index == 0 ? one : two).Writer.PutCell(spec, StoreFixture.Draft(spec, "retry"));
+            Assert.Equal(winner, Assert.IsType<RecapGridCellPutResult.AlreadyFilled>(result).Winner);
+        }
+        RecapRowView row = Assert.IsType<RecapGridRowViewPutResult.Inserted>(one.Writer.PutRowView(spec, [winner])).Winner;
+        Assert.Equal(row.Id, Assert.IsType<RecapGridRowViewPutResult.AlreadyPresent>(two.Writer.PutRowView(spec, [winner])).Winner.Id);
+    }
+
+    [Fact]
+    public async Task ConcurrentRowPublicationReturnsActualStoredRow() {
+        Create();
+        RowBuildSpec spec = StoreFixture.Spec();
+        RecapCellArtifact cell;
+        using (RecapGridStoreHandle setup = OpenWithHooks(new StorePersistenceTestHooks())) cell = StoreFixture.Put(setup, spec);
+        using var barrier = new Barrier(2);
+        int firstOne = 0, firstTwo = 0;
+        using RecapGridStoreHandle one = OpenWithHooks(new StorePersistenceTestHooks(BeforeRowViewBegin: () => {
+            if (Interlocked.Exchange(ref firstOne, 1) == 0) barrier.SignalAndWait();
+        }));
+        using RecapGridStoreHandle two = OpenWithHooks(new StorePersistenceTestHooks(BeforeRowViewBegin: () => {
+            if (Interlocked.Exchange(ref firstTwo, 1) == 0) barrier.SignalAndWait();
+        }));
+        RecapGridRowViewPutResult[] results = await Task.WhenAll(
+            Task.Run(() => one.Writer.PutRowView(spec, [cell])),
+            Task.Run(() => two.Writer.PutRowView(spec, [cell])));
+        RecapRowView winner = Assert.Single(results.OfType<RecapGridRowViewPutResult.Inserted>()).Winner;
+        for (int index = 0; index < results.Length; index++) {
+            RecapGridRowViewPutResult result = results[index];
+            if (result is RecapGridRowViewPutResult.Inserted) continue;
+            if (result is RecapGridRowViewPutResult.Busy) result = (index == 0 ? one : two).Writer.PutRowView(spec, [cell]);
+            Assert.Equal(winner.Id, Assert.IsType<RecapGridRowViewPutResult.AlreadyPresent>(result).Winner.Id);
+        }
+    }
+
+    [Fact]
+    public void QueryPlansUseSlotAndResultIndexes() {
+        Create();
+        using SqliteConnection connection = OpenRaw();
+        connection.Open();
+        foreach (string sql in new[] {
+            "SELECT content FROM cell_artifact WHERE recipe_digest = $key AND history_row_id = $key AND logical_column_id = $key",
+            "SELECT cell_id FROM cell_artifact WHERE cell_id > $key ORDER BY cell_id LIMIT 129",
+            "SELECT row_result_id FROM row_view WHERE row_result_id > $key ORDER BY row_result_id LIMIT 129",
+            "SELECT row_result_id FROM fulfilled_view_ref WHERE ref_id = $key AND timeline_id = $key AND timeline_head_generation = 1 AND through_row_descriptor_digest = $key AND recipe_digest = $key",
+            "SELECT ref_id FROM fulfilled_view_ref WHERE (ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest) > ($key, $key, 0, $key, $key) ORDER BY ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest LIMIT 129"
+        }) {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "EXPLAIN QUERY PLAN " + sql;
+            command.Parameters.AddWithValue("$key", new string('0', 64));
+            using SqliteDataReader reader = command.ExecuteReader();
+            var plans = new List<string>();
+            while (reader.Read()) plans.Add(reader.GetString(3));
+            string plan = string.Join("\n", plans);
+            Assert.Contains("SEARCH", plan, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("SCAN ", plan, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("TEMP B-TREE", plan, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void ExportHidesJsonContentByDefaultAndReportsActualProjectionSize() {
+        Create();
+        RecapCellArtifact cell;
+        using (RecapGridStoreHandle handle = OpenWithHooks(new StorePersistenceTestHooks())) {
+            cell = Assert.IsType<RecapGridCellPutResult.Inserted>(Put(handle, Cell('b', "private answer"))).Winner;
+        }
+        RecapGridStoreExportItem hidden = Assert.Single(Assert.IsType<RecapGridStoreExportResult.Page>(
+            RecapGridStoreMaintenance.Export(_root)).Value.Items);
+        Assert.Equal(cell.Id.Value, hidden.Key);
+        Assert.Null(hidden.Json);
+        RecapGridStoreExportItem revealed = Assert.Single(Assert.IsType<RecapGridStoreExportResult.Page>(
+            RecapGridStoreMaintenance.Export(_root, includeContent: true)).Value.Items);
+        byte[] json = Assert.IsType<byte[]>(revealed.Json);
+        Assert.Equal(json.Length, revealed.JsonUtf8Bytes);
+        Assert.Contains("private answer", System.Text.Encoding.UTF8.GetString(json));
+        RecapGridStoreExportCursor cursor = RecapGridStoreExportCursor.Parse(RecapGridStoreExportCursor.CreateId(hidden.Kind, hidden.Key).Value);
+        Assert.True(cursor.IsCell);
+        Assert.Equal(hidden.Key, cursor.Key);
+        Assert.Throws<ArgumentException>(() => RecapGridStoreExportCursor.Parse("not/canonical"));
+    }
+
+    [Fact]
+    public void ExportUsesTypedReversibleCursorAcrossThreePages() {
+        Create();
+        RecapCellArtifact[] cells = Enumerable.Range(1, 257).Select(i => Cell(i, $"answer-{i}")).OrderBy(c => c.Id.Value, StringComparer.Ordinal).ToArray();
+        InsertCellsRaw(cells);
+        var exported = new List<string>();
+        RecapGridStoreExportCursor? cursor = null;
+        int pages = 0;
+        do {
+            var page = Assert.IsType<RecapGridStoreExportResult.Page>(RecapGridStoreMaintenance.Export(_root, cursor)).Value;
+            pages++;
+            exported.AddRange(page.Items.Select(item => item.Key));
+            if (!page.Incomplete) { Assert.Null(page.NextCursor); break; }
+            cursor = RecapGridStoreExportCursor.Parse(Assert.IsType<RecapGridStoreExportCursor>(page.NextCursor).Value);
+        } while (true);
+        Assert.Equal(3, pages);
+        Assert.Equal(cells.Select(c => c.Id.Value), exported);
+    }
+
+    [Fact]
+    public void ExportRespectsByteAndItemBoundsWithoutLosingLargeItems() {
+        Create();
+        RecapCellArtifact[] cells = Enumerable.Range(1, 129).Select(i => Cell(i, new string('x', 16000))).ToArray();
+        InsertCellsRaw(cells);
+        RecapGridStoreExportCursor? cursor = null;
+        var seen = new HashSet<string>();
+        do {
+            var page = Assert.IsType<RecapGridStoreExportResult.Page>(RecapGridStoreMaintenance.Export(_root, cursor, includeContent: true)).Value;
+            Assert.InRange(page.Items.Count, 1, RecapGridStoreLimits.MaximumPageItems);
+            Assert.InRange(page.Items.Sum(i => i.JsonUtf8Bytes), 1, RecapGridStoreLimits.MaximumPageBytes);
+            foreach (var item in page.Items) {
+                Assert.True(seen.Add(item.Key));
+                Assert.Equal(item.JsonUtf8Bytes, Assert.IsType<byte[]>(item.Json).Length);
+            }
+            if (!page.Incomplete) break;
+            cursor = Assert.IsType<RecapGridStoreExportCursor>(page.NextCursor);
+        } while (true);
+        Assert.Equal(cells.Length, seen.Count);
+    }
+
+    [Fact]
+    public void FulfilledExportUsesCompositeCursorAndStoredResultIds() {
+        Create();
+        var expected = new Dictionary<string, RowResultId>();
+        using (RecapGridStoreHandle handle = OpenWithHooks(new StorePersistenceTestHooks())) {
+            for (int index = 1; index <= 257; index++) {
+                RowBuildSpec spec = StoreFixture.Spec(refId: new RefId((ulong)index));
+                RecapGridCellPutResult put = handle.Writer.PutCell(spec, StoreFixture.Draft(spec));
+                RecapCellArtifact cell = put switch {
+                    RecapGridCellPutResult.Inserted inserted => inserted.Winner,
+                    RecapGridCellPutResult.AlreadyFilled filled => filled.Winner,
+                    _ => throw new InvalidOperationException(put.ToString())
+                };
+                RecapRowView view = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(spec, [cell])).Winner;
+                FulfilledViewKey key = StoreFixture.Fulfilled(spec, index);
+                Assert.IsType<RecapGridFulfilledPutResult.Inserted>(handle.Writer.PutFulfilled(key, view.Id));
+                string cursorKey = RecapGridStoreExportCursor.CreateFulfilled(key.RefId.ToHexString(), key.TimelineId.Value,
+                    key.TimelineHeadGeneration, key.ThroughRowDescriptorDigest.Value, key.RecipeDigest.Value).Key;
+                expected.Add(cursorKey, view.Id);
+            }
+        }
+        RecapGridStoreExportCursor? cursor = null;
+        var seen = new HashSet<string>();
+        var cursors = new HashSet<string>();
+        int pages = 0;
+        do {
+            var page = Assert.IsType<RecapGridStoreExportResult.Page>(RecapGridStoreMaintenance.Export(_root, cursor, includeContent: true)).Value;
+            pages++;
+            foreach (var item in page.Items.Where(i => i.Kind == "fulfilled")) {
+                Assert.True(seen.Add(item.Key));
+                Assert.Equal(expected[item.Key], item.FulfilledRowResultId);
+                Assert.NotNull(item.Json);
+            }
+            if (!page.Incomplete) break;
+            cursor = Assert.IsType<RecapGridStoreExportCursor>(page.NextCursor);
+            Assert.True(cursors.Add(cursor.Value));
+            cursor = RecapGridStoreExportCursor.Parse(cursor.Value);
+        } while (true);
+        Assert.Equal(5, pages);
+        Assert.Equal(expected.Count, seen.Count);
+    }
+
+    private void Create() {
+        Directory.CreateDirectory(_root);
+        Assert.IsType<RecapGridStoreCreateResult.Created>(RecapGridStoreFactory.Create(_root));
+    }
+    private SqliteConnection OpenRaw() => new($"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False");
+    private RecapGridStoreHandle OpenWithHooks(StorePersistenceTestHooks hooks) => Assert.IsType<RecapGridStoreOpenResult.Opened>(
+        RecapGridStoreFactory.OpenForTest(_root, StoreStorageLimits.Production, hooks)).Handle;
+    private static RecapCellArtifact Cell(char row, string content) => StoreFixture.Proposed(
+        StoreFixture.Spec(row: new HistoryRowId(new string(row, 64))), content);
+    private static RecapCellArtifact Cell(int row, string content) => StoreFixture.Proposed(
+        StoreFixture.Spec(row: new HistoryRowId(row.ToString("x64"))), content);
+    private static RecapGridCellPutResult Put(RecapGridStoreHandle handle, RecapCellArtifact cell) => handle.Writer.PutCell(
+        StoreFixture.Spec(row: cell.Slot.HistoryRowId), RecapCellDraft.Create(cell.Slot, cell.DefinitionDigest,
+            cell.Outcome, cell.Content, RecapGridLimits.MaximumContentUtf8Bytes));
     private void InsertCellsRaw(IReadOnlyList<RecapCellArtifact> cells) {
         using SqliteConnection connection = OpenRaw();
         connection.Open();
         using SqliteTransaction transaction = connection.BeginTransaction();
         foreach (RecapCellArtifact cell in cells) {
-            using SqliteCommand insert = connection.CreateCommand();
-            insert.Transaction = transaction;
-            insert.CommandText = """
-                INSERT INTO cell_artifact(
-                    cell_digest, evaluation_key_digest,
-                    history_segment_digest, logical_column_id,
-                    definition_digest, content_digest, canonical
-                ) VALUES (
-                    $cell, $evaluation, $history, $column,
-                    $definition, $content, $canonical
-                );
-                """;
-            insert.Parameters.AddWithValue("$cell", cell.CellDigest.Value);
-            insert.Parameters.AddWithValue(
-                "$evaluation",
-                cell.EvaluationKey.Digest.Value
-            );
-            insert.Parameters.AddWithValue(
-                "$history",
-                cell.EvaluationKey.HistorySegmentDigest.Value
-            );
-            insert.Parameters.AddWithValue(
-                "$column",
-                cell.LogicalColumnId.Value
-            );
-            insert.Parameters.AddWithValue(
-                "$definition",
-                cell.DefinitionDigest.Value
-            );
-            insert.Parameters.AddWithValue(
-                "$content",
-                cell.ContentDigest.Value
-            );
-            insert.Parameters.AddWithValue(
-                "$canonical",
-                cell.ToCanonicalBytes()
-            );
-            insert.ExecuteNonQuery();
+            using SqliteCommand command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO cell_artifact(cell_id, recipe_digest, history_row_id, logical_column_id, definition_digest, outcome, content) VALUES ($id, $recipe, $row, $column, $definition, $outcome, $content);";
+            command.Parameters.AddWithValue("$id", cell.Id.Value);
+            command.Parameters.AddWithValue("$recipe", cell.Slot.RecipeDigest.Value);
+            command.Parameters.AddWithValue("$row", cell.Slot.HistoryRowId.Value);
+            command.Parameters.AddWithValue("$column", cell.LogicalColumnId.Value);
+            command.Parameters.AddWithValue("$definition", cell.DefinitionDigest.Value);
+            command.Parameters.AddWithValue("$outcome", (int)cell.Outcome);
+            command.Parameters.AddWithValue("$content", cell.Content);
+            command.ExecuteNonQuery();
         }
         using SqliteCommand count = connection.CreateCommand();
         count.Transaction = transaction;
@@ -852,139 +491,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         Assert.Equal(1, count.ExecuteNonQuery());
         transaction.Commit();
     }
-
-    private RecapGridStoreHandle OpenWithHooks(
-        StorePersistenceTestHooks hooks
-    ) => Assert.IsType<RecapGridStoreOpenResult.Opened>(
-        RecapGridStoreFactory.OpenForTest(
-            _root,
-            StoreStorageLimits.Production,
-            hooks
-        )
-    ).Handle;
-
-    private static IReadOnlyList<string> ReadPlan(SqliteCommand command) {
-        var result = new List<string>();
-        using SqliteDataReader reader = command.ExecuteReader();
-        while (reader.Read()) {
-            result.Add(reader.GetString(3));
-        }
-        return result;
-    }
-
-    private static RecapCellArtifact Cell(char descriptor, string content) {
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        EvaluationKey evaluation = EvaluationKey.Create(
-            new HistorySegmentDescriptorDigest(new string(descriptor, 64)),
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        return RecapCellArtifact.Create(
-            new LogicalColumnId("case.culprit"),
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            content,
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-    }
-
-    private static RecapCellArtifact Cell(int descriptor, string content) {
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        EvaluationKey evaluation = EvaluationKey.Create(
-            new HistorySegmentDescriptorDigest(descriptor.ToString("x64")),
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        return RecapCellArtifact.Create(
-            new LogicalColumnId("case.culprit"),
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            content,
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-    }
-
-    private static (
-        RowBuildSpec Spec,
-        RecapCellArtifact Cell,
-        RecapRowView View,
-        FulfilledViewKey Fulfilled
-    ) RowValues() {
-        GridBuildRecipe recipe = Recipe();
-        TimelineId timeline = recipe.TimelineId;
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        var column = new LogicalColumnId("case.culprit");
-        var descriptor = new HistorySegmentDescriptorDigest(new string('b', 64));
-        EvaluationKey evaluation = EvaluationKey.Create(
-            descriptor,
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact cell = RecapCellArtifact.Create(
-            column,
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            "answer",
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
-        var rowId = new HistoryRowId(new string('c', 64));
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            recipe,
-            new RowViewCoordinate(
-                new RefId(1),
-                timeline,
-                rowId,
-                descriptor,
-                recipe.Digest,
-                recipe.Target.Digest,
-                previousHistoryRowId: null,
-                previousViewDigest: null,
-                bootstrapCompleted: true
-            ),
-            PriorInputReference.FirstRow.Value,
-            [new RowBuildAssignment.Evaluate(column, evaluation)]
-        );
-        RecapRowView view = RecapRowView.Create(spec, [cell]);
-        var head = new TimelineHeadRef(
-            timeline,
-            new RefId(1),
-            null,
-            new string('d', 64),
-            null,
-            0,
-            HistoryTimelineSelectedPath.EmptyDigest,
-            generation: 1
-        );
-        return (
-            spec,
-            cell,
-            view,
-            FulfilledViewKey.Create(
-                head.RefId,
-                head,
-                view.RowDescriptorDigest,
-                recipe
-            )
-        );
-    }
-
-    private static GridBuildRecipe Recipe() {
-        var timeline = new TimelineId("00112233445566778899aabbccddeeff");
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        var column = new LogicalColumnId("case.culprit");
-        return GridBuildRecipe.CreateFull(
-            timeline,
-            new HistoryRowId(new string('c', 64)),
-            BuildTarget.Create([new BuildTargetColumn(column, definition)])
-        );
-    }
-
     public void Dispose() {
-        if (Directory.Exists(_root)) {
-            Directory.Delete(_root, recursive: true);
-        }
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 }
