@@ -203,10 +203,9 @@ export ATELIA_DEBUG_CONSOLE_LEVEL="Info"
 
 ## Common Pitfalls
 
-### StateJournal: Revision has no public constructor
-- **Always** use `Repository.Create/Open` → `CreateBranch/CheckoutBranch` to get a `Revision`
-- The `internal Revision(uint)` constructor is for testing only; do NOT add `InternalsVisibleTo` for normal consumers
-- See `docs/StateJournal/usage-guide.md` §0 for the canonical path
+### StateJournal 已迁出
+- StateJournal 与其 Generator 已不属于 Atelia 的活跃构建图；不要新增跨仓引用或让其 internal API 变成 public。
+- 历史用法、固定来源和新仓位置见 `docs/statejournal-retirement.md`。
 
 ### AteliaResult<T>.Value is a property, not a method
 - `result.Value;` alone fails with CS0201 (only assignment/call/increment can be used as statement)

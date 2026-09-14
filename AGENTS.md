@@ -71,12 +71,9 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 - `Option<T>` 构造函数第二参数起是 aliases，不是 description
 - `DefaultValueFactory` 替代 `SetDefaultValue`
 
-## StateJournal 可见性边界
+## StateJournal 历史查阅入口
 
-> **`Revision` 没有 public 构造函数。** 普通消费者必须走 `Repository.Create/Open` → `CreateBranch/CheckoutBranch` 获取 `Revision`。
-> `internal Revision(uint boundSegmentNumber)` 仅供测试/内部使用，构造函数上已有注释指向 public 路径。
-> `InternalsVisibleTo` 只应授予白盒测试入口（如 `Atelia.DebugApps`），不应授予普通消费者。
-> 详见 `docs/StateJournal/usage-guide.md` §0 和 §12。
+StateJournal 与其 Generator 已从 Atelia 活跃构建图迁出为封存源码仓；访问 [迁出说明](docs/statejournal-retirement.md) 获取仓库、固定来源和历史用法入口。不要把它与仍在本仓的 SessionJournal 混淆，也不要新增跨仓引用或把 `Revision` 的 internal API 改成 public。
 
 ## atelia-storage 拆仓任务入口
 
@@ -90,6 +87,10 @@ Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至�
 
 ---
 
+## StateJournal 拆仓封存方案入口
+
+StateJournal 与 StateJournal.Generators 已按 [分阶段实施方案](docs/plans/atelia-statejournal-extraction-plan.md) 迁出为封存源码仓，不发布 NuGet，且已移除新仓对两项 Style 项目的依赖。验收证据见 [验收记录](docs/plans/atelia-statejournal-extraction-validation.md)；StateJournal 与 SessionJournal 是不同模块，后者不在范围内。
+
 ## 目标分解树
 - 设计并实现可以长期持续自主行动的Agent
   - 建立[Agent-Operating-System(能动体运转系统)](agent-team/beacon/draft-agent-operating-system.md)的理论框架
@@ -97,13 +98,13 @@ Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至�
 - 设计并实现[DocUI](DocUI/docs/key-notes)。DocUI是LLM与Agent-OS交互的界面
 - 实现LLM Agent的“零意外编辑”，用预览+确认的方式
 - 设计并实现DocUI中的[Micro-Wizard](DocUI/docs/key-notes/micro-wizard.md)
-  - 实现[StateJournal](atelia/docs/StateJournal/memory-notebook.md)
+  - （已封存）StateJournal：历史源码与设计资料见 [迁出说明](docs/statejournal-retirement.md)
     - 实现[RBF(Reversible-Binary-Framing)](docs/storage-dependency.md)
       - 用[SizedPtr](docs/storage-dependency.md)替代RBF接口文档中的<deleted-place-holder>类型
         - 确定`Offset`和`Length`的bit分配方案
         - 在[Atelia.Data](docs/storage-dependency.md)中实现`SizedPtr`- 探索文本回合制游戏作为 Native-Agentic 训练沙盒
   - 设计[异世界转生型训练沙盒](agent-team/docs/idea/native-agentic-isekai-proposal.md)（另见 `/repos/qa-dump/docs/idea/native-agentic-isekai-proposal.md`）
-  - 实现基于 PipeMux + StateJournal 的文字冒险原型：`prototypes/TextAdv/`- 维持项目内的众多文档出于LLM Agent可理解和使用的形态
+  - （历史原型）基于 PipeMux + StateJournal 的文字冒险：`prototypes/TextAdv/`
   - 撰写和维护团队内Agent的入门知识文件[AGENTS.md]，也就是本文件
   - 建立基于[Wish](wish/W-0001-wish-bootstrap/wish.md)和[Artifact-Tiers](agent-team/wiki/artifact-tiers.md)的分圈层推进的软件开发方法
   - （已归档）基于 DocGraph 的 glossary 和 issues 汇总。分散撰写与维护，自动汇总关键信息形成鸟瞰视图。
