@@ -4,7 +4,7 @@
 > performed merely by having the command available; each `--apply` remains a
 > separate operator-authorized action after backup and dry-run.
 
-普通 Codex 进程崩溃、线程缺失或历史检查失败由运行时自动有限恢复。当前 wire V5 / SQLite V3 的规则见[运行时](runtime.md)与[恢复方案](codex-delegation-recovery-refactor-plan.md)。运行时不读取 Codex 私有 SQLite 或 rollout JSONL。
+普通 Codex 进程崩溃、线程缺失或历史检查失败由运行时自动有限恢复。当前 wire V5 / delegation SQLite V4 的规则见[运行时](runtime.md)与[恢复方案](codex-delegation-recovery-refactor-plan.md)。运行时不读取 Codex 私有 SQLite 或 rollout JSONL。
 
 ## 识别当前状态
 
@@ -15,9 +15,9 @@
 
 inbox 容量被占满时需正常消费已有回信；后台保留待结算邮件，不通过丢信绕过容量。重启保留失败计数，不能用反复重启重置预算。
 
-## SQLite V3 离线升级
+## SQLite V4 离线升级
 
-代码升级后，已有 V1/V2 store 必须显式升级；普通启动不会自动改写旧库。先停服并确认 writer lock 已释放，然后执行：
+代码升级后，已有 V1/V2/V3 store 必须显式升级；普通启动不会自动改写旧库。V3→V4 只增加角色邮件附表，绝不将历史 `Unrouted` 重新解释为待投递信。先停服并确认 writer lock 已释放，然后执行：
 
 ```bash
 dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \

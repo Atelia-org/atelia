@@ -65,7 +65,7 @@
 }
 ```
 
-每个 user 的 `userId`、`password`、`characterName`、`playerName`、`sessionDir`、`delegationStateDir`、`characterMemoryStateDir`、`homeDir`、`sessionProvisioning` 和 `defaultConnectionId` 都是业务配置。`characterName` 与 `playerName` 是独立故事身份，不从登录 ID 推导；它们必须已经是 NFC 且没有首尾空白，loader 会拒绝非规范输入而不会自动 `Trim` 或 normalize。已有 session 不能只改这两个名字，必须停服后迁移或重建 RecapGrid asset 并切换 active recipe。
+每个 user 的 `userId`、`password`、`characterName`、`playerName`、`sessionDir`、`delegationStateDir`、`characterMemoryStateDir`、`homeDir`、`sessionProvisioning` 和 `defaultConnectionId` 都是业务配置。`characterName` 与 `playerName` 是独立故事身份，不从登录 ID 推导；它们必须已经是 NFC 且没有首尾空白，loader 会拒绝非规范输入而不会自动 `Trim` 或 normalize。全部 `characterName` 必须大小写精确地唯一，且不能为保留收件人 `Codex`；它们同时构成角色间邮件的唯一地址簿。已有 session 不能只改这两个名字，必须停服后迁移或重建 RecapGrid asset 并切换 active recipe；有未结算角色邮件时还须遵守[角色间站内信的身份漂移前提](character-mail-design.md#6-配置漂移与运维前提)。
 
 `sessionProvisioning` 只有两种闭合策略：
 
