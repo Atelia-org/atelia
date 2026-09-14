@@ -133,3 +133,8 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 
 **易混淆陷阱**：
 - **`T?` 与泛型约束**：`T?` 仅在泛型参数有 `struct` 或 `unmanaged` 约束时才生成 `Nullable<T>` 包装。当约束为 `notnull`、`class`、或无约束时，`T?` 只是可空性注解（NRT attribute），运行时类型仍是 `T` 本身，无 `Nullable<T>` 包装开销。**写代码时务必留意**，不要误以为 `where T : notnull` 下的 `T?` 参数需要 `.HasValue` / `.GetValueOrDefault()`。
+
+# 鼓励用廉价LLM进行真实调用测试
+本机环境变量中配置了丰富的BASE_URL和API_KEY：
+  - DEEPSEEK_BASE_URL + DEEPSEEK_API_KEY + `deepseek-v4-flash`：非常便宜，随便用，deepseek提供了openai chat、openai responses、anthropic messages三种服务器端点规格。
+  - 其他不管项目里用什么连接服务器的，直连官方API也好、中转站也好、订阅OAuth也好，模型有便宜的可以随便用，anthropic随便用`claude-haiku-4-5`，openai随便用`gpt-5.6-luna`。
