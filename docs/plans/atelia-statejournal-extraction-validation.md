@@ -20,7 +20,13 @@
 - 迁出后 `dotnet build Atelia.sln -c Release -t:Rebuild`：通过，0 warning / 0 error。
 - `Atelia.sln` 不再包含 StateJournal；活跃 `src/`、`prototypes/`、`tests/`、`benchmarks/` 没有 StateJournal 代码或项目引用。
 - 当前的 `AGENTS.md`、`CLAUDE.md` 与三个 `docs/StateJournal` 跳转文件指向迁出说明。`docs/Galatea/backlog/` 中三份已有历史任务仍保留旧链接，但它们通过跳转文件到达新仓，不属于活跃构建引用。
-- `git diff --check` 在提交前通过；最终 Atelia 提交与推送状态在交接报告中列出。
+- `git diff --check` 在提交前通过。
+
+## 交付
+
+- 新仓 `main`：`76a6afaf00c32f5410e4c19e55dd759d390ccc9f`，已推送至 `https://github.com/Atelia-org/atelia-statejournal.git`。
+- Atelia 迁出提交：`592020e9232ea1a56f0b9b2bbba18c3f17a71d62`，已推送至 `origin/main`。
+- 两仓均保持普通 public Git 仓；没有创建 NuGet 包、CI、Trusted Publishing、release、tag 或 GitHub Archive。
 
 ## 允许的残留
 
