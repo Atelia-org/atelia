@@ -157,7 +157,9 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
     public void LegacySchemaOpenIsReadOnlyUnsupportedAndExplicitResetNeedsNoLegacyReader() {
         Directory.CreateDirectory(_root);
         StorePaths paths = new(_root);
-        Directory.CreateDirectory(Path.GetDirectoryName(paths.DatabasePath)!);
+        // A valid older store also has the durable lifetime-lock slot. Without
+        // it, opening correctly fails before the database version is inspected.
+        StoreDurableFiles.EnsureSlots(paths);
         using (var connection = new SqliteConnection($"Data Source={paths.DatabasePath};Pooling=False")) {
             connection.Open();
             using SqliteCommand command = connection.CreateCommand();

@@ -246,7 +246,7 @@ public sealed class StoreCellVerticalTests : IDisposable {
         Assert.False(Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(reopened.Reader.ReadView(rowId)).Value.BootstrapCompleted);
         Assert.IsType<RecapGridStoreVerifyResult.Healthy>(RecapGridStoreMaintenance.Verify(_root));
         var export = Assert.IsType<RecapGridStoreExportResult.Page>(RecapGridStoreMaintenance.Export(_root, includeContent: true)).Value;
-        Assert.Equal(rowId, Assert.Single(export.Items.Where(item => item.Kind == "fulfilled")).FulfilledRowResultId);
+        Assert.Equal(rowId, Assert.Single(export.Items, item => item.Kind == "fulfilled").FulfilledRowResultId);
     }
 
     [Fact]
