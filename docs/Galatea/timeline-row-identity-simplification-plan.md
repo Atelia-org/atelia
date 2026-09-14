@@ -1,8 +1,8 @@
 # Timeline 单一行身份：设计与实施记录
 
-> 状态：代码、独立审阅与本地验证完成；27 个项目、2,001 项通过，0 失败、0 跳过，尚未部署。设计已完成三视角独立审查与交叉质询。
+> 状态：代码、独立审阅与本地验证完成；27 个项目、2,001 项通过，0 失败、0 跳过。2026-09-14 已完成唯一 Dev 数据升级与真实 LLM Recap 重建，服务保持停止，见 §8.4。
 > 日期：2026-09-14；规划基线：`6d87a4c1`；实施与旧样本生成基线：`3c1fd372`。
-> 承接[身份简化总设计](identity-simplification-design.md)与已完成的 [Store 切片](recap-store-simplification-plan.md)。真实数据处置和 LLM 重建仍留到全部重构完成后。
+> 承接[身份简化总设计](identity-simplification-design.md)与已完成的 [Store 切片](recap-store-simplification-plan.md)。§1–8.3 保留原设计与代码实施证据；后续明确授权的真实数据操作另记于 §8.4。
 
 ## 1. 最小模型
 
@@ -302,5 +302,29 @@ build 日志为 `/tmp/timeline-identity-build-{Timeline,RecapGrid,Server,CLI}.lo
 原四个 ZIP、Cadence/Journal/Completion、Recipe body 与 builtin 生产路径在实施范围内的 git diff 为空。
 本轮没有真实 Timeline 升级、Store Reset、LLM 调用、部署或 push。旧样本仍保留原字节，所有可写实验均在合成隔离副本进行。
 
-剩余内容只有 §6 的最终真实升级/Reset/LLM 重建与部署，以及[总设计 §6.4](identity-simplification-design.md#64-暂缓项目)
-列出的独立暂缓项。Timeline 行身份与 Store/Control 字段收口已完成，不再作为下一轮工作包重复规划。
+代码实施结束时，剩余内容为 §6 的真实升级/Reset/LLM 重建与部署，以及[总设计 §6.4](identity-simplification-design.md#64-暂缓项目)
+列出的独立暂缓项。前者的数据操作随后已按 §8.4 完成；独立暂缓项不阻塞本次 Dev 切换。
+Timeline 行身份与 Store/Control 字段收口已完成，不再作为下一轮工作包重复规划。
+
+### 8.4 唯一 Dev 数据升级与真实重建
+
+2026-09-14 用户明确授权操作 `prototypes/Galatea/.atelia`、调用真实 LLM，并允许必要时弃用
+Session Repo、从旧 JSON 重导。实际升级顺利，**未清空 Session Repo、未重导、未丢失近期回合**。
+
+- 停服状态下备份完整 `.atelia`，归档 `atelia-full-recap-cutover-20260914T073540Z.7z`
+  位于 `/mnt/e/bak/`，通过 `7z t` 和 SHA256 校验。两个在用会话均为单 Ref/main、Idle，无 pending 工具执行。
+- 在完整隔离副本升级 cyber/gpt 的 Timeline schema 2 → 3；每库两行，原行身份、事实、head、
+  selected path/Merkle 保持。archive 历史快照不属于在用仓库，原样保留。
+- cyber 旧 Store Reset 为 v4，仅重建活动 recipe（两行两列，无 base 依赖）。使用原配置的
+  `gpt5-6-sol-codex` / `gpt-5.6-sol`，**4 次真实调用全部成功**，提交 4 cells、2 row views、1 fulfillment。
+  gpt 尚无 recipe/Store，保持该状态。
+- 冷开后以零新调用预算再次 Build，仍为 fulfilled，零新增调用和写入。副本及实际目录的
+  Timeline/Control Verify、Store Verify、Progress 与 Getter materialize 均通过。
+- 验证后按整仓目录切换回原路径，旧整仓另存。最终 `.atelia` 仅两个 Timeline DB 和一个 Store DB
+  改变，没有新增或删除文件；Journal、Control、Cadence、配置、archive 与 JSON 导入源逐字保持。
+  两份 Journal 验证报告除 repositoryPath 外全部原值一致。服务操作前后均保持停止，未做浏览器 E2E。
+
+操作记录、前后文件清单、原仓库及调用日志位于忽略目录
+`gitignore/recap-cutover-20260914T073540Z/`，入口为 `REPORT.md`；私有正文不提交。
+此次仅用一次性操作程序装配 Galatea 同款 Codex subscription factory，执行既有 CLI/Manager/Runtime
+构建链；临时投影 CLI V2 connections 并去除 route 尾部换行。原 Galatea 配置、模型、路由及产品代码均未修改。
