@@ -340,6 +340,10 @@ internal static class Program {
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
+            "  recap-grid timeline upgrade-schema-v2 --input <stopped-repo-copy> "
+            + "--ref <physical-ref-id> --timeline <timeline-id>"
+        );
+        Console.WriteLine(
             "  recap-grid legacy-root inspect|archive|delete ..."
         );
         Console.WriteLine(
