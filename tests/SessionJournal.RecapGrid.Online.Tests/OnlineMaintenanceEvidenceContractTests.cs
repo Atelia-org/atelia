@@ -36,7 +36,6 @@ public sealed class OnlineMaintenanceEvidenceContractTests {
             null!,
             null!,
             default,
-            default,
             default
         );
 

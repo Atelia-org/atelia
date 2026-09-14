@@ -12,14 +12,12 @@ public sealed class ManagerProgressRecordContractTests {
             null!,
             null!,
             default,
-            default,
             default
         );
         var second = new RecapGridBuildProgressAuthority(
             null!,
             null!,
             null!,
-            default,
             default,
             default
         );
