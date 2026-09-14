@@ -406,7 +406,7 @@ public sealed class HistoryTimelineCrashRecoveryTests : IDisposable {
                     "Timeline head is unavailable after crash."
                 );
 
-    private async Task RunCrashHarnessAsync(
+    internal static async Task RunCrashHarnessAsync(
         string repositoryPath,
         string operation,
         string failpoint,

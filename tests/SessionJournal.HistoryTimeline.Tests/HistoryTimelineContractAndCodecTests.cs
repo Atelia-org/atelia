@@ -63,7 +63,7 @@ public sealed class HistoryTimelineContractAndCodecTests {
     }
 
     [Fact]
-    public void DescriptorUsesBoundSelectedRangeAndDistinctHashDomains() {
+    public void DescriptorWireV2KeepsOriginalRowIdAndHasNoSecondIdentity() {
         PartitionPolicyRevision policy = Policy(
             "atelia.tests.history-load.numeric-v1"
         );
@@ -95,19 +95,14 @@ public sealed class HistoryTimelineContractAndCodecTests {
                 .DecodeHistorySegmentDescriptor(canonical);
 
         Assert.Equal(selectedRangeSha, descriptor.RawRangeSha256);
-        Assert.NotEqual(
-            descriptor.RowId.Value,
-            descriptor.DescriptorDigest.Value
-        );
         Assert.Equal(descriptor, decoded);
         Assert.Equal(
             "f945064a1db7c0f70a1ca3f3e0f0a44f56f9d3b7e1880e6ea4a8ef48528f75cd",
             descriptor.RowId.Value
         );
-        Assert.Equal(
-            "2b2c36201f3b38d7d82855bc98e9dc55b716c950078c480e1f797662937db65b",
-            descriptor.DescriptorDigest.Value
-        );
+        using var json = System.Text.Json.JsonDocument.Parse(canonical);
+        Assert.Equal(2, json.RootElement.GetProperty("v").GetInt32());
+        Assert.False(json.RootElement.TryGetProperty("descriptorDigest", out _));
     }
 
     [Fact]
@@ -235,10 +230,6 @@ public sealed class HistoryTimelineContractAndCodecTests {
         Assert.Equal(60, sealedAtSixty.TargetHistoryLoadAtCreation.Value);
         Assert.Equal(originalBytes, sealedAtSixty.ToCanonicalBytes());
         Assert.NotEqual(sealedAtSixty.RowId, sealedAtNinety.RowId);
-        Assert.NotEqual(
-            sealedAtSixty.DescriptorDigest,
-            sealedAtNinety.DescriptorDigest
-        );
     }
 
     [Fact]
@@ -277,10 +268,6 @@ public sealed class HistoryTimelineContractAndCodecTests {
             second.TargetHistoryLoadAtCreation
         );
         Assert.NotEqual(first.RowId, second.RowId);
-        Assert.NotEqual(
-            first.DescriptorDigest,
-            second.DescriptorDigest
-        );
     }
 
     [Fact]
@@ -354,10 +341,6 @@ public sealed class HistoryTimelineContractAndCodecTests {
             withPrevious.RawRangeSha256
         );
         Assert.NotEqual(withoutPrevious.RowId, withPrevious.RowId);
-        Assert.NotEqual(
-            withoutPrevious.DescriptorDigest,
-            withPrevious.DescriptorDigest
-        );
     }
 
     [Fact]
@@ -817,11 +800,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
                 new string('0', 64),
                 StringComparison.Ordinal
             ),
-            canonical.Replace(
-                "\"descriptorDigest\":\"",
-                "\"descriptorDigest\":null,\"ignored\":\"",
-                StringComparison.Ordinal
-            )
+            canonical[..^1] + ",\"descriptorDigest\":null}",
+            canonical.Replace("\"v\":2", "\"v\":1", StringComparison.Ordinal)
         ];
 
         Assert.All(invalid, text =>
@@ -841,9 +821,6 @@ public sealed class HistoryTimelineContractAndCodecTests {
         );
         Assert.Throws<ArgumentException>(() =>
             new HistoryRowId(new string('g', 64))
-        );
-        Assert.Throws<ArgumentException>(() =>
-            new HistorySegmentDescriptorDigest(new string('G', 64))
         );
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             PartitionPolicyRevision.Create(

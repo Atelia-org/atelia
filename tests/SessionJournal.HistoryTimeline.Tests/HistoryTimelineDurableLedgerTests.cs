@@ -110,7 +110,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 unsupportedPath,
                 unsupported.BranchRefId
             ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
-            ExecuteSql(databasePath, "PRAGMA user_version = 3;");
+            ExecuteSql(databasePath, "PRAGMA user_version = 4;");
             byte[] unsupportedBytes = File.ReadAllBytes(databasePath);
 
             HistoryTimelineCreateResult.Invalid createInvalid = Assert.IsType<
@@ -136,9 +136,9 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                         _estimator
                     )
                 );
-            Assert.Equal(3, result.SchemaVersion);
+            Assert.Equal(4, result.SchemaVersion);
             Assert.Equal(
-                3,
+                4,
                 Assert.IsType<
                     HistoryTimelineReaderOpenResult.UnsupportedSchema
                 >(HistoryTimelineMaintenance.OpenReader(
@@ -317,10 +317,10 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             schemaPath,
             schema.BranchRefId
         ).TimelineDatabasePath(schemaCreated.Locator.ActiveTimelineId);
-        ExecuteSql(schemaDatabase, "PRAGMA user_version = 3;");
+        ExecuteSql(schemaDatabase, "PRAGMA user_version = 4;");
 
         Assert.Equal(
-            3,
+            4,
             Assert.IsType<HistoryTimelineSnapshotResult.UnsupportedSchema>(
                 handle.Reader.ReadSnapshot()
             ).SchemaVersion
@@ -951,7 +951,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
     }
 
     [Fact]
-    public void SqliteV2IdentityAndOrderedSchemaHaveIndependentFingerprint() {
+    public void SqliteV3IdentityAndOrderedSchemaHaveIndependentFingerprint() {
         string path = NewPath();
         using SessionJournalEngine journal = CreateJournal(path);
         HistoryTimelineCreateResult.Created created = Assert.IsType<
@@ -972,7 +972,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             ReadSqliteInt64(connection, "PRAGMA application_id;")
         );
         Assert.Equal(
-            2L,
+            3L,
             ReadSqliteInt64(connection, "PRAGMA user_version;")
         );
         using SqliteCommand schema = connection.CreateCommand();
@@ -1027,7 +1027,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             fingerprint.GetHashAndReset()
         ).ToLowerInvariant();
         Assert.Equal(
-            "7fbd3b1ee14ecfa50cb5194ac5d9b3cda3e55edaed5131f6d72ad7fada321b11",
+            "c5ee2eab5e1ccd2382d7fcbed8d6269cade29de70fdeb9f95418347d5d9388d7",
             actualFingerprint
         );
     }
@@ -1039,7 +1039,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
     [InlineData("metadata-ref")]
     [InlineData("head-digest")]
     [InlineData("head-scope-with-valid-digest")]
-    public void V2CoreIdentityMetadataAndHeadMismatchBlockNormalOpen(
+    public void CurrentCoreIdentityMetadataAndHeadMismatchBlockNormalOpen(
         string corruption
     ) {
         string path = NewPath();
@@ -1068,7 +1068,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                     databasePath,
                     """
                     UPDATE store_metadata
-                    SET schema_version = 3
+                    SET schema_version = 4
                     WHERE singleton = 1;
                     """
                 );

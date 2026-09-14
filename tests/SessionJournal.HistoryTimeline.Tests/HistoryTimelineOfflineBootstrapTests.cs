@@ -853,10 +853,6 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
             onlineRows.Select(static row => row.RowId),
             offlineRows.Select(static row => row.RowId)
         );
-        Assert.Equal(
-            onlineRows.Select(static row => row.DescriptorDigest),
-            offlineRows.Select(static row => row.DescriptorDigest)
-        );
     }
 
     [Fact]

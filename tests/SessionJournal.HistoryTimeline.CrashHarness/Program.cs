@@ -11,7 +11,7 @@ internal static class Program {
     public static int Main(string[] args) {
         if (args.Length is < 3 or > 4) {
             Console.Error.WriteLine(
-                "usage: <create|put-policy|policy-cas|append|reconcile|abandon|backup|restore> <failpoint> <repository> [backup]"
+                "usage: <create|put-policy|policy-cas|append|reconcile|abandon|backup|restore|upgrade> <failpoint> <repository> [backup]"
             );
             return 2;
         }
@@ -32,6 +32,12 @@ internal static class Program {
             SessionJournalEngine.Open(repositoryPath);
 
         switch (operation) {
+            case "upgrade":
+                RequireReached(HistoryTimelineMaintenance.UpgradeSchemaV2Core(
+                    repositoryPath, journal.BranchRefId,
+                    ReadLocator(repositoryPath, journal.BranchRefId).ActiveTimelineId,
+                    HistoryTimelineStorageLimits.Production, hooks));
+                break;
             case "create":
                 RequireReached(HistoryTimelineFactory.CreateForTest(
                     journal.ReadView,
@@ -307,7 +313,13 @@ internal static class Program {
         BeforeRestoreReplace:
             failpoint == "restore-before-replace" ? crash : null,
         AfterRestoreReplace:
-            failpoint == "restore-after-replace" ? crash : null
+            failpoint == "restore-after-replace" ? crash : null,
+        AfterUpgradeSourceValidated:
+            failpoint == "upgrade-source-validated" ? crash : null,
+        BeforeUpgradeReplace:
+            failpoint == "upgrade-before-replace" ? crash : null,
+        AfterUpgradeReplace:
+            failpoint == "upgrade-after-replace" ? crash : null
     );
 
     private static void RequireReached(object result) {

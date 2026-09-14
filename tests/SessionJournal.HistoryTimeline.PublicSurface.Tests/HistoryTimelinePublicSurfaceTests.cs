@@ -13,6 +13,21 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
     );
 
     [Fact]
+    public void ExternalMaintenanceCanRecognizeCurrentSchemaWithoutMutatingHead() {
+        using SessionJournalEngine journal = SessionJournalEngine.Create(_path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"));
+        var estimator = new O200kBaseHistoryUnitLoadEstimator();
+        var created = Assert.IsType<HistoryTimelineCreateResult.Created>(HistoryTimelineFactory.Create(journal.ReadView,
+            new HistoryTimelineInitialPolicySpec(HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId, new HistoryLoadUnit(1), 8, 1024 * 1024), estimator));
+        var result = Assert.IsType<HistoryTimelineUpgradeResult.AlreadyCurrent>(HistoryTimelineMaintenance.UpgradeSchemaV2(
+            _path, journal.BranchRefId, created.Locator.ActiveTimelineId));
+        Assert.Equal(created.InitialHead, result.Head);
+        Assert.DoesNotContain(typeof(HistorySegmentDescriptor).Assembly.GetExportedTypes(),
+            type => type.Name == "HistorySegmentDescriptorDigest");
+    }
+
+    [Fact]
     public void ExternalEstimatorCanMeasureAndConstructResult() {
         IHistoryUnitLoadEstimator estimator = new ExternalEstimator();
         var unit = new SessionHistoryPlanningUnit(
