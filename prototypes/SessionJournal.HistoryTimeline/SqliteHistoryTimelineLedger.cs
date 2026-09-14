@@ -3,9 +3,9 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.HistoryTimeline;
 
-internal sealed class SqliteHistoryTimelineLedger
+internal sealed partial class SqliteHistoryTimelineLedger
     : IHistoryTimelineLedgerPort {
-    internal const int SchemaVersion = 2;
+    internal const int SchemaVersion = 3;
     internal const string HeadHashDomain =
         "atelia.history-timeline.head.v1";
     internal const string VerifyRowsFirstPageSql = """
@@ -13,7 +13,6 @@ internal sealed class SqliteHistoryTimelineLedger
             row_id,
             previous_row_id,
             end_address,
-            descriptor_digest,
             length(canonical),
             canonical
         FROM rows
@@ -25,7 +24,6 @@ internal sealed class SqliteHistoryTimelineLedger
             row_id,
             previous_row_id,
             end_address,
-            descriptor_digest,
             length(canonical),
             canonical
         FROM rows
@@ -427,7 +425,7 @@ internal sealed class SqliteHistoryTimelineLedger
                 );
                 insert.Parameters.AddWithValue(
                     "$canonical",
-                    canonical
+                canonical
                 );
                 insert.ExecuteNonQuery();
             }
@@ -1234,13 +1232,11 @@ internal sealed class SqliteHistoryTimelineLedger
                 row_id,
                 previous_row_id,
                 end_address,
-                descriptor_digest,
-                canonical
+                    canonical
             ) VALUES (
                 $row,
                 $previous,
                 $end,
-                $descriptorDigest,
                 $canonical
             );
             """;
@@ -1252,10 +1248,6 @@ internal sealed class SqliteHistoryTimelineLedger
                 : DBNull.Value
         );
         command.Parameters.AddWithValue("$end", endAddress);
-        command.Parameters.AddWithValue(
-            "$descriptorDigest",
-            descriptor.DescriptorDigest.Value
-        );
         command.Parameters.AddWithValue("$canonical", canonical);
         command.ExecuteNonQuery();
     }
@@ -1717,9 +1709,8 @@ internal sealed class SqliteHistoryTimelineLedger
                         reader.GetString(0),
                         reader.IsDBNull(1) ? null : reader.GetString(1),
                         reader.GetFieldValue<byte[]>(2),
-                        reader.GetString(3),
-                        reader.GetInt64(4),
-                        reader.GetFieldValue<byte[]>(5)
+                        reader.GetInt64(3),
+                        reader.GetFieldValue<byte[]>(4)
                     ));
                 }
             }
@@ -1759,10 +1750,6 @@ internal sealed class SqliteHistoryTimelineLedger
                     || !string.Equals(
                         descriptor.PreviousRowId?.Value,
                         stored.PreviousRowId,
-                        StringComparison.Ordinal)
-                    || !string.Equals(
-                        descriptor.DescriptorDigest.Value,
-                        stored.DescriptorDigest,
                         StringComparison.Ordinal)
                     || !expectedEnd.AsSpan().SequenceEqual(
                         stored.EndAddress
@@ -1806,8 +1793,8 @@ internal sealed class SqliteHistoryTimelineLedger
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT p.ordinal, p.row_id, p.end_address, r.previous_row_id,
-                   length(r.canonical), r.canonical
+            SELECT p.ordinal, p.row_id, p.end_address, p.previous_row_id,
+                   length(r.canonical), r.canonical, p.leaf_digest
             FROM current_selected_path AS p
             JOIN rows AS r ON r.row_id = p.row_id
             ORDER BY p.ordinal;
@@ -1816,6 +1803,7 @@ internal sealed class SqliteHistoryTimelineLedger
         long expectedOrdinal = 0;
         HistoryRowId? previous = null;
         HistoryRowId? last = null;
+        var nodeCache = new Dictionary<(int Level, long NodeIndex), string>();
         while (reader.Read()) {
             long ordinal = reader.GetInt64(0);
             var rowId = new HistoryRowId(reader.GetString(1));
@@ -1848,6 +1836,21 @@ internal sealed class SqliteHistoryTimelineLedger
                     "The current selected path index differs from its row."
                 );
             }
+            // Verify the same assignment and inclusion proof used by point reads.
+            // Bound cached nodes independently of the total selected-path length.
+            if ((ordinal & 127) == 0) {
+                nodeCache.Clear();
+            }
+            RequireSelectedAssignment(
+                connection,
+                transaction,
+                head,
+                new CurrentSelectedAssignment(
+                    ordinal, rowId, storedPrevious, indexedEnd,
+                    reader.GetString(6)),
+                descriptor,
+                nodeCache,
+                verifyWholeRoot: false);
             previous = rowId;
             last = rowId;
             expectedOrdinal = checked(expectedOrdinal + 1);
@@ -2079,7 +2082,7 @@ internal sealed class SqliteHistoryTimelineLedger
                     expected.Sql,
                     StringComparison.Ordinal)) {
                 throw new InvalidDataException(
-                    "Timeline SQLite schema shape differs from V2."
+                    "Timeline SQLite schema shape differs from V3."
                 );
             }
         }
@@ -2418,7 +2421,6 @@ internal sealed class SqliteHistoryTimelineLedger
                 row_id TEXT PRIMARY KEY,
                 previous_row_id TEXT NULL,
                 end_address BLOB NOT NULL,
-                descriptor_digest TEXT NOT NULL,
                 canonical BLOB NOT NULL,
                 FOREIGN KEY(previous_row_id) REFERENCES rows(row_id)
             ) STRICT, WITHOUT ROWID
@@ -2568,7 +2570,6 @@ internal sealed class SqliteHistoryTimelineLedger
         string RowId,
         string? PreviousRowId,
         byte[] EndAddress,
-        string DescriptorDigest,
         long CanonicalLength,
         byte[] Canonical
     );

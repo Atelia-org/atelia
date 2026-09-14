@@ -87,7 +87,6 @@ internal sealed class HistoryRecentReserveProof {
         ExpectedHead = expectedHead;
         CapturedRawHead = capturedRawHead;
         RowId = descriptor.RowId;
-        DescriptorDigest = descriptor.DescriptorDigest;
         Retained = retained;
     }
 
@@ -101,7 +100,6 @@ internal sealed class HistoryRecentReserveProof {
         ExpectedHead = testProposal.ExpectedHead;
         CapturedRawHead = testProposal.CapturedSelectedRawHead;
         RowId = testProposal.Descriptor.RowId;
-        DescriptorDigest = testProposal.Descriptor.DescriptorDigest;
         Retained = new HistoryLoadUnit(0);
     }
 
@@ -109,7 +107,6 @@ internal sealed class HistoryRecentReserveProof {
     internal TimelineHeadRef ExpectedHead { get; }
     internal EventAddress CapturedRawHead { get; }
     internal HistoryRowId RowId { get; }
-    internal HistorySegmentDescriptorDigest DescriptorDigest { get; }
     internal HistoryLoadUnit Retained { get; }
 
     internal static HistoryRecentReserveProof Create(
@@ -175,7 +172,6 @@ internal sealed class HistoryRecentReserveProof {
         && rawFence.RefId == Policy.RefId
         && rawFence.CapturedHead == CapturedRawHead
         && proposal.Descriptor.RowId == RowId
-        && proposal.Descriptor.DescriptorDigest == DescriptorDigest
         && proposal.Descriptor.RefId == Policy.RefId
         && (!Policy.IsRequired || string.Equals(
             proposal.Descriptor.PartitionPolicyDigestAtCreation,

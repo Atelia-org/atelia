@@ -107,10 +107,10 @@ public sealed class HistoryTimelineReader {
             witness.RowId
         );
         if (result is HistoryTimelineReaderRowResult.Selected selected
-            && selected.Row.Descriptor.DescriptorDigest
-                != witness.DescriptorDigest) {
+            && selected.Row.Descriptor.RowId
+                != witness.RowId) {
             return new HistoryTimelineReaderRowResult.Invalid(
-                "AncestorWitnessDigestMismatch",
+                "AncestorWitnessRowMismatch",
                 "The selected descriptor differs from the witness commitment."
             );
         }

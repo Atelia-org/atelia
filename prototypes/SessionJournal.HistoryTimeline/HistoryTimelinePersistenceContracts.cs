@@ -336,13 +336,11 @@ public sealed class HistoryTimelineAncestorWitness {
         CanonicalRepositoryPath = canonicalRepositoryPath;
         WholeHead = wholeHead;
         RowId = descriptor.RowId;
-        DescriptorDigest = descriptor.DescriptorDigest;
     }
 
     internal string CanonicalRepositoryPath { get; }
     public TimelineHeadRef WholeHead { get; }
     public HistoryRowId RowId { get; }
-    public HistorySegmentDescriptorDigest DescriptorDigest { get; }
 }
 
 public sealed class HistoryTimelineSelectedRow {
@@ -350,9 +348,7 @@ public sealed class HistoryTimelineSelectedRow {
         HistorySegmentDescriptor descriptor,
         HistoryTimelineAncestorWitness witness
     ) {
-        if (descriptor.RowId != witness.RowId
-            || descriptor.DescriptorDigest
-                != witness.DescriptorDigest) {
+        if (descriptor.RowId != witness.RowId) {
             throw new ArgumentException(
                 "The selected row and ancestor witness must bind the same descriptor."
             );

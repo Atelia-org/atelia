@@ -9,7 +9,7 @@ using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.HistoryTimeline;
 
-public static class HistoryTimelineCanonicalCodec {
+public static partial class HistoryTimelineCanonicalCodec {
     public const int MaximumPolicyUtf8Bytes = 4 * 1024;
     public const int MaximumDescriptorUtf8Bytes = 16 * 1024;
 
@@ -234,7 +234,7 @@ public static class HistoryTimelineCanonicalCodec {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             writer.WriteStartObject();
-            writer.WriteNumber("v", 1);
+            writer.WriteNumber("v", 2);
             writer.WriteString("timelineId", value.TimelineId.Value);
             writer.WriteString(
                 "partitionPolicyDigestAtCreation",
@@ -248,10 +248,6 @@ public static class HistoryTimelineCanonicalCodec {
                 writer.WriteNull("previousRowId");
             }
             WriteDescriptorRangeFields(writer, value);
-            writer.WriteString(
-                "descriptorDigest",
-                value.DescriptorDigest.Value
-            );
             writer.WriteEndObject();
         }
         return RequireEncodedBound(
@@ -267,7 +263,7 @@ public static class HistoryTimelineCanonicalCodec {
         bytes,
         MaximumDescriptorUtf8Bytes,
         static root => {
-            RequireVersion(root, "history segment descriptor");
+            RequireVersion(root, "history segment descriptor", version: 2);
             var timelineId = new TimelineId(
                 ReadString(root, "timelineId")
             );
@@ -316,12 +312,6 @@ public static class HistoryTimelineCanonicalCodec {
                 root,
                 "rawRangeSha256"
             );
-            var descriptorDigest =
-                new HistorySegmentDescriptorDigest(ReadString(
-                    root,
-                    "descriptorDigest"
-                ));
-
             byte[] body = EncodeDescriptorBody(
                 timelineId,
                 policyDigest,
@@ -342,17 +332,9 @@ public static class HistoryTimelineCanonicalCodec {
                 HistoryTimelineHash.RowIdDomain,
                 body
             );
-            string expectedDescriptorDigest = HistoryTimelineHash.Compute(
-                HistoryTimelineHash.DescriptorDomain,
-                body
-            );
             if (!string.Equals(
                     expectedRowId,
                     rowId.Value,
-                    StringComparison.Ordinal)
-                || !string.Equals(
-                    expectedDescriptorDigest,
-                    descriptorDigest.Value,
                     StringComparison.Ordinal)) {
                 throw new InvalidDataException(
                     "History segment identity does not match its canonical body."
@@ -373,8 +355,7 @@ public static class HistoryTimelineCanonicalCodec {
                 measured,
                 rawEventCount,
                 renderedBytes,
-                rawRangeSha256,
-                descriptorDigest
+                rawRangeSha256
             );
         },
         Encode,
@@ -626,8 +607,8 @@ public static class HistoryTimelineCanonicalCodec {
         }
     }
 
-    private static void RequireVersion(JsonElement root, string label) {
-        if (ReadInt32(root, "v") != 1) {
+    private static void RequireVersion(JsonElement root, string label, int version = 1) {
+        if (ReadInt32(root, "v") != version) {
             throw new InvalidDataException(
                 $"Unsupported {label} schema version."
             );
@@ -770,8 +751,6 @@ internal static class HistoryTimelineHash {
         "atelia.history-timeline.partition-policy.v1";
     internal const string RowIdDomain =
         "atelia.history-timeline.row-id.v1";
-    internal const string DescriptorDomain =
-        "atelia.history-timeline.descriptor.v1";
 
     internal static string Compute(
         string domain,

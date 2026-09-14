@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Atelia.SessionJournal.HistoryTimeline;
 
-public static class HistoryTimelineMaintenance {
+public static partial class HistoryTimelineMaintenance {
     private const string BackupDatabaseFileName = "timeline.sqlite";
     private const string BackupManifestFileName = "manifest.json";
 

@@ -113,9 +113,7 @@ public sealed class HistoryTimelineBuildReadSession : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(selectedRow);
-        if (selectedRow.Descriptor.RowId != selectedRow.Witness.RowId
-            || selectedRow.Descriptor.DescriptorDigest
-                != selectedRow.Witness.DescriptorDigest) {
+        if (selectedRow.Descriptor.RowId != selectedRow.Witness.RowId) {
             return InvalidSelectedRow();
         }
         return OpenSelectedSegment(
@@ -142,8 +140,6 @@ public sealed class HistoryTimelineBuildReadSession : IDisposable {
         return validated switch {
             HistoryTimelineReaderRowResult.Selected selected
                 when selected.Row.Descriptor.RowId == witness.RowId
-                    && selected.Row.Descriptor.DescriptorDigest
-                        == witness.DescriptorDigest
                 => _ownedHandle.Coordinator.OpenSegment(
                     expectedWholeHead,
                     capture,

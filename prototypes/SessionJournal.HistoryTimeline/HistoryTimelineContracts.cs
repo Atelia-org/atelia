@@ -41,19 +41,6 @@ public readonly record struct HistoryRowId {
     public override string ToString() => Value ?? string.Empty;
 }
 
-public readonly record struct HistorySegmentDescriptorDigest {
-    public HistorySegmentDescriptorDigest(string value) {
-        Value = HistoryTimelineSyntax.RequireLowerHex(
-            value,
-            64,
-            nameof(value)
-        );
-    }
-
-    public string Value { get; }
-    public override string ToString() => Value ?? string.Empty;
-}
-
 public static class HistoryPartitionPolicyLimits {
     public const int MaximumRawEvents =
         SJ.SessionSelectedLineageAuditLimits
@@ -540,8 +527,7 @@ public sealed record HistorySegmentDescriptor {
         HistoryLoadUnit measuredHistoryLoad,
         int rawEventCount,
         int measuredRenderedUtf8Bytes,
-        string rawRangeSha256,
-        HistorySegmentDescriptorDigest descriptorDigest
+        string rawRangeSha256
     ) {
         TimelineId = HistoryTimelineSyntax.RequireTimelineId(timelineId);
         PartitionPolicyDigestAtCreation =
@@ -602,10 +588,7 @@ public sealed record HistorySegmentDescriptor {
             rawRangeSha256,
             nameof(rawRangeSha256)
         );
-        DescriptorDigest =
-            HistoryTimelineSyntax.RequireDescriptorDigest(
-                descriptorDigest
-            );
+
     }
 
     public TimelineId TimelineId { get; }
@@ -623,7 +606,6 @@ public sealed record HistorySegmentDescriptor {
     public int RawEventCount { get; }
     public int MeasuredRenderedUtf8Bytes { get; }
     public string RawRangeSha256 { get; }
-    public HistorySegmentDescriptorDigest DescriptorDigest { get; }
 
     public byte[] ToCanonicalBytes()
         => HistoryTimelineCanonicalCodec.Encode(this);
@@ -702,12 +684,6 @@ internal static class HistorySegmentDescriptorFactory {
             HistoryTimelineHash.RowIdDomain,
             body
         ));
-        var descriptorDigest = new HistorySegmentDescriptorDigest(
-            HistoryTimelineHash.Compute(
-                HistoryTimelineHash.DescriptorDomain,
-                body
-            )
-        );
         return new HistorySegmentDescriptor(
             policy.TimelineId,
             policy.PolicyDigest,
@@ -723,8 +699,7 @@ internal static class HistorySegmentDescriptorFactory {
             point.MeasuredHistoryLoad,
             point.RawEventCount,
             point.MeasuredRenderedUtf8Bytes,
-            boundRange.RawRangeSha256,
-            descriptorDigest
+            boundRange.RawRangeSha256
         );
     }
 }
@@ -777,13 +752,6 @@ internal static class HistoryTimelineSyntax {
     }
 
     internal static HistoryRowId RequireHistoryRowId(HistoryRowId value) {
-        _ = RequireLowerHex(value.Value, 64, nameof(value));
-        return value;
-    }
-
-    internal static HistorySegmentDescriptorDigest RequireDescriptorDigest(
-        HistorySegmentDescriptorDigest value
-    ) {
         _ = RequireLowerHex(value.Value, 64, nameof(value));
         return value;
     }
