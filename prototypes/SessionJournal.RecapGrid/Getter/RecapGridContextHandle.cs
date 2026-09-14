@@ -266,7 +266,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             return MapStoreRead(fulfilledRead);
         }
         RecapGridStoreReadResult<RecapRowView> currentViewRead =
-            reader.ReadView(fulfilled.Value.ViewDigest);
+            reader.ReadView(fulfilled.Value.RowResultId);
         if (currentViewRead is not RecapGridStoreReadResult<
                 RecapRowView>.Found currentViewFound) {
             return currentViewRead is RecapGridStoreReadResult<
@@ -389,9 +389,9 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         RecapRowView selectedView = healthyReserveView;
         for (int ordinal = 0; ordinal < nthPrevious; ordinal++) {
             HistoryRowId? previousRowId = selectedRow.Descriptor.PreviousRowId;
-            RowViewDigest? previousViewDigest =
-                selectedView.PreviousViewDigest;
-            if (previousRowId is null && previousViewDigest is null) {
+            RowResultId? previousRowResultId =
+                selectedView.PreviousRowResultId;
+            if (previousRowId is null && previousRowResultId is null) {
                 return CompleteTerminal(
                     new RecapGridContextResolveResult.OrdinalUnavailable(),
                     completionBoundary,
@@ -400,7 +400,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                     control.Head
                 );
             }
-            if (previousRowId is null || previousViewDigest is null) {
+            if (previousRowId is null || previousRowResultId is null) {
                 return Invalid(
                     RecapGridContextComponent.Store,
                     "PreviousViewChainInvalid",
@@ -417,7 +417,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 return MapTimelineRow(previousRowRead);
             }
             RecapGridStoreReadResult<RecapRowView> previousViewRead =
-                reader.ReadView(previousViewDigest.Value);
+                reader.ReadView(previousRowResultId.Value);
             if (previousViewRead is not RecapGridStoreReadResult<
                     RecapRowView>.Found previousFound) {
                 return previousViewRead is RecapGridStoreReadResult<
@@ -460,7 +460,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             store.Handle.Identity,
             recipe,
             currentKey,
-            fulfilled.Value.ViewDigest,
+            fulfilled.Value.RowResultId,
             selectedRow.Descriptor,
             selectedView
         );
@@ -476,7 +476,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 selectedRow,
                 selectedView,
                 currentKey,
-                fulfilled.Value.ViewDigest,
+                fulfilled.Value.RowResultId,
                 _lifetime,
                 _lifetime.OwnerNonce,
                 handle,
@@ -549,7 +549,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             || view.RowDescriptorDigest != descriptor.DescriptorDigest
             || view.RecipeDigest != recipe.Digest
             || view.TargetDigest != recipe.Target.Digest
-            || (view.PreviousViewDigest is null)
+            || (view.PreviousRowResultId is null)
                 != (descriptor.PreviousRowId is null)
             || view.OrderedCells.Count
                 != recipe.Target.OrderedColumns.Count) {
@@ -585,7 +585,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         foreach (RecapRowViewCell member in view.OrderedCells) {
             cancellationToken.ThrowIfCancellationRequested();
             RecapGridStoreReadResult<RecapCellArtifact> read =
-                reader.ReadCell(member.CellDigest);
+                reader.ReadCell(member.CellId);
             if (read is not RecapGridStoreReadResult<
                     RecapCellArtifact>.Found found) {
                 return read is RecapGridStoreReadResult<
@@ -598,11 +598,11 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                     : MapStoreRead(read);
             }
             RecapCellArtifact cell = found.Value;
-            if (cell.CellDigest != member.CellDigest
+            if (cell.Id != member.CellId
                 || cell.LogicalColumnId != member.LogicalColumnId
                 || cell.DefinitionDigest != member.DefinitionDigest
-                || cell.EvaluationKey.HistorySegmentDigest
-                    != descriptor.DescriptorDigest
+                || cell.Slot.HistoryRowId
+                    != descriptor.RowId
                 || !definitions.TryGetValue(
                     member.DefinitionDigest,
                     out MaintainerDefinitionRevision? definition)
@@ -687,7 +687,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 else {
                     if (finalRow.Descriptor.PreviousRowId
                             != row.Descriptor.RowId
-                        || finalView.PreviousViewDigest
+                        || finalView.PreviousRowResultId
                             is not { } previousDigest) {
                         return Invalid(
                             RecapGridContextComponent.Store,
@@ -896,7 +896,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         RecapGridStoreIdentity storeIdentity,
         GridBuildRecipe recipe,
         FulfilledViewKey currentKey,
-        RowViewDigest currentViewDigest,
+        RowResultId currentRowResultId,
         HistorySegmentDescriptor selectedDescriptor,
         RecapRowView selectedView
     ) {
@@ -926,10 +926,14 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             System.Globalization.CultureInfo.InvariantCulture
         ));
         AppendBytes(recipe.ToCanonicalBytes());
-        AppendBytes(currentKey.ToCanonicalBytes());
-        AppendText(currentViewDigest.Value);
+        AppendText(currentKey.RefId.ToHexString());
+        AppendText(currentKey.TimelineId.Value);
+        AppendText(currentKey.TimelineHeadGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        AppendText(currentKey.ThroughRowDescriptorDigest.Value);
+        AppendText(currentKey.RecipeDigest.Value);
+        AppendText(currentRowResultId.Value);
         AppendBytes(selectedDescriptor.ToCanonicalBytes());
-        AppendBytes(selectedView.ToCanonicalBytes());
+        AppendText(selectedView.Id.Value);
         return Convert.ToHexStringLower(hash.GetHashAndReset());
 
         void AppendText(string value) => AppendBytes(

@@ -117,7 +117,7 @@ public sealed partial class RecapGridContextHandle {
             RecapRowViewCell member =
                 selection.SelectedView.OrderedCells[index];
             RecapGridStoreReadResult<RecapCellArtifact> read =
-                reader.ReadCell(member.CellDigest);
+                reader.ReadCell(member.CellId);
             if (read is not RecapGridStoreReadResult<
                     RecapCellArtifact>.Found found) {
                 return read is RecapGridStoreReadResult<
@@ -130,11 +130,11 @@ public sealed partial class RecapGridContextHandle {
                     : MapStoreReadForMaterialize(read);
             }
             RecapCellArtifact cell = found.Value;
-            if (cell.CellDigest != member.CellDigest
+            if (cell.Id != member.CellId
                 || cell.LogicalColumnId != member.LogicalColumnId
                 || cell.DefinitionDigest != member.DefinitionDigest
-                || cell.EvaluationKey.HistorySegmentDigest
-                    != selection.SelectedDescriptorDigest
+                || cell.Slot.HistoryRowId
+                    != selection.SelectedRowId
                 || !definitions.TryGetValue(
                     member.DefinitionDigest,
                     out MaintainerDefinitionRevision? definition)
@@ -207,12 +207,11 @@ public sealed partial class RecapGridContextHandle {
             cancellationToken
         );
         RecapGridStoreReadResult<RecapRowView> health = reader.ReadView(
-            selection.SelectedView.Digest
+            selection.SelectedView.Id
         );
         if (health is not RecapGridStoreReadResult<RecapRowView>.Found
                 healthy
-            || !healthy.Value.ToCanonicalBytes().SequenceEqual(
-                selection.SelectedView.ToCanonicalBytes())) {
+            || healthy.Value.Id != selection.SelectedView.Id) {
             return health is RecapGridStoreReadResult<RecapRowView>.Busy
                 ? new RecapGridContextMaterializeResult.Busy(
                     RecapGridContextComponent.Store
@@ -271,7 +270,8 @@ public sealed partial class RecapGridContextHandle {
                     : RecapGridProvenanceStatus.NotSatisfied,
                 tracker.ExaminedRows,
                 tracker.ExaminedCells,
-                tracker.ExaminedCanonicalUtf8Bytes
+                tracker.ExaminedMembers,
+                tracker.ExaminedContentUtf8Bytes
             );
         }
 
@@ -307,7 +307,8 @@ public sealed partial class RecapGridContextHandle {
             full,
             tracker.ExaminedRows,
             tracker.ExaminedCells,
-            tracker.ExaminedCanonicalUtf8Bytes
+            tracker.ExaminedMembers,
+            tracker.ExaminedContentUtf8Bytes
         );
     }
 
@@ -322,13 +323,11 @@ public sealed partial class RecapGridContextHandle {
         predecessor = null;
         HistorySegmentDescriptor descriptor = current.Row.Descriptor;
         if (descriptor.PreviousRowId is null) {
-            return current.Cells.All(static cell =>
-                    cell.EvaluationKey.PriorInput
-                        is PriorInputReference.FirstRow)
+            return current.Cells.All(cell => cell.Slot.HistoryRowId == descriptor.RowId)
                 ? RecapGridProvenanceStatus.Verified
                 : RecapGridProvenanceStatus.NotSatisfied;
         }
-        if (current.View.PreviousViewDigest is not { } previousDigest) {
+        if (current.View.PreviousRowResultId is not { } previousId) {
             return RecapGridProvenanceStatus.NotSatisfied;
         }
         cancellationToken.ThrowIfCancellationRequested();
@@ -346,7 +345,7 @@ public sealed partial class RecapGridContextHandle {
             return RecapGridProvenanceStatus.Incomplete;
         }
         RecapGridStoreReadResult<RecapRowView> previousRead =
-            reader.ReadView(previousDigest);
+            reader.ReadView(previousId);
         if (previousRead is not RecapGridStoreReadResult<
                 RecapRowView>.Found previous) {
             return RecapGridProvenanceStatus.Incomplete;
@@ -371,17 +370,17 @@ public sealed partial class RecapGridContextHandle {
             }
             RecapRowViewCell member = previous.Value.OrderedCells[index];
             RecapGridStoreReadResult<RecapCellArtifact> read =
-                reader.ReadCell(member.CellDigest);
+                reader.ReadCell(member.CellId);
             if (read is not RecapGridStoreReadResult<
                     RecapCellArtifact>.Found found) {
                 return RecapGridProvenanceStatus.Incomplete;
             }
             if (!tracker.RecordReadCell(found.Value)
-                || found.Value.CellDigest != member.CellDigest
+                || found.Value.Id != member.CellId
                 || found.Value.LogicalColumnId != member.LogicalColumnId
                 || found.Value.DefinitionDigest != member.DefinitionDigest
-                || found.Value.EvaluationKey.HistorySegmentDigest
-                    != selectedPredecessor.Row.Descriptor.DescriptorDigest) {
+                || found.Value.Slot.HistoryRowId
+                    != selectedPredecessor.Row.Descriptor.RowId) {
                 return RecapGridProvenanceStatus.Incomplete;
             }
             previousCells[index] = found.Value;
@@ -391,19 +390,32 @@ public sealed partial class RecapGridContextHandle {
             previous.Value,
             previousCells
         );
-        PriorInputProjectionDigest projectionDigest;
-        try {
-            projectionDigest = PriorInputProjectionDigest.FromCells(previousCells);
+        // A cell keeps its producer Slot even when an Overlay explicitly reuses it.
+        // Its source predecessor exists before that producer's row is published.
+        foreach (GridBuildRecipeDigest sourceRecipe in current.Cells
+                     .Select(static cell => cell.Slot.RecipeDigest).Distinct()) {
+            if (sourceRecipe == current.View.RecipeDigest) { continue; }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!tracker.CanReadRow()) { return RecapGridProvenanceStatus.Incomplete; }
+            _hooks.BeforeProvenancePredecessorLookup?.Invoke();
+            RecapGridStoreReadResult<RecapRowView> sourceRead = reader.ReadViewAt(
+                new RowViewAssignmentKey(current.View.RefId, current.View.TimelineId,
+                    sourceRecipe, descriptor.PreviousRowId.Value));
+            if (sourceRead is not RecapGridStoreReadResult<RecapRowView>.Found source
+                || !tracker.RecordReadRow(source.Value)) {
+                return RecapGridProvenanceStatus.Incomplete;
+            }
+            if (source.Value.RefId != current.View.RefId
+                || source.Value.TimelineId != current.View.TimelineId
+                || source.Value.RecipeDigest != sourceRecipe
+                || source.Value.HistoryRowId != descriptor.PreviousRowId.Value) {
+                return RecapGridProvenanceStatus.Incomplete;
+            }
+            if (source.Value.Id != previous.Value.Id) {
+                return RecapGridProvenanceStatus.NotSatisfied;
+            }
         }
-        catch (Exception) {
-            return RecapGridProvenanceStatus.Incomplete;
-        }
-        return current.Cells.All(cell =>
-                cell.EvaluationKey.PriorInput
-                    is PriorInputReference.Projection prior
-                && prior.Digest == projectionDigest)
-            ? RecapGridProvenanceStatus.Verified
-            : RecapGridProvenanceStatus.NotSatisfied;
+        return RecapGridProvenanceStatus.Verified;
     }
 
     private sealed record ProvenanceRow(
@@ -421,60 +433,43 @@ public sealed partial class RecapGridContextHandle {
 
         internal int ExaminedRows { get; private set; }
         internal int ExaminedCells { get; private set; }
-        internal int ExaminedCanonicalUtf8Bytes { get; private set; }
+        internal int ExaminedMembers { get; private set; }
+        internal int ExaminedContentUtf8Bytes { get; private set; }
 
         internal bool TryIncludeKnown(ProvenanceRow row) {
             int bytes;
-            try {
-                bytes = checked(
-                    row.View.ToCanonicalBytes().Length
-                    + row.Cells.Sum(static cell =>
-                        cell.ToCanonicalBytes().Length)
-                );
-            }
-            catch (OverflowException) {
-                return false;
-            }
+            try { bytes = checked(row.Cells.Sum(static cell => Encoding.UTF8.GetByteCount(cell.Content))); }
+            catch (OverflowException) { return false; }
             if (ExaminedRows >= _budget.MaximumRows
                 || row.Cells.Length > _budget.MaximumCells - ExaminedCells
-                || bytes > _budget.MaximumCanonicalUtf8Bytes
-                    - ExaminedCanonicalUtf8Bytes) {
+                || row.View.OrderedCells.Count > _budget.MaximumMembers - ExaminedMembers
+                || bytes > _budget.MaximumContentUtf8Bytes - ExaminedContentUtf8Bytes) {
                 return false;
             }
             ExaminedRows++;
             ExaminedCells += row.Cells.Length;
-            ExaminedCanonicalUtf8Bytes += bytes;
+            ExaminedMembers += row.View.OrderedCells.Count;
+            ExaminedContentUtf8Bytes += bytes;
             return true;
         }
 
-        internal bool CanReadRow() =>
-            ExaminedRows < _budget.MaximumRows
-            && ExaminedCanonicalUtf8Bytes
-                < _budget.MaximumCanonicalUtf8Bytes;
+        internal bool CanReadRow() => ExaminedRows < _budget.MaximumRows
+            && ExaminedMembers <= _budget.MaximumMembers;
 
         internal bool RecordReadRow(RecapRowView view) {
             ExaminedRows++;
-            ExaminedCanonicalUtf8Bytes = checked(
-                ExaminedCanonicalUtf8Bytes
-                + view.ToCanonicalBytes().Length
-            );
-            return ExaminedCanonicalUtf8Bytes
-                <= _budget.MaximumCanonicalUtf8Bytes;
+            ExaminedMembers = checked(ExaminedMembers + view.OrderedCells.Count);
+            return ExaminedMembers <= _budget.MaximumMembers;
         }
 
-        internal bool CanReadCell() =>
-            ExaminedCells < _budget.MaximumCells
-            && ExaminedCanonicalUtf8Bytes
-                < _budget.MaximumCanonicalUtf8Bytes;
+        internal bool CanReadCell() => ExaminedCells < _budget.MaximumCells
+            && ExaminedContentUtf8Bytes <= _budget.MaximumContentUtf8Bytes;
 
         internal bool RecordReadCell(RecapCellArtifact cell) {
             ExaminedCells++;
-            ExaminedCanonicalUtf8Bytes = checked(
-                ExaminedCanonicalUtf8Bytes
-                + cell.ToCanonicalBytes().Length
-            );
-            return ExaminedCanonicalUtf8Bytes
-                <= _budget.MaximumCanonicalUtf8Bytes;
+            ExaminedContentUtf8Bytes = checked(ExaminedContentUtf8Bytes
+                + Encoding.UTF8.GetByteCount(cell.Content));
+            return ExaminedContentUtf8Bytes <= _budget.MaximumContentUtf8Bytes;
         }
     }
 

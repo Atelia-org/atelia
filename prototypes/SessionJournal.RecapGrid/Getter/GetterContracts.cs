@@ -11,7 +11,9 @@ public static class RecapGridGetterLimits {
     public const int MaximumProvenanceRows = 128;
     public const int MaximumProvenanceCells =
         MaximumProvenanceRows * RecapGridLimits.MaximumColumnCount;
-    public const int MaximumProvenanceCanonicalUtf8Bytes = 16 * 1024 * 1024;
+    public const int MaximumProvenanceMembers =
+        MaximumProvenanceRows * RecapGridLimits.MaximumColumnCount;
+    public const int MaximumProvenanceContentUtf8Bytes = 16 * 1024 * 1024;
 }
 
 public enum RecapGridContextComponent {
@@ -31,26 +33,29 @@ public enum RecapGridProvenanceStatus {
 public sealed record RecapGridContextProvenance {
     internal RecapGridContextProvenance(
         RecapGridProvenanceStatus membershipComplete,
-        RecapGridProvenanceStatus priorInputAligned,
+        RecapGridProvenanceStatus priorSourceAligned,
         RecapGridProvenanceStatus fullRebuildChain,
         int examinedRows,
         int examinedCells,
-        int examinedCanonicalUtf8Bytes
+        int examinedMembers,
+        int examinedContentUtf8Bytes
     ) {
         MembershipComplete = membershipComplete;
-        PriorInputAligned = priorInputAligned;
+        PriorSourceAligned = priorSourceAligned;
         FullRebuildChain = fullRebuildChain;
         ExaminedRows = examinedRows;
         ExaminedCells = examinedCells;
-        ExaminedCanonicalUtf8Bytes = examinedCanonicalUtf8Bytes;
+        ExaminedMembers = examinedMembers;
+        ExaminedContentUtf8Bytes = examinedContentUtf8Bytes;
     }
 
     public RecapGridProvenanceStatus MembershipComplete { get; }
-    public RecapGridProvenanceStatus PriorInputAligned { get; }
+    public RecapGridProvenanceStatus PriorSourceAligned { get; }
     public RecapGridProvenanceStatus FullRebuildChain { get; }
     public int ExaminedRows { get; }
     public int ExaminedCells { get; }
-    public int ExaminedCanonicalUtf8Bytes { get; }
+    public int ExaminedMembers { get; }
+    public int ExaminedContentUtf8Bytes { get; }
 }
 
 public abstract record RecapGridContextOpenResult {
@@ -87,7 +92,7 @@ public sealed class RecapGridContextSelection {
         HistoryTimelineSelectedRow selectedRow,
         RecapRowView selectedView,
         FulfilledViewKey currentFulfilledKey,
-        RowViewDigest currentViewDigest,
+        RowResultId currentRowResultId,
         GetterLifetime owner,
         string ownerNonce,
         string handleToken,
@@ -103,7 +108,7 @@ public sealed class RecapGridContextSelection {
         SelectedRow = selectedRow;
         SelectedView = selectedView;
         CurrentFulfilledKey = currentFulfilledKey;
-        CurrentViewDigest = currentViewDigest;
+        CurrentRowResultId = currentRowResultId;
         Owner = owner;
         OwnerNonce = ownerNonce;
         HandleToken = handleToken;
@@ -120,9 +125,9 @@ public sealed class RecapGridContextSelection {
     public HistoryRowId SelectedRowId => SelectedRow.Descriptor.RowId;
     public HistorySegmentDescriptorDigest SelectedDescriptorDigest =>
         SelectedRow.Descriptor.DescriptorDigest;
-    public RowViewDigest SelectedViewDigest => SelectedView.Digest;
+    public RowResultId SelectedRowResultId => SelectedView.Id;
     public FulfilledViewKey CurrentFulfilledKey { get; }
-    public RowViewDigest CurrentViewDigest { get; }
+    public RowResultId CurrentRowResultId { get; }
 
     internal HistoryTimelineSelectedRow SelectedRow { get; }
     internal RecapRowView SelectedView { get; }
@@ -135,18 +140,21 @@ public sealed class RecapGridContextSelection {
 internal sealed record GetterProvenanceReadBudget(
     int MaximumRows,
     int MaximumCells,
-    int MaximumCanonicalUtf8Bytes
+    int MaximumMembers,
+    int MaximumContentUtf8Bytes
 ) {
     internal static GetterProvenanceReadBudget Production { get; } = new(
         RecapGridGetterLimits.MaximumProvenanceRows,
         RecapGridGetterLimits.MaximumProvenanceCells,
-        RecapGridGetterLimits.MaximumProvenanceCanonicalUtf8Bytes
+        RecapGridGetterLimits.MaximumProvenanceMembers,
+        RecapGridGetterLimits.MaximumProvenanceContentUtf8Bytes
     );
 
     internal void Validate() {
         if (MaximumRows < 1
             || MaximumCells < 1
-            || MaximumCanonicalUtf8Bytes < 1) {
+            || MaximumMembers < 1
+            || MaximumContentUtf8Bytes < 1) {
             throw new ArgumentOutOfRangeException(nameof(MaximumRows));
         }
     }

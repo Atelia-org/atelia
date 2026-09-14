@@ -219,55 +219,22 @@ public sealed partial class GetterVerticalTests : IDisposable {
             RecapGridStoreOpenResult.Opened
         >(RecapGridStoreFactory.Open(fixture.Path)).Handle;
         RecapRowView? previous = null;
-        var cells = new List<RecapCellArtifact>();
         for (int index = 0; index < fixture.Rows.Count; index++) {
             HistorySegmentDescriptor descriptor = fixture.Rows[index].Descriptor;
-            PriorInputReference prior = previous is null
-                ? PriorInputReference.FirstRow.Value
-                : new PriorInputReference.Projection(
-                    PriorInputProjectionDigest.FromCells([cells[^1]])
-                );
-            EvaluationKey key = EvaluationKey.Create(
-                descriptor.DescriptorDigest,
-                fixture.Definition.Digest,
-                prior
-            );
-            RecapCellArtifact cell = RecapCellArtifact.Create(
-                fixture.Definition.LogicalColumnId,
-                fixture.Definition.Digest,
-                key,
-                RecapCellOutcome.Updated,
-                contentFactory?.Invoke(index) ?? $"recap-{index}",
-                fixture.Definition.MaxContentUtf8Bytes
-            );
-            Assert.IsType<RecapGridCellPutResult.Inserted>(
-                store.Writer.PutCell(cell)
-            );
+            var slot = new CellSlot(fixture.Recipe.Digest, descriptor.RowId, fixture.Definition.LogicalColumnId);
             RowBuildSpec spec = RowBuildSpec.CreateFull(
                 fixture.Recipe,
-                new RowViewCoordinate(
-                    fixture.Journal.BranchRefId,
-                    descriptor.TimelineId,
-                    descriptor.RowId,
-                    descriptor.DescriptorDigest,
-                    fixture.Recipe.Digest,
-                    fixture.Recipe.Target.Digest,
-                    descriptor.PreviousRowId,
-                    previous?.Digest,
-                    bootstrapCompleted: true
-                ),
-                prior,
-                [new RowBuildAssignment.Evaluate(
-                    fixture.Definition.LogicalColumnId,
-                    key
-                )]
-            );
-            RecapRowView view = RecapRowView.Create(spec, [cell]);
-            Assert.IsType<RecapGridRowViewPutResult.Inserted>(
-                store.Writer.PutRowView(spec, view)
-            );
-            previous = view;
-            cells.Add(cell);
+                new RowViewCoordinate(fixture.Journal.BranchRefId, descriptor.TimelineId,
+                    descriptor.RowId, descriptor.DescriptorDigest, fixture.Recipe.Digest,
+                    fixture.Recipe.Target.Digest, descriptor.PreviousRowId, previous?.Id,
+                    bootstrapCompleted: true),
+                [new RowBuildAssignment.Evaluate(slot)]);
+            RecapCellArtifact cell = Assert.IsType<RecapGridCellPutResult.Inserted>(
+                store.Writer.PutCell(spec, RecapCellDraft.Create(slot, fixture.Definition.Digest,
+                    RecapCellOutcome.Updated, contentFactory?.Invoke(index) ?? $"recap-{index}",
+                    fixture.Definition.MaxContentUtf8Bytes))).Winner;
+            previous = Assert.IsType<RecapGridRowViewPutResult.Inserted>(
+                store.Writer.PutRowView(spec, [cell])).Winner;
         }
         HistorySegmentDescriptor head = fixture.Rows[^1].Descriptor;
         FulfilledViewKey fulfilled = FulfilledViewKey.Create(
@@ -277,7 +244,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
             fixture.Recipe
         );
         Assert.IsType<RecapGridFulfilledPutResult.Inserted>(
-            store.Writer.PutFulfilled(fulfilled, previous!.Digest)
+            store.Writer.PutFulfilled(fulfilled, previous!.Id)
         );
         return fixture;
     }

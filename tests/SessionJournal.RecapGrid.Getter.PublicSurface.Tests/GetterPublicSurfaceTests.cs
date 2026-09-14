@@ -128,11 +128,12 @@ public sealed class GetterPublicSurfaceTests : IDisposable {
             typeof(RecapGridContextProvenance),
             [
                 ("MembershipComplete", typeof(RecapGridProvenanceStatus)),
-                ("PriorInputAligned", typeof(RecapGridProvenanceStatus)),
+                ("PriorSourceAligned", typeof(RecapGridProvenanceStatus)),
                 ("FullRebuildChain", typeof(RecapGridProvenanceStatus)),
                 ("ExaminedRows", typeof(int)),
                 ("ExaminedCells", typeof(int)),
-                ("ExaminedCanonicalUtf8Bytes", typeof(int))
+                ("ExaminedMembers", typeof(int)),
+                ("ExaminedContentUtf8Bytes", typeof(int))
             ]
         );
         AssertEvidenceRecordShape(

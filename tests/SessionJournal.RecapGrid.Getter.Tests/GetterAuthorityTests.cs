@@ -209,11 +209,11 @@ public sealed partial class GetterVerticalTests {
                 getter,
                 missingCell.Journal.ReadCurrentHead()!.Value
             );
-            CellDigest missingDigest = selected.SelectedView
-                .OrderedCells[0].CellDigest;
+            CellId missingDigest = selected.SelectedView
+                .OrderedCells[0].CellId;
             ExecuteStoreSql(
                 missingCell.Path,
-                "PRAGMA foreign_keys=OFF; DELETE FROM cell_artifact WHERE cell_digest=$digest;",
+                "PRAGMA foreign_keys=OFF; DELETE FROM cell_artifact WHERE cell_id=$digest;",
                 ("$digest", missingDigest.Value)
             );
             RecapGridContextMaterializeResult.Invalid invalid = Assert.IsType<
@@ -224,17 +224,17 @@ public sealed partial class GetterVerticalTests {
         }
 
         using Fixture corruptView = await CreateBuiltFixture(turns: 1);
-        RowViewDigest viewDigest;
+        RowResultId viewDigest;
         using (RecapGridContextHandle getter = OpenGetter(
                    corruptView.Journal)) {
             viewDigest = Select(
                 getter,
                 corruptView.Journal.ReadCurrentHead()!.Value
-            ).SelectedViewDigest;
+            ).SelectedRowResultId;
         }
         ExecuteStoreSql(
             corruptView.Path,
-            "UPDATE row_view SET canonical=X'00' WHERE view_digest=$digest;",
+            "PRAGMA foreign_keys=OFF; UPDATE row_view_member SET logical_column_id='case.foreign' WHERE row_result_id=$digest;",
             ("$digest", viewDigest.Value)
         );
         using (RecapGridContextHandle getter = OpenGetter(
@@ -248,17 +248,17 @@ public sealed partial class GetterVerticalTests {
         }
 
         using Fixture brokenPrevious = await CreateBuiltFixture(turns: 2);
-        RowViewDigest previousDigest;
+        RowResultId previousDigest;
         using (RecapGridContextHandle getter = OpenGetter(
                    brokenPrevious.Journal)) {
             previousDigest = Select(
                 getter,
                 brokenPrevious.Journal.ReadCurrentHead()!.Value
-            ).SelectedView.PreviousViewDigest!.Value;
+            ).SelectedView.PreviousRowResultId!.Value;
         }
         ExecuteStoreSql(
             brokenPrevious.Path,
-            "PRAGMA foreign_keys=OFF; DELETE FROM row_view_member WHERE view_digest=$digest; DELETE FROM row_view WHERE view_digest=$digest;",
+            "PRAGMA foreign_keys=OFF; DELETE FROM row_view_member WHERE row_result_id=$digest; DELETE FROM row_view WHERE row_result_id=$digest;",
             ("$digest", previousDigest.Value)
         );
         using (RecapGridContextHandle getter = OpenGetter(
@@ -391,86 +391,19 @@ public sealed partial class GetterVerticalTests {
     }
 
     [Fact]
-    public async Task OffScopePreviousViewMakesProvenanceIncompleteNotVerified() {
+    public async Task OffScopePreviousRowFailsClosed() {
         using Fixture fixture = await CreateBuiltFixture(turns: 2);
         RecapGridContextSelection original;
         using (RecapGridContextHandle getter = OpenGetter(fixture.Journal)) {
-            original = Select(
-                getter,
-                fixture.Journal.ReadCurrentHead()!.Value
-            );
+            original = Select(getter, fixture.Journal.ReadCurrentHead()!.Value);
         }
-        using RecapGridStoreHandle store = Assert.IsType<
-            RecapGridStoreOpenResult.Opened>(
-            RecapGridStoreFactory.Open(fixture.Path)
-        ).Handle;
-        RecapCellArtifact cell = Assert.IsType<
-            RecapGridStoreReadResult<RecapCellArtifact>.Found>(
-            store.Reader.ReadCell(
-                original.SelectedView.OrderedCells[0].CellDigest
-            )
-        ).Value;
-        RowBuildSpec spec = RowBuildSpec.CreateFull(
-            fixture.Recipe,
-            new RowViewCoordinate(
-                fixture.Journal.BranchRefId,
-                original.SelectedRow.Descriptor.TimelineId,
-                original.SelectedRow.Descriptor.RowId,
-                original.SelectedDescriptorDigest,
-                fixture.Recipe.Digest,
-                fixture.Recipe.Target.Digest,
-                original.SelectedRow.Descriptor.PreviousRowId,
-                // This deliberately names the current view as predecessor;
-                // Store V2 must reject the broken assignment recurrence.
-                original.SelectedView.Digest,
-                bootstrapCompleted: true
-            ),
-            cell.EvaluationKey.PriorInput,
-            [new RowBuildAssignment.Evaluate(
-                cell.LogicalColumnId,
-                cell.EvaluationKey
-            )]
-        );
-        RecapRowView wrong = RecapRowView.Create(spec, [cell]);
-        store.Dispose();
-        ExecuteStoreSql(
-            fixture.Path,
-            """
-            PRAGMA foreign_keys=OFF;
-            UPDATE row_view
-            SET view_digest=$newView,
-                previous_view_digest=$offScopePrevious,
-                canonical=$canonical
-            WHERE view_digest=$oldView;
-            UPDATE row_view_member
-            SET view_digest=$newView
-            WHERE view_digest=$oldView;
-            UPDATE fulfilled_view_ref
-            SET view_digest=$newView
-            WHERE view_digest=$oldView;
-            """,
-            ("$newView", wrong.Digest.Value),
-            ("$offScopePrevious", original.SelectedView.Digest.Value),
-            ("$canonical", wrong.ToCanonicalBytes()),
-            ("$oldView", original.SelectedView.Digest.Value)
-        );
-
+        // Corrupt the one SQL authority; there is no canonical replica to forge.
+        ExecuteStoreSql(fixture.Path,
+            "PRAGMA foreign_keys=OFF; UPDATE row_view SET previous_row_result_id=$self WHERE row_result_id=$self;",
+            ("$self", original.SelectedView.Id.Value));
         using RecapGridContextHandle reopened = OpenGetter(fixture.Journal);
-        RecapGridContextMaterializeResult.Available available = Assert.IsType<
-            RecapGridContextMaterializeResult.Available>(
-            reopened.Materialize(Select(
-                reopened,
-                fixture.Journal.ReadCurrentHead()!.Value
-            ))
-        );
-        Assert.Equal(
-            RecapGridProvenanceStatus.Incomplete,
-            available.Provenance.PriorInputAligned
-        );
-        Assert.Equal(
-            RecapGridProvenanceStatus.Incomplete,
-            available.Provenance.FullRebuildChain
-        );
+        Assert.IsType<RecapGridContextResolveResult.Invalid>(
+            reopened.Resolve(fixture.Journal.ReadCurrentHead()!.Value, 0));
     }
 
     private static void ForgeActiveRecipe(

@@ -13,7 +13,8 @@ public sealed class GetterEvidenceRecordContractTests {
             RecapGridProvenanceStatus.Incomplete,
             1,
             2,
-            3
+            3,
+            4
         );
         var second = new RecapGridContextProvenance(
             RecapGridProvenanceStatus.Verified,
@@ -21,7 +22,8 @@ public sealed class GetterEvidenceRecordContractTests {
             RecapGridProvenanceStatus.Incomplete,
             1,
             2,
-            3
+            3,
+            4
         );
         RecapGridContextProvenance clone = first with { };
 
@@ -31,9 +33,9 @@ public sealed class GetterEvidenceRecordContractTests {
         Assert.Equal(first, clone);
         Assert.Equal(
             "RecapGridContextProvenance { MembershipComplete = Verified, "
-                + "PriorInputAligned = NotSatisfied, FullRebuildChain = "
+                + "PriorSourceAligned = NotSatisfied, FullRebuildChain = "
                 + "Incomplete, ExaminedRows = 1, ExaminedCells = 2, "
-                + "ExaminedCanonicalUtf8Bytes = 3 }",
+                + "ExaminedMembers = 3, ExaminedContentUtf8Bytes = 4 }",
             first.ToString()
         );
     }

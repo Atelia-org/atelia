@@ -81,11 +81,11 @@ public sealed partial class GetterVerticalTests {
     public async Task ReserveBootstrapNeverMasksUnhealthyCrossedArtifacts() {
         using Fixture fixture = await CreateBuiltFixture(turns: 2);
         EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
-        RowViewDigest crossedDigest;
-        CellDigest crossedCell;
+        RowResultId crossedDigest;
+        CellId crossedCell;
         using (RecapGridContextHandle getter = OpenGetter(fixture.Journal)) {
             RecapGridContextSelection current = Select(getter, boundary);
-            crossedDigest = current.SelectedView.PreviousViewDigest!.Value;
+            crossedDigest = current.SelectedView.PreviousRowResultId!.Value;
         }
         using (RecapGridStoreReaderHandle store = Assert.IsType<
                RecapGridStoreReaderOpenResult.Opened>(
@@ -94,12 +94,12 @@ public sealed partial class GetterVerticalTests {
                 RecapGridStoreReadResult<RecapRowView>.Found>(
                 store.Reader.ReadView(crossedDigest)
             ).Value;
-            crossedCell = Assert.Single(crossed.OrderedCells).CellDigest;
+            crossedCell = Assert.Single(crossed.OrderedCells).CellId;
         }
         UpdateCadence(fixture.Journal, minimumRecentHistoryLoad: 1_000_000);
         ExecuteStoreSql(
             fixture.Path,
-            "PRAGMA foreign_keys=OFF; DELETE FROM cell_artifact WHERE cell_digest=$digest;",
+            "PRAGMA foreign_keys=OFF; DELETE FROM cell_artifact WHERE cell_id=$digest;",
             ("$digest", crossedCell.Value)
         );
 
@@ -251,7 +251,7 @@ public sealed partial class GetterVerticalTests {
             foreignSelection.SelectedRow,
             expected.SelectedView,
             expected.CurrentFulfilledKey,
-            expected.CurrentViewDigest,
+            expected.CurrentRowResultId,
             expected.Owner,
             expected.OwnerNonce,
             expected.HandleToken,
@@ -497,15 +497,41 @@ public sealed partial class GetterVerticalTests {
         }
         Assert.Equal(fixture.Rows.Count, baseline.ExaminedRows);
         Assert.Equal(fixture.Rows.Count, baseline.ExaminedCells);
-        Assert.True(baseline.ExaminedCanonicalUtf8Bytes > 0);
+        Assert.Equal(fixture.Rows.Count, baseline.ExaminedMembers);
+        Assert.True(baseline.ExaminedContentUtf8Bytes > 0);
         Assert.Equal(
             RecapGridProvenanceStatus.Verified,
-            baseline.PriorInputAligned
+            baseline.PriorSourceAligned
         );
         Assert.Equal(
             RecapGridProvenanceStatus.Verified,
             baseline.FullRebuildChain
         );
+        Assert.Equal(fixture.Rows.Select((_, index) =>
+            System.Text.Encoding.UTF8.GetByteCount($"recap-{index}")).Sum(),
+            baseline.ExaminedContentUtf8Bytes);
+
+        foreach (bool limitMembers in new[] { false, true }) {
+            using RecapGridContextHandle limited = OpenGetterForTest(fixture.Journal,
+                new GetterTestHooks(ProvenanceBudget: new GetterProvenanceReadBudget(
+                    baseline.ExaminedRows,
+                    limitMembers ? baseline.ExaminedCells : baseline.ExaminedCells - 1,
+                    limitMembers ? baseline.ExaminedMembers - 1 : baseline.ExaminedMembers,
+                    baseline.ExaminedContentUtf8Bytes)));
+            RecapGridContextProvenance limitedEvidence = Assert.IsType<
+                RecapGridContextMaterializeResult.Available>(
+                limited.Materialize(Select(limited, boundary))).Provenance;
+            Assert.Equal(RecapGridProvenanceStatus.Incomplete, limitedEvidence.FullRebuildChain);
+            if (limitMembers) {
+                // SQL has materialized the row that crosses the member budget;
+                // count its members, but do not read its cells.
+                Assert.Equal(baseline.ExaminedMembers, limitedEvidence.ExaminedMembers);
+                Assert.Equal(baseline.ExaminedCells - 1, limitedEvidence.ExaminedCells);
+            }
+            else {
+                Assert.Equal(baseline.ExaminedCells - 1, limitedEvidence.ExaminedCells);
+            }
+        }
 
         using (RecapGridContextHandle exact = OpenGetterForTest(
                    fixture.Journal,
@@ -513,7 +539,8 @@ public sealed partial class GetterVerticalTests {
                        new GetterProvenanceReadBudget(
                            baseline.ExaminedRows,
                            baseline.ExaminedCells,
-                           baseline.ExaminedCanonicalUtf8Bytes
+                    baseline.ExaminedMembers,
+                           baseline.ExaminedContentUtf8Bytes
                        )))) {
             RecapGridContextProvenance observed = Assert.IsType<
                 RecapGridContextMaterializeResult.Available>(
@@ -528,7 +555,8 @@ public sealed partial class GetterVerticalTests {
                 new GetterProvenanceReadBudget(
                     baseline.ExaminedRows - 1,
                     baseline.ExaminedCells,
-                    baseline.ExaminedCanonicalUtf8Bytes
+                    baseline.ExaminedMembers,
+                    baseline.ExaminedContentUtf8Bytes
                 ))
         );
         RecapGridContextMaterializeResult.Available cappedAvailable =
@@ -548,17 +576,18 @@ public sealed partial class GetterVerticalTests {
             cappedAvailable.Provenance.ExaminedCells
         );
         Assert.True(
-            cappedAvailable.Provenance.ExaminedCanonicalUtf8Bytes
-                < baseline.ExaminedCanonicalUtf8Bytes
+            cappedAvailable.Provenance.ExaminedContentUtf8Bytes
+                < baseline.ExaminedContentUtf8Bytes
         );
 
-        int byteCap = baseline.ExaminedCanonicalUtf8Bytes - 1;
+        int byteCap = baseline.ExaminedContentUtf8Bytes - 1;
         using RecapGridContextHandle byteCapped = OpenGetterForTest(
             fixture.Journal,
             new GetterTestHooks(ProvenanceBudget:
                 new GetterProvenanceReadBudget(
                     baseline.ExaminedRows,
                     baseline.ExaminedCells,
+                    baseline.ExaminedMembers,
                     byteCap
                 ))
         );
@@ -572,10 +601,10 @@ public sealed partial class GetterVerticalTests {
         );
         // The single artifact that crosses the byte ceiling is still counted;
         // no unaccounted lookup can make an incomplete proof look verified.
-        Assert.True(byteEvidence.ExaminedCanonicalUtf8Bytes > byteCap);
+        Assert.True(byteEvidence.ExaminedContentUtf8Bytes > byteCap);
         Assert.True(
-            byteEvidence.ExaminedCanonicalUtf8Bytes
-                <= baseline.ExaminedCanonicalUtf8Bytes
+            byteEvidence.ExaminedContentUtf8Bytes
+                <= baseline.ExaminedContentUtf8Bytes
         );
 
         int predecessorLookups = 0;
@@ -585,7 +614,8 @@ public sealed partial class GetterVerticalTests {
                 ProvenanceBudget: new GetterProvenanceReadBudget(
                     MaximumRows: 1,
                     baseline.ExaminedCells,
-                    baseline.ExaminedCanonicalUtf8Bytes
+                    baseline.ExaminedMembers,
+                    baseline.ExaminedContentUtf8Bytes
                 ),
                 BeforeProvenancePredecessorLookup:
                     () => predecessorLookups++
@@ -600,7 +630,7 @@ public sealed partial class GetterVerticalTests {
         Assert.Equal(1, oneRowEvidence.ExaminedCells);
         Assert.Equal(
             RecapGridProvenanceStatus.Incomplete,
-            oneRowEvidence.PriorInputAligned
+            oneRowEvidence.PriorSourceAligned
         );
         Assert.Equal(
             RecapGridProvenanceStatus.Incomplete,
@@ -615,7 +645,7 @@ public sealed partial class GetterVerticalTests {
         using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
         EventAddress oldRawHead = fixture.Journal.ReadCurrentHead()!.Value;
         RecapGridContextSelection oldSelection = Select(getter, oldRawHead);
-        Assert.NotNull(oldSelection.SelectedView.PreviousViewDigest);
+        Assert.NotNull(oldSelection.SelectedView.PreviousRowResultId);
 
         SessionTurnRetractionResult.Moved moved = Assert.IsType<
             SessionTurnRetractionResult.Moved>(
@@ -664,66 +694,30 @@ public sealed partial class GetterVerticalTests {
                )).Handle) {
             RecapRowView previous = oldSelection.SelectedView;
             while (previous.HistoryRowId != commonHead.HeadRowId) {
-                Assert.NotNull(previous.PreviousViewDigest);
+                Assert.NotNull(previous.PreviousRowResultId);
                 previous = Assert.IsType<
                     RecapGridStoreReadResult<RecapRowView>.Found>(
                     store.Reader.ReadView(
-                        previous.PreviousViewDigest!.Value
+                        previous.PreviousRowResultId!.Value
                     )
                 ).Value;
             }
             foreach ((HistoryTimelineSelectedRow row, int index) in committed
                          .Select((row, index) => (row, index))) {
-                RecapCellArtifact previousCell = Assert.IsType<
-                    RecapGridStoreReadResult<RecapCellArtifact>.Found>(
-                    store.Reader.ReadCell(
-                        previous.OrderedCells[0].CellDigest
-                    )
-                ).Value;
-                PriorInputReference prior =
-                    new PriorInputReference.Projection(
-                        PriorInputProjectionDigest.FromCells([previousCell])
-                    );
-                EvaluationKey evaluation = EvaluationKey.Create(
-                    row.Descriptor.DescriptorDigest,
-                    fixture.Definition.Digest,
-                    prior
-                );
-                RecapCellArtifact cell = RecapCellArtifact.Create(
-                    fixture.Definition.LogicalColumnId,
-                    fixture.Definition.Digest,
-                    evaluation,
-                    RecapCellOutcome.Updated,
-                    $"sibling-recap-{index}",
-                    fixture.Definition.MaxContentUtf8Bytes
-                );
-                Assert.IsType<RecapGridCellPutResult.Inserted>(
-                    store.Writer.PutCell(cell)
-                );
-                RowBuildSpec spec = RowBuildSpec.CreateFull(
-                    fixture.Recipe,
-                    new RowViewCoordinate(
-                        fixture.Journal.BranchRefId,
-                        row.Descriptor.TimelineId,
-                        row.Descriptor.RowId,
-                        row.Descriptor.DescriptorDigest,
-                        fixture.Recipe.Digest,
-                        fixture.Recipe.Target.Digest,
-                        row.Descriptor.PreviousRowId,
-                        previous.Digest,
-                        bootstrapCompleted: true
-                    ),
-                    prior,
-                    [new RowBuildAssignment.Evaluate(
-                        fixture.Definition.LogicalColumnId,
-                        evaluation
-                    )]
-                );
-                RecapRowView siblingView = RecapRowView.Create(spec, [cell]);
-                Assert.IsType<RecapGridRowViewPutResult.Inserted>(
-                    store.Writer.PutRowView(spec, siblingView)
-                );
-                previous = siblingView;
+                var slot = new CellSlot(fixture.Recipe.Digest, row.Descriptor.RowId,
+                    fixture.Definition.LogicalColumnId);
+                RowBuildSpec spec = RowBuildSpec.CreateFull(fixture.Recipe,
+                    new RowViewCoordinate(fixture.Journal.BranchRefId, row.Descriptor.TimelineId,
+                        row.Descriptor.RowId, row.Descriptor.DescriptorDigest, fixture.Recipe.Digest,
+                        fixture.Recipe.Target.Digest, row.Descriptor.PreviousRowId, previous.Id,
+                        bootstrapCompleted: true),
+                    [new RowBuildAssignment.Evaluate(slot)]);
+                RecapCellArtifact cell = Assert.IsType<RecapGridCellPutResult.Inserted>(
+                    store.Writer.PutCell(spec, RecapCellDraft.Create(slot, fixture.Definition.Digest,
+                        RecapCellOutcome.Updated, $"sibling-recap-{index}",
+                        fixture.Definition.MaxContentUtf8Bytes))).Winner;
+                previous = Assert.IsType<RecapGridRowViewPutResult.Inserted>(
+                    store.Writer.PutRowView(spec, [cell])).Winner;
             }
             FulfilledViewKey fulfilled = FulfilledViewKey.Create(
                 fixture.Journal.BranchRefId,
@@ -732,7 +726,7 @@ public sealed partial class GetterVerticalTests {
                 fixture.Recipe
             );
             Assert.IsType<RecapGridFulfilledPutResult.Inserted>(
-                store.Writer.PutFulfilled(fulfilled, previous.Digest)
+                store.Writer.PutFulfilled(fulfilled, previous.Id)
             );
         }
 
