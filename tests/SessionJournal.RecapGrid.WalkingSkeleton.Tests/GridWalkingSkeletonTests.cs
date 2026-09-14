@@ -1,351 +1,109 @@
 using Atelia.EventJournal;
-using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
-using Atelia.SessionJournal.RecapGrid;
 
 namespace Atelia.SessionJournal.RecapGrid.WalkingSkeleton.Tests;
 
-/// <summary>
-/// Cross-package walking skeleton over the formal WP-01/WP-02 identities.
-/// This fixture intentionally owns no alternate Grid shape or hasher.
-/// </summary>
+/// <summary>Cross-package rules with explicit synthetic stored IDs.
+/// Store/Manager integration tests prove actual allocation and first-winner behavior.</summary>
 public sealed class GridWalkingSkeletonTests {
-    private static readonly TimelineId Timeline = new(
-        "00112233445566778899aabbccddeeff"
-    );
+    private static readonly TimelineId Timeline = new("00112233445566778899aabbccddeeff");
 
     [Fact]
-    public void FirstAndSuccessorRowsUseFrozenPriorProjection() {
+    public void SuccessorKeepsIndependentPredecessorAndCurrentSlots() {
         Fixture fixture = CreateFixture();
-        HistorySegmentDescriptorDigest firstHistory = HistoryDigest('1');
-        EvaluationKey firstCulprit = EvaluationKey.Create(
-            firstHistory,
-            fixture.Culprit.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        EvaluationKey firstWorld = EvaluationKey.Create(
-            firstHistory,
-            fixture.World.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        RowBuildSpec firstSpec = RowBuildSpec.CreateFull(
-            fixture.Recipe,
-            Coordinate(fixture.Recipe, RowId('1'), firstHistory, null),
-            PriorInputReference.FirstRow.Value,
-            [
-                new RowBuildAssignment.Evaluate(
-                    fixture.Culprit.LogicalColumnId,
-                    firstCulprit
-                ),
-                new RowBuildAssignment.Evaluate(
-                    fixture.World.LogicalColumnId,
-                    firstWorld
-                )
-            ]
-        );
-        RecapCellArtifact culpritCell = Cell(
-            fixture.Culprit,
-            firstCulprit,
-            "The witness account conflicts with X's alibi."
-        );
-        RecapCellArtifact worldCell = Cell(
-            fixture.World,
-            firstWorld,
-            "The locked room requires access to the service passage."
-        );
-        RecapRowView firstView = View(
-            firstSpec,
-            culpritCell,
-            worldCell
-        );
-        PriorInputProjectionDigest prior = PriorInputProjectionDigest.FromCells([
-            culpritCell,
-            worldCell
-        ]);
+        RowBuildSpec first = FullSpec(fixture, RowId('1'), null);
+        RecapCellArtifact culprit = Cell(fixture.Culprit,
+            Slot(fixture.Recipe, RowId('1'), fixture.Culprit), "Conflicting alibi.");
+        RecapCellArtifact world = Cell(fixture.World,
+            Slot(fixture.Recipe, RowId('1'), fixture.World), "Locked room.");
+        RecapRowView view = View(first, culprit, world);
+        RowBuildSpec second = FullSpec(fixture, RowId('2'), view.Id);
 
-        HistorySegmentDescriptorDigest secondHistory = HistoryDigest('2');
-        var priorReference = new PriorInputReference.Projection(prior);
-        EvaluationKey secondCulprit = EvaluationKey.Create(
-            secondHistory,
-            fixture.Culprit.Digest,
-            priorReference
-        );
-        EvaluationKey secondWorld = EvaluationKey.Create(
-            secondHistory,
-            fixture.World.Digest,
-            priorReference
-        );
-        RowBuildSpec secondSpec = RowBuildSpec.CreateFull(
-            fixture.Recipe,
-            Coordinate(
-                fixture.Recipe,
-                RowId('2'),
-                secondHistory,
-                firstView.Digest
-            ),
-            priorReference,
-            [
-                new RowBuildAssignment.Evaluate(
-                    fixture.Culprit.LogicalColumnId,
-                    secondCulprit
-                ),
-                new RowBuildAssignment.Evaluate(
-                    fixture.World.LogicalColumnId,
-                    secondWorld
-                )
-            ]
-        );
-
-        Assert.Equal(firstView.Digest, secondSpec.PreviousViewDigest);
-        Assert.All(
-            secondSpec.OrderedAssignments,
-            assignment => Assert.Equal(
-                prior,
-                Assert.IsType<PriorInputReference.Projection>(
-                    Assert.IsType<RowBuildAssignment.Evaluate>(assignment)
-                        .EvaluationKey.PriorInput
-                ).Digest
-            )
-        );
+        Assert.Equal(view.Id, second.PreviousRowResultId);
+        Assert.Equal(RowId('1'), second.PreviousHistoryRowId);
+        Assert.All(second.OrderedAssignments, assignment => {
+            CellSlot slot = Assert.IsType<RowBuildAssignment.Evaluate>(assignment).Slot;
+            Assert.Equal(fixture.Recipe.Digest, slot.RecipeDigest);
+            Assert.Equal(RowId('2'), slot.HistoryRowId);
+            Assert.Equal(assignment.LogicalColumnId, slot.LogicalColumnId);
+        });
+        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(fixture.Recipe,
+            second.Coordinate, first.OrderedAssignments));
+        Assert.Throws<ArgumentException>(() => View(first, world, culprit));
     }
 
     [Fact]
-    public void ContentEquivalentViewsShareProjectionIdentity() {
+    public void SameContentAcrossRecipesHasDistinctSlots() {
         Fixture fixture = CreateFixture();
-        MaintainerDefinitionRevision changedCulprit = Maintainer(
-            "culprit", fixture.Family.Digest, "A different definition with the same result.");
-        RecapCellArtifact[] first = [
-            Cell(fixture.Culprit, EvaluationKey.Create(HistoryDigest('1'),
-                fixture.Culprit.Digest, PriorInputReference.FirstRow.Value), "same culprit conclusion"),
-            Cell(fixture.World, EvaluationKey.Create(HistoryDigest('1'),
-                fixture.World.Digest, PriorInputReference.FirstRow.Value), "same world conclusion")
-        ];
-        RecapCellArtifact[] second = [
-            Cell(changedCulprit, EvaluationKey.Create(HistoryDigest('2'),
-                changedCulprit.Digest, PriorInputReference.FirstRow.Value), "same culprit conclusion"),
-            Cell(fixture.World, EvaluationKey.Create(HistoryDigest('2'),
-                fixture.World.Digest, PriorInputReference.FirstRow.Value), "same world conclusion")
-        ];
-
-        Assert.NotEqual(first[0].DefinitionDigest, second[0].DefinitionDigest);
-        Assert.NotEqual(first[0].CellDigest, second[0].CellDigest);
-        Assert.NotEqual(first[1].CellDigest, second[1].CellDigest);
-        Assert.Equal(PriorInputProjectionDigest.FromCells(first),
-            PriorInputProjectionDigest.FromCells(second));
+        var changed = Maintainer("culprit", fixture.Family.Digest, "A different rule.");
+        var target = BuildTarget.Create([
+            new BuildTargetColumn(changed.LogicalColumnId, changed.Digest),
+            new BuildTargetColumn(fixture.World.LogicalColumnId, fixture.World.Digest)]);
+        var otherRecipe = GridBuildRecipe.CreateFull(Timeline, RowId('f'), target);
+        var first = Cell(fixture.World, Slot(fixture.Recipe, RowId('1'), fixture.World), "same text");
+        var second = Cell(fixture.World, Slot(otherRecipe, RowId('1'), fixture.World), "same text");
+        Assert.Equal(first.Content, second.Content);
+        Assert.NotEqual(first.Slot, second.Slot);
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(first.Slot, Slot(fixture.Recipe, RowId('1'), fixture.World));
     }
 
     [Fact]
     public void OverlayRecomputesOnlyDeclaredOrderedSubset() {
         Fixture fixture = CreateFixture();
-        MaintainerDefinitionRevision changed = Maintainer(
-            "culprit",
-            fixture.Family.Digest,
-            "Focus on X's opportunity and means."
-        );
-        BuildTarget target = BuildTarget.Create([
-            new BuildTargetColumn(
-                changed.LogicalColumnId,
-                changed.Digest
-            ),
-            new BuildTargetColumn(
-                fixture.World.LogicalColumnId,
-                fixture.World.Digest
-            )
-        ]);
-
-        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
-            fixture.Recipe,
-            RowId('f'),
-            target,
-            [changed.LogicalColumnId]
-        );
-
+        var changed = Maintainer("culprit", fixture.Family.Digest, "Focus on opportunity.");
+        var target = BuildTarget.Create([
+            new BuildTargetColumn(changed.LogicalColumnId, changed.Digest),
+            new BuildTargetColumn(fixture.World.LogicalColumnId, fixture.World.Digest)]);
+        var overlay = GridBuildRecipe.CreateOverlay(fixture.Recipe, RowId('f'), target,
+            [changed.LogicalColumnId]);
         Assert.Equal(fixture.Recipe.Digest, overlay.BaseRecipeDigest);
-        Assert.Equal(
-            [changed.LogicalColumnId],
-            overlay.RecomputedColumns
-        );
-        Assert.Equal(
-            fixture.World.Digest,
-            overlay.Target.OrderedColumns[1].DefinitionDigest
-        );
+        Assert.Equal([changed.LogicalColumnId], overlay.RecomputedColumns);
+        Assert.Equal(fixture.World.Digest, overlay.Target.OrderedColumns[1].DefinitionDigest);
     }
 
     [Fact]
-    public void OverlayMayRemoveReorderAddAndReuseHistoricalCell() {
+    public void OverlayMayRemoveReorderAddAndReuseBaseCellWithoutChangingItsSlot() {
         Fixture fixture = CreateFixture();
-        MaintainerDefinitionRevision suspect = Maintainer(
-            "suspect-x",
-            fixture.Family.Digest,
-            "Are X's actions suspicious?"
-        );
-        BuildTarget target = BuildTarget.Create([
-            new BuildTargetColumn(
-                fixture.World.LogicalColumnId,
-                fixture.World.Digest
-            ),
-            new BuildTargetColumn(suspect.LogicalColumnId, suspect.Digest)
-        ]);
-        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
-            fixture.Recipe,
-            RowId('2'),
-            target,
-            [suspect.LogicalColumnId]
-        );
-
-        EvaluationKey historicalWorld = EvaluationKey.Create(
-            HistoryDigest('2'),
-            fixture.World.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact historicalCell = Cell(
-            fixture.World,
-            historicalWorld,
-            "The service passage remains the only access route."
-        );
-        var currentPrior = new PriorInputReference.Projection(
-            PriorInputProjectionDigest.FromCells([historicalCell]));
-        EvaluationKey currentSuspect = EvaluationKey.Create(
-            HistoryDigest('2'),
-            suspect.Digest,
-            currentPrior
-        );
-        RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(
-            overlay,
-            Coordinate(
-                overlay,
-                RowId('2'),
-                HistoryDigest('2'),
-                new RowViewDigest(new string('d', 64))
-            ),
-            currentPrior,
-            [
-                new RowBuildAssignment.Reuse(
-                    fixture.World.LogicalColumnId,
-                    historicalCell
-                ),
-                new RowBuildAssignment.Evaluate(
-                    suspect.LogicalColumnId,
-                    currentSuspect
-                )
-            ]
-        );
-        RecapCellArtifact suspectCell = Cell(
-            suspect,
-            currentSuspect,
-            "X knew about the passage before it was disclosed."
-        );
-        EvaluationKey currentWorld = EvaluationKey.Create(
-            HistoryDigest('2'),
-            fixture.World.Digest,
-            currentPrior
-        );
-        Assert.Throws<ArgumentException>(() =>
-            RowBuildSpec.CreateOverlayBootstrap(
-                overlay,
-                Coordinate(
-                    overlay,
-                    RowId('2'),
-                    HistoryDigest('2'),
-                    new RowViewDigest(new string('d', 64))
-                ),
-                currentPrior,
-                [
-                    new RowBuildAssignment.Reuse(
-                        fixture.World.LogicalColumnId,
-                        historicalCell
-                    ),
-                    new RowBuildAssignment.Reuse(
-                        suspect.LogicalColumnId,
-                        suspectCell
-                    )
-                ]
-            ));
-        Assert.Throws<ArgumentException>(() =>
-            RowBuildSpec.CreateOverlayBootstrap(
-                overlay,
-                Coordinate(
-                    overlay,
-                    RowId('2'),
-                    HistoryDigest('2'),
-                    new RowViewDigest(new string('d', 64))
-                ),
-                currentPrior,
-                [
-                    new RowBuildAssignment.Evaluate(
-                        fixture.World.LogicalColumnId,
-                        currentWorld
-                    ),
-                    new RowBuildAssignment.Evaluate(
-                        suspect.LogicalColumnId,
-                        currentSuspect
-                    )
-                ]
-            ));
-        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateNormal(
-            overlay,
-            Coordinate(
-                overlay,
-                RowId('2'),
-                HistoryDigest('2'),
-                new RowViewDigest(new string('d', 64))
-            ),
-            currentPrior,
-            [
-                new RowBuildAssignment.Reuse(
-                    fixture.World.LogicalColumnId,
-                    historicalCell
-                ),
-                new RowBuildAssignment.Evaluate(
-                    suspect.LogicalColumnId,
-                    currentSuspect
-                )
-            ]
-        ));
-        RecapRowView view = RecapRowView.Create(
-            spec,
-            [historicalCell, suspectCell]
-        );
-
-        Assert.Equal(
-            [fixture.World.LogicalColumnId, suspect.LogicalColumnId],
-            view.OrderedCells.Select(static cell => cell.LogicalColumnId)
-        );
-        Assert.Throws<ArgumentException>(() => RecapRowView.Create(
-            spec,
-            [suspectCell, suspectCell]
-        ));
-        EvaluationKey wrongRowKey = EvaluationKey.Create(
-            HistoryDigest('1'),
-            fixture.World.Digest,
-            PriorInputReference.FirstRow.Value
-        );
-        RecapCellArtifact wrongRowCell = Cell(
-            fixture.World,
-            wrongRowKey,
-            historicalCell.Content
-        );
-        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateOverlayBootstrap(
-            overlay,
-            Coordinate(
-                overlay,
-                RowId('2'),
-                HistoryDigest('2'),
-                new RowViewDigest(new string('d', 64))
-            ),
-            currentPrior,
-            [
-                new RowBuildAssignment.Reuse(
-                    fixture.World.LogicalColumnId,
-                    wrongRowCell
-                ),
-                new RowBuildAssignment.Evaluate(
-                    suspect.LogicalColumnId,
-                    currentSuspect
-                )
-            ]
-        ));
+        var suspect = Maintainer("suspect-x", fixture.Family.Digest, "Are X's actions suspicious?");
+        var target = BuildTarget.Create([
+            new BuildTargetColumn(fixture.World.LogicalColumnId, fixture.World.Digest),
+            new BuildTargetColumn(suspect.LogicalColumnId, suspect.Digest)]);
+        var overlay = GridBuildRecipe.CreateOverlay(fixture.Recipe, RowId('2'), target,
+            [suspect.LogicalColumnId]);
+        var coordinate = Coordinate(overlay, RowId('2'), HistoryDigest('2'),
+            new RowResultId(new string('d', 32)));
+        var historical = Cell(fixture.World, Slot(fixture.Recipe, RowId('2'), fixture.World), "Service passage.");
+        var current = Cell(suspect, Slot(overlay, RowId('2'), suspect), "X knew the passage.");
+        RowBuildAssignment[] assignments = [
+            new RowBuildAssignment.Reuse(fixture.World.LogicalColumnId, historical),
+            new RowBuildAssignment.Evaluate(current.Slot)];
+        var spec = RowBuildSpec.CreateOverlayBootstrap(overlay, coordinate, assignments);
+        var view = View(spec, historical, current);
+        Assert.Equal([fixture.World.LogicalColumnId, suspect.LogicalColumnId],
+            view.OrderedCells.Select(cell => cell.LogicalColumnId));
+        Assert.Equal(historical.Id, view.OrderedCells[0].CellId);
+        Assert.Equal(fixture.Recipe.Digest, historical.Slot.RecipeDigest);
+        Assert.NotEqual(overlay.Digest, historical.Slot.RecipeDigest);
+        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateNormal(overlay, coordinate, assignments));
+        Assert.Throws<ArgumentException>(() => View(spec, current, current));
+        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateOverlayBootstrap(overlay, coordinate, [
+            assignments[0], new RowBuildAssignment.Reuse(suspect.LogicalColumnId, current)]));
+        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateOverlayBootstrap(overlay, coordinate, [
+            new RowBuildAssignment.Evaluate(Slot(overlay, RowId('2'), fixture.World)), assignments[1]]));
+        var wrongRow = Cell(fixture.World, Slot(fixture.Recipe, RowId('1'), fixture.World), historical.Content);
+        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateOverlayBootstrap(overlay, coordinate, [
+            new RowBuildAssignment.Reuse(fixture.World.LogicalColumnId, wrongRow), assignments[1]]));
     }
+
+    private static CellSlot Slot(GridBuildRecipe recipe, HistoryRowId row,
+        MaintainerDefinitionRevision definition) => new(recipe.Digest, row, definition.LogicalColumnId);
+
+    private static RowBuildSpec FullSpec(Fixture fixture, HistoryRowId row, RowResultId? previous)
+        => RowBuildSpec.CreateFull(fixture.Recipe,
+            Coordinate(fixture.Recipe, row, new HistorySegmentDescriptorDigest(row.Value), previous),
+            [new RowBuildAssignment.Evaluate(Slot(fixture.Recipe, row, fixture.Culprit)),
+             new RowBuildAssignment.Evaluate(Slot(fixture.Recipe, row, fixture.World))]);
 
     private static Fixture CreateFixture() {
         FamilyDefinition family = FamilyDefinition.Create(
@@ -406,12 +164,12 @@ public sealed class GridWalkingSkeletonTests {
 
     private static RecapCellArtifact Cell(
         MaintainerDefinitionRevision definition,
-        EvaluationKey key,
+        CellSlot slot,
         string content
-    ) => RecapCellArtifact.Create(
-        definition.LogicalColumnId,
+    ) => new(
+        new CellId(Guid.NewGuid().ToString("N")),
+        slot,
         definition.Digest,
-        key,
         RecapCellOutcome.Updated,
         content,
         definition.MaxContentUtf8Bytes
@@ -421,6 +179,7 @@ public sealed class GridWalkingSkeletonTests {
         RowBuildSpec spec,
         params RecapCellArtifact[] cells
     ) => RecapRowView.Create(
+        new RowResultId(Guid.NewGuid().ToString("N")),
         spec,
         cells
     );
@@ -435,7 +194,7 @@ public sealed class GridWalkingSkeletonTests {
         GridBuildRecipe recipe,
         HistoryRowId rowId,
         HistorySegmentDescriptorDigest descriptor,
-        RowViewDigest? previousView
+        RowResultId? previousView
     ) => new(
         new RefId(1),
         recipe.TimelineId,

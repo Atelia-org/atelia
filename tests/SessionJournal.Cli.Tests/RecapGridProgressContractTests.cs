@@ -31,8 +31,7 @@ public sealed class RecapGridProgressContractTests {
                 7,
                 default(HistoryRowId),
                 default(GridBuildRecipeDigest),
-                default(LogicalColumnId),
-                default(EvaluationKeyDigest)
+                default(LogicalColumnId)
             );
         var frontier = new RecapGridBuildProgressResult.Frontier(
             authority,
@@ -71,8 +70,7 @@ public sealed class RecapGridProgressContractTests {
                 "\"OrderedMissing\":[{" +
                 "\"Ordinal\":7,\"RowId\":{\"Value\":null}," +
                 "\"RecipeDigest\":{\"Value\":null}," +
-                "\"LogicalColumnId\":{\"Value\":null}," +
-                "\"EvaluationKey\":{\"Value\":null}}]," +
+                "\"LogicalColumnId\":{\"Value\":null}}]," +
                 "\"RowId\":{\"Value\":null}," +
                 "\"RecipeDigest\":{\"Value\":null}," +
                 "\"Metrics\":{" +

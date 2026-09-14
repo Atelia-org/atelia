@@ -253,7 +253,7 @@ internal static partial class RecapGridCommands {
                         rowId = selected.Selection.SelectedRowId.Value,
                         descriptorDigest = selected.Selection
                             .SelectedDescriptorDigest.Value,
-                        viewDigest = selected.Selection.SelectedViewDigest.Value
+                        rowResultId = selected.Selection.SelectedRowResultId.Value
                     },
                     candidate = new {
                         available.Candidate.SetAdmissionAnchor,

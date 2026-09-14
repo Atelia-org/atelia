@@ -169,11 +169,11 @@ internal static class RecapGridStoreCommands {
                 items = page.Items.Select(static item => new {
                     item.Kind,
                     item.Key,
-                    item.CanonicalBytes,
-                    fulfilledViewDigest = item.FulfilledViewDigest?.Value,
-                    canonicalBase64 = item.Canonical is null
+                    item.JsonUtf8Bytes,
+                    fulfilledRowResultId = item.FulfilledRowResultId?.Value,
+                    jsonBase64 = item.Json is null
                         ? null
-                        : Convert.ToBase64String(item.Canonical)
+                        : Convert.ToBase64String(item.Json)
                 }),
                 nextCursor = page.NextCursor?.Value,
                 page.Incomplete

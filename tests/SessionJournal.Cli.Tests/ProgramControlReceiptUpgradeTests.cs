@@ -3,6 +3,7 @@ using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.RecapGrid.Store;
 using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
@@ -16,6 +17,12 @@ public sealed partial class ProgramRecapGridCommandTests {
         bool resultAlreadyCommitted
     ) {
         ExtractControlReceiptFixture(fixtureName);
+        // Only this extracted, disposable Store is reset. The source ZIP and
+        // durable Journal/Control bytes remain the legacy production fixture.
+        var preparedReset = Assert.IsType<RecapGridStorePrepareResetResult.Prepared>(
+            RecapGridStoreMaintenance.PrepareReset(_root));
+        Assert.IsType<RecapGridStoreResetResult.Reset>(
+            RecapGridStoreMaintenance.Reset(_root, preparedReset.Witness));
         (SessionJournalAuditScanResult initial, List<SessionJournalAuditEvent> before) = AuditReceiptFixture();
         string refId = initial.BranchRefId.ToHexString();
         Assert.Equal(resultAlreadyCommitted ? SessionEventKind.ToolResultObserved
@@ -93,6 +100,10 @@ public sealed partial class ProgramRecapGridCommandTests {
     [Fact]
     public void LegacyToolResultInFrozenPreparedRetainsExactRequestAndAudit() {
         ExtractControlReceiptFixture("prepared-with-old-tool-result");
+        string oldStorePath = Path.Combine(_root, "derived", "recap-grid", "v1", "grid.sqlite");
+        byte[] oldStoreBytes = File.ReadAllBytes(oldStorePath);
+        Assert.Equal(2, Assert.IsType<RecapGridStoreOpenResult.UnsupportedSchema>(
+            RecapGridStoreFactory.Open(_root)).SchemaVersion);
         (SessionJournalAuditScanResult initial, List<SessionJournalAuditEvent> before) = AuditReceiptFixture();
         Assert.Equal(SessionEventKind.CompletionRequestPrepared, initial.ExecutionStateAtCapturedHead.HeadKind);
         string refId = initial.BranchRefId.ToHexString();
@@ -116,6 +127,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         Assert.Equal(expectedRequest, SessionRequestCanonicalizer.Canonicalize(Assert.Single(provider.Requests)));
         Assert.Equal(0, provider.RecapRequestCount);
         Assert.Equal(originalControl, File.ReadAllBytes(controlPath));
+        Assert.Equal(oldStoreBytes, File.ReadAllBytes(oldStorePath));
         Assert.Equal(expectedResult, ReadReceiptEventPayload(result));
         SessionPreparedRequestReconstruction reopened = ReconstructReceiptRequest(prepared);
         Assert.Equal(expectedRequest, reopened.CanonicalBytes);

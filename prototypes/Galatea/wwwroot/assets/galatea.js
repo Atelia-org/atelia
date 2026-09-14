@@ -535,10 +535,10 @@ function requireReadinessMetrics(value, label) {
 
 function requireMissingAssignment(value, label) {
   const missing = requireExactKeys(value, [
-    "ordinal", "rowId", "recipeDigest", "logicalColumnId", "evaluationKey",
+    "ordinal", "rowId", "recipeDigest", "logicalColumnId",
   ], label);
   requireNonnegativeInteger(missing.ordinal, `${label}.ordinal`);
-  for (const key of ["rowId", "recipeDigest", "logicalColumnId", "evaluationKey"]) {
+  for (const key of ["rowId", "recipeDigest", "logicalColumnId"]) {
     requireNonblankString(missing[key], `${label}.${key}`);
   }
   return missing;

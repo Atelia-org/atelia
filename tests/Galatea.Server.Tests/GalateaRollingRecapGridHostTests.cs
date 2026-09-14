@@ -255,7 +255,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             value => value.DefinitionDigest == fixture.Autobiography.Digest
         );
         Assert.Equal("failed", failedEvent.ProviderOutcome);
-        Assert.Equal(missing.EvaluationKey, failedEvent.EvaluationKey);
+        Assert.Equal(missing.Slot, failedEvent.Slot);
 
         var factoryB = new RoutedCompletionFactory(
             agentAnswer: "agent-b",
@@ -307,7 +307,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Null(modelBEvent.RouteKey.SemanticModelId);
         Assert.Equal(fixture.Autobiography.Digest,
             modelBEvent.DefinitionDigest);
-        Assert.Equal(missing.EvaluationKey, modelBEvent.EvaluationKey);
+        Assert.Equal(missing.Slot, modelBEvent.Slot);
         Assert.Equal(partialTimeline,
             ReadTimelineHead(fixture.Path, fixture.RefId));
         Assert.Equal(partialControl, ReadControlSnapshot(fixture).Head);
@@ -437,9 +437,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             await RunFreshAsync(seedService, seedSession, "seed one");
             await RunFreshAsync(seedService, seedSession, "seed two");
         }
-        EvaluationKeyDigest[] healthyKeys = seedCompletion
+        CellSlot[] healthyKeys = seedCompletion
             .ReadTelemetrySnapshot().Events.Select(
-                static value => value.EvaluationKey)
+                static value => value.Slot)
             .ToArray();
         Assert.Equal(2, healthyKeys.Length);
 
@@ -539,9 +539,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 StringComparison.Ordinal
             );
         });
-        EvaluationKeyDigest[] continuationKeys = recoveryCompletion
+        CellSlot[] continuationKeys = recoveryCompletion
             .ReadTelemetrySnapshot().Events.Select(
-                static value => value.EvaluationKey)
+                static value => value.Slot)
             .ToArray();
         Assert.Equal(continuationKeys.Length,
             continuationKeys.Distinct().Count());
@@ -615,7 +615,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         ))).Value;
         RecapCellArtifact[] cells = view.OrderedCells.Select(member =>
             Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(
-                store.Reader.ReadCell(member.CellDigest)
+                store.Reader.ReadCell(member.CellId)
             ).Value
         ).ToArray();
         Assert.Equal(2, cells.Length);

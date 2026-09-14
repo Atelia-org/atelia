@@ -8,6 +8,10 @@ namespace Atelia.Analyzers.Style.Tests;
 public sealed class RG0001RecapGridModuleDependencyTests {
     private const string ModuleDeclarations = """
         namespace Atelia.SessionJournal.HistoryTimeline {
+            public readonly struct TimelineId { public TimelineId(string value) { } }
+            public readonly struct HistoryRowId { public HistoryRowId(string value) { } }
+            public readonly struct HistorySegmentDescriptorDigest { public HistorySegmentDescriptorDigest(string value) { } }
+            public static class HistoryTimelineMaintenance { public static void Open() { } }
             public readonly struct TimelineValue {
                 public static bool operator ==(
                     TimelineValue left,
@@ -319,6 +323,29 @@ public sealed class RG0001RecapGridModuleDependencyTests {
         );
         Assert.Contains("Store", edge.GetMessage());
         Assert.Contains("Manager", edge.GetMessage());
+    }
+
+    [Fact]
+    public async Task StoreMayMaterializeTimelineCoordinatesButCannotOpenTimeline() {
+        const string path = "/repo/prototypes/SessionJournal.RecapGrid/Store/Read.cs";
+        const string coordinates = """
+            using Atelia.SessionJournal.HistoryTimeline;
+            namespace Atelia.SessionJournal.RecapGrid.Store;
+            public static class Read {
+                public static object[] Coordinates() => new object[] {
+                    new TimelineId("timeline"), new HistoryRowId("row"),
+                    new HistorySegmentDescriptorDigest("descriptor")
+                };
+            }
+            """;
+        Assert.Empty(await AnalyzeAsync((path, coordinates)));
+        Diagnostic forbidden = Assert.Single(await AnalyzeAsync((path, """
+            using Atelia.SessionJournal.HistoryTimeline;
+            namespace Atelia.SessionJournal.RecapGrid.Store;
+            public static class Read { public static void Open() => HistoryTimelineMaintenance.Open(); }
+            """)));
+        Assert.Equal("RG0001", forbidden.Id);
+        Assert.Contains("HistoryTimeline", forbidden.GetMessage());
     }
 
     private static async Task<Diagnostic[]> AnalyzeAsync(

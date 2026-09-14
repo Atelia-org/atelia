@@ -200,7 +200,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         var cells = GalateaRecapFixture.ReadHeadCells(repository);
         Assert.Equal(GalateaRecapFixture.World(generation), cells.World.Content);
         Assert.Equal(GalateaRecapFixture.Autobiography(generation), cells.Autobiography.Content);
-        return new(head, cells.World.CellDigest.Value, cells.Autobiography.CellDigest.Value);
+        return new(head, cells.World.CellId.Value, cells.Autobiography.CellId.Value);
     }
 
     private static async Task LoginAsync(HttpClient http) {

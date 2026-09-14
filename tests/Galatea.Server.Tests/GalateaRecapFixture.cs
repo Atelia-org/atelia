@@ -294,7 +294,7 @@ internal static class GalateaRecapFixture {
                 controlState.Head.ActiveRecipeDigest!.Value, head.HeadRowId!.Value))).Value;
         RecapCellArtifact[] cells = view.OrderedCells.Select(member =>
             Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(
-                store.Reader.ReadCell(member.CellDigest)).Value).ToArray();
+                store.Reader.ReadCell(member.CellId)).Value).ToArray();
         Assert.Equal(2, cells.Length);
         return (cells[0], cells[1]);
     }

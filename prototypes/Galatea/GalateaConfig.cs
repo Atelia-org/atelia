@@ -597,8 +597,7 @@ public sealed record RecapGridMissingAssignmentDto(
     int Ordinal,
     string RowId,
     string RecipeDigest,
-    string LogicalColumnId,
-    string EvaluationKey
+    string LogicalColumnId
 );
 
 public sealed record RecapGridReadinessSnapshotDto(

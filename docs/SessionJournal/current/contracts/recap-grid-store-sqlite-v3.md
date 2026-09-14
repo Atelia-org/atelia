@@ -52,7 +52,11 @@ Getter selection 使用 `SelectedRowResultId/CurrentRowResultId`，CLI selection
 `PriorSourceAligned` 比较由 cell 源 Slot 推导的前驱 RowResult 与当前 row 前驱；它不承诺旧的正文等价。
 合法 Overlay 可能 NotSatisfied，正文仍可读；缺来源或预算耗尽是 Incomplete。
 预算分别统计 `ExaminedRows/ExaminedCells/ExaminedMembers/ExaminedContentUtf8Bytes`；最后一项只度量实际正文 UTF-8 bytes。
-Runtime telemetry 使用 Slot、StoreIdentity 与必要前驱 ID，不保留旧 digest 字段名。
+Runtime telemetry 使用 Slot、既有身份的 `StoreInstanceId/StoreSchemaVersion` 值与必要前驱 ID，
+不保留旧 digest 字段名，也不新增 Runtime → Store 模块依赖。
+
+Store 从 SQL 物化 Abstractions 所使用的 Timeline 坐标，因此 RG0001 允许它构造
+`TimelineId/HistoryRowId/HistorySegmentDescriptorDigest` 三种不可变值；该例外不开放 Timeline 的读取、维护或写入 API。
 
 ## 旧 schema 与最终 Reset
 

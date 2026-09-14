@@ -1907,7 +1907,7 @@ public sealed class OnlineVerticalTests : IDisposable {
                 new RecapCellBatchExecutionResult.Completed([
                     .. batch.OrderedMissingWork.Select(work =>
                         new RecapCellExecutionOutcome.Updated(
-                            work.EvaluationKey.Digest,
+                            work.Slot,
                             "原来如此，那些疑点就都对得上了。"))
                 ]));
         }
@@ -1927,7 +1927,7 @@ public sealed class OnlineVerticalTests : IDisposable {
                 new RecapCellBatchExecutionResult.Completed([
                     .. batch.OrderedMissingWork.Select(work =>
                         new RecapCellExecutionOutcome.Updated(
-                            work.EvaluationKey.Digest,
+                            work.Slot,
                             $"settled-{CallCount}-{work.Ordinal}"))
                 ]));
         }
@@ -1947,10 +1947,10 @@ public sealed class OnlineVerticalTests : IDisposable {
             return ValueTask.FromResult<RecapCellBatchExecutionResult>(
                 new RecapCellBatchExecutionResult.Completed([
                     new RecapCellExecutionOutcome.Updated(
-                        batch.OrderedMissingWork[0].EvaluationKey.Digest,
+                        batch.OrderedMissingWork[0].Slot,
                         "settled-first"),
                     new RecapCellExecutionOutcome.Failed(
-                        batch.OrderedMissingWork[1].EvaluationKey.Digest,
+                        batch.OrderedMissingWork[1].Slot,
                         "fixture-failure",
                         "retry only this cell")
                 ]));
@@ -1972,7 +1972,7 @@ public sealed class OnlineVerticalTests : IDisposable {
             return new RecapCellBatchExecutionResult.Completed([
                 .. batch.OrderedMissingWork.Select(work =>
                     new RecapCellExecutionOutcome.Updated(
-                        work.EvaluationKey.Digest,
+                        work.Slot,
                         "原来如此，那些疑点就都对得上了。"))
             ]);
         }

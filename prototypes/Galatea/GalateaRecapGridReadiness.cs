@@ -472,8 +472,7 @@ internal static class GalateaRecapGridReadiness {
                             value.Ordinal,
                             value.RowId.Value!,
                             value.RecipeDigest.Value!,
-                            value.LogicalColumnId.Value!,
-                            value.EvaluationKey.Value!
+                            value.LogicalColumnId.Value!
                         ))]
                 ),
             RecapGridBuildProgressResult.Blocked blocked

@@ -1,7 +1,5 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal.HistoryTimeline;
-using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Store;
 using System.Text;
 using System.Text.Json;
@@ -194,8 +192,8 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
     [Fact]
     public void PreviousFourMiBCanonicalPageCanExceedTheReportLimit() {
         const int previousMaximumPageBytes = 4 * 1024 * 1024;
-        RecapGridStoreExportItem[] items = AdversarialItems(10_600);
-        int canonicalBytes = items.Sum(static item => item.CanonicalBytes);
+        RecapGridStoreExportItem[] items = AdversarialItems(previousMaximumPageBytes);
+        int canonicalBytes = items.Sum(static item => item.JsonUtf8Bytes);
         var page = new RecapGridStoreExportPage(
             items,
             ParseCellCursor(items[^1].Key),
@@ -221,8 +219,8 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
 
     [Fact]
     public void MaximumItemAdversarialPageFitsTheSharedReportEnvelope() {
-        RecapGridStoreExportItem[] items = AdversarialItems(5_196);
-        int canonicalBytes = items.Sum(static item => item.CanonicalBytes);
+        RecapGridStoreExportItem[] items = AdversarialItems(RecapGridStoreLimits.MaximumPageBytes);
+        int canonicalBytes = items.Sum(static item => item.JsonUtf8Bytes);
         RecapGridStoreExportCursor cursor = ParseCellCursor(items[^1].Key);
         var page = new RecapGridStoreExportPage(
             items,
@@ -293,26 +291,28 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
         }
     }
 
-    private static RecapGridStoreExportItem[] AdversarialItems(
-        int contentScalars
-    ) {
-        string content = new('\u9ffe', contentScalars);
-        return Enumerable.Range(1, 128)
-            .Select(index => {
-                RecapCellArtifact cell = Cell(index, content);
-                byte[] canonical = cell.ToCanonicalBytes();
-                return new RecapGridStoreExportItem(
-                    "cell",
-                    cell.CellDigest.Value,
-                    canonical.Length,
-                    canonical
-                );
-            })
-            .ToArray();
+    private static RecapGridStoreExportItem[] AdversarialItems(int pageBytes) {
+        // Exercise the CLI JSON envelope using export projections, not a second
+        // artifact codec or persistence representation.
+        var options = new JsonSerializerOptions {
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+        return Enumerable.Range(1, 128).Select(index => {
+            string id = index.ToString("x32");
+            byte[] Encode(string content) => JsonSerializer.SerializeToUtf8Bytes(new {
+                id,
+                slot = new { recipeDigest = new string('a', 64),
+                    historyRowId = new string('b', 64), logicalColumnId = "case.culprit" },
+                definitionDigest = new string('c', 64), outcome = "updated", content
+            }, options);
+            int available = pageBytes / 128 - Encode(string.Empty).Length;
+            byte[] projection = Encode(new string('\u9ffe', available / 3));
+            return new RecapGridStoreExportItem("cell", id, projection.Length, projection);
+        }).ToArray();
     }
 
     private static RecapGridStoreExportCursor ParseCellCursor(string key) {
-        var bytes = new byte[66];
+        var bytes = new byte[34];
         bytes[0] = 1;
         bytes[1] = 1;
         Encoding.ASCII.GetBytes(key, bytes.AsSpan(2));
@@ -321,23 +321,6 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
             .Replace('+', '-')
             .Replace('/', '_');
         return RecapGridStoreExportCursor.Parse(value);
-    }
-
-    private static RecapCellArtifact Cell(int descriptor, string content) {
-        var definition = new MaintainerDefinitionDigest(new string('a', 64));
-        EvaluationKey evaluation = EvaluationKey.Create(
-            new HistorySegmentDescriptorDigest(descriptor.ToString("x64")),
-            definition,
-            PriorInputReference.FirstRow.Value
-        );
-        return RecapCellArtifact.Create(
-            new LogicalColumnId("case.culprit"),
-            definition,
-            evaluation,
-            RecapCellOutcome.Updated,
-            content,
-            RecapGridLimits.MaximumContentUtf8Bytes
-        );
     }
 
     public void Dispose() {

@@ -42,7 +42,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             RecapGridProvenanceStatus.Incomplete,
             1,
             2,
-            3
+            3,
+            4
         );
         (int provenanceCode, string provenanceJson) = CapturePrint(
             "materialize",
@@ -54,9 +55,9 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "{\"schema\":\"atelia.session-journal.recap-grid-cli.v1\","
                 + "\"command\":\"materialize\",\"status\":\"available\","
                 + "\"detail\":{\"MembershipComplete\":0,"
-                + "\"PriorInputAligned\":1,\"FullRebuildChain\":2,"
+                + "\"PriorSourceAligned\":1,\"FullRebuildChain\":2,"
                 + "\"ExaminedRows\":1,\"ExaminedCells\":2,"
-                + "\"ExaminedCanonicalUtf8Bytes\":3}}",
+                + "\"ExaminedMembers\":3,\"ExaminedContentUtf8Bytes\":4}}",
             provenanceJson
         );
 

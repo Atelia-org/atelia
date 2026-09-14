@@ -221,6 +221,12 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
             Location location,
             string symbolName
         ) {
+            // SQL materialization constructs the immutable coordinates exposed
+            // by Abstractions. This does not grant Store access to Timeline
+            // readers, maintenance or mutation APIs.
+            if (source == SourceModule.Store && IsTimelineCoordinate(symbol)) {
+                return;
+            }
             TargetModule? target = ClassifyTargetSymbolOwner(symbol);
             if (target is null || IsAllowed(source.Value, target.Value)) {
                 return;
@@ -419,6 +425,17 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
                 or TargetModule.Control,
             _ => false
         };
+    }
+
+    private static bool IsTimelineCoordinate(ISymbol symbol) {
+        INamedTypeSymbol? type = symbol as INamedTypeSymbol;
+        if (symbol is IMethodSymbol { MethodKind: MethodKind.Constructor } constructor) {
+            type = constructor.ContainingType;
+        }
+        return type is { TypeKind: TypeKind.Struct, IsReadOnly: true }
+            && type.ContainingNamespace.ToDisplayString()
+                == "Atelia.SessionJournal.HistoryTimeline"
+            && type.Name is "TimelineId" or "HistoryRowId" or "HistorySegmentDescriptorDigest";
     }
 
     private static bool ContainsPathSegment(string path, string segment) =>

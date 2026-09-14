@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
@@ -853,17 +854,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         DerivedSnapshot galatea = ReadDerivedSnapshot(galateaPath);
         Assert.Equal(cli.TimelineHead, galatea.TimelineHead);
         Assert.Equal(cli.Descriptor, galatea.Descriptor);
-        Assert.Equal(cli.StoreItems.Count, galatea.StoreItems.Count);
-        for (int index = 0; index < cli.StoreItems.Count; index++) {
-            Assert.Equal(cli.StoreItems[index].Kind,
-                galatea.StoreItems[index].Kind);
-            Assert.Equal(cli.StoreItems[index].Key,
-                galatea.StoreItems[index].Key);
-            Assert.Equal(cli.StoreItems[index].Canonical,
-                galatea.StoreItems[index].Canonical);
-            Assert.Equal(cli.StoreItems[index].FulfilledViewDigest,
-                galatea.StoreItems[index].FulfilledViewDigest);
-        }
+        // Separate stores allocate independent result IDs. Compare the complete
+        // business graph (including membership and predecessor coordinates).
+        Assert.Equal(cli.StoreBusinessRecords, galatea.StoreBusinessRecords);
         Assert.Equal(cli.Contributions, galatea.Contributions);
         Assert.True(cliFactory.Client.RecapDispatchCount > 0);
         Assert.Equal(
@@ -2309,8 +2302,36 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         return new DerivedSnapshot(
             timelineHead.ToCanonicalBytes(),
             selected.Descriptor.ToCanonicalBytes(),
-            items,
+            ReadStoreBusinessRecords(path, items),
             contributions);
+    }
+
+    private static string[] ReadStoreBusinessRecords(
+        string path, IReadOnlyList<RecapGridStoreExportItem> items) {
+        Assert.IsType<RecapGridStoreVerifyResult.Healthy>(RecapGridStoreMaintenance.Verify(path));
+        using var store = Assert.IsType<RecapGridStoreReaderOpenResult.Opened>(
+            RecapGridStoreFactory.OpenReader(path)).Handle;
+        var cells = items.Where(item => item.Kind == "cell").ToDictionary(item => item.Key,
+            item => Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+                store.Reader.ReadCell(new CellId(item.Key))).Value);
+        object CellBody(RecapCellArtifact cell) => new {
+            cell.Slot, cell.DefinitionDigest, cell.Outcome, cell.Content
+        };
+        var rows = items.Where(item => item.Kind == "row-view").ToDictionary(item => item.Key,
+            item => Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                store.Reader.ReadView(new RowResultId(item.Key))).Value);
+        object RowBody(RecapRowView row) => new {
+            row.RefId, row.TimelineId, row.HistoryRowId, row.RowDescriptorDigest,
+            row.RecipeDigest, row.TargetDigest, row.PreviousHistoryRowId, row.BootstrapCompleted,
+            members = row.OrderedCells.Select(member => CellBody(cells[member.CellId.Value])).ToArray()
+        };
+        return items.Select(item => item.Kind switch {
+            "cell" => "cell:" + JsonSerializer.Serialize(CellBody(cells[item.Key])),
+            "row-view" => "row:" + JsonSerializer.Serialize(RowBody(rows[item.Key])),
+            "fulfilled" => "fulfilled:" + item.Key + ":" + JsonSerializer.Serialize(
+                RowBody(rows[item.FulfilledRowResultId!.Value.Value])),
+            _ => throw new InvalidOperationException("Unexpected Store export kind: " + item.Kind)
+        }).Order(StringComparer.Ordinal).ToArray();
     }
 
     private static void CopyDirectory(string source, string destination) {
@@ -2634,7 +2655,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     private sealed record DerivedSnapshot(
         byte[] TimelineHead,
         byte[] Descriptor,
-        IReadOnlyList<RecapGridStoreExportItem> StoreItems,
+        IReadOnlyList<string> StoreBusinessRecords,
         IReadOnlyList<string> Contributions
     );
 }
