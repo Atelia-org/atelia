@@ -1,8 +1,8 @@
 # Galatea Player / Character 分离方案
 
-状态：**设计已完成两轮独立审查；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。**
+状态：**设计已完成独立审查与本次补充交叉质询；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。**
 
-日期：2026-09-15。范围：Galatea 配置、认证、角色运行身份、输入来源、网页交互，以及 SessionJournal 输入/请求恢复、RecapGrid、CharacterMemory 与 sidecar 的必要接入调整。用户已在方案审定后授权完整实施；真实实例迁移在集成与故障验证后串行进行。
+日期：2026-09-15。范围：Galatea 配置、认证、角色运行身份、输入来源、网页交互，以及 SessionJournal 输入/请求恢复、RecapGrid、CharacterMemory、MemoPod 与 sidecar 的必要接入调整。本次修订完善设计约束；实施与验证状态见工作单，真实实例迁移在集成与故障验证后串行进行。
 
 ## 1. 最小模型与需求来源
 
@@ -34,9 +34,11 @@ Character 来信 / Codex 结果 → Character 的既有 turn runner
 
 已确认的权限和推进顺序无需再次提问。ID 的实际取值、旧账号对应哪位真实 Player、实例文件内容属于部署输入，不凭名字自动合并。
 
-### 当前证据及与旧材料的差异
+### 方案形成时的改造基线及与旧材料的差异
 
-| 当前入口 | 已核对的事实 / 对方案的影响 |
+下表记录旧实现为何需要改造，不作为当前施工进度或实现验收；实现证据统一维护在工作单。
+
+| 证据入口 | 基线事实 / 对方案的影响 |
 |:--|:--|
 | [GalateaConfig](../../prototypes/Galatea/GalateaConfig.cs)、[strict reader](../../prototypes/Galatea/GalateaStrictConfigReader.cs) | V9 `users[]` 混合登录、角色和状态配置；`serverAgentUserIds` 按同一个 ID 关联。 |
 | [Program](../../prototypes/Galatea/Program.cs)、[GalateaServices](../../prototypes/Galatea/GalateaServices.cs) | cookie user claim 直接决定 session；认证和交互目标必须拆开。 |
@@ -48,11 +50,11 @@ Character 来信 / Codex 结果 → Character 的既有 turn runner
 | [target alignment](../../prototypes/Galatea/GalateaRecapGridTargetAlignment.cs)、[CLI asset catalog](../../prototypes/SessionJournal.Cli/RecapGridOperatorAssetCatalog.cs) | fresh admission 精确核对 active target；CLI 也要求 PlayerName，必须随新资产一起调整。 |
 | [角色信设计](character-mail-design.md) | 当前角色名必须唯一，且精确 `Codex` 保留；capture 冻结目标 userId / repository locator。 |
 
-工作区已有一份未跟踪的 `docs/Galatea/user-identity-evolution-research.md`，以 account/login 解耦为前提，建议额外 accountId、loginName 和历史 dispatch key。它提供影响面线索，但不构成本方案需求依据；其“可重复 characterName”假设已不符合站内信实码，其 account 目标也已被本次用户选择替代。本轮保留该原稿，不将其当成当前方案或修改其内容。
+早期 [身份演进研究](user-identity-evolution-research.md) 以 account/login 解耦为前提，建议额外 accountId、loginName 和历史 dispatch key。它提供影响面线索，但不构成本方案需求依据；其“可重复 characterName”假设不符合站内信的角色地址规则，其 account 目标也已被本次用户选择替代。保留该原稿作为历史材料。
 
 ## 2. 配置与身份归属
 
-继续使用一个 `config.json`，新版本分为 `characters`、`players`、`runtime` 三个区块；`v` 仍是根格式版本。实施时以当前 V9 为基线分配下一版本。示意字段如下，省略现有必需路径和 Runtime 细节，不是可直接运行的配置：
+继续使用一个 `config.json`，V10 分为 `characters`、`players`、`runtime` 三个区块；`v` 仍是根格式版本，由旧 V9 转换。示意字段如下，省略现有必需路径和 Runtime 细节，不是可直接运行的配置：
 
 ```json
 {
@@ -120,10 +122,12 @@ API 边界集中解析当前 Player 和目标 Character，不引入权限引擎�
 - Player 动作、角色邮件、Codex 回信、心跳、Note receipt、recall 等按类型保存结构化事实和原始正文；JSON schema 版本描述字段语义。
 - 发送者来源由 runtime 确认并在接纳/capture 时保存名称快照。组合 Observation 各块分别归因；HTTP 注入者与客户端声明的信内署名分别记录。
 - SessionJournal 追加机读输入；recent、undo、投递 proof、DerivedInfo 等直接读字段。给主线和辅助 LLM 的 prompt 在各自请求组装边界投影。
+- 辅助请求保留其选中块的来源、时间和类型含义；业务解释属于稳定 schema/指令源。MemoPod 的 Open/Freeze 保存并冻结机读内容，到 Recall 请求时才渲染；清缓存不改变内容身份或冻结周期。
 - md-json 是局部 renderer，ProjectReference 接入；JSON Pointer 列表由当前内容 shape 生成，不进入角色配置或持久输入。
 - 新写入不保存 FrozenTask、渲染后的 Observation/receipt、渲染上下文快照或持久渲染缓存。原正文中的 Markdown、业务指令源文本、LLM 输出和必要 provider opaque 协议内容仍是内容事实。
 - Prepared 只保存所选内容计划，每次 Started/dispatch claim 记录该次请求承诺；未发送时换风格不增加 Prepared 或结束事件。已发送未知的尝试保留原证据并先核对，不因换风格获得重发权限。
 - 旧版本已有的 Prepared、Bound、Applied receipt 等保留精确读取与原恢复路径。身份拆分不授权将历史作者或旧外部请求改写成当前配置。
+- 旧 Pending 回执可作为明确标记的 legacy 内容进入新结构化输入；旧内容来源格式与本次绑定格式分别判别。已 Bound 的原输入不重新包装或改写。
 - 角色输出的网页/响应上下文明确 CharacterId 与轮次，并保留角色、旁白、状态摘要各声部。一个角色会话的所有输出不等于该角色的一次发言。
 
 这项变化与身份拆分一起做纵向接入；先只改 DTO、仍把包装好的文本落盘，不能算本方案完成。
@@ -183,7 +187,7 @@ Character 系统 prompt 只依赖角色身份、角色设定、home、能力及 
 
 ### 切片 B：全部通信、派生输入与旧状态
 
-接通角色间邮件、Codex 出站与 sidecar 核对、reply lease、Note receipt、recall、recap、辅助 LLM 请求、配置转换与旧数据读取。删除所有新版先渲染后落盘旁路。新旧混合状态、crash/reopen 与格式替换验收以 [专题矩阵](structured-input-rendering-design.md) 为准。
+接通角色间邮件、Codex 出站与 sidecar 核对、reply lease、Note receipt、recall、recap、MemoPod 冻结/缓存边界、辅助 LLM 请求、配置转换与旧数据读取。删除所有新版先渲染后落盘旁路。新旧混合状态、crash/reopen 与格式替换验收以 [专题矩阵](structured-input-rendering-design.md) 为准。
 
 | 身份侧验收 | 通过标准 |
 |:--|:--|
@@ -198,7 +202,7 @@ Character 系统 prompt 只依赖角色身份、角色设定、home、能力及 
 
 主要入口：[config tests](../../tests/Galatea.Server.Tests/GalateaConfigValidationTests.cs)、[strict fields](../../tests/Galatea.Server.Tests/GalateaRootConfigFieldLanguageTests.cs)、[Observation tests](../../tests/Galatea.Server.Tests/PlayerTurnObservationTests.cs)、[provisioning](../../tests/Galatea.Server.Tests/GalateaSessionProvisioningTests.cs)、[角色信 delivery](../../tests/Galatea.Server.Tests/GalateaCharacterMailDeliveryTests.cs)、[operator recovery](../../tests/Galatea.Server.Tests/GalateaDelegationOperatorRecoveryTests.cs)、[RecapGrid target / recovery](../../tests/Galatea.Server.Tests/GalateaRecapGridCompositionTests.cs)、[public operator chain](../../tests/Galatea.Server.Tests/GalateaRecapGridPublicOperatorChainTests.cs)。跨 SessionJournal 和 sidecar 的新增验收不能仅由原 Galatea 单测替代。
 
-实现时同步配置/API/runtime 参考、运行指南及相关 current contracts；此时文档索引只标记方案未实施。受限权限、持久草稿、通用路径选择框架仍不在范围内。
+实现时同步配置/API/runtime 参考、运行指南及相关 current contracts；文档索引按实际施工与验证状态标记，不把设计完成等同于实施完成。受限权限、持久草稿、通用路径选择框架仍不在范围内。
 
 ## 8. 审查结论与已替代方案
 
@@ -206,6 +210,6 @@ Character 系统 prompt 只依赖角色身份、角色设定、home、能力及 
 
 当前用户 U5 替代了前轮 FrozenTask 结论；“只多一个持久 task 字段”和“CharacterMemory 无需升级”已不再是当前方案。新的不可约核心是结构化内容、瞬态投影与实际调用事实之间的边界。md-json 已有真实库，本期接入，不再列为整体暂缓。
 
-本轮三位 subagent 完成独立查漏与交叉质询，主线程据代码证据修订；两轮后收敛，裁决汇总见专题第 8 节。补齐了 SystemPromptSetup/audit、receipt 内容选择、recall 的 title/exactText、Recap 语义协议与 CLI 日志；删去了不必要的 supersede 事件、新提交 ID 和统一辅助调用 WAL。
+前轮三位 subagent 完成独立查漏与交叉质询，主线程据代码证据修订；补齐了 SystemPromptSetup/audit、receipt 内容选择、recall 的 title/exactText、Recap 语义协议与 CLI 日志，删去了 supersede 事件、新提交 ID 和统一辅助调用 WAL。本次再由三位审阅者复核并交叉质询，补齐 MemoPod 早渲染、辅助输入来源、旧 Pending 与新绑定混用、机读支持域和失败阶段；裁决汇总见专题第 8 节。
 
 实施前仍须盘点实例 schema、容量和未决状态，确定实际 Player 配置及依赖源码版本。本轮完成的是设计与验证要求，不是代码实现、状态迁移或真实 provider 验收。
