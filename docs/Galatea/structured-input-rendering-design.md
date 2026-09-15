@@ -1,6 +1,6 @@
 # Galatea 结构化输入存储与瞬态渲染
 
-状态：**已完成三位 subagent 独立审查与交叉质询，共两轮；未实施。** 日期：2026-09-15。
+状态：**设计已完成两轮独立审查；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。** 日期：2026-09-15。
 
 本文是 [Player / Character 分离方案](player-character-separation-design.md) 的输入存储与恢复专题。当前用户已明确：给 LLM 的 user message、Observation、PlayerTurnObservation、Codex session user prompt 等输入，使用稳定机读格式持久化，调用 LLM 时临时渲染；缓存不改变瞬态语义。此决定替代前版新增 FrozenTask 的设计。
 
@@ -23,7 +23,7 @@
 | C2 | 当前一角色一个 TurnLock；跨 sender SQLite 与目标 Journal 没有全局事务。 | 当前 production spine；新设计保留原子 capture、目标门禁与先对账再推进历史。 |
 | C3 | 来源选择、实际回信、recall 结果、源版本、顺序与已发生调用都是事实。 | 现有恢复/投递/归因消费者；不可因瞬态渲染而从当前世界重新推导旧事实。 |
 
-本轮授权为修订文档和 subagent 审查，不包含代码、真实数据转换或服务操作。相邻文档中的历史要求只作材料；发生冲突时以当前 U1 为准。
+本方案最初在文档审查授权下形成；后续用户已授权完整实施与最后的真实实例迁移，施工和验证状态见工作单。相邻文档中的历史要求只作材料；发生冲突时以当前 U1 为准。
 
 ## 2. 持久内容与渲染的边界
 

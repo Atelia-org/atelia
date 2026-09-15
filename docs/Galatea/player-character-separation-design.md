@@ -1,8 +1,8 @@
 # Galatea Player / Character 分离方案
 
-状态：**已按结构化存储 / 瞬态渲染决策修订，并完成三位 subagent 两轮审查；未实施。**
+状态：**设计已完成两轮独立审查；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。**
 
-日期：2026-09-15。范围：Galatea 配置、认证、角色运行身份、输入来源、网页交互，以及 SessionJournal 输入/请求恢复、RecapGrid、CharacterMemory 与 sidecar 的必要接入调整。本轮只撰写与修订方案，不修改真实实例、数据库或配置。
+日期：2026-09-15。范围：Galatea 配置、认证、角色运行身份、输入来源、网页交互，以及 SessionJournal 输入/请求恢复、RecapGrid、CharacterMemory 与 sidecar 的必要接入调整。用户已在方案审定后授权完整实施；真实实例迁移在集成与故障验证后串行进行。
 
 ## 1. 最小模型与需求来源
 

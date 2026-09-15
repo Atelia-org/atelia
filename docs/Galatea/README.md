@@ -22,7 +22,7 @@
 | 主题 | 入口 |
 |:--|:--|
 | root config 的字段合同 | [V9 current contract](../SessionJournal/current/contracts/galatea-root-config-v9.md)，沿其引用读取继承规则 |
-| Player / Character 身份分离 | [重构方案](player-character-separation-design.md)：零 Player、超级管理员与可信来源；[结构化输入专题](structured-input-rendering-design.md)定义稳定存储、md-json 瞬态渲染及恢复边界；已完成审查，未实施 |
+| Player / Character 身份分离 | [重构方案](player-character-separation-design.md)：零 Player、超级管理员与可信来源；[结构化输入专题](structured-input-rendering-design.md)定义稳定存储、md-json 瞬态渲染及恢复边界；实施状态与验证见[工作单](player-character-implementation-work-order.md) |
 | prompt 的代码与 operator 分工 | [prompt 资源说明](prompt/README.md) |
 | TextExtractor 与 Observation 通讯 | [Observation Bridge](text-extractor-observation-bridge.md) |
 | Character Note、Default MemoPod | [忠实代写](character-note-transcription.md)、[保存合同](character-note-default-memopod-v1.md)、[自动记忆工作单](automatic-memory-work-order.md) |
