@@ -43,6 +43,8 @@ docs/Galatea/recap-store-simplification-plan.md
 docs/Galatea/timeline-row-identity-simplification-plan.md
 docs/Galatea/character-note-transcription.md
 docs/Galatea/character-mail-design.md
+docs/Galatea/player-character-separation-design.md
+docs/Galatea/structured-input-rendering-design.md
 docs/SessionJournal/current/contracts/galatea-root-config-v9.md
 
 # Evidence/archive records are intentionally not default-scanned. Their links
