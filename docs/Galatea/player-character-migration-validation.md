@@ -1,6 +1,6 @@
 # Player / Character 与结构化输入：真实实例迁移验收
 
-状态：**配置与数据库升级、冷重开已完成；隔离真实 Codex canary 已通过，正在构建 V7 Recap，服务尚未恢复运行。** 日期：2026-09-16（Asia/Singapore）。施工总入口见[实施工作单](player-character-implementation-work-order.md)。
+状态：**配置与数据库升级、冷重开已完成；隔离真实 Codex canary、cyber V7 采用已通过，正在构建 gpt V7，服务尚未恢复运行。** 日期：2026-09-16（Asia/Singapore）。施工总入口见[实施工作单](player-character-implementation-work-order.md)。
 
 本文只记录真实实例的实际结果。共享 Observation 投影补充后的 Galatea provider-free 全套为 1195/1195，CLI 全套为 162/162，独立审阅通过；这些结果不能代替真实迁移或真实 provider 验收。
 
@@ -50,6 +50,8 @@
 - 四个库的 SQLite integrity 均为 `ok`。与完整备份逐表比较所有原有列，唯一允许且已单独验证的变化为 metadata 的 `schema_version`（3→5 或 3→4）；其余原列保持一致，包括 owner、body、状态与原证明。比较覆盖 cyber 的 21/22 行和 gpt 的 116/108 行，结果见 `inventory/sqlite-after-upgrade.json`。
 - 首次真实 Codex canary 在 Ready 前以 `SIDECAR_EXITED` 失败，没有发送任务；原因尚未确认。随后同配置 sidecar 初始化与直接 initialize 探测分别在 2.21/2.07 秒成功。证据保留在 `initialization-probes/`。
 - 初始化探测之后的真实 canary **1/1 通过，8 秒**：临时仓库中的 EnsureBinding→Start→重复 dispatch 拒绝→Inspect Completed 成功，临时仓库与子进程按测试合同清理。证据：`real-codex-canary-after-ready-probe.log` 与 `galatea-semantic-real-codex-after-ready-probe.trx`。第一次失败日志保留，不将原因标为已修复。
+- `cyber` 的 V7 采用已完成：4 次实际 `gpt5-6-sol-codex` 调用、4 个新 cell、2 个新 row view，provider 请求全部结束；零新调用的 progress 返回完整 Fulfillment proof，promotion 后 Control/Store/Timeline verify 与 raw audit 均通过。新 active recipe 为 `9a71bd2345ad80ad3d7e617e8ea457e488502b4594ac018236dcecf74257a6ae`；原 Journal head、事件数与历史语义承诺不变，旧资产保留。证据位于 `cyber-v7/`。
+- 已用公开 scaffold 准备新的运行期 V7 profile；与原 current profile 比较，权限、capability fingerprints、carrier、列前缀及容量上限相同，只将允许的 Family 换为 V7。尚未发布到运行配置；旧 profile 会继续保留供历史恢复使用。
 
 ## 5. 剩余迁移与验收
 

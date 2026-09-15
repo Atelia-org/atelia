@@ -113,6 +113,7 @@ Recap 的合法非空 Tail 超出现有 SessionJournal request canonicalizer 的
 - 真实迁移预检发现并修复 CLI build 缺 projector：新增窄 `Galatea.Input` 共享库，Host 与公共 CLI 使用同一严格 Observation schema、来源规则和 JSON Pointer 路径；核心不引用该库，CLI 不引用 Web host。保留未知 schema 的发送拒绝及纯读边界。
 - 该接缝的实际 public MainCore 专项 **2/2**：真正的旧 Observation v1 与新版 structured Player/Heartbeat 混合，经 V7 scaffold→Timeline→recipe→build 到可控 provider，md-json 还原值与原机读记录一致；未知 schema 的各列失败均为 `InputProjectionFailed`，provider 请求为零。CLI 全套 **162/162**，TRX `galatea-v7-public-build.trx`、`galatea-shared-cli-full.trx`。
 - 共享抽取后的 Host 定向 **166/166**、全 Galatea provider-free **1195/1195**，生产与测试工程编译零警告、零错误；最终日志 `/tmp/galatea-shared-input-full-tests.log`。新增严格反例覆盖 sender、时间、receipt 全或零正文与容量、recall 来源、mail 字符/注入者和旧块限额。独立 reviewer 对最终 diff 无 must-fix。以上仍不替代真实 provider 验收。
+- 最终矩阵审计补齐 `GalateaStructuredDeliveryRewindGateTests`，定向 **1/1** 通过（`structured-delivery-rewind-gate.trx`）：真实 Note capture/Applied→结构化 Bound+append 未 ack→真实 undo service gate，先结算 Delivered，再拒绝撤销尚未完成的轮次；原 head/物理追加边界与 exact proof 不变，重复调用不重发。测试使用可达窗口，没有为成功 undo 人工伪造 terminal；独立审阅通过，生产逻辑未修改。不把此前 1195 项与此次单项表述为同一次全套运行。
 
 离线工具已有真实锁与文件/SQLite 故障证据：ConfigV9 专项 **23/23**、相关合并组 **91/91**；CharacterMemory store 原 74 项与新增升级 14 项共 **88/88**，命令侧 **6/6**。工具可用不代表真实配置或数据库已迁移。
 
