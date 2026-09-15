@@ -1,12 +1,14 @@
 # Galatea Dynamic Memory Puzzle Map
 
-本文记录 Galatea 自主笔记与动态信息召回系统当前已经清晰的底层拼图。它是恢复思路用的工作笔记；其中
+> **阅读边界（2026-09-16）**：本文是分阶段形成的研究地图，不是当前存储格式清单；后文 SQLite V3、冻结 receipt／recall Body 等内容保留其历史含义。当前 CharacterMemory SQLite V4 的新输入保存所选来源与精确内容，在 LLM 请求时渲染；既有 recall 选择、barrier、capture 和 apply 法则仍适用。现行边界见[结构化输入合同](structured-input-rendering-design.md)和[运行时](runtime.md)，真实实例结果见[迁移验收](player-character-migration-validation.md)。
+
+本文记录 Galatea 自主笔记与动态信息召回系统各阶段形成的底层拼图。它是恢复思路用的工作笔记；其中
 `PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier`、
 `CharacterNoteOriginBarrier`、Galatea-side provider seam，以及Character Note保存请求的durable capture、
 默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。MemoPod DerivedInfo更新与全文-only recall
 projection、Character Note DerivedInfo批量生成、durable apply与非阻塞runtime pump也已落地；Default MemoPod
 `MemoExactText` recall MVP现已接通，分类、多Pod与二级索引维护仍是后续设计。
-自动记忆闭环已进一步扩展为三种typed trigger共享召回、SQLite V3 durable receipt outbox；现行边界见
+自动记忆闭环阶段进一步扩展为三种typed trigger共享召回、SQLite V3 durable receipt outbox；该阶段边界见
 [Automatic memory工作单](automatic-memory-work-order.md)。旧V1阶段的in-process receipt与player-only限制已被替代。
 
 ## 当前判断

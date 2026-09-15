@@ -1,6 +1,6 @@
 # Galatea 结构化输入存储与瞬态渲染
 
-状态：**设计已完成独立审查与本次补充交叉质询；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。** 修订日期：2026-09-16。本次修订只完善设计；文中的验收标准不代表已经通过实现验证。
+状态：**已实施并完成隔离与真实实例验收，见[实施验收](player-character-implementation-work-order.md)。** 修订日期：2026-09-16。本文列出规范性约束；实际测试、迁移与运行证据集中在实施验收记录。
 
 本文是 [Player / Character 分离方案](player-character-separation-design.md) 的输入存储与恢复专题。当前用户已明确：给 LLM 的 user message、Observation、PlayerTurnObservation、Codex session user prompt 等输入，使用稳定机读格式持久化，调用 LLM 时临时渲染；缓存不改变瞬态语义。此决定替代前版新增 FrozenTask 的设计。
 

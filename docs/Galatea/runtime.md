@@ -1,6 +1,6 @@
 # Galatea 运行时机制
 
-本文说明 Galatea Server 的运行时职责、持久化边界与关键协议；常规启动、浏览器操作和简要日志命令由 [Galatea 文档索引](README.md) 承接。HTTP 语法见 [server-api.md](server-api.md)，连接与本地配置见 [configuration.md](configuration.md)。本文描述当前代码合同，不表示真实实例已完成本轮迁移；真实 provider/Codex 验证的证据范围见 [Codex delegation verification](codex-delegation-verification.md)。
+本文说明 Galatea Server 的运行时职责、持久化边界与关键协议；常规启动、浏览器操作和简要日志命令由 [Galatea 文档索引](README.md) 承接。HTTP 语法见 [server-api.md](server-api.md)，连接与本地配置见 [configuration.md](configuration.md)。本文描述当前代码合同；本轮真实迁移与调用证据见[迁移验收](player-character-migration-validation.md)，既有 Codex 专项证据见 [Codex delegation verification](codex-delegation-verification.md)。
 
 ## 模型切换与 reasoning 回放排障
 

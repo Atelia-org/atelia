@@ -1,5 +1,7 @@
 # TextExtractor / Observation Bridge
 
+> **当前格式边界（2026-09-16）**：本文保留异步双向通讯桥的职责说明；后文 canonical Observation 包装／冻结文本的描述属于旧输入格式。当前 CharacterMemory SQLite V4、delegation SQLite V5 的新内容使用稳定机读记录，主线和辅助 LLM 请求时瞬态投影；capture、Applied 与投递对账职责不变。现行合同见[结构化输入方案](structured-input-rendering-design.md)及[运行时](runtime.md)，实际迁移与调用证据见[迁移验收](player-character-migration-validation.md)。
+
 本文记录 Galatea 当前已经落地的一种 runtime 与角色之间的异步双向通讯模式：
 
 - 角色到 runtime：角色在叙事 `Action` 中表达意图，runtime 用 `TextExtractor` 把可见文本提取成 typed artifact。这个方向对位 LLM tool-call。

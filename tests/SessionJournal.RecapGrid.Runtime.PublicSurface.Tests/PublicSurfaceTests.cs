@@ -64,6 +64,18 @@ public sealed class PublicSurfaceTests {
 
     [Fact]
     public void ExternalComposition_CanConstructExactLazyRouteRuntime() {
+        var parameters = Assert.Single(typeof(RecapCompletionRuntime).GetConstructors()).GetParameters();
+        Assert.Equal([
+            typeof(IRecapCompletionRouteResolver),
+            typeof(RecapCompletionRuntimeOptions),
+            typeof(IRecapCompletionTelemetry),
+            typeof(ISessionInputProjector)
+        ], parameters.Select(static parameter => parameter.ParameterType).ToArray());
+        var inputProjector = parameters[^1];
+        Assert.Equal("inputProjector", inputProjector.Name);
+        Assert.True(inputProjector.IsOptional);
+        Assert.True(inputProjector.HasDefaultValue);
+        Assert.Null(inputProjector.DefaultValue);
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),
             RecapRewriterProtocolV3.RuntimeProtocolId,

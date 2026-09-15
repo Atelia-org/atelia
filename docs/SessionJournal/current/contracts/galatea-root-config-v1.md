@@ -1,4 +1,7 @@
-# Galatea root config V1 approved contract
+# Galatea root config V1 historical approved contract
+
+> 当前配置由 [V10 合同](galatea-root-config-v10.md) 定义。下文的字段、current/writer 描述与验收证据
+> 均属于本页版本当时的历史语境，保留原义；当前 loader 不接受该旧版本。
 
 状态：**Approved Stable V1；surface set 2 anchored**  
 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  

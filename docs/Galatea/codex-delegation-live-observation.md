@@ -1,5 +1,7 @@
 # Codex 空启动投影与 live 观察
 
+> **当前格式边界（2026-09-16）**：本文保留 sparse Start／live observation 的故障分析与信任边界；同 generation 的相关 RPC／通知和 cold 历史核对两条证据链继续适用。当前 delegation SQLite V5、wire V6 的完整任务承诺统一为严格 UTF-8 摘要／长度；旧全文或摘要算法的阶段描述不作为新写入合同。详见[结构化输入方案](structured-input-rendering-design.md)与[当前运行时](runtime.md)，最新真实调用与迁移证据见[迁移验收](player-character-migration-validation.md)。
+
 最小模型：同一 app-server generation 内，原 `turn/start` 请求保存 dispatch/task，关联响应补齐 turn ID；item 通知补充正文，terminal 通知决定完成。进程结束即清空 live 观察，冷恢复继续匹配持久历史。
 
 ## 2026-09-14 故障证据

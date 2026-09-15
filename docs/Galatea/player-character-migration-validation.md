@@ -1,6 +1,6 @@
 # Player / Character 与结构化输入：真实实例迁移验收
 
-状态：**配置与数据库升级、冷重开已完成；隔离真实 Codex canary、cyber V7 采用已通过，正在构建 gpt V7，服务尚未恢复运行。** 日期：2026-09-16（Asia/Singapore）。施工总入口见[实施工作单](player-character-implementation-work-order.md)。
+状态：**真实实例迁移与验收已完成，服务已恢复运行。** 日期：2026-09-16（Asia/Singapore）。完整交付与故障验证见[实施验收](player-character-implementation-work-order.md)。
 
 本文只记录真实实例的实际结果。共享 Observation 投影补充后的 Galatea provider-free 全套为 1195/1195，CLI 全套为 162/162，独立审阅通过；这些结果不能代替真实迁移或真实 provider 验收。
 
@@ -51,13 +51,19 @@
 - 首次真实 Codex canary 在 Ready 前以 `SIDECAR_EXITED` 失败，没有发送任务；原因尚未确认。随后同配置 sidecar 初始化与直接 initialize 探测分别在 2.21/2.07 秒成功。证据保留在 `initialization-probes/`。
 - 初始化探测之后的真实 canary **1/1 通过，8 秒**：临时仓库中的 EnsureBinding→Start→重复 dispatch 拒绝→Inspect Completed 成功，临时仓库与子进程按测试合同清理。证据：`real-codex-canary-after-ready-probe.log` 与 `galatea-semantic-real-codex-after-ready-probe.trx`。第一次失败日志保留，不将原因标为已修复。
 - `cyber` 的 V7 采用已完成：4 次实际 `gpt5-6-sol-codex` 调用、4 个新 cell、2 个新 row view，provider 请求全部结束；零新调用的 progress 返回完整 Fulfillment proof，promotion 后 Control/Store/Timeline verify 与 raw audit 均通过。新 active recipe 为 `9a71bd2345ad80ad3d7e617e8ea457e488502b4594ac018236dcecf74257a6ae`；原 Journal head、事件数与历史语义承诺不变，旧资产保留。证据位于 `cyber-v7/`。
-- 已用公开 scaffold 准备新的运行期 V7 profile；与原 current profile 比较，权限、capability fingerprints、carrier、列前缀及容量上限相同，只将允许的 Family 换为 V7。尚未发布到运行配置；旧 profile 会继续保留供历史恢复使用。
+- `gpt` 同样完成 4 次调用、4 个新 cell、2 个新 row view，取得完整 Fulfillment 并 promotion；新 active 为 `f109365e93d304da2c05759995d2946438e2670052a40e637a02aae1bd4c17c6`。Control/Store/Timeline verify 与 raw audit 通过，原始历史未改变。证据位于 `gpt-v7/`。
+- 公开 scaffold 生成的运行期 V7 profile 已发布：与原 current profile 比较，权限、capability fingerprints、carrier、列前缀及容量上限相同，只将允许的 Family 换为 V7。配置现有 3 个 profile、2 条 exact route，旧 profile/route 保留；两角色分别用合并后的正式 route 执行零新调用预算的 build，均 fulfilled。配置发布前后副本在 `runtime-publication/`。
+- 启动前另做完整一致备份 `ready-before-first-turn/`：191 个文件、34,240,773 字节，持有 27 个锁、逐文件校验并 flush。它与最初 V9 备份分别对应不同状态边界。
 
-## 5. 剩余迁移与验收
+## 5. 真实 Player 主线、冷审计与最终运行
 
-1. 共享 Observation projector / 公共 CLI mixed-history build 的补充已完成、全套通过并经独立审阅。
-2. 配置和两类数据库已升级并验证，见第 4 节。
-3. 两个角色分别登记 V7 资产、构建新 recipe、取得 Fulfillment 并 promotion，保留旧资产及历史依赖。按当前每角色 2 行、每行 2 列，预计共 8 次摘要调用；实际缺口以新 candidate progress 为准。
-4. 真实 provider / Codex sidecar 验证，并验证新登录、显式目标、结构化输入和最终后台运行状态。未知外部结果仍按既有政策处理，不为得到通过结果自动重发。
+- 实际 `/login` 页面 200，未认证 `/api/v1/me` 为 401；用 `player-main` 登录后 `/me`、角色目录、两个角色页面、静态 JS、current/recent/agent/mailbox API 均通过。未知 Character 返回 404。
+- 向 `gpt` 只提交一次 Player 验证动作，未提供 connection override，使用其默认 `gpt-6-astra`。轮次 `a62771cef6b34b9981b0f1aaa59ffbcc` 收到 exactly-one SSE `done`，耗时 38.94 秒，回复包含正确 sender 值；随后 current 为 Idle、Recap ready。证据为 `player-canary-accepted.json`、`player-canary-result.json`，未重复发送该动作。
+- 完成后正常停止首个服务进程，再以只依赖 SessionJournal 的只读 probe 冷开：gpt 为 394 个事件，最新 SystemPromptSetup/Observation 为事件 v2 的 structured 内容，sender 为 `player/player-main`，本轮 Prepared v9、Started v2，整条 lineage 审计通过；公共 CLI `validate` 也通过。无 Galatea/MdJson projector 参与该 probe。
+- `cyber` 仍为原来的 251 个事件，尚无新动作，其历史 text SystemPromptSetup v1 保持原样。只读 attach 不主动改写历史；下一次 fresh 在 `ReconcileDesiredSetup` 的合法边界采用配置中的新机读指令。不能为使验收数字一致而改写旧记录。
+- 最后一次 SQLite 完整性检查通过，未增加出站邮件；gpt 新增一个 `ZeroCaptured` Note capture，无新 Note 或待投递回执。没有未结算 lease/outbox 工作。证据为 `post-canary-stores.json`。
+- 已重新启动 Release 服务，验收时 PID `591954`，地址 `http://127.0.0.1:3511`。重启后两个角色均 Idle、Recap `ready/exact`、mailbox `no-mail`；cyber 的 heartbeat 仍 disabled，gpt 为 waiting。相隔 11 秒观察 gpt 的剩余等待时间递减，无 admissionFailure。证据为 `final-running-state.json`。
 
-第 1–2 项已完成；第 3 项正在执行，第 4 项尚需真实实例的主线与最终运行验证。旧备份只用于明确匹配的恢复步骤，不能覆盖恢复运行后产生的新事实。
+操作工具及启动 PID/日志保存在本机私有操作目录；该进程延续原有手动管理方式，不新增开机自启或崩溃自动重启部署。Web 功能通过真实 HTTP 页面/API 与浏览器协议 Node 测试验收，未宣称运行了浏览器自动化。
+
+最初 sidecar 初始化退出的根因仍未定位；成功探测和实际调用证据不能反推它从未发生。新轮次和新摘要已经落盘，不能用旧备份覆盖它们；恢复需选择匹配状态边界并明确保留后续事实。

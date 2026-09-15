@@ -1,6 +1,8 @@
 # Galatea Codex delegation durable state machine
 
-> **2026-09-14 后继规则**：下文记录原始 durable 设计及历次增量。发送/恢复部分由[有限恢复方案](codex-delegation-recovery-refactor-plan.md)和[当前运行时](runtime.md)覆盖：wire V5、SQLite V3；确证未发送可有限重试，可能发送不重发；连续 8 次恢复失败产生诚实失败回信、释放队列并弃用失效绑定。原文中的永久 at-most-one attempt、禁止 rollover、无限只读检查及普通故障 route quarantine 已不再是当前要求。capture、reply lease 和真实本地损坏的约束继续适用。
+> **当前格式边界（2026-09-16）**：当前 delegation SQLite V5、sidecar wire V6。新版任务保存原信件与来源，在 Start 前瞬态渲染并持久化本次完整任务的 UTF-8 摘要／长度；旧已发送任务按原证据核对。后继合同见[结构化输入方案](structured-input-rendering-design.md)与[当前运行时](runtime.md)。本文仍承载未被替代的 capture、reply lease、投递与有限恢复规则，旧字段／版本和历史验收不改写。真实实例迁移与调用结果见[迁移验收](player-character-migration-validation.md)。
+
+> **2026-09-14 阶段后继规则**：下文记录原始 durable 设计及历次增量。发送/恢复部分由[有限恢复方案](codex-delegation-recovery-refactor-plan.md)覆盖当时的发送/恢复合同（wire V5、SQLite V3）；确证未发送可有限重试，可能发送不重发；连续 8 次恢复失败产生诚实失败回信、释放队列并弃用失效绑定。原文中的永久 at-most-one attempt、禁止 rollover、无限只读检查及普通故障 route quarantine 已不再是当前要求。capture、reply lease 和真实本地损坏的约束继续适用。
 
 
 > 状态：Implemented；production hard cut active

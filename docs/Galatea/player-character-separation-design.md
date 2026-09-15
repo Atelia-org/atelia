@@ -1,6 +1,6 @@
 # Galatea Player / Character 分离方案
 
-状态：**设计已完成独立审查与本次补充交叉质询；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。**
+状态：**已实施并完成隔离与真实实例验收，见[实施验收](player-character-implementation-work-order.md)。** 本文保留设计约束与审查结论。
 
 修订日期：2026-09-16。范围：Galatea 配置、认证、角色运行身份、输入来源、网页交互，以及 SessionJournal 输入/请求恢复、RecapGrid、CharacterMemory、MemoPod 与 sidecar 的必要接入调整。本次修订完善设计约束；实施与验证状态见工作单，真实实例迁移在集成与故障验证后串行进行。
 
@@ -213,4 +213,4 @@ Character 系统 prompt 只依赖角色身份、角色设定、home、能力及 
 
 前轮三位 subagent 完成独立查漏与交叉质询，主线程据代码证据修订；补齐了 SystemPromptSetup/audit、receipt 内容选择、recall 的 title/exactText、Recap 语义协议与 CLI 日志，删去了 supersede 事件、新提交 ID 和统一辅助调用 WAL。本次再由三位审阅者复核并交叉质询，补齐 MemoPod 早渲染、辅助输入来源、旧 Pending 与新绑定混用、机读支持域和失败阶段；裁决汇总见专题第 8 节。
 
-实施前仍须盘点实例 schema、容量和未决状态，确定实际 Player 配置及依赖源码版本。本轮完成的是设计与验证要求，不是代码实现、状态迁移或真实 provider 验收。
+设计阶段要求的实例盘点、Player 配置、依赖源码验证、实现与迁移现已完成。实际证据和验证范围见[实施验收](player-character-implementation-work-order.md)及[真实实例迁移记录](player-character-migration-validation.md)；上述设计审查本身不替代执行证据。

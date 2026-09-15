@@ -1,6 +1,8 @@
 # Codex delegation 验证
 
-本文把可重复的 live canary 操作与已带日期的历史证据分开。它只验证指定链路，不能推导 app-server/provider 的 exactly-once 承诺；运行时语义见 [运行时机制](runtime.md)，当前实现/测试状态见 [delegation 重构状态](codex-delegation-refactor-status.md)。
+> **当前验收入口（2026-09-16）**：当前 delegation SQLite V5、sidecar wire V6 的格式合同见[结构化输入方案](structured-input-rendering-design.md)与[运行时](runtime.md)。最新真实迁移、Codex／Player 调用、冷审计及服务恢复证据集中于[迁移验收](player-character-migration-validation.md)，其中保留首次 SidecarReady 前失败及原因未确认的限制。下文按日期保留旧版本测试、故障与 canary 记录，不将历史成功改写为新版或完整实例验收。
+
+本文把可重复的 live canary 操作与已带日期的历史证据分开。它只验证指定链路，不能推导 app-server/provider 的 exactly-once 承诺；运行时语义见 [运行时机制](runtime.md)，旧阶段完成记录见 [delegation 重构状态](codex-delegation-refactor-status.md)。
 
 ## 2026-09-14 空启动投影修复验证
 

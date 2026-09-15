@@ -2,7 +2,7 @@
 
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
-[runtime.md](runtime.md)。根配置当前为 V10；exact 字段由
+[runtime.md](runtime.md)。根配置当前为 [V10](../SessionJournal/current/contracts/galatea-root-config-v10.md)；exact 字段由
 [`GalateaStrictConfigReader`](../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与
 [`GalateaRootFileConfig`](../../prototypes/Galatea/GalateaConfig.cs) 定义。
 旧 [V9 合同](../SessionJournal/current/contracts/galatea-root-config-v9.md)仅用于识别升级前数据，不是当前配置入口。

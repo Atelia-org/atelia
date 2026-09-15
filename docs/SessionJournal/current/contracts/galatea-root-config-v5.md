@@ -1,6 +1,9 @@
 # Galatea root config V5 historical contract
 
-状态：**Archived historical predecessor；current contract is [V9](galatea-root-config-v9.md)**  
+> 当前配置由 [V10 合同](galatea-root-config-v10.md) 定义。下文的字段、current/writer 描述与验收证据
+> 均属于本页版本当时的历史语境，保留原义；当前 loader 不接受该旧版本。
+
+状态：**Archived historical predecessor；current contract is [V10](galatea-root-config-v10.md)**  
 Authority：historical Galatea code、`GalateaRootConfigFieldLanguageTests`、
 `GalateaConfigValidationTests`、`GalateaSessionProvisioningTests`与
 `GalateaTrackedPromptTemplateTests`  

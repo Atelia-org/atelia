@@ -1,16 +1,18 @@
 # Character Note Default MemoPod V1
 
+> **当前格式边界（2026-09-16）**：本文保留 Default Pod V1、后续 SQLite V3 回执方案及其阶段记录。当前 CharacterMemory SQLite 为 V4；新版回执保存机读事实，旧 `notice_body`／冻结 Observation 按原格式读取，不能作为新写入模板。capture、Planned→Applied、old-or-new reconciliation 和回执投递证明仍适用。后继边界见[结构化输入合同](structured-input-rendering-design.md)、[当前运行时](runtime.md)；真实升级与通信结果见[迁移验收](player-character-migration-validation.md)。
+
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前状态：Implemented and reviewed；D0-R0完成
+- V1 阶段状态：Implemented and reviewed；D0-R0完成
 - 前置版本：[`Character Note Request Receipt V0`](character-note-request-receipt-v0.md)
 - 本轮目标：把已识别的Character Note保存请求幂等地写入每个角色唯一的Default MemoPod，并只在durable apply已经证明成功后生成诚实回执
 - 本轮不包含：静态分类、PodCatalog、动态聚类、多Pod routing、Memo内容整理、主线程recall注入
 
-本文保留Default Pod V1的原始apply设计与已完成工作包记录。当前实现另包含DerivedInfo V2、Memo recall与
-[Automatic memory闭环](automatic-memory-work-order.md)：CharacterMemory SQLite已为V3，三种typed trigger共享
-召回和durable receipt投递。[Note 忠实代写](character-note-transcription.md)进一步放宽capture前的文字提取：不要求叙事原文逐字符匹配。下面的提取与receipt现行条款已更新；§10–12的V1阶段non-goals/验收历史不再表示当前缺口。
+本文保留Default Pod V1的原始apply设计与已完成工作包记录。后续DerivedInfo V2、Memo recall与
+[Automatic memory闭环](automatic-memory-work-order.md)阶段将CharacterMemory SQLite推进到V3，三种typed trigger共享
+召回和durable receipt投递。[Note 忠实代写](character-note-transcription.md)进一步放宽capture前的文字提取：不要求叙事原文逐字符匹配。下面保留这些阶段更新后的提取与receipt条款；§10–12的V1阶段non-goals/验收历史不再表示当前缺口。
 
 ## 一句话决策
 

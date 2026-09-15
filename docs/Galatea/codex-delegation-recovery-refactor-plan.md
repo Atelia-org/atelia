@@ -1,6 +1,8 @@
 # Galatea Codex 委派自动恢复重构方案
 
-> 状态：WP0–WP4 已实施、审阅并通过本地 Debug/Release 验证；真实实例部署与 live canary 尚未执行。
+> **当前格式边界（2026-09-16）**：下文是 2026-09-14 有限恢复方案及其阶段证据。有限检查、诚实“结果不明”回信、失效绑定处理及不自动重发可能已执行任务的规则继续适用；任务全文／wire V5／SQLite V3 的格式描述已由[结构化输入合同](structured-input-rendering-design.md)和[当前运行时](runtime.md)接续，当前为 delegation SQLite V5、wire V6。真实部署及调用结果见[迁移验收](player-character-migration-validation.md)，下文“尚未执行 live”仅指当时阶段。
+
+> 2026-09-14 阶段状态：WP0–WP4 已实施、审阅并通过本地 Debug/Release 验证；当时真实实例部署与 live canary 尚未执行。
 >
 > 日期：2026-09-14。实施入口：本文；不重新执行旧 `GOAL-codex-delegation-local-resilience.md`。
 >

@@ -1,5 +1,7 @@
 # Automatic memory closure
 
+> **阶段与当前边界（2026-09-16）**：下文是 automatic-memory 阶段的实施工作单；其 SQLite V3、query V2、冻结 Observation bytes 和“不包含 live 迁移”等表述描述当时范围，不代表当前格式或部署状态。当前 CharacterMemory SQLite V4 的新 receipt／recall 输入使用机读事实与请求时投影；三 trigger 的既有选择政策、Applied 原子结算和投递 proof 门禁继续适用。后继合同见[结构化输入方案](structured-input-rendering-design.md)与[当前运行时](runtime.md)，真实迁移与调用验收见[迁移验收](player-character-migration-validation.md)。
+
 ## Scope and decisions
 
 Approved implementation following the headless infrastructure pilot. Tracked

@@ -186,7 +186,8 @@ public sealed class PublicSurfaceTests {
             typeof(CompletionConnectionRegistry),
             typeof(RecapCompletionRuntimeOptions),
             typeof(int),
-            typeof(IRecapCompletionTelemetry)
+            typeof(IRecapCompletionTelemetry),
+            typeof(ISessionInputProjector)
         ]));
         Assert.Contains(signatures, static signature => signature.SequenceEqual([
             typeof(Func<RecapGridRouteManifest>),
@@ -194,13 +195,20 @@ public sealed class PublicSurfaceTests {
             typeof(RecapGridAgentControlProfileRegistry),
             typeof(RecapCompletionRuntimeOptions),
             typeof(int),
-            typeof(IRecapCompletionTelemetry)
+            typeof(IRecapCompletionTelemetry),
+            typeof(ISessionInputProjector)
         ]));
         Assert.All(factories, static method => {
-            var liveTelemetry = method.GetParameters()[^1];
+            var liveTelemetry = method.GetParameters()[^2];
             Assert.Equal("liveTelemetry", liveTelemetry.Name);
             Assert.True(liveTelemetry.IsOptional);
             Assert.Null(liveTelemetry.DefaultValue);
+            var inputProjector = method.GetParameters()[^1];
+            Assert.Equal("inputProjector", inputProjector.Name);
+            Assert.Equal(typeof(ISessionInputProjector), inputProjector.ParameterType);
+            Assert.True(inputProjector.IsOptional);
+            Assert.True(inputProjector.HasDefaultValue);
+            Assert.Null(inputProjector.DefaultValue);
         });
     }
 

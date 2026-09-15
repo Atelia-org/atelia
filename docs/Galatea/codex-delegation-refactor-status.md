@@ -1,6 +1,8 @@
 # Galatea Codex 代行闭环重构状态
 
-> 2026-09-14 后继实施见[有限恢复方案](codex-delegation-recovery-refactor-plan.md)与[验证记录](codex-delegation-verification.md)。当前 wire V5、SQLite V3；下文的 Complete 和测试数量只属于历史阶段。
+> **当前状态入口（2026-09-16）**：本文只保留旧重构阶段的完成记录和测试数量。当前 delegation SQLite V5、sidecar wire V6；新结构化内容与请求承诺见[结构化输入合同](structured-input-rendering-design.md)，运行行为见[当前运行时](runtime.md)。真实配置／库升级、两角色 Recap V7 采用、通信与服务恢复结果见[迁移验收](player-character-migration-validation.md)，不能从下文的历史 Complete 推断当前验收范围。
+
+> 2026-09-14 后继实施见[有限恢复方案](codex-delegation-recovery-refactor-plan.md)与[验证记录](codex-delegation-verification.md)。该阶段为 wire V5、SQLite V3；下文的 Complete 和测试数量只属于历史阶段。
 
 
 > 状态：**Complete**
