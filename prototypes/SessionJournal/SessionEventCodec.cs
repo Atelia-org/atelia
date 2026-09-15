@@ -15,7 +15,12 @@ internal static class SessionEventCodec {
     };
 
     public static byte[] Encode(SessionEventKind kind, object body) {
-        int bodySchemaVersion = GetExpectedBodySchemaVersion(kind);
+        int bodySchemaVersion = kind switch {
+            SessionEventKind.CompletionRequestPrepared when body is CompletionRequestPreparedBody { Commitment: not null }
+                => SessionRequestManifestDefaults.LegacyBodySchemaVersionV8,
+            SessionEventKind.CompletionAttemptStarted when body is CompletionAttemptStartedBody { Commitment: null } => 1,
+            _ => GetExpectedBodySchemaVersion(kind)
+        };
         return kind switch {
             SessionEventKind.RuntimeConfigSetup => EncodeRuntimeConfiguration((SessionRuntimeConfiguration)body, bodySchemaVersion),
             SessionEventKind.SystemPromptSetup => EncodeSystemPromptSetup((SystemPromptSetupBody)body, bodySchemaVersion),
@@ -36,7 +41,7 @@ internal static class SessionEventCodec {
         int currentBodySchemaVersion = GetExpectedBodySchemaVersion(kind);
         JsonDocument document;
         try {
-            document = JsonDocument.Parse(payload.ToArray());
+            document = JsonDocument.Parse(payload.ToArray(), new JsonDocumentOptions { MaxDepth = 128 });
         }
         catch (JsonException exception) {
             throw new InvalidDataException(
@@ -48,18 +53,25 @@ internal static class SessionEventCodec {
             JsonElement root = document.RootElement;
             RequireObject(root, "envelope");
             bodySchemaVersion = ReadRequiredInt32(root, "v");
+            // Only the new typed input envelope needs additional nesting. Preserve the
+            // historical 64-container acceptance limit for all other event contracts.
+            if (!(bodySchemaVersion == 2 && kind is (SessionEventKind.SystemPromptSetup or SessionEventKind.ObservationAccepted))) {
+                ValidateHistoricalJsonDepth(root);
+            }
             bool supportedHistoricalPrepared =
                 kind == SessionEventKind.CompletionRequestPrepared
                 && bodySchemaVersion is
                     SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5
-                    or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7;
+                    or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7
+                    or SessionRequestManifestDefaults.LegacyBodySchemaVersionV8;
+            bool supportedHistoricalInput = bodySchemaVersion == 1 && kind is (SessionEventKind.SystemPromptSetup or SessionEventKind.ObservationAccepted or SessionEventKind.CompletionAttemptStarted);
             if (bodySchemaVersion != currentBodySchemaVersion
-                && !supportedHistoricalPrepared) {
+                && !supportedHistoricalPrepared && !supportedHistoricalInput) {
                 throw new NotSupportedException(
                     $"Unsupported body schema version for session event kind '{kind}': "
                     + $"actual={bodySchemaVersion}, expected={currentBodySchemaVersion}"
                     + (kind == SessionEventKind.CompletionRequestPrepared
-                        ? $", readableHistorical={SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5},{SessionRequestManifestDefaults.LegacyBodySchemaVersionV7}."
+                        ? $", readableHistorical={SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5},{SessionRequestManifestDefaults.LegacyBodySchemaVersionV7},{SessionRequestManifestDefaults.LegacyBodySchemaVersionV8}."
                         : ".")
                 );
             }
@@ -70,15 +82,16 @@ internal static class SessionEventCodec {
             try {
                 return kind switch {
                     SessionEventKind.RuntimeConfigSetup => DecodeRuntimeConfiguration(body),
-                    SessionEventKind.SystemPromptSetup => DecodeSystemPromptSetup(body),
+                    SessionEventKind.SystemPromptSetup => DecodeSystemPromptSetup(body, bodySchemaVersion),
                     SessionEventKind.SessionCreated => DecodeSessionCreated(body),
-                    SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
+                    SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body, bodySchemaVersion),
                     SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body, bodySchemaVersion),
                     SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
                     SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
                     SessionEventKind.CompletionRequestPrepared => bodySchemaVersion switch {
                         SessionRequestManifestDefaults.CurrentBodySchemaVersion =>
-                            SessionRequestManifestCodec.Decode(body),
+                            SessionRequestManifestCodec.Decode(body, semantic: true),
+                        SessionRequestManifestDefaults.LegacyBodySchemaVersionV8 => SessionRequestManifestCodec.Decode(body),
                         SessionRequestManifestDefaults.LegacyBodySchemaVersionV7 =>
                             SessionRequestManifestCodec.Decode(body, legacyTarget: true),
                         SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5 =>
@@ -89,7 +102,7 @@ internal static class SessionEventCodec {
                     },
                     SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
                     SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
-                    SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body),
+                    SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body, bodySchemaVersion),
                     _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
                 };
             }
@@ -101,7 +114,8 @@ internal static class SessionEventCodec {
             }
             catch (Exception exception) when (exception is ArgumentException
                 or FormatException
-                or InvalidOperationException) {
+                or InvalidOperationException
+                or KeyNotFoundException) {
                 throw new InvalidDataException(
                     $"Session event '{kind}' body violates its semantic contract.",
                     exception
@@ -110,12 +124,23 @@ internal static class SessionEventCodec {
         }
     }
 
+    private static void ValidateHistoricalJsonDepth(JsonElement value, int depth = 0) {
+        if (value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array)) { return; }
+        if (++depth > 64) { throw new InvalidDataException("Session event payload exceeds the historical 64-level JSON depth limit."); }
+        if (value.ValueKind == JsonValueKind.Object) {
+            foreach (JsonProperty property in value.EnumerateObject()) { ValidateHistoricalJsonDepth(property.Value, depth); }
+        }
+        else {
+            foreach (JsonElement item in value.EnumerateArray()) { ValidateHistoricalJsonDepth(item, depth); }
+        }
+    }
+
     internal static int GetExpectedBodySchemaVersion(SessionEventKind kind)
         => kind switch {
             SessionEventKind.RuntimeConfigSetup => 2,
-            SessionEventKind.SystemPromptSetup => 1,
+            SessionEventKind.SystemPromptSetup => 2,
             SessionEventKind.SessionCreated => 2,
-            SessionEventKind.ObservationAccepted => 1,
+            SessionEventKind.ObservationAccepted => 2,
             SessionEventKind.AgentActionProduced => 1,
             SessionEventKind.ToolExecutionStarted => 1,
             SessionEventKind.ToolResultObserved => 1,
@@ -123,7 +148,7 @@ internal static class SessionEventCodec {
                 SessionRequestManifestDefaults.CurrentBodySchemaVersion,
             SessionEventKind.CompletionAttemptFailed => 2,
             SessionEventKind.ImportedAgentAction => 1,
-            SessionEventKind.CompletionAttemptStarted => 1,
+            SessionEventKind.CompletionAttemptStarted => 2,
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
 
@@ -174,7 +199,8 @@ internal static class SessionEventCodec {
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
-            writer.WriteString("content", body.Content);
+            writer.WritePropertyName("content");
+            body.Content.Write(writer);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -216,13 +242,15 @@ internal static class SessionEventCodec {
         int bodySchemaVersion
     ) {
         ArgumentNullException.ThrowIfNull(body);
-        ValidateRequired(body.Content, nameof(body.Content));
+        ArgumentNullException.ThrowIfNull(body.Content);
+        if (!body.Content.IsStructured) { ValidateRequired(body.Content.TextValue, nameof(body.Content)); }
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
-            writer.WriteString("content", body.Content);
+            writer.WritePropertyName("content");
+            body.Content.Write(writer);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -383,20 +411,48 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeCompletionAttemptStarted(
-        CompletionAttemptStartedBody body,
-        int bodySchemaVersion
-    ) {
+    private static byte[] EncodeCompletionAttemptStarted(CompletionAttemptStartedBody body, int bodySchemaVersion) {
         ArgumentNullException.ThrowIfNull(body);
-
+        if (bodySchemaVersion == 1 && body.CanonicalRequestCodecId is not null) {
+            throw new InvalidDataException("Legacy Started cannot carry partial evidence.");
+        }
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
+            if (bodySchemaVersion == 2) {
+                ValidateStartedEvidence(body);
+                writer.WriteString("canonicalRequestCodecId", body.CanonicalRequestCodecId);
+                writer.WriteNumber("byteLength", body.Commitment!.ByteLength);
+                writer.WriteString("sha256", body.Commitment.Sha256);
+            }
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
         return buffer.WrittenMemory.ToArray();
+    }
+
+    internal static void ValidateStartedEvidence(CompletionAttemptStartedBody body) {
+        if (body.CanonicalRequestCodecId != SessionRequestManifestDefaults.CanonicalRequestCodecId
+            || body.Commitment is not { ByteLength: > 0 } evidence
+            || evidence.Sha256 is not { Length: 64 }
+            || evidence.Sha256.Any(static c => c is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))) {
+            throw new InvalidDataException("Invalid canonical request evidence on Started.");
+        }
+    }
+
+    internal static void ValidateStartedForPrepared(int version, CompletionAttemptStartedBody body, SessionPreparedManifestView manifest) {
+        if (manifest.BodySchemaVersion == SessionRequestManifestDefaults.CurrentBodySchemaVersion) {
+            if (version != 2) { throw new InvalidDataException("Semantic Prepared requires Started v2 evidence."); }
+            ValidateStartedEvidence(body);
+        }
+        else if (version == 2) {
+            ValidateStartedEvidence(body);
+            if (body.CanonicalRequestCodecId != manifest.Recipe.CanonicalRequestCodecId
+                || body.Commitment != manifest.Commitment) {
+                throw new InvalidDataException("Started evidence differs from the legacy exact request codec or commitment.");
+            }
+        }
     }
 
     private static SessionRuntimeConfiguration DecodeRuntimeConfiguration(JsonElement body) {
@@ -445,10 +501,10 @@ internal static class SessionEventCodec {
         return result;
     }
 
-    private static SystemPromptSetupBody DecodeSystemPromptSetup(JsonElement body) {
+    private static SystemPromptSetupBody DecodeSystemPromptSetup(JsonElement body, int version) {
         RequireObject(body, "system-prompt-setup body");
         RequireExactProperties(body, "system-prompt-setup body", "content");
-        return new SystemPromptSetupBody(ReadRequiredString(body, "content"));
+        return new SystemPromptSetupBody(version == 1 ? SessionInputContent.Text(ReadRequiredString(body, "content")) : SessionInputContent.Read(body.GetProperty("content")));
     }
 
     private static SessionCreatedBody DecodeSessionCreated(JsonElement body) {
@@ -465,13 +521,11 @@ internal static class SessionEventCodec {
         );
     }
 
-    private static ObservationAcceptedBody DecodeObservationAccepted(JsonElement body) {
+    private static ObservationAcceptedBody DecodeObservationAccepted(JsonElement body, int version) {
         RequireObject(body, "observation-accepted body");
         RequireExactProperties(body, "observation-accepted body", "content");
-        var result = new ObservationAcceptedBody(
-            ReadRequiredString(body, "content")
-        );
-        ValidateRequired(result.Content, "content");
+        var result = new ObservationAcceptedBody(version == 1 ? SessionInputContent.Text(ReadRequiredString(body, "content")) : SessionInputContent.Read(body.GetProperty("content")));
+        if (!result.Content.IsStructured) { ValidateRequired(result.Content.TextValue, "content"); }
         return result;
     }
 
@@ -609,10 +663,17 @@ internal static class SessionEventCodec {
         );
     }
 
-    private static CompletionAttemptStartedBody DecodeCompletionAttemptStarted(JsonElement body) {
+    private static CompletionAttemptStartedBody DecodeCompletionAttemptStarted(JsonElement body, int version) {
         RequireObject(body, "completion-attempt-started body");
-        if (body.EnumerateObject().Any()) { throw new InvalidDataException("completion-attempt-started body must be empty."); }
-        return new CompletionAttemptStartedBody();
+        if (version == 1) {
+            if (body.EnumerateObject().Any()) { throw new InvalidDataException("Legacy Started body must be empty."); }
+            return new CompletionAttemptStartedBody();
+        }
+        RequireExactProperties(body, "Started evidence", "canonicalRequestCodecId", "byteLength", "sha256");
+        var result = new CompletionAttemptStartedBody(ReadRequiredString(body, "canonicalRequestCodecId"),
+            new SessionRequestCommitment(ReadRequiredInt32(body, "byteLength"), ReadRequiredString(body, "sha256")));
+        ValidateStartedEvidence(result);
+        return result;
     }
 
     private static void WriteEnvelopeStart(

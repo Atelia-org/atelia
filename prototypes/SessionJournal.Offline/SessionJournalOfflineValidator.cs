@@ -61,11 +61,7 @@ public static class SessionJournalOfflineValidator {
             );
             if (folded.RuntimeConfig
                     != governingSetup.RuntimeConfig
-                || !string.Equals(
-                    folded.SystemPrompt,
-                    governingSetup.SystemPrompt,
-                    StringComparison.Ordinal
-                )
+                || folded.SystemPrompt != governingSetup.SystemPrompt
                 || folded.RuntimeConfigSetupAddress
                     != governingSetup.RuntimeConfigSetupAddress
                 || folded.SystemPromptSetupAddress
@@ -104,14 +100,14 @@ public static class SessionJournalOfflineValidator {
                         governingSetup.SystemPromptSetupAddress
                     ),
                 governingSetup?.RuntimeConfig,
-                SystemPromptUtf8Sha256CodecId,
+                governingSetup?.SystemPrompt.IsStructured == true ? "atelia.session-input-content-json.sha256.v1" : SystemPromptUtf8Sha256CodecId,
                 governingSetup is null
                     ? null
                     : Convert.ToHexStringLower(
                         SHA256.HashData(
-                            Encoding.UTF8.GetBytes(
-                                governingSetup.SystemPrompt
-                            )
+                            governingSetup.SystemPrompt.IsStructured
+                                ? governingSetup.SystemPrompt.ToUtf8Json()
+                                : Encoding.UTF8.GetBytes(governingSetup.SystemPrompt.TextValue)
                         )
                     ),
                 folded.PreparedRequestCount,

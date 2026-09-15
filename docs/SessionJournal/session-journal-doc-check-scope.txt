@@ -6,6 +6,7 @@ docs/SessionJournal/evidence/README.md
 docs/SessionJournal/evidence/memo-pod-deepseek-v4-flash-candidate.md
 docs/SessionJournal/current/contracts/session-journal-beta-contract-snapshot.md
 docs/SessionJournal/current/contracts/completion-request-prepared-v7.md
+docs/SessionJournal/current/contracts/completion-request-prepared-v9.md
 docs/SessionJournal/current/derived-recap/concepts.md
 docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v3.md
 docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v4.md

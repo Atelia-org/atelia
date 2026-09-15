@@ -538,7 +538,7 @@ internal static class SessionExecutionTailResolver {
             EventAddress activeAttemptHead
         ) {
             var newestToOldestStarts =
-                new List<(EventAddress Address, EventAddress Parent)>();
+                new List<(EventAddress Address, EventAddress Parent, int Version, CompletionAttemptStartedBody Body)>();
             EventAddress cursor = activeAttemptHead;
             SessionPreparedManifestView sourceManifest;
             EventAddress sourcePreparedAddress;
@@ -550,8 +550,8 @@ internal static class SessionExecutionTailResolver {
                         ?? throw new InvalidDataException(
                             $"CompletionAttemptStarted at {cursor} requires a Prepared or prior Started parent."
                         );
-                    _ = RequireBody<CompletionAttemptStartedBody>(ev);
-                    newestToOldestStarts.Add((cursor, parent));
+                    var started = RequireBody<CompletionAttemptStartedBody>(ev);
+                    newestToOldestStarts.Add((cursor, parent, ev.BodySchemaVersion, started));
                     cursor = parent;
                     continue;
                 }
@@ -572,6 +572,7 @@ internal static class SessionExecutionTailResolver {
             EventAddress expectedParent = sourcePreparedAddress;
             EventAddress? activeAttemptAddress = null;
             foreach (var entry in newestToOldestStarts.AsEnumerable().Reverse()) {
+                SessionEventCodec.ValidateStartedForPrepared(entry.Version, entry.Body, sourceManifest);
                 if (entry.Parent != expectedParent) {
                     throw new InvalidDataException(
                         $"CompletionAttemptStarted at {entry.Address} does not strictly continue the source attempt chain."

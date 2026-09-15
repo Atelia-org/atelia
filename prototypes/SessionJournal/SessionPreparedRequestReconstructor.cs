@@ -5,8 +5,8 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Exact provider-neutral request reconstructed exclusively from a durable prepared manifest
-/// and the raw boundary committed by its event header.
+/// Provider-neutral request assembled from a durable prepared manifest and its authoritative
+/// raw boundary. V7/v8 verify exact bytes; v9 projects semantic content for this attempt.
 /// </summary>
 internal sealed record SessionPreparedRequestReconstruction(
     CompletionRequest Request,
@@ -28,9 +28,9 @@ internal sealed record SessionPreparedRequestMaterialization(
 );
 
 /// <summary>
-/// The only reconstruction path that can produce a current dispatchable request. This component
-/// accepts Prepared v7 and v8 and is intentionally read-only: it never plans, opens a derived
-/// artifact store, or substitutes current runtime configuration for pinned setup references.
+/// The reconstruction path for dispatchable Prepared v7/v8/v9. It never reselects content, opens
+/// a derived artifact store, or substitutes current runtime configuration for pinned setups.
+/// V9 alone uses the host projector; its read-only verifier never invokes that projector.
 /// Historical v5 is handled by a separate verifier that cannot return CompletionRequest.
 /// </summary>
 internal static class SessionPreparedRequestReconstructor {
@@ -49,7 +49,8 @@ internal static class SessionPreparedRequestReconstructor {
     public static SessionPreparedRequestReconstruction Reconstruct(
         SessionJournalEventReader reader,
         EventAddress sourcePreparedAddress,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ISessionInputProjector? projector = null
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         cancellationToken.ThrowIfCancellationRequested();
@@ -73,10 +74,10 @@ internal static class SessionPreparedRequestReconstructor {
         );
         var manifest = decoded as CompletionRequestPreparedBody
             ?? throw new InvalidDataException(
-                $"CompletionRequestPrepared at {sourcePreparedAddress} is body v{bodySchemaVersion}; only v7 and v8 can be reconstructed for dispatch."
+                $"CompletionRequestPrepared at {sourcePreparedAddress} is body v{bodySchemaVersion}; only v7, v8, and v9 can be reconstructed for dispatch."
             );
 
-        return ReconstructCore(reader, manifest, rawEndInclusive, bodySchemaVersion, cancellationToken) with {
+        return ReconstructCore(reader, manifest, rawEndInclusive, bodySchemaVersion, cancellationToken, projector) with {
             SourcePreparedAddress = sourcePreparedAddress
         };
     }
@@ -99,21 +100,40 @@ internal static class SessionPreparedRequestReconstructor {
         SessionJournalEventReader reader,
         CompletionRequestPreparedBody manifest,
         EventAddress authoritativeRawEndInclusive,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ISessionInputProjector? projector = null
     ) => ReconstructCore(
         reader,
         manifest,
         authoritativeRawEndInclusive,
-        SessionRequestManifestDefaults.CurrentBodySchemaVersion,
-        cancellationToken
+        manifest.Commitment is null ? SessionRequestManifestDefaults.CurrentBodySchemaVersion : SessionRequestManifestDefaults.LegacyBodySchemaVersionV8,
+        cancellationToken,
+        projector
     );
+
+    internal static CompletionRequestPreparedBody VerifySemantic(
+        SessionJournalEventReader reader, EventAddress address, CancellationToken cancellationToken = default
+    ) {
+        using var frame = reader.ReadEvent(address).Unwrap();
+        ValidateSessionHeader(address, frame.Header);
+        if ((SessionEventKind)frame.Header.OpaqueEventKind != SessionEventKind.CompletionRequestPrepared) { throw new InvalidDataException("Expected Prepared."); }
+        object body = SessionEventCodec.Decode(SessionEventKind.CompletionRequestPrepared, frame.Payload, out int version);
+        if (version != SessionRequestManifestDefaults.CurrentBodySchemaVersion || body is not CompletionRequestPreparedBody manifest) {
+            throw new InvalidDataException("Expected semantic Prepared v9.");
+        }
+        SessionRequestManifestCodec.Validate(manifest);
+        _ = Materialize(reader, SessionPreparedManifestView.FromDecoded(version, manifest),
+            frame.Header.Parent ?? throw new InvalidDataException("Prepared has no parent."), cancellationToken, verifyOnly: true);
+        return manifest;
+    }
 
     private static SessionPreparedRequestReconstruction ReconstructCore(
         SessionJournalEventReader reader,
         CompletionRequestPreparedBody manifest,
         EventAddress authoritativeRawEndInclusive,
         int bodySchemaVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ISessionInputProjector? projector = null
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(manifest);
@@ -128,7 +148,8 @@ internal static class SessionPreparedRequestReconstructor {
             reader,
             view,
             authoritativeRawEndInclusive,
-            cancellationToken
+            cancellationToken,
+            projector
         );
         var request = new CompletionRequest(
             materialization.ModelId,
@@ -137,7 +158,7 @@ internal static class SessionPreparedRequestReconstructor {
         );
 
         byte[] canonicalBytes = SessionRequestCanonicalizer.Canonicalize(request);
-        ValidateCommitment(view.Commitment, canonicalBytes);
+        if (view.Commitment is not null) { ValidateCommitment(view.Commitment, canonicalBytes); }
 
         return new SessionPreparedRequestReconstruction(
             request,
@@ -152,7 +173,9 @@ internal static class SessionPreparedRequestReconstructor {
         SessionJournalEventReader reader,
         SessionPreparedManifestView manifest,
         EventAddress authoritativeRawEndInclusive,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ISessionInputProjector? projector = null,
+        bool verifyOnly = false
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(manifest);
@@ -182,11 +205,7 @@ internal static class SessionPreparedRequestReconstructor {
             || rawStartSetup.SystemPromptSetupAddress
                 != authoritativeRawStart.SystemPromptSetupAddress
             || rawStartSetup.RuntimeConfig != authoritativeRawStart.RuntimeConfig
-            || !string.Equals(
-                rawStartSetup.SystemPrompt,
-                authoritativeRawStart.SystemPrompt,
-                StringComparison.Ordinal
-            )) {
+            || rawStartSetup.SystemPrompt != authoritativeRawStart.SystemPrompt) {
             throw new InvalidDataException(
                 $"Prepared v{manifest.BodySchemaVersion} plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
             );
@@ -213,7 +232,9 @@ internal static class SessionPreparedRequestReconstructor {
             systemPrompt.Content,
             rawEvents,
             rawStartSetup,
-            cancellationToken
+            cancellationToken,
+            projector,
+            verifyOnly
         );
     }
 
@@ -237,10 +258,12 @@ internal static class SessionPreparedRequestReconstructor {
         SessionPreparedManifestView manifest,
         EventAddress rawEndInclusive,
         SessionRuntimeConfiguration referencedRuntime,
-        string referencedSystemPrompt,
+        SessionInputContent referencedSystemPrompt,
         IReadOnlyList<DecodedSessionEvent> rawEvents,
         SessionGoverningSetup rawStartSetup,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ISessionInputProjector? projector,
+        bool verifyOnly
     ) {
         EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive;
         SessionExecutionRecovery seedRecovery =
@@ -276,7 +299,7 @@ internal static class SessionPreparedRequestReconstructor {
             || folded.GoverningSetup.RuntimeConfigSetupAddress != manifest.Setups.RuntimeConfig.Address
             || folded.GoverningSetup.SystemPromptSetupAddress != manifest.Setups.SystemPrompt.Address
             || folded.GoverningSetup.RuntimeConfig != referencedRuntime
-            || !string.Equals(folded.GoverningSetup.SystemPrompt, referencedSystemPrompt, StringComparison.Ordinal)
+            || folded.GoverningSetup.SystemPrompt != referencedSystemPrompt
             || folded.Phase != finalRecovery.State.Phase
             || folded.ToolExecutionSequenceCheckpoint != manifest.Execution.LastIssuedToolExecutionSequence
             || folded.ToolExecutionSequenceCheckpoint != finalRecovery.State.ToolExecutionSequenceCheckpoint
@@ -286,18 +309,33 @@ internal static class SessionPreparedRequestReconstructor {
             );
         }
 
-        SessionRequestArtifactContextSnapshot aggregate =
-            SessionCoherentRequestRecipe.AggregateExactInputs(manifest.Plan.ExactContextInputs);
+        bool semantic = manifest.BodySchemaVersion == SessionRequestManifestDefaults.CurrentBodySchemaVersion;
+        if (semantic) {
+            var allowedSourceHeads = rawEvents.Select(static ev => ev.Address).ToHashSet();
+            allowedSourceHeads.Add(manifest.Plan.RawStartExclusive);
+            foreach (SessionContextContribution contribution in manifest.Plan.SemanticContributions) {
+                if (!allowedSourceHeads.Contains(contribution.AbsorbedThrough)) {
+                    throw new InvalidDataException("Contribution absorbed-through is outside the selected raw interval.");
+                }
+            }
+            if (verifyOnly) {
+                return new SessionPreparedRequestMaterialization(manifest.ModelId,
+                    new CompletionPromptPrefix(string.Empty, CompletionOutputContract.ProviderDefault(manifest.ToolSet.Definitions), []), []);
+            }
+        }
+        SessionRequestArtifactContextSnapshot aggregate = semantic
+            ? SessionCoherentRequestRecipe.Aggregate([.. manifest.Plan.SemanticContributions.Select(c => SessionContextContributionRenderer.RenderOneHot(c.Target, c.ExactText))])
+            : SessionCoherentRequestRecipe.AggregateExactInputs(manifest.Plan.ExactContextInputs);
         (string expandedSystemPrompt, ImmutableArray<IHistoryMessage> snapshotContext) =
             SessionCoherentRequestRecipe.Expand(
-                referencedSystemPrompt,
+                semantic ? SessionInputProjection.Project(referencedSystemPrompt, projector) : referencedSystemPrompt.TextValue,
                 aggregate
             );
         var context = ImmutableArray.CreateBuilder<IHistoryMessage>(
             snapshotContext.Length + folded.Context.Count
         );
         context.AddRange(snapshotContext);
-        context.AddRange(folded.Context);
+        context.AddRange(semantic ? folded.Context.Select(m => SessionInputProjection.Project(m, projector)) : folded.Context);
         return new SessionPreparedRequestMaterialization(
             manifest.ModelId,
             new CompletionPromptPrefix(

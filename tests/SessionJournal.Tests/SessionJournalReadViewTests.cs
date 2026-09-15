@@ -401,6 +401,6 @@ public sealed class SessionJournalReadViewTests : IDisposable {
         EventAddress RuntimeSetupAddress,
         EventAddress PromptSetupAddress,
         string ModelId,
-        string SystemPrompt
+        SessionInputContent SystemPrompt
     );
 }

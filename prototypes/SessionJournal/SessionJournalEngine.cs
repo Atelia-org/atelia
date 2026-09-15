@@ -711,7 +711,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         SessionRuntimeConfiguration? runtimeConfig = null;
         SessionContextSetupReference? runtimeReference = null;
         EventAddress? promptAddress = null;
-        string? systemPrompt = null;
+        SessionInputContent? systemPrompt = null;
         SessionContextSetupReference? promptReference = null;
         for (int index = headers.Count - 1; index >= 0; index--) {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2274,7 +2274,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     internal async Task<TurnResult> SendAsync(
-        string observation,
+        SessionInputContent observation,
         CancellationToken cancellationToken = default
     ) {
         return await SendAsync(
@@ -2287,7 +2287,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
     public async Task<TurnResult> SendAsync(
         EventAddress expectedHead,
-        string observation,
+        SessionInputContent observation,
         CancellationToken cancellationToken = default
     ) => await SendAsync(
             expectedHead,
@@ -2298,7 +2298,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         .ConfigureAwait(false);
 
     internal async Task<TurnResult> SendAsync(
-        string observation,
+        SessionInputContent observation,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
     ) => await SendCoreAsync(
@@ -2311,7 +2311,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
     public async Task<TurnResult> SendAsync(
         EventAddress expectedHead,
-        string observation,
+        SessionInputContent observation,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
     ) => await SendCoreAsync(
@@ -2324,13 +2324,13 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
     private async Task<TurnResult> SendCoreAsync(
         EventAddress? expectedHead,
-        string observation,
+        SessionInputContent observation,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
         using MutationLease mutation = EnterMutation(nameof(SendAsync));
         ThrowIfReadOnlyMutation(nameof(SendAsync));
-        ValidateRequired(observation, nameof(observation));
+        ValidateInput(observation, nameof(observation));
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
         );
@@ -2560,12 +2560,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
         };
     }
 
-    internal EventAddress AppendObservation(string content) {
+    internal EventAddress AppendObservation(SessionInputContent content) {
         using MutationLease mutation = EnterMutation(
             nameof(AppendObservation)
         );
         ThrowIfReadOnlyMutation(nameof(AppendObservation));
-        ValidateRequired(content, nameof(content));
+        ValidateInput(content, nameof(content));
         SessionExecutionRecovery recovery = ResolveExecutionTail();
         if (recovery.State.Phase != SessionExecutionPhase.Idle) {
             throw new InvalidOperationException(
@@ -2603,7 +2603,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
-    internal EventAddress AppendSystemPromptSetup(string systemPrompt) {
+    internal EventAddress AppendSystemPromptSetup(SessionInputContent systemPrompt) {
         using MutationLease mutation = EnterMutation(
             nameof(AppendSystemPromptSetup)
         );
@@ -2901,51 +2901,11 @@ public sealed partial class SessionJournalEngine : IDisposable {
             cancellationToken
         ).ConfigureAwait(false);
         SessionContextCandidate selectedCandidate = selection.Candidate;
-        SessionTailContextProjectionResult tail =
-            MaterializeSelectedContext(
-                selection,
-                recovery,
-                governingSetup
-            );
-        _lastTailProjectionDiagnostics = tail.Diagnostics;
-        var materialization = new RequestContextMaterialization(
-            tail.SystemPrompt,
-            tail.Context,
-            tail.RawStartExclusive,
-            tail.RawRangeSha256,
-            ToManifestSetupReferences(
-                selectedCandidate.AnchorSetups
-            ),
-            tail.ContextSnapshots.Select(static snapshot => new SessionRequestContextInput(
-                SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot), snapshot
-            )).ToImmutableArray()
-        );
-        var request = new CompletionRequest(
-            governingSetup.RuntimeConfig.ModelId,
-            new CompletionPromptPrefix(
-                materialization.SystemPrompt,
-                CompletionOutputContract.ProviderDefault(tools),
-                materialization.Context
-            ),
-            tailMessages: []
-        );
-        if (runtime.MaximumCanonicalRequestBytes
-                is long maximumCanonicalRequestBytes
-            && SessionRequestCanonicalizer.Canonicalize(request)
-                is { Length: var actualCanonicalRequestBytes }
-            && actualCanonicalRequestBytes
-                > maximumCanonicalRequestBytes) {
-            throw new InvalidDataException(
-                "Canonical request byte guard rejected the exact final request "
-                + $"before Prepared: metric={CanonicalRequestBytesMetricId}, "
-                + $"actualBytes={actualCanonicalRequestBytes}, "
-                + $"maximumBytes={maximumCanonicalRequestBytes}."
-            );
-        }
+        RequestContextMaterialization materialization = MaterializeSelectedContext(selection, recovery, governingSetup);
+        _lastTailProjectionDiagnostics = materialization.Diagnostics;
 
         CommittedCompletionResult committed =
             await ExecutePreparedCompletionAsync(
-            request,
             completionBoundary,
             governingSetup,
             completionTarget,
@@ -2989,7 +2949,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
-    private static SessionTailContextProjectionResult
+    private static RequestContextMaterialization
         MaterializeSelectedContext(
         SelectedContextCandidate selection,
         SessionExecutionRecovery recovery,
@@ -3014,35 +2974,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 "Selected context planning fold does not match the exact completion boundary."
             );
         }
-        ImmutableArray<SessionRequestArtifactContextSnapshot>
-            snapshots = [
-                .. selection.Candidate.Contributions.Select(
-                    static contribution =>
-                        SessionContextContributionRenderer
-                            .RenderOneHot(
-                                contribution.Target,
-                                contribution.ExactText
-                            )
-                )
-            ];
-        (
-            string systemPrompt,
-            ImmutableArray<IHistoryMessage> header
-        ) = SessionCoherentRequestRecipe.Expand(
-            folded.GoverningSetup.SystemPrompt,
-            SessionCoherentRequestRecipe.Aggregate(snapshots)
-        );
-        var context =
-            ImmutableArray.CreateBuilder<IHistoryMessage>(
-                header.Length
-                + window.Units.Count
-            );
-        context.AddRange(header);
-        for (int index = 0;
-             index < window.Units.Count;
-             index++) {
-            context.Add(window.Units[index].Message);
-        }
         int rawStart =
             selection.Candidate.SetAdmissionAnchor
                 == window.StartExclusive
@@ -3059,12 +2990,11 @@ public sealed partial class SessionJournalEngine : IDisposable {
             window.ObservedRawHead,
             rawEntries
         );
-        return new SessionTailContextProjectionResult(
-            systemPrompt,
-            context.MoveToImmutable(),
+        return new RequestContextMaterialization(
             selection.Candidate.SetAdmissionAnchor,
             rawRangeSha256,
-            snapshots,
+            ToManifestSetupReferences(selection.Candidate.AnchorSetups),
+            [.. selection.Candidate.Contributions],
             new SessionTailProjectionDiagnostics(
                 checked((int)window.Diagnostics.HeaderVisits),
                 checked((int)window.Diagnostics.PayloadReads),
@@ -3090,7 +3020,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
     );
 
     private async Task<CommittedCompletionResult> ExecutePreparedCompletionAsync(
-        CompletionRequest request,
         EventAddress expectedParent,
         SessionGoverningSetup governingSetup,
         SessionCompletionTargetIdentity completionTarget,
@@ -3105,7 +3034,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken
     ) {
         CompletionRequestPreparedBody manifest = BuildRequestManifest(
-            request,
             expectedParent,
             governingSetup,
             completionTarget,
@@ -3124,6 +3052,8 @@ public sealed partial class SessionJournalEngine : IDisposable {
             requireBoundSetupCursor: true
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterRequestPreparedCommitted);
+        CompletionRequest request = SessionPreparedRequestReconstructor.Reconstruct(
+            _reader, preparedAddress, cancellationToken, runtime.InputProjector).Request;
         return await StartAndExecuteCompletionAttemptAsync(
             request,
             preparedAddress,
@@ -3145,9 +3075,13 @@ public sealed partial class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
+        EnforceProjectedCanonicalRequestByteGuard(runtime, request);
+        CompletionAttemptStartedBody evidence = manifest.Commitment is null
+            ? new CompletionAttemptStartedBody(SessionRequestManifestDefaults.CanonicalRequestCodecId, SessionRequestCanonicalizer.CreateCommitment(request))
+            : new CompletionAttemptStartedBody();
         EventAddress startedAddress = AppendExpected(
             SessionEventKind.CompletionAttemptStarted,
-            new CompletionAttemptStartedBody(),
+            evidence,
             expectedParent,
             requireBoundSetupCursor: false
         );
@@ -3320,8 +3254,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 "Prepared-only recovery must not expose an active Started boundary."
             );
         }
-        SessionPreparedRequestReconstruction reconstruction =
-            ReconstructPreparedRecovery(recovery, cancellationToken);
+        // Validate durable facts even when policy refuses dispatch. Semantic v9 verification
+        // does not need the current projector; historical versions keep exact verification.
+        _ = CreateFrozenCompletionRequirement(recovery, cancellationToken);
         SessionUncertainCompletionRecoveryPolicy policy =
             _runtime?.UncertainCompletionRecoveryPolicy
             ?? SessionUncertainCompletionRecoveryPolicy.Refuse;
@@ -3339,8 +3274,8 @@ public sealed partial class SessionJournalEngine : IDisposable {
         }
 
         SessionRuntime runtime = RequireRuntime();
-        CompletionRequestPreparedBody manifest =
-            reconstruction.Manifest;
+        SessionPreparedRequestReconstruction reconstruction = ReconstructPreparedRecovery(recovery, cancellationToken);
+        CompletionRequestPreparedBody manifest = reconstruction.Manifest;
         ValidateRecoveryRuntimeCompatibility(runtime, manifest);
 
         bool sourceAllowsToolCalls =
@@ -3645,7 +3580,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         PreflightFreshBootstrapBeforeContextLifecycleAsync(
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
-        string? pendingObservation,
+        SessionInputContent? pendingObservation,
         ImmutableArray<ToolDefinition> tools,
         CancellationToken cancellationToken
     ) {
@@ -3739,7 +3674,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 ImmutableArray<SessionContextContribution>.Empty,
                 pendingObservation is null
                     ? null
-                    : new ObservationMessage(pendingObservation)
+                    : pendingObservation.ToHistoryMessage()
             );
         EnforceProjectedCanonicalRequestByteGuard(
             runtime,
@@ -3930,7 +3865,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         PrepareContextLifecycleAsync(
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
-        string? pendingObservation,
+        SessionInputContent? pendingObservation,
         CancellationToken cancellationToken
     ) {
         if (runtime.ContextLifecycle is not { } lifecycle) {
@@ -3947,7 +3882,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         PrepareContextLifecycleAsync(
         ISessionContextLifecycleCoordinator lifecycle,
         SessionExecutionRecovery recovery,
-        string? pendingObservation,
+        SessionInputContent? pendingObservation,
         CancellationToken cancellationToken
     ) {
         EventAddress boundary = recovery.Head
@@ -4016,7 +3951,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         PrepareContextLifecycleMaintenanceAsync(
         EventAddress expectedHead,
         ISessionContextLifecycleCoordinator lifecycle,
-        string? pendingObservation,
+        SessionInputContent? pendingObservation,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(lifecycle);
@@ -4056,7 +3991,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
     private static SessionContextLifecycleTrigger
         DeriveContextLifecycleTrigger(
         SessionExecutionRecovery recovery,
-        string? pendingObservation
+        SessionInputContent? pendingObservation
     ) {
         if (pendingObservation is not null) {
             return SessionContextLifecycleTrigger.PreObservation;
@@ -4077,7 +4012,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
         EventAddress currentBoundary,
-        string pendingObservation,
+        SessionInputContent pendingObservation,
         ImmutableArray<ToolDefinition> tools,
         bool allowMatureRawHistory,
         CancellationToken cancellationToken
@@ -4100,7 +4035,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(selection);
         selection.ValidateShape();
         var projectedObservation =
-            new ObservationMessage(pendingObservation);
+            pendingObservation.ToHistoryMessage();
         if (selection.Status
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
@@ -4537,7 +4472,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             string systemPrompt,
             ImmutableArray<IHistoryMessage> header
         ) = SessionCoherentRequestRecipe.Expand(
-            governingSetup.SystemPrompt,
+            SessionInputProjection.Project(governingSetup.SystemPrompt, runtime.InputProjector),
             SessionCoherentRequestRecipe.Aggregate(snapshots)
         );
         var context =
@@ -4550,10 +4485,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
         for (int index = 0;
              index < window.Units.Count;
              index++) {
-            context.Add(window.Units[index].Message);
+            context.Add(SessionInputProjection.Project(window.Units[index].Message, runtime.InputProjector));
         }
         if (projectedMessage is not null) {
-            context.Add(projectedMessage);
+            context.Add(SessionInputProjection.Project(projectedMessage, runtime.InputProjector));
         }
         return new CompletionRequest(
             governingSetup.RuntimeConfig.ModelId,
@@ -4589,7 +4524,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     private CompletionRequestPreparedBody BuildRequestManifest(
-        CompletionRequest request,
         EventAddress authoritativeRawEndInclusive,
         SessionGoverningSetup governingSetup,
         SessionCompletionTargetIdentity completionTarget,
@@ -4604,7 +4538,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ValidateRequired(correlationId, nameof(correlationId));
         ValidateRequired(reason, nameof(reason));
         ArgumentNullException.ThrowIfNull(executionCheckpoint);
-        SessionRequestCommitment commitment = SessionRequestCanonicalizer.CreateCommitment(request);
         var manifest = new CompletionRequestPreparedBody(
             new SessionRequestOrigin(
                 correlationId,
@@ -4615,13 +4548,13 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 RawStartExclusive: materialization.RawStartExclusive,
                 RawRangeSha256: materialization.RawRangeSha256,
                 RawStartSetups: materialization.RawStartSetups,
-                ExactContextInputs: materialization.ExactContextInputs
-            ),
+                ExactContextInputs: []
+            ) { SemanticContributions = materialization.SemanticContributions },
             new SessionGoverningSetupReferences(
                 CreateSetupReference(governingSetup.RuntimeConfigSetupAddress, SessionEventKind.RuntimeConfigSetup),
                 CreateSetupReference(governingSetup.SystemPromptSetupAddress, SessionEventKind.SystemPromptSetup)
             ),
-            new SessionRequestParameters(request.ModelId),
+            new SessionRequestParameters(governingSetup.RuntimeConfig.ModelId),
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
@@ -4629,7 +4562,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 tools.IsEmpty ? null : RequireToolRuntimeIdentity(runtime, tools)
             ),
             new SessionRequestRecipe(
-                RecipeId: SessionRequestManifestDefaults.RecipeId,
+                RecipeId: SessionRequestManifestDefaults.SemanticRecipeId,
                 CanonicalRequestCodecId: SessionRequestManifestDefaults.CanonicalRequestCodecId
             ),
             new SessionRequestTarget(
@@ -4637,22 +4570,13 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 runtime.CompletionClient.Name,
                 runtime.CompletionClient.ApiSpecId
             ),
-            commitment
+            Commitment: null
         );
 
-        SessionPreparedRequestReconstruction reconstructed =
-            SessionPreparedRequestReconstructor.Reconstruct(
-                _reader,
-                manifest,
-                authoritativeRawEndInclusive,
-                cancellationToken
-            );
-        byte[] originalCanonicalBytes = SessionRequestCanonicalizer.Canonicalize(request);
-        if (!originalCanonicalBytes.AsSpan().SequenceEqual(reconstructed.CanonicalBytes)) {
-            throw new InvalidDataException(
-                "Prepared manifest reconstruction does not exactly match the original canonical request bytes."
-            );
-        }
+        SessionRequestManifestCodec.Validate(manifest);
+        _ = SessionPreparedRequestReconstructor.Materialize(_reader,
+            SessionPreparedManifestView.FromDecoded(SessionRequestManifestDefaults.CurrentBodySchemaVersion, manifest),
+            authoritativeRawEndInclusive, cancellationToken, verifyOnly: true);
         return manifest;
     }
 
@@ -4888,7 +4812,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             );
     }
 
-    private string ReadSystemPromptSetup(EventAddress address) {
+    private SessionInputContent ReadSystemPromptSetup(EventAddress address) {
         using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
@@ -5039,17 +4963,21 @@ public sealed partial class SessionJournalEngine : IDisposable {
         }
     }
 
+    private static void ValidateInput(SessionInputContent content, string name) {
+        ArgumentNullException.ThrowIfNull(content, name);
+        if (!content.IsStructured) { ValidateRequired(content.TextValue, name); }
+    }
+
     private static void ValidateRequired(string value, string name) {
         if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("Value must not be null, empty, or whitespace.", name); }
     }
 
     private sealed record RequestContextMaterialization(
-        string SystemPrompt,
-        IReadOnlyList<IHistoryMessage> Context,
         EventAddress RawStartExclusive,
         string RawRangeSha256,
         SessionGoverningSetupReferences RawStartSetups,
-        ImmutableArray<SessionRequestContextInput> ExactContextInputs
+        ImmutableArray<SessionContextContribution> SemanticContributions,
+        SessionTailProjectionDiagnostics Diagnostics
     );
 
     private sealed record SelectedContextCandidate(

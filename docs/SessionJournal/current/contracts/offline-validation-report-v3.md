@@ -10,6 +10,11 @@ activation runbook消费该report时必须遵守的fail-closed规则。它是rea
 authority、continuous readiness proof、generic CLI envelope或bounded service contract。Current source/tests仍是实现事实；
 addendum圈定的scope已通过fresh gates/rebuild与final pre-tag review，并由annotated v6 tag锚定。
 
+> Post-approval typed-input 扩展：当前 producer 仍使用 V3 根字段，structured setup 的摘要改用下述明确的
+> content-envelope codec；Text 的摘要保持原算法。Prepared v9 验证语义计划而不重建历史提示。
+> 上述 approval tag 只认证当时的 Text/旧 Prepared 范围，不认证此扩展；新合同见
+> [typed input / Prepared v9](completion-request-prepared-v9.md)。
+
 ## 1. Producer、schema与exact root shape
 
 Production report由
@@ -38,9 +43,9 @@ wrong-type或用旧numeric enum representation均不属于V3：
 | `runtimeConfigSetup` | string or null | captured head governing runtime-config setup address；empty branch为null |
 | `systemPromptSetup` | string or null | captured head governing system-prompt setup address；empty branch为null |
 | `runtimeConfig` | object or null | captured head governing runtime configuration；empty branch为null；shape见§3 |
-| `systemPromptUtf8Sha256CodecId` | string | exact `atelia.utf8-text.sha256.v1` |
-| `systemPromptUtf8Sha256` | string or null | lowercase hex `SHA256(UTF8(governing system prompt))`；empty branch为null |
-| `preparedRequestCount` | integer | lineage中reconstructed `CompletionRequestPrepared` event数量 |
+| `systemPromptUtf8Sha256CodecId` | string | Text/empty 为 `atelia.utf8-text.sha256.v1`；structured 为 `atelia.session-input-content-json.sha256.v1` |
+| `systemPromptUtf8Sha256` | string or null | Text 为原文 UTF-8 的 SHA-256；structured 为 `SessionInputContent.ToUtf8Json()` 完整机读 envelope 的 SHA-256；均是 lowercase hex，empty branch为null |
+| `preparedRequestCount` | integer | lineage中已验证的 `CompletionRequestPrepared` event数量；v9 纯验证语义计划，旧版验证 exact commitment |
 | `observationCount` | integer | lineage中`ObservationAccepted` event数量 |
 | `agentActionCount` | integer | produced与imported agent actions总数 |
 | `importedAgentActionCount` | integer | `agentActionCount`中`ImportedAgentAction`子集数量 |
@@ -61,6 +66,10 @@ unchanged。
 
 仓内没有supported whole-document V3 reader。Tests对public DTO做typed serializer round-trip是writer/metadata闭合gate，
 不等于承诺任意`JsonSerializer.Deserialize` options、unknown-root-field policy或future compatibility language。
+
+消费 system prompt 摘要时必须同时读取 codec ID，不能仅因字段名含 Utf8 就将 structured 摘要解释成 LLM
+提示文本摘要。history aggregate codec 保持 v1；Text 贡献保留旧算法，structured Observation 使用新的
+`structured-observation` domain 对机读 envelope 计算贡献，不以当前 projector 的输出参与哈希。
 
 ## 2. Closed phase与event-kind tokens
 
@@ -117,14 +126,18 @@ order、whitespace、escaping、terminal newline、byte identity，亦不承诺`
 ## 4. Read-only captured-head与resource boundary
 
 Validator以`SessionJournalEngine.OpenReadOnly`打开selected branch，并消费`ScanCheckedAuditEvents()`的完整selected Parent
-lineage。Scan检查header/codec/parent与body schema，forward fold重建所有historical Prepared commitments并与captured-head
+lineage。Scan检查header/codec/parent与body schema，v9 检查持久语义计划，旧 Prepared 重建验证原 commitment；forward fold 与captured-head
 tail execution state和governing setup做differential。成功report只证明这些checks在该次captured head上一致；branch随后
 推进时，旧report不会自动成为current witness。
 
 Audit不会append raw、修改branch ref或写derived owners。它会遍历并decode完整selected lineage、保存full fold state与
-semantic contribution hashes，并重建每个Prepared request。Current operation没有header/event/payload/work/memory budget、
+semantic contribution hashes，并验证每个Prepared（v9 不生成渲染请求）。Current operation没有header/event/payload/work/memory budget、
 pagination/cursor、final encoded JSON byte cap或stable oversize result/exit。因此它是显式offline/full-audit action，不能
 进入online request path、continuous readiness loop或以文档声称bounded。
+
+核心审计不要求 projector，也不解释未知 host domain schema。核心 envelope/recipe/引用等合法的 structured
+内容可通过该审计；这不证明业务字段含义、作者真实性或 host 授权。domain 不受支持由需要解释它的 host
+消费者报告，不能扩大为核心 raw reader 必须识别所有业务 schema。
 
 ## 5. Publication、failure与operator recovery
 

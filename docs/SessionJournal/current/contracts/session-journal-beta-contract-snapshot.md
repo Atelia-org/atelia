@@ -1,5 +1,9 @@
 # SessionJournal Beta contract snapshot (v7 evidence)
 
+> 当前 raw 输入与请求合同见 [typed input / Prepared v9 / Started v2](completion-request-prepared-v9.md)。
+> 本页的 v7 是旧 DerivedRecap 候选版本；下列 Prepared v5、Observation/Setup v1 与 Started v1 表格保持历史原义，
+> 不描述新 writer，也不为新格式提供验收证据。
+
 状态：Archived-in-place historical evidence snapshot；DerivedRecap v7 candidate-specific gate **NotRun**，见 §7  
 Prior Beta-supported candidate：`49ebb4634e5b4136032db983dd92a9a4560b33eb`  
 Current recap contract已由WP-08 formal RecapGrid source cutover取代v8；见

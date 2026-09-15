@@ -118,7 +118,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             SessionPreparedRequestReconstructor.Reconstruct(
                 journal,
                 scenario.Manifest with {
-                    Commitment = scenario.Manifest.Commitment with {
+                    Commitment = scenario.Manifest.Commitment! with {
                         Sha256 = new string('0', 64)
                     }
                 },

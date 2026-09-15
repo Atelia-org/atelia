@@ -9,7 +9,7 @@ namespace Atelia.SessionJournal;
 /// </summary>
 public sealed record SessionCompletedTurnProjection(
     EventAddress ObservationAddress,
-    string ObservationContent,
+    SessionInputContent ObservationContent,
     SessionTerminalActionProjection TerminalAction
 );
 
@@ -98,7 +98,7 @@ public sealed class SessionPreparedCompletedTurnRewind {
 
     public EventAddress ExpectedHead { get; }
     public EventAddress ObservationAddress => Turn.ObservationAddress;
-    public string ObservationContent => Turn.ObservationContent;
+    public SessionInputContent ObservationContent => Turn.ObservationContent;
 }
 
 public abstract class SessionCompletedTurnRewindPrepareResult {
@@ -158,7 +158,7 @@ public abstract class SessionCompletedTurnRewindPrepareResult {
 /// </summary>
 public sealed record SessionRetractedTurnProjection(
     EventAddress ObservationAddress,
-    string ObservationContent,
+    SessionInputContent ObservationContent,
     SessionTerminalActionProjection? TerminalAction
 );
 

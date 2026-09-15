@@ -18,7 +18,7 @@ public sealed record SessionJournalAuditRuntimeConfigFact(
 ) : SessionJournalAuditFact;
 
 public sealed record SessionJournalAuditSystemPromptFact(
-    string SystemPrompt
+    SessionInputContent SystemPrompt
 ) : SessionJournalAuditFact;
 
 public sealed record SessionJournalAuditSessionCreatedFact(

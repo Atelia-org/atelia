@@ -63,7 +63,7 @@ public sealed record SessionContextLifecycleRequest {
         SessionContextSelectionRequest selection,
         SessionExecutionPhase phase,
         SessionContextLifecycleTrigger trigger,
-        string? pendingObservation = null
+        SessionInputContent? pendingObservation = null
     ) {
         Selection = selection
             ?? throw new ArgumentNullException(nameof(selection));
@@ -100,7 +100,7 @@ public sealed record SessionContextLifecycleRequest {
     public EventAddress Boundary => Selection.CompletionBoundary;
     public SessionExecutionPhase Phase { get; }
     public SessionContextLifecycleTrigger Trigger { get; }
-    public string? PendingObservation { get; }
+    public SessionInputContent? PendingObservation { get; }
 }
 
 /// <summary>

@@ -1,5 +1,10 @@
 # Desired setup reconciliation report V2 approved contract
 
+> Typed-input 接入说明：核心 DesiredSetup/governing setup 已使用
+> [`SessionInputContent`](completion-request-prepared-v9.md#输入-wire-与公共接口)，按机读内容比较，不调用 projector。
+> 本 CLI 命令仍只从文本文件读取 desired prompt，并显式映射为 Text；其 V2 receipt 的 UTF-8 文本摘要合同不变。
+> 不能将 structured setup 的渲染文本传入本命令并声称只是风格调整：这会把 desired 内容改为 Text。
+
 状态：**Approved Stable V2 operational receipt；surface set 3 anchored**  
 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`  
 test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  

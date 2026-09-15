@@ -27,7 +27,7 @@ internal static class SessionAuthoritativeGoverningSetupResolver {
         EventAddress? runtimeAddress = null;
         EventAddress? promptAddress = null;
         SessionRuntimeConfiguration? runtime = null;
-        string? prompt = null;
+        SessionInputContent? prompt = null;
         int headerVisits = 0;
         int payloadReads = 0;
         int checkpointPayloadReads = 0;

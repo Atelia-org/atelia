@@ -48,3 +48,13 @@
 
 Owning code 与 tests见[架构与代码地图](../architecture-and-code-map.md)。
 Control 格式、跨提交窗口与回退边界见[回执简化设计](../../../Galatea/control-receipt-simplification-plan.md)。
+
+## 与 typed raw 输入的接缝
+
+[Prepared v9](../contracts/completion-request-prepared-v9.md)保存已接纳 contribution 的 carrier、blockKey、
+semanticHeading、exactText、内容承诺与 absorbedThrough，替代新请求里的 rendered ContextSnapshot。
+其中 heading 文字、carrier、选择及顺序是语义合同；消息布局在发送时生成。历史 v7/v8 的 exact snapshots
+仍按旧恢复合同消费。v9 恢复只使用已选内容，不重新选 current cell，也不借此扩大 Getter 的来源范围。
+
+History planning 保留 `SessionInputObservationMessage` 的 typed 内容，辅助请求 Runtime 在真正调用 LLM 前投影。
+Manager/Runtime 的内存 Prepared/cache 不因此成为新的 durable attempt WAL；既有 cell/result 提交与恢复边界保持。

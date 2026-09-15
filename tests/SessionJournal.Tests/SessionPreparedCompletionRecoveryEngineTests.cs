@@ -39,7 +39,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             SessionPreparedRequestReconstruction original =
                 SessionPreparedRequestReconstructor.Reconstruct(journal, currentPrepared);
             expectedRequestBytes = original.CanonicalBytes;
-            legacyBytes = LegacyPreparedV7TestFixture.Encode(original.Manifest, adapterLabel);
+            legacyBytes = LegacyPreparedV7TestFixture.Encode(LegacyPreparedV7TestFixture.FreezeCurrent(original.Manifest, original.Request), adapterLabel);
             RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             Assert.True(journal.MoveRef(main, currentPrepared, original.RawEndInclusive).Unwrap());
             legacyPrepared = journal.CommitToRef(
@@ -110,7 +110,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionJournalAuditScanResult audit = auditEngine.ScanCheckedAuditEvents(events.Add);
         Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
         Assert.Equal(
-            [7, 8],
+            [7, 9],
             events.Where(static entry => entry.Kind == SessionEventKind.CompletionRequestPrepared)
                 .Select(static entry => entry.BodySchemaVersion).ToArray()
         );
@@ -189,11 +189,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 SessionEventKind.CompletionRequestPrepared
             );
         CompletionRequestPreparedBody malformedManifest = validManifest with {
-            Commitment = validManifest.Commitment with { Sha256 = new string('0', 64) }
+            Plan = validManifest.Plan with { RawRangeSha256 = new string('0', 64) }
         };
         EventAddress malformedPrepared;
         EventAddress malformedStarted;
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            CompletionAttemptStartedBody evidence = LegacyPreparedV7TestFixture.StartedFor(journal, validPrepared);
             RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             Assert.True(journal.MoveRef(main, validPrepared, observation).Unwrap());
             malformedPrepared = journal.CommitToRef(
@@ -211,7 +212,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 malformedPrepared,
                 SessionEventCodec.Encode(
                     SessionEventKind.CompletionAttemptStarted,
-                    new CompletionAttemptStartedBody()
+                    evidence
                 ),
                 opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted,
                 hint: default
@@ -230,12 +231,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 () => reopened.ResumeAsync(CancellationToken.None)
             );
             Assert.Contains(
-                "commitment",
+                "raw range hash",
                 inspectionError.Message,
                 StringComparison.OrdinalIgnoreCase
             );
             Assert.Contains(
-                "commitment",
+                "raw range hash",
                 resumeError.Message,
                 StringComparison.OrdinalIgnoreCase
             );
@@ -428,7 +429,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 .ScanCheckedAuditEvents(events.Add);
             Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
             Assert.Equal(
-                [5, 8],
+                [5, 9],
                 events
                     .Where(static entry => entry.Kind
                         == SessionEventKind.CompletionRequestPrepared)
@@ -589,7 +590,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             .ScanCheckedAuditEvents(events.Add);
         Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
         Assert.Equal(
-            [5, 8],
+            [5, 9],
             events
                 .Where(static entry => entry.Kind
                     == SessionEventKind.CompletionRequestPrepared)
@@ -1407,7 +1408,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             prepared,
             SessionEventCodec.Encode(
                 SessionEventKind.CompletionAttemptStarted,
-                new CompletionAttemptStartedBody()
+                LegacyPreparedV7TestFixture.StartedFor(journal, prepared)
             ),
             opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted,
             hint: default

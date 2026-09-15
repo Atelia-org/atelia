@@ -11,6 +11,7 @@ internal static class HistoricalPreparedV5TestFixture {
         CompletionRequest request,
         int? legacyMaxTokens
     ) {
+        current = LegacyPreparedV7TestFixture.FreezeCurrent(current, request);
         byte[] canonicalBytes = SessionRequestV5HistoricalCanonicalizer.Canonicalize(
             request.ModelId,
             request.PromptPrefix,

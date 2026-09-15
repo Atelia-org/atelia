@@ -46,7 +46,7 @@ public sealed record SessionExecutionBoundaryInspection(
 
 public sealed record SessionCreateOptions(
     string ModelId,
-    string SystemPrompt,
+    SessionInputContent SystemPrompt,
     string CompletionSurfaceId,
     string Schema = SessionJournalDefaults.Schema,
     int DerivedContextNthPrevious = 0
@@ -111,7 +111,8 @@ public sealed record SessionRuntime(
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
     long? MaximumCanonicalRequestBytes = null,
-    ISessionContextLifecycleCoordinator? ContextLifecycle = null
+    ISessionContextLifecycleCoordinator? ContextLifecycle = null,
+    ISessionInputProjector? InputProjector = null
 );
 
 public sealed record TurnResult(
@@ -268,16 +269,16 @@ public sealed record SessionGoverningSetup(
     EventAddress RuntimeConfigSetupAddress,
     SessionRuntimeConfiguration RuntimeConfig,
     EventAddress SystemPromptSetupAddress,
-    string SystemPrompt
+    SessionInputContent SystemPrompt
 );
 
 internal sealed record SessionCreatedBody(
     SessionCreationOrigin Origin
 );
 
-internal sealed record SystemPromptSetupBody(string Content);
+internal sealed record SystemPromptSetupBody(SessionInputContent Content);
 
-internal sealed record ObservationAcceptedBody(string Content);
+internal sealed record ObservationAcceptedBody(SessionInputContent Content);
 
 internal sealed record AgentActionProducedBody(
     ActionMessage Action,
@@ -305,8 +306,8 @@ internal sealed record ToolResultObservedBody(
 );
 
 /// <summary>
-/// Current logical Prepared body, written as v8 and also decoded from v7. Both versions share
-/// request reconstruction; historical v5 retains a distinct verification-only body.
+/// Dispatchable Prepared facts. New v9 freezes semantic contributions and has no Commitment;
+/// historical v7/v8 carry exact rendered context and a Prepared commitment. V5 is verification-only.
 /// </summary>
 internal sealed record CompletionRequestPreparedBody(
     SessionRequestOrigin Origin,
@@ -317,7 +318,7 @@ internal sealed record CompletionRequestPreparedBody(
     SessionRequestToolSet ToolSet,
     SessionRequestRecipe Recipe,
     SessionRequestTarget Target,
-    SessionRequestCommitment Commitment
+    SessionRequestCommitment? Commitment
 );
 
 internal sealed record CompletionAttemptFailedBody(
@@ -327,7 +328,10 @@ internal sealed record CompletionAttemptFailedBody(
     IReadOnlyList<string> Errors
 );
 
-internal sealed record CompletionAttemptStartedBody;
+internal sealed record CompletionAttemptStartedBody(
+    string? CanonicalRequestCodecId = null,
+    SessionRequestCommitment? Commitment = null
+);
 
 internal readonly record struct DecodedSessionEvent(
     SessionEventKind Kind,

@@ -1,9 +1,24 @@
 using System.Text;
+using Atelia.EventJournal;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
 
 public sealed class SessionEventBodySchemaVersionTests {
+    [Fact]
+    public void StartedV2CannotRelabelHistoricalV5CanonicalV1Evidence() {
+        EventAddress address = EventAddressTextCodec.Parse("ej1:00000000000000010000000100000000");
+        CompletionRequestPreparedBody exact = PreparedFixture.Create("correlation", "observation",
+            address, address, address, address, "model", [], null);
+        SessionPreparedManifestView historical = SessionPreparedManifestView.FromDecoded(8, exact) with {
+            BodySchemaVersion = 5,
+            Recipe = exact.Recipe with { CanonicalRequestCodecId = SessionRequestManifestDefaults.HistoricalCanonicalRequestCodecIdV1 }
+        };
+        // Equal digest/length cannot turn canonical-json-v1 bytes into a v2 commitment.
+        var mislabeled = new CompletionAttemptStartedBody(SessionRequestManifestDefaults.CanonicalRequestCodecId, exact.Commitment);
+        Assert.Throws<InvalidDataException>(() => SessionEventCodec.ValidateStartedForPrepared(2, mislabeled, historical));
+    }
+
     public static TheoryData<SessionEventKind, int> DeclaredKinds {
         get {
             var data = new TheoryData<SessionEventKind, int>();
@@ -18,7 +33,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV8AndCurrentPerKindVersions() {
+    public void ExpectedVersionMap_DefinesPreparedV9AndCurrentPerKindVersions() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
@@ -39,7 +54,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Equal(
-            """{"v":1,"body":{"content":"hello"}}""",
+            """{"v":2,"body":{"content":{"kind":"text","value":"hello"}}}""",
             Encoding.UTF8.GetString(payload)
         );
     }
@@ -119,7 +134,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=2", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=9", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -133,7 +148,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=3", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=9", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -147,7 +162,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=4", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=9", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -161,7 +176,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=6", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=9", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -209,10 +224,13 @@ public sealed class SessionEventBodySchemaVersionTests {
 
     private static int ExpectedVersion(SessionEventKind kind)
         => kind switch {
-            SessionEventKind.CompletionRequestPrepared => 8,
+            SessionEventKind.CompletionRequestPrepared => 9,
             SessionEventKind.RuntimeConfigSetup => 2,
             SessionEventKind.SessionCreated => 2,
             SessionEventKind.CompletionAttemptFailed => 2,
+            SessionEventKind.SystemPromptSetup => 2,
+            SessionEventKind.ObservationAccepted => 2,
+            SessionEventKind.CompletionAttemptStarted => 2,
             _ => 1
         };
 }

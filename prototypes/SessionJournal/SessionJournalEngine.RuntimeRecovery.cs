@@ -5,9 +5,8 @@ namespace Atelia.SessionJournal;
 public sealed partial class SessionJournalEngine {
     /// <summary>
     /// Inspects the exact current raw head and returns only the non-secret
-    /// runtime identity required to continue it. A Prepared/Started tail is
-    /// fully reconstructed and commitment-verified before any frozen identity
-    /// is exposed. This method does not create a runtime, dispatch external
+    /// runtime identity required to continue it. V9 validates semantic content and lineage without
+    /// rendering; historical dispatchable versions reconstruct and verify exact commitments. This method does not create a runtime, dispatch external
     /// work, or mutate the journal.
     /// </summary>
     public SessionRuntimeRecoveryRequirements
@@ -77,9 +76,10 @@ public sealed partial class SessionJournalEngine {
         SessionExecutionRecovery recovery,
         CancellationToken cancellationToken
     ) {
-        SessionPreparedRequestReconstruction reconstruction =
-            ReconstructPreparedRecovery(recovery, cancellationToken);
-        CompletionRequestPreparedBody manifest = reconstruction.Manifest;
+        CompletionRequestPreparedBody manifest = recovery.PreparedRuntime?.BodySchemaVersion == SessionRequestManifestDefaults.CurrentBodySchemaVersion
+            ? SessionPreparedRequestReconstructor.VerifySemantic(_reader,
+                recovery.Boundary.SourcePrepared ?? throw new InvalidDataException("Missing Prepared boundary."), cancellationToken)
+            : ReconstructPreparedRecovery(recovery, cancellationToken).Manifest;
         SessionPreparedRuntimeRecoverySnapshot snapshot =
             recovery.PreparedRuntime
                 ?? throw new InvalidDataException(
@@ -155,12 +155,13 @@ public sealed partial class SessionJournalEngine {
             );
             throw new NotSupportedException(
                 "Historical CompletionRequestPrepared v5 was verified but cannot be resumed. "
-                + "Only v7 and v8 requests can enter completion dispatch."
+                + "Only v7, v8, and v9 requests can enter completion dispatch."
             );
         }
         if (bodySchemaVersion is not (
             SessionRequestManifestDefaults.CurrentBodySchemaVersion
-            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7)) {
+            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7
+            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV8)) {
             throw new NotSupportedException(
                 $"CompletionRequestPrepared v{bodySchemaVersion} cannot be resumed."
             );
@@ -170,7 +171,8 @@ public sealed partial class SessionJournalEngine {
             SessionPreparedRequestReconstructor.Reconstruct(
                 _reader,
                 sourcePreparedAddress,
-                cancellationToken
+                cancellationToken,
+                _runtime?.InputProjector
             );
         CompletionRequestPreparedBody manifest = reconstruction.Manifest;
         if (!string.Equals(

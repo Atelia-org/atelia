@@ -46,6 +46,12 @@ Runtime start/settled 与 Manager 行提交/已有行 callback 提供独立操�
 - ToolContinuation：先exact frozen tool profile/operation/sequence，再绑定无工具的current completion，最后打开Online。
 - ToolResult NewRequest：保留ToolResult raw tail，以无工具runtime进入readiness；不在该phase重新seal。
 
+上述 Prepared/Started 包含 [v9 语义计划](../contracts/completion-request-prepared-v9.md) 与历史 v7/v8 exact
+两类。v9 先验证持久计划，Refuse 不要求 projector；允许发送后才用当前 host projector 表达已选内容。
+旧 v7/v8 exact 恢复不调用新 projector。换风格不重新打开 Getter/Manager 选择 cell，不改变 uncertain 权限。
+host 的主请求 runtime 和真正发出辅助请求的 runtime 都需能处理 `SessionInputObservationMessage`；核心
+query、audit 与 setup 比较只读 typed 内容，不要求接入 Galatea 或 md-json。
+
 Lifecycle audit authority来自同一mutable `SessionJournalEngine`在Prepare动态作用域内签发的owner-bound
 snapshot。Online可以用同一snapshot的独立cursors先offline reconcile、再offline build；cursor释放自身
 enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed authority mismatch。

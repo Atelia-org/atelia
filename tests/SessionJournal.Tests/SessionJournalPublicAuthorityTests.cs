@@ -176,11 +176,11 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
         Assert.Equal(
             [
                 "ExecutePendingToolToBoundaryAsync(EventAddress,ToolSession,SessionToolRuntimeIdentity,CancellationToken)",
-                "PrepareContextLifecycleMaintenanceAsync(EventAddress,ISessionContextLifecycleCoordinator,String,CancellationToken)",
+                "PrepareContextLifecycleMaintenanceAsync(EventAddress,ISessionContextLifecycleCoordinator,SessionInputContent,CancellationToken)",
                 "ResumeAsync(EventAddress,CancellationToken)",
                 "ResumeAsync(EventAddress,CompletionStreamObserver,CancellationToken)",
-                "SendAsync(EventAddress,String,CancellationToken)",
-                "SendAsync(EventAddress,String,CompletionStreamObserver,CancellationToken)"
+                "SendAsync(EventAddress,SessionInputContent,CancellationToken)",
+                "SendAsync(EventAddress,SessionInputContent,CompletionStreamObserver,CancellationToken)"
             ],
             publicOnlineMethods
                 .Select(FormatSignature)

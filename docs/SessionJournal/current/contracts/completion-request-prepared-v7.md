@@ -1,9 +1,10 @@
-# CompletionRequestPrepared v8 — current adapter recovery
+# CompletionRequestPrepared v7/v8 — 历史 exact 恢复合同
 
-状态：Current；Prepared v8-only writer，v7/v8 current recovery，Prepared v5 historical read-only verification，
-withdrawn v6 unsupported。
+状态：历史 v7/v8 exact reader/recovery 合同；v5 audit-only，撤回的 v6 unsupported。新请求 writer 已改为
+[Prepared v9](completion-request-prepared-v9.md)，同时写入 Observation/Setup v2 与 Started v2。本文保留旧请求
+的接受语言和执行权限，不要求 v9 重建历史渲染文本，也不把旧验证证据转授给新版。
 
-本文是 [SessionJournal Contract R2](session-journal-contract-r2.md) 之后的 raw/recovery successor。
+本文记录 [SessionJournal Contract R2](session-journal-contract-r2.md) 之后、v9 之前的 raw/recovery 变化。
 R2 的 Prepared v5 表格、tag 与 evidence 仍记录当时事实，不由本文改写。
 
 ## 1. 决策
@@ -11,7 +12,7 @@ R2 的 Prepared v5 表格、tag 与 evidence 仍记录当时事实，不由本�
 SessionJournal current execution 有意不支持 caller/Host 选择输出 token ceiling：
 
 - `CompletionRequest` 与 `SessionRuntime` 没有 `MaxTokens` / `MaxOutputTokens` 参数；
-- current Prepared v8 的 `parameters` 仅包含 `modelId`；
+- 历史 Prepared v8 的 `parameters` 仅包含 `modelId`；
 - provider-neutral canonical request v2 仅包含 `modelId`、`systemPrompt`、`context`、`tools`；
 - provider optional limit field 在 omission 表示 unlimited/model maximum 时必须省略；
 - provider 若必须发送数字，或 omission 会选择更低的 model-varying default，则具体 provider client
@@ -25,9 +26,9 @@ SessionJournal current execution 有意不支持 caller/Host 选择输出 token 
 也不会在付费 generation 途中终止请求。Timeout、caller cancellation 与 provider terminal `Incomplete`
 同样不是本次合同删除的 caller-selected output ceiling。
 
-## 2. Current v8 accepted language
+## 2. 历史 v8 accepted language
 
-`CompletionRequestPrepared` 的 event kind 仍为 `8`，current body schema version 为 `8`。body 继续是
+`CompletionRequestPrepared` 的 event kind 仍为 `8`，本文的 body schema version 为 `8`。body 继续是
 exact nine-field object：
 
 ```text
@@ -52,7 +53,7 @@ commitment
 
 Identifiers：
 
-| Fact | Current identifier |
+| Fact | v7/v8 identifier |
 |---|---|
 | Prepared body | `8` |
 | recipe | `atelia.session-journal.coherent-artifact-tail.recipe.v1` |
@@ -60,10 +61,10 @@ Identifiers：
 | tool definitions | `atelia.tool-definition.canonical-json.v1` |
 
 Recipe v1 保持不变，因为 coherent artifact-tail 的 selection、aggregation 与 expansion 没变。
-Canonical request 升 v2，因为 output-ceiling field 已从 committed bytes 删除。Current writer 对 exact
+当时 Canonical request 升 v2，因为 output-ceiling field 已从 committed bytes 删除。v7/v8 记录对 exact
 canonical v2 bytes 计算 `commitment.byteLength` 与 SHA-256，recovery 必须重建同一 bytes。
 
-raw-range、artifact snapshot、history semantic commitment 与 context-contribution hash domain 都不升级。
+v7 → v8 当时未升级 raw-range、artifact snapshot、history semantic commitment 与 context-contribution hash domain。
 raw-range 本来就纳入每个 event 的 actual body schema version，因此 mixed v5/v7/v8 lineage 保持可验证。
 
 ### v7 → v8 target 简化
@@ -106,14 +107,18 @@ SessionRequestV5HistoricalCanonicalizer
 
 Lineage/state-machine/setup/audit 只消费 cap-free `SessionPreparedManifestView`。Full audit、selected-lineage
 audit、offline validation、completed-turn projection、history planning、tail fold 与 governing-setup checkpoint
-可以跨 completed v5；随后生成的新 Prepared 必须是 v8。
+可以跨 completed v5；随后生成的新 Prepared 必须是 v9。
 
 Prepared v6 曾属于已撤回的 supplemental-context candidate，current reader/writer 都明确拒绝，数字不复用。
-其他旧版与 future version 同样 unsupported。
+v9 是明确支持的当前语义格式；其他未列出的旧版与 future version unsupported。
 
 ## 4. Recovery
 
-v7/v8 共用当前执行模型，均能由 `SessionPreparedRequestReconstructor` 生成 dispatchable `CompletionRequest`。
+v7/v8 共用旧 exact 执行路径，均能由 `SessionPreparedRequestReconstructor` 生成 dispatchable `CompletionRequest`。
+恢复使用已存 exactContextInputs、raw/setup 和 commitment，不调用 `ISessionInputProjector` 或重新查询 RecapGrid。
+真实旧 Observation/Setup v1 解码为 Text；不能拿新 structured 内容改版号冒充旧 fixture。正常历史恢复写 Started v1；
+若读取到 Started v2，其 canonical codec 与 commitment 都必须等于 source Prepared。v9 必须搭配 Started v2，
+v5 不接受 Started v2，完整矩阵见 [v9 合同](completion-request-prepared-v9.md#恢复版本矩阵)。
 
 若 selected head 是 historical v5 Prepared，或是其后的 active `CompletionAttemptStarted`：
 
@@ -124,8 +129,8 @@ v7/v8 共用当前执行模型，均能由 `SessionPreparedRequestReconstructor`
 
 v5 的拒绝来自独立的执行版本边界，与 adapter 标签无关；即使连接身份匹配，v5 也不得恢复调用。
 
-已完成 v5 Action 是历史事实：Idle session 可以继续 append v8。若旧 completion 已成功产生含 tool-call 的
-Action，现有 frozen tool-runtime identity 仍控制该工具；工具完成后的新 completion request 必须写 v8，
+已完成 v5 Action 是历史事实：Idle session 可以继续 append v9。若旧 completion 已成功产生含 tool-call 的
+Action，现有 frozen tool-runtime identity 仍控制该工具；工具完成后的新 completion request 必须写 v9，
 不会复用 v5 ceiling。Known-failed v5 turn 仍可通过既有 explicit abandon 操作处理。
 
 ## 5. Verification owners
@@ -139,5 +144,5 @@ Action，现有 frozen tool-runtime identity 仍控制该工具；工具完成�
 - audit、selected-lineage、execution-tail、tail projection 与 governing-setup resolver。
 
 Focused evidence 位于 `tests/SessionJournal.Tests`：v8 exact golden、v7 旧字段读取、v5 numeric/null strict decode、legacy
-ceiling tamper、v6 rejection、active v5 zero-dispatch refusal，以及 completed v5/v7 → current v8 mixed-lineage
+ceiling tamper、v6 rejection、active v5 zero-dispatch refusal，以及 completed v5/v7 → 后续新请求的 mixed-lineage
 audit/offline/recent projection。Public-surface tests守门 `SessionRuntime` 不再暴露 caller-selected output cap。

@@ -4,15 +4,6 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal;
 
-internal sealed record SessionTailContextProjectionResult(
-    string SystemPrompt,
-    ImmutableArray<IHistoryMessage> Context,
-    EventAddress RawStartExclusive,
-    string RawRangeSha256,
-    ImmutableArray<SessionRequestArtifactContextSnapshot> ContextSnapshots,
-    SessionTailProjectionDiagnostics Diagnostics
-);
-
 internal static class SessionTailContextProjection {
     internal static SessionExecutionRecovery ValidateReplaySafeBoundary(
         SessionJournalEventReader reader,
@@ -49,7 +40,7 @@ internal static class SessionTailContextProjection {
             seed.GoverningSetup.RuntimeConfig;
         EventAddress promptAddress =
             seed.GoverningSetup.SystemPromptSetupAddress;
-        string systemPrompt = seed.GoverningSetup.SystemPrompt;
+        SessionInputContent systemPrompt = seed.GoverningSetup.SystemPrompt;
         var context = new List<IHistoryMessage>();
         ActionMessage? openAction = null;
         var observedResults = new Dictionary<string, ToolResultObservedBody>(StringComparer.Ordinal);
@@ -136,6 +127,7 @@ internal static class SessionTailContextProjection {
                             $"{ev.Kind} at {ev.Address} does not continue the active suffix Prepared attempt chain."
                         );
                     }
+                    SessionEventCodec.ValidateStartedForPrepared(ev.BodySchemaVersion, RequireBody<CompletionAttemptStartedBody>(ev), sourcePrepared);
                     activeAttemptAddress = ev.Address;
                     phase = SessionExecutionPhase.AwaitingCompletion;
                     break;
@@ -188,9 +180,7 @@ internal static class SessionTailContextProjection {
                             $"{ev.Kind} at {ev.Address} must appear at an idle suffix boundary; an exact failed turn must be abandoned first."
                         );
                     }
-                    var observation = new ObservationMessage(
-                        RequireBody<ObservationAcceptedBody>(ev).Content
-                    );
+                    IHistoryMessage observation = RequireBody<ObservationAcceptedBody>(ev).Content.ToHistoryMessage();
                     context.Add(observation);
                     planningUnits?.Add(new SessionHistoryPlanningUnit(
                         observation,

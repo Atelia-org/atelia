@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal;
 public sealed record SessionExpectedObservationTurnRequest(
     EventAddress ExpectedSelectedHead,
     EventAddress FreshBaseHead,
-    string ExactObservationContent,
+    SessionInputContent ExactObservationContent,
     EventAddress? ExpectedObservationAddress = null
 );
 

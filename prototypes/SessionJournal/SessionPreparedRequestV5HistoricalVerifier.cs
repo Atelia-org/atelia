@@ -122,6 +122,9 @@ internal static class SessionPreparedRequestAuditVerifier {
     ) {
         switch (bodySchemaVersion) {
             case SessionRequestManifestDefaults.CurrentBodySchemaVersion:
+                _ = SessionPreparedRequestReconstructor.VerifySemantic(reader, sourcePreparedAddress, cancellationToken);
+                return;
+            case SessionRequestManifestDefaults.LegacyBodySchemaVersionV8:
             case SessionRequestManifestDefaults.LegacyBodySchemaVersionV7:
                 _ = SessionPreparedRequestReconstructor.Reconstruct(
                     reader,

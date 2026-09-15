@@ -253,8 +253,8 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         >(path, prepared, SessionEventKind.CompletionRequestPrepared);
         EventAddress parent = ReadParent(path, prepared)!.Value;
         CompletionRequestPreparedBody corrupt = source with {
-            Commitment = source.Commitment with {
-                Sha256 = new string('0', 64)
+            Plan = source.Plan with {
+                RawRangeSha256 = new string('0', 64)
             }
         };
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
@@ -279,7 +279,7 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         InvalidDataException error = Assert.Throws<InvalidDataException>(
             () => reopened.InspectRuntimeRecoveryRequirements()
         );
-        Assert.Contains("commitment", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("raw range hash", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, client.Calls);
     }
 
@@ -422,7 +422,7 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
             prepared,
             SessionEventCodec.Encode(
                 SessionEventKind.CompletionAttemptStarted,
-                new CompletionAttemptStartedBody()
+                LegacyPreparedV7TestFixture.StartedFor(journal, prepared)
             ),
             opaqueEventKind:
                 (uint)SessionEventKind.CompletionAttemptStarted,

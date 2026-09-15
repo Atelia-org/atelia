@@ -48,7 +48,7 @@ internal sealed record SessionJournalOfflineFoldResult(
     EventAddress? RuntimeConfigSetupAddress,
     SessionRuntimeConfiguration? RuntimeConfig,
     EventAddress? SystemPromptSetupAddress,
-    string? SystemPrompt,
+    SessionInputContent? SystemPrompt,
     int PreparedRequestCount,
     int ObservationCount,
     int AgentActionCount,

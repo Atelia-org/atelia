@@ -30,6 +30,13 @@ public static class SessionHistorySemanticCommitment {
         );
     }
 
+    public static string ComputeObservationContributionSha256(SessionInputContent content) {
+        ArgumentNullException.ThrowIfNull(content);
+        return content.IsStructured
+            ? ComputeCanonicalJsonHash("structured-observation", content.Write)
+            : ComputeObservationContributionSha256(new ObservationMessage(content.TextValue));
+    }
+
     public static string ComputeActionContributionSha256(
         ActionMessage action
     ) {

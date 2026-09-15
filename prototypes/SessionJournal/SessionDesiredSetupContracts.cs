@@ -9,7 +9,7 @@ namespace Atelia.SessionJournal;
 public sealed record SessionDesiredSetup(
     string ModelId,
     string CompletionSurfaceId,
-    string SystemPrompt
+    SessionInputContent SystemPrompt
 );
 
 public enum SessionDesiredSetupUnavailableReason {

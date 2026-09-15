@@ -82,8 +82,8 @@ public static class ContextHeaderCarrierTokens {
 
 /// <summary>
 /// Provider-facing target for one derived context contribution. Carrier and
-/// block key are its routing identity; semantic heading is a presentation
-/// envelope and deliberately does not participate in identity or ordering.
+/// block key are its routing identity. Semantic heading is selected content, independent
+/// of transient Markdown decoration; it does not participate in carrier/block ordering.
 /// </summary>
 public sealed record ContextHeaderBlockTarget {
     public const int MaximumSemanticHeadingUtf8Bytes = 256;

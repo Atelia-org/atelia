@@ -101,38 +101,28 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 )
             );
         }
-        Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
+        Assert.Equal(SessionRequestManifestDefaults.SemanticRecipeId, manifest.Recipe.RecipeId);
         Assert.Equal(anchor, manifest.Plan.RawStartExclusive);
-        Assert.Equal(2, manifest.Plan.ExactContextInputs.Length);
-        Assert.Collection(
-            manifest.Plan.ExactContextInputs,
+        Assert.Empty(manifest.Plan.ExactContextInputs);
+        Assert.Collection(manifest.Plan.SemanticContributions,
             observation => {
-                Assert.Equal("", observation.ContextSnapshot.SystemPromptFragment);
-                Assert.Equal(
-                    "## Derived context from prior history: roleplay.world-understanding\n\n"
-                    + "~~~~recap-block\nmemory observation\n~~~~",
-                    observation.ContextSnapshot.ObservationMessage
-                );
-                Assert.Equal("", observation.ContextSnapshot.ActionMessage);
+                Assert.Equal(ContextHeaderCarrier.Observation, observation.Target.Carrier);
+                Assert.Equal("memory observation", observation.ExactText);
+                Assert.Equal("Derived context from prior history: roleplay.world-understanding", observation.Target.SemanticHeading);
             },
             autobiography => {
-                Assert.Equal("", autobiography.ContextSnapshot.SystemPromptFragment);
-                Assert.Equal("", autobiography.ContextSnapshot.ObservationMessage);
-                Assert.Equal(
-                    "## Derived context from prior history: roleplay.first-person-autobiography\n\n"
-                    + "~~~~recap-block\nmemory action\n~~~~",
-                    autobiography.ContextSnapshot.ActionMessage
-                );
-            }
-        );
-        Assert.All(
-            manifest.Plan.ExactContextInputs,
-            input => Assert.Equal(
-                SessionArtifactContextSnapshotHasher.ComputeSha256(input.ContextSnapshot),
-                input.ContentSha256
-            )
-        );
-        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), manifest.Commitment);
+                Assert.Equal(ContextHeaderCarrier.Action, autobiography.Target.Carrier);
+                Assert.Equal("memory action", autobiography.ExactText);
+                Assert.Equal("Derived context from prior history: roleplay.first-person-autobiography", autobiography.Target.SemanticHeading);
+            });
+        Assert.All(manifest.Plan.SemanticContributions, input => Assert.Equal(
+            SessionContextContributionHasher.ComputeSha256(input.ExactText), input.ContentSha256));
+        Assert.Null(manifest.Commitment);
+        EventAddress started = Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
+        using (var inspection = SessionJournalEngine.Open(path)) {
+            var evidence = Assert.IsType<CompletionAttemptStartedBody>(SessionEventCodec.Decode(SessionEventKind.CompletionAttemptStarted, inspection.ReadPayloadBytes(started), out _));
+            Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), evidence.Commitment);
+        }
         Assert.Equal(runtimeB, manifest.Setups.RuntimeConfig.Address);
         Assert.Equal(promptB, manifest.Setups.SystemPrompt.Address);
     }
@@ -247,8 +237,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.All(
             manifests,
             manifest => {
-                Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
-                Assert.Equal(2, manifest.Plan.ExactContextInputs.Length);
+                Assert.Equal(SessionRequestManifestDefaults.SemanticRecipeId, manifest.Recipe.RecipeId);
+                Assert.Empty(manifest.Plan.ExactContextInputs);
+                Assert.Equal(2, manifest.Plan.SemanticContributions.Length);
                 Assert.Single(manifest.ToolSet.Definitions);
                 Assert.Equal(TestToolRuntimeIdentity, manifest.ToolSet.RuntimeIdentity);
             }

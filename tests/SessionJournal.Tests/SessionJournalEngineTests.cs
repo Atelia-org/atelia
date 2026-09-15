@@ -51,7 +51,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         string[] payloads = ReadJournalPayloadJson(path);
         Assert.Equal(3, payloads.Length);
         Assert.Equal("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}", payloads[0]);
-        Assert.Equal("{\"v\":1,\"body\":{\"content\":\"system-A\"}}", payloads[1]);
+        Assert.Equal("{\"v\":2,\"body\":{\"content\":{\"kind\":\"text\",\"value\":\"system-A\"}}}", payloads[1]);
         Assert.Equal(
             "{\"v\":2,\"body\":{\"origin\":\"native\"}}",
             payloads[2]
@@ -736,7 +736,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             EventAddress address = engine.AppendSystemPromptSetup("system-B");
 
             string promptJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(address));
-            Assert.Equal("{\"v\":1,\"body\":{\"content\":\"system-B\"}}", promptJson);
+            Assert.Equal("{\"v\":2,\"body\":{\"content\":{\"kind\":\"text\",\"value\":\"system-B\"}}}", promptJson);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -1116,7 +1116,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         byte[] payload = engine.ReadPayloadBytes(address);
         string json = System.Text.Encoding.UTF8.GetString(payload);
 
-        Assert.Equal("{\"v\":1,\"body\":{\"content\":\"你好，Atelia <session>\"}}", json);
+        Assert.Equal("{\"v\":2,\"body\":{\"content\":{\"kind\":\"text\",\"value\":\"你好，Atelia <session>\"}}}", json);
         Assert.DoesNotContain("\\u4F60", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\\u597D", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("opaqueEventKind", json, StringComparison.Ordinal);
@@ -1308,13 +1308,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var manifest = Assert.IsType<CompletionRequestPreparedBody>(
             SessionEventCodec.Decode(SessionEventKind.CompletionRequestPrepared, inspection.ReadPayloadBytes(preparedAddress), out _)
         );
-        Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
+        Assert.Equal(SessionRequestManifestDefaults.SemanticRecipeId, manifest.Recipe.RecipeId);
         Assert.Equal(activated.CommonAnchor, manifest.Plan.RawStartExclusive);
-        Assert.Equal(2, manifest.Plan.ExactContextInputs.Length);
+        Assert.Empty(manifest.Plan.ExactContextInputs);
+        Assert.Equal(2, manifest.Plan.SemanticContributions.Length);
         Assert.Equal(64, manifest.Plan.RawRangeSha256.Length);
         Assert.Equal("model-A", manifest.Parameters.ModelId);
         Assert.Empty(manifest.ToolSet.Definitions);
-        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(client.Requests.Single()), manifest.Commitment);
+        Assert.Null(manifest.Commitment);
+        var attempt = Assert.IsType<CompletionAttemptStartedBody>(SessionEventCodec.Decode(SessionEventKind.CompletionAttemptStarted, inspection.ReadPayloadBytes(startedAddress), out _));
+        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(client.Requests.Single()), attempt.Commitment);
     }
 
     [Fact]

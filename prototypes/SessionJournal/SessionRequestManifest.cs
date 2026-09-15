@@ -22,7 +22,9 @@ internal sealed record SessionContextPlan(
     string RawRangeSha256,
     SessionGoverningSetupReferences RawStartSetups,
     ImmutableArray<SessionRequestContextInput> ExactContextInputs
-);
+) {
+    public ImmutableArray<SessionContextContribution> SemanticContributions { get; init; } = [];
+}
 
 /// <summary>
 /// An exact, already-rendered contribution to a prepared provider request.  This is an execution
@@ -55,7 +57,7 @@ internal sealed record SessionGoverningSetupReferences(
 );
 
 /// <summary>
-/// Current Prepared v8 provider-neutral request parameters. The absence of an output ceiling is
+/// Ceiling-free provider-neutral request parameters. The absence of an output ceiling is
 /// intentional: optional provider fields are omitted and required fields use the model maximum
 /// inside the concrete provider client, never in SessionJournal durable state.
 /// </summary>
@@ -108,9 +110,11 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
-    public const int CurrentBodySchemaVersion = 8;
+    public const int CurrentBodySchemaVersion = 9;
+    public const int LegacyBodySchemaVersionV8 = 8;
     public const int LegacyBodySchemaVersionV7 = 7;
     public const int HistoricalBodySchemaVersionV5 = 5;
+    public const string SemanticRecipeId = "atelia.session-journal.semantic-artifact-tail.recipe.v1";
     public const string RecipeId =
         "atelia.session-journal.coherent-artifact-tail.recipe.v1";
     public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v2";
@@ -149,14 +153,15 @@ internal sealed record SessionPreparedManifestView(
     SessionRequestToolSet ToolSet,
     SessionRequestRecipe Recipe,
     SessionRequestTarget Target,
-    SessionRequestCommitment Commitment
+    SessionRequestCommitment? Commitment
 ) {
     public static SessionPreparedManifestView FromDecoded(
         int bodySchemaVersion,
         object body
     ) => (bodySchemaVersion, body) switch {
         (SessionRequestManifestDefaults.CurrentBodySchemaVersion
-            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7,
+            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7
+            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV8,
             CompletionRequestPreparedBody current) => new(
                 bodySchemaVersion,
                 current.Origin,

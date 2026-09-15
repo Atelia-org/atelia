@@ -25,7 +25,7 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 
 | Assembly | Owns |
 |---|---|
-| `SessionJournal` | raw replay、selected Parent lineage、setup authority、bounded planning/audit、neutral context lifecycle |
+| `SessionJournal` | typed raw input、selected Parent lineage、setup authority、bounded planning/audit、neutral context lifecycle 与请求时 host projection 接缝 |
 | `SessionJournal.HistoryTimeline` | 单一 HistoryRowId、schema 3 rows、selected-path head、policy、branch reconcile、owner-bound build reads 与显式 UpgradeSchemaV2 |
 | `SessionJournal.HistoryTimeline.O200k` | fixed o200k estimator、renderer 与 tokenizer adapter |
 | `SessionJournal.RecapGrid.Cadence` | per-Ref R/expected Timeline policy、reserve-aware seal authority、strict CAS/no-create reader |
@@ -51,11 +51,14 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 | formal CLI / Galatea composition | `SessionJournal.Cli.Tests`, `Galatea.Server.Tests` |
 | dependency and retired-owner absence | `SessionJournal.RecapGrid.WalkingSkeleton.Tests` |
 
-Current raw request contract is [CompletionRequestPrepared v8](contracts/completion-request-prepared-v7.md).
-The writer emits only v8 with canonical request codec v2 and no caller-selected output ceiling.
-Legacy v7 shares current reconstruction after its old target layout is decoded. A distinct
-read-only v5 decoder/verifier preserves existing append-only history and exact Action-address provenance;
-historical v5 never produces a dispatchable `CompletionRequest`.
+新请求使用 [CompletionRequestPrepared v9](contracts/completion-request-prepared-v9.md)：Observation/Setup v2
+保存 `SessionInputContent`，Prepared 保存语义计划，Started v2 保存本次 canonical request v2 的长度与摘要。
+新计划不保存渲染文本；核心通过 host 提供的 `ISessionInputProjector` 在发送前投影 structured 输入。
+查询、setup 比较、undo、exact append proof、重开与审计不需要 projector。
+
+[历史 v7/v8](contracts/completion-request-prepared-v7.md)继续按旧 recipe 重建 exact request，恢复不调用新输入
+projector；原 Observation/Setup v1 读成明确的 Text。独立 v5 decoder/verifier 保留 append-only history 与
+Action-address provenance，但不能生成可发送的请求。旧 tag 的验证证据不自动覆盖这些新格式或全域接入。
 
 ## Authority and recovery rules
 
@@ -67,8 +70,10 @@ historical v5 never produces a dispatchable `CompletionRequest`.
 - Timeline writers must enter a Cadence-owned reserve-aware seal operation. Getter validates exact Cadence and
   Timeline policy, then selects the latest healthy R-eligible fulfillment; healthy bootstrap shortage is a
   distinct `ReserveBootstrapRawOnly` state rather than `Unfulfilled` fallback.
-- Current v7/v8 Prepared/Started recovery binds the frozen connection/protocol/tool identity before current configuration;
-  Prepared performs no derived open and Started refuses before connection construction. Historical v5
+- v9 及历史 v7/v8 Prepared/Started recovery 都按已保存的 connection/protocol/tool identity 恢复，不重新选 recap。
+  v9 先纯验证语义计划，再按 uncertain policy 决定是否可投影/发送；换 renderer 不产生重试权限。
+  历史 v7/v8 继续 exact 校验。Host 在 Prepared recovery 不打开 derived owners，在 Started Refuse 时不构造连接。
+  Historical v5
   Prepared/Started is commitment-verified and then fails closed before a frozen requirement, client binding,
   provider call, or journal write.
 - Timeline/Control/Store failures remain typed Busy/Stale/Invalid/Unsupported/Indeterminate outcomes. Hosts do

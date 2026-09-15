@@ -264,7 +264,7 @@ internal static class SessionJournalAuditScanner {
         new(
             SessionHistorySemanticCommitment
                 .ComputeObservationContributionSha256(
-                    new ObservationMessage(body.Content)
+                    body.Content
                 )
         );
 

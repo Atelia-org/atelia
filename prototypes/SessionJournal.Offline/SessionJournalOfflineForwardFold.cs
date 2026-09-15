@@ -12,7 +12,7 @@ internal sealed class SessionJournalOfflineForwardFold {
 
     private SessionRuntimeConfiguration? _runtimeConfig;
     private EventAddress? _runtimeConfigSetupAddress;
-    private string? _systemPrompt;
+    private SessionInputContent? _systemPrompt;
     private EventAddress? _systemPromptSetupAddress;
     private bool _sessionCreated;
     private SessionEventKind? _headKind;

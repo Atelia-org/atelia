@@ -185,7 +185,7 @@ public sealed partial class SessionJournalEngine {
                         );
                 }
 
-                (EventAddress? parent, string content) =
+                (EventAddress? parent, SessionInputContent content) =
                     ReadExactObservationAt(abandoned);
                 observedHead = _journal.GetHead(_branchRefId);
                 if (observedHead != request.ExpectedSelectedHead) {
@@ -207,10 +207,7 @@ public sealed partial class SessionJournalEngine {
                             abandonedDiagnostics
                         );
                 }
-                if (!string.Equals(
-                        content,
-                        request.ExactObservationContent,
-                        StringComparison.Ordinal)) {
+                if (content != request.ExactObservationContent) {
                     return new SessionExpectedObservationTurnReadResult
                         .Conflict(
                             SessionExpectedObservationConflictReason
@@ -243,7 +240,7 @@ public sealed partial class SessionJournalEngine {
 
             EventAddress? observationAddress;
             EventAddress? observationParent;
-            string? observationContent;
+            SessionInputContent? observationContent;
             SessionTerminalActionProjection? terminalAction;
             if (located.OpenTurn is { } open) {
                 observationAddress = open.ObservationAddress;
@@ -304,10 +301,7 @@ public sealed partial class SessionJournalEngine {
                     proofDiagnostics
                 );
             }
-            if (!string.Equals(
-                    observationContent,
-                    request.ExactObservationContent,
-                    StringComparison.Ordinal)) {
+            if (observationContent != request.ExactObservationContent) {
                 return new SessionExpectedObservationTurnReadResult.Conflict(
                     SessionExpectedObservationConflictReason
                         .ObservationContentMismatch,
@@ -403,9 +397,7 @@ public sealed partial class SessionJournalEngine {
                 nameof(request)
             );
         }
-        ArgumentException.ThrowIfNullOrWhiteSpace(
-            request.ExactObservationContent
-        );
+        ArgumentNullException.ThrowIfNull(request.ExactObservationContent);
         if (request.ExpectedObservationAddress is { } expectedObservation
             && expectedObservation == default) {
             throw new ArgumentException(
@@ -423,7 +415,7 @@ public sealed partial class SessionJournalEngine {
         budget.DecodedLogicalPayloadBytes
     );
 
-    private (EventAddress? Parent, string Content)
+    private (EventAddress? Parent, SessionInputContent Content)
         ReadExactObservationAt(EventAddress address) {
         using SessionJournalEventFrame frame =
             _reader.ReadEvent(address).Unwrap();
@@ -829,6 +821,10 @@ public sealed partial class SessionJournalEngine {
                     // ToolResultsMessage shares the observation role in provider context,
                     // but it is protocol material inside the current visible user turn.
                     break;
+                case SessionInputObservationMessage structured:
+                    open = new OpenTurnLocation(unit.SourceStartInclusive,
+                        ReadObservationPredecessor(unit.SourceStartInclusive), structured.Content);
+                    break;
                 case ObservationMessage observation:
                     open = new OpenTurnLocation(
                         unit.SourceStartInclusive,
@@ -1055,7 +1051,7 @@ public sealed partial class SessionJournalEngine {
     private sealed record OpenTurnLocation(
         EventAddress ObservationAddress,
         EventAddress ObservationPredecessor,
-        string ObservationContent
+        SessionInputContent ObservationContent
     );
 
     private sealed record CompletedTurnLocation(

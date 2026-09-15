@@ -15,42 +15,41 @@ internal static class SessionRequestManifestCodec {
             writer.WriteStartObject();
             WriteOrigin(writer, body.Origin);
             WriteExecution(writer, body.Execution);
-            WritePlan(writer, body.Plan);
+            WritePlan(writer, body.Plan, body.Commitment is null);
             WriteSetups(writer, body.Setups);
             WriteParameters(writer, body.Parameters);
             WriteToolSet(writer, body.ToolSet);
             WriteRecipe(writer, body.Recipe);
             WriteTarget(writer, body.Target);
-            WriteCommitment(writer, body.Commitment);
+            if (body.Commitment is not null) { WriteCommitment(writer, body.Commitment); }
             writer.WriteEndObject();
         }
         return buffer.WrittenMemory.ToArray();
     }
 
-    public static CompletionRequestPreparedBody Decode(JsonElement body, bool legacyTarget = false) {
+    public static CompletionRequestPreparedBody Decode(JsonElement body, bool legacyTarget = false, bool semantic = false) {
         RequireExactProperties(
             body,
             "completion-request-prepared body",
-            "origin",
+            ["origin",
             "execution",
             "plan",
             "setups",
             "parameters",
             "toolSet",
             "recipe",
-            "target",
-            "commitment"
+            .. (semantic ? new[] { "target" } : new[] { "target", "commitment" })]
         );
         var result = new CompletionRequestPreparedBody(
             ReadOrigin(ReadRequiredObject(body, "origin")),
             ReadExecution(ReadRequiredObject(body, "execution")),
-            ReadPlan(ReadRequiredObject(body, "plan")),
+            ReadPlan(ReadRequiredObject(body, "plan"), semantic),
             ReadSetups(ReadRequiredObject(body, "setups")),
             ReadParameters(ReadRequiredObject(body, "parameters")),
             ReadToolSet(ReadRequiredObject(body, "toolSet")),
             ReadRecipe(ReadRequiredObject(body, "recipe")),
             ReadTarget(ReadRequiredObject(body, "target"), legacyTarget),
-            ReadCommitment(ReadRequiredObject(body, "commitment"))
+            semantic ? null : ReadCommitment(ReadRequiredObject(body, "commitment"))
         );
         Validate(result);
         return result;
@@ -60,7 +59,7 @@ internal static class SessionRequestManifestCodec {
         ArgumentNullException.ThrowIfNull(body);
         ValidateCommon(
             SessionPreparedManifestView.FromDecoded(
-                SessionRequestManifestDefaults.CurrentBodySchemaVersion,
+                body.Commitment is null ? SessionRequestManifestDefaults.CurrentBodySchemaVersion : SessionRequestManifestDefaults.LegacyBodySchemaVersionV8,
                 body
             ),
             SessionRequestManifestDefaults.CanonicalRequestCodecId
@@ -150,7 +149,7 @@ internal static class SessionRequestManifestCodec {
         RequireText(body.Recipe.RecipeId, "recipe.recipeId");
         if (!string.Equals(
                 body.Recipe.RecipeId,
-                SessionRequestManifestDefaults.RecipeId,
+                body.BodySchemaVersion == 9 ? SessionRequestManifestDefaults.SemanticRecipeId : SessionRequestManifestDefaults.RecipeId,
                 StringComparison.Ordinal
             )) {
             throw new NotSupportedException(
@@ -171,6 +170,19 @@ internal static class SessionRequestManifestCodec {
         RequireText(body.Target.ClientName, "target.clientName");
         RequireText(body.Target.ApiSpecId, "target.apiSpecId");
 
+        if (body.BodySchemaVersion == 9) {
+            if (body.Commitment is not null || !body.Plan.ExactContextInputs.IsEmpty) {
+                throw new InvalidDataException("Semantic Prepared cannot contain rendered snapshots or a Prepared commitment.");
+            }
+            var normalized = SessionContextContributionContract.ValidateAndNormalize(body.Plan.SemanticContributions, allowEmpty: true);
+            if (!normalized.SequenceEqual(body.Plan.SemanticContributions)) {
+                throw new InvalidDataException("Semantic contributions are not in canonical order.");
+            }
+            return;
+        }
+        if (!body.Plan.SemanticContributions.IsEmpty || body.Commitment is null) {
+            throw new InvalidDataException("Legacy Prepared requires an exact commitment and legacy context.");
+        }
         if (body.Commitment.ByteLength <= 0) {
             throw new ArgumentOutOfRangeException(nameof(body), "commitment.byteLength must be positive.");
         }
@@ -202,7 +214,7 @@ internal static class SessionRequestManifestCodec {
         writer.WriteEndObject();
     }
 
-    private static void WritePlan(Utf8JsonWriter writer, SessionContextPlan value) {
+    private static void WritePlan(Utf8JsonWriter writer, SessionContextPlan value, bool semantic) {
         writer.WriteStartObject("plan");
         writer.WriteString(
             "rawStartExclusive",
@@ -213,6 +225,23 @@ internal static class SessionRequestManifestCodec {
         WriteSetup(writer, "runtimeConfig", value.RawStartSetups.RuntimeConfig);
         WriteSetup(writer, "systemPrompt", value.RawStartSetups.SystemPrompt);
         writer.WriteEndObject();
+        if (semantic) {
+            writer.WriteStartArray("contributions");
+            foreach (SessionContextContribution contribution in value.SemanticContributions) {
+                writer.WriteStartObject();
+                writer.WriteNumber("carrier", (int)contribution.Target.Carrier);
+                writer.WriteString("blockKey", contribution.Target.BlockKey);
+                writer.WriteString("semanticHeading", contribution.Target.SemanticHeading);
+                writer.WriteString("exactText", contribution.ExactText);
+                writer.WriteString("contentCodecId", contribution.ContentCodecId);
+                writer.WriteString("contentSha256", contribution.ContentSha256);
+                writer.WriteString("absorbedThrough", EventAddressTextCodec.Format(contribution.AbsorbedThrough));
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            return;
+        }
         writer.WriteStartArray("exactContextInputs");
         foreach (SessionRequestContextInput input in value.ExactContextInputs) {
             writer.WriteStartObject();
@@ -303,15 +332,24 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    internal static SessionContextPlan ReadPlan(JsonElement element) {
+    internal static SessionContextPlan ReadPlan(JsonElement element, bool semantic = false) {
         RequireExactProperties(
             element,
             "plan",
             "rawStartExclusive",
             "rawRangeSha256",
             "rawStartSetups",
-            "exactContextInputs"
+            semantic ? "contributions" : "exactContextInputs"
         );
+        if (semantic) {
+            var contributions = ReadArray(element, "contributions").Select(item => {
+                RequireExactProperties(item, "contribution", "carrier", "blockKey", "semanticHeading", "exactText", "contentCodecId", "contentSha256", "absorbedThrough");
+                return new SessionContextContribution(
+                    new ContextHeaderBlockTarget((ContextHeaderCarrier)ReadRequiredInt32(item, "carrier"), ReadRequiredString(item, "blockKey"), ReadRequiredString(item, "semanticHeading")),
+                    ReadRequiredString(item, "exactText"), ReadRequiredString(item, "contentCodecId"), ReadRequiredString(item, "contentSha256"), ReadRequiredAddress(item, "absorbedThrough"));
+            }).ToImmutableArray();
+            return new SessionContextPlan(ReadRequiredAddress(element, "rawStartExclusive"), ReadRequiredString(element, "rawRangeSha256"), ReadSetups(ReadRequiredObject(element, "rawStartSetups")), []) { SemanticContributions = contributions };
+        }
         var exactContextInputs = ReadArray(element, "exactContextInputs")
             .Select(ReadExactContextInput)
             .ToImmutableArray();

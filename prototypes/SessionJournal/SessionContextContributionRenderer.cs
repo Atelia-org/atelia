@@ -1,9 +1,9 @@
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Renders validated, pre-Prepared derived contributions into exact request
-/// snapshots. Current Prepared v8 persists the resulting snapshot and never
-/// re-renders it through this contract.
+/// Transiently renders validated derived contributions at the request boundary.
+/// Historical v7/v8 snapshots remain already-rendered facts and bypass this renderer
+/// during exact recovery; v9 persists only the original semantic contributions.
 /// </summary>
 internal static class SessionContextContributionRenderer {
     private const string RecapFenceInfoString = "recap-block";

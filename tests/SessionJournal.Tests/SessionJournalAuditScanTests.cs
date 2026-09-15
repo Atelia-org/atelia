@@ -310,7 +310,7 @@ public sealed class SessionJournalAuditScanTests : IDisposable {
     }
 
     [Fact]
-    public async Task PreparedCommitmentCorruption_FailsBeforeVisiting() {
+    public async Task PreparedContentPlanCorruption_FailsBeforeVisiting() {
         (
             string path,
             EventAddress prepared
@@ -319,8 +319,8 @@ public sealed class SessionJournalAuditScanTests : IDisposable {
             path,
             prepared,
             body => body with {
-                Commitment = body.Commitment with {
-                    Sha256 = new string('0', 64)
+                Plan = body.Plan with {
+                    RawRangeSha256 = new string('0', 64)
                 }
             }
         );
@@ -334,7 +334,7 @@ public sealed class SessionJournalAuditScanTests : IDisposable {
             );
 
         Assert.Contains(
-            "commitment",
+            "raw range hash",
             error.Message,
             StringComparison.OrdinalIgnoreCase
         );

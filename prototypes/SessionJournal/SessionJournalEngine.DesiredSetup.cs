@@ -87,11 +87,7 @@ public sealed partial class SessionJournalEngine {
                 desired.CompletionSurfaceId,
                 StringComparison.Ordinal
             );
-        bool promptChanged = !string.Equals(
-            governing.SystemPrompt,
-            desired.SystemPrompt,
-            StringComparison.Ordinal
-        );
+        bool promptChanged = governing.SystemPrompt != desired.SystemPrompt;
 
         if (runtimeChanged) {
             cancellationToken.ThrowIfCancellationRequested();

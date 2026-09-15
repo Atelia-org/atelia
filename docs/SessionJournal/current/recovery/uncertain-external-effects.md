@@ -12,13 +12,28 @@ runtime identity 或 Host domain policy 的 owning code。
 
 `CompletionAttemptStarted` 已提交而 Action/Failed 尚未提交时，provider outcome 是 uncertain。
 `SessionUncertainCompletionRecoveryPolicy.Refuse` 是默认策略：`ResumeAsync` 不调用 provider，也不写 journal。
-只有 Host 明确接受潜在重复 external effect 时，才可选择 `RestartWithNewAttempt`；它会在同一 frozen
-Prepared request 上创建新的 attempt，而不是证明或继续旧 attempt。因此显式 restart 路径的 provider
+只有 Host 明确接受潜在重复 external effect 时，才可选择 `RestartWithNewAttempt`；它会在同一
+Prepared 下创建新的 attempt，而不是证明或继续旧 attempt。因此显式 restart 路径的 provider
 调用语义是 **at-least-once**：provider 可能已经完成旧调用，restart 可能产生重复调用或重复计费。
 
 当前 Core 没有 provider request/result lookup、reconciliation、capability discovery，也没有跨进程
 lease/single-flight。Host 不得把 idempotency key、provider handle 或 operator 推测当成 Core 已提供的
 exactly-once proof。
+
+### 新语义计划与旧 exact 请求
+
+[Prepared v9](../contracts/completion-request-prepared-v9.md)冻结所选内容和执行边界，Started v2 才记录
+本次临时投影请求的 canonical codec、字节数和摘要。首次发送先提交 Prepared，再从持久计划投影、检查
+限额、提交 Started，最后调用 provider。投影或限额失败保持原 Prepared，无 Started、无 provider 调用。
+
+Refuse 前仍验证持久计划、raw/setup/工具及尝试归属；拒绝重发不要求可用 projector。明确授权新 attempt
+后可用当前 projector 表达同一语义计划，旧未知 attempt 及其摘要保留。renderer 变更、缓存失效或投影
+失败均不证明旧调用 NotDispatched，不授权重选内容或自动重发。Started 提交不确定时，本次不调用 provider，
+dispose/reopen 后按实际 Prepared/Started head 决定恢复阶段。
+
+[旧 Prepared v7/v8](../contracts/completion-request-prepared-v7.md)保持原 commitment 的 exact 重构，
+不调用 structured projector；其正常恢复继续写 Started v1。v5 只验证历史记录，不可恢复 provider 调用。
+版本组合的精确接受规则由 v9 合同的恢复矩阵约束，不因本节的 retry 策略扩大。
 
 ### 明确的 no-dispatch / pre-stream rejection：Started 后可持久化 Failed
 

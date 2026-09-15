@@ -9,7 +9,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
     private readonly List<string> _paths = [];
 
     [Fact]
-    public async Task ReconstructsEveryHistoricalPreparedCommitment() {
+    public async Task ValidatesEveryPreparedContentPlan() {
         string path = NewPath();
         var client = new NeverCalledCompletionClient();
         EventAddress prepared;
@@ -70,8 +70,8 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                 );
             Assert.True(journal.MoveRef(main, prepared, observation).Unwrap());
             CompletionRequestPreparedBody corrupt = body with {
-                Commitment = body.Commitment with {
-                    Sha256 = new string('0', 64)
+                Plan = body.Plan with {
+                    RawRangeSha256 = new string('0', 64)
                 }
             };
             EventAddress corruptPrepared = Commit(
@@ -106,7 +106,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                 )
             );
         Assert.Contains(
-            "commitment",
+            "raw range hash",
             error.Message,
             StringComparison.Ordinal
         );
