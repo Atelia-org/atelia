@@ -64,7 +64,7 @@ RecapGrid承诺事务明细完整性。这里描述的是Galatea对两种产品�
 2. 用单对象 `Editable ↔ Frozen` 状态机取代并发 snapshot/version 系统。
 3. Frozen 时所有写操作直接拒绝；Editable 时production `RecallAsync`直接拒绝；renderer/raw resolver不作为
    production lifecycle API暴露。
-4. Frozen 状态缓存一份 exact canonical provider-neutral context projection，重复查询复用完全相同的前缀。
+4. Frozen 状态固定机读 document；Recall 请求组装时瞬态生成 provider-neutral projection，可缓存以复用前缀。
 5. 召回 Agent 只能提交有序 Memo ID；production API在一次Frozen调用内完成query、验证与hydrate。
 6. storage document、prompt render 与 provider request projection 分层，任一格式升级都不会悄悄改写另一层。
 7. correctness 不依赖 prompt cache 是否命中；cache 只影响费用和延迟，并由真实 provider telemetry 验证。
@@ -102,8 +102,9 @@ MemoPod
   OrderedMap<MemoId, Memo>
   NextMemoId
   Dirty
-  FrozenPrompt?          // internal cache；不从production API detached返回
-  FrozenPromptSha256?    // telemetry/debug identity，不是第二份 authority
+  FrozenDocument?        // 当前 Frozen 生命周期的进程内 immutable snapshot/epoch
+  FrozenPrompt?          // 可清空的 internal 派生缓存；不从production API detached返回
+  FrozenPromptSha256?    // 本次调用投影的 telemetry/debug digest，不是 document/epoch identity
 
 Memo
   MemoId
@@ -168,16 +169,16 @@ Editable
   Append / Remove
   FreezeAsync
     validate complete working state
-    build storage bytes + frozen prompt
+    capture immutable document and build storage bytes
     atomically commit durable document when dirty
-    publish cached prompt
+    establish a new in-process document epoch; leave prompt cache empty
     transition to Frozen
 
 Frozen
   RecallAsync                // public query -> validate -> hydrate closed operation
-  repeated queries over the exact same frozen prompt
+  lazily project the frozen document for each request; reuse optional prompt cache
   ResumeEditing
-    invalidate frozen prompt/cache metadata
+    revoke document epoch and discard prompt cache
     transition to Editable
 ```
 
@@ -196,7 +197,7 @@ Frozen
 
 ```text
 Freeze
-  -> RecallAsync内部使用当前cached prompt发起provider recall
+  -> RecallAsync内部按需投影当前Frozen document，或复用缓存，再发起provider recall
   -> RecallAsync内部parse/validate IDs
   -> RecallAsync内部从同一个still-frozen Pod resolve IDs
   -> copy immutable Memo values into self-contained MemoRecallResult
@@ -214,9 +215,9 @@ Frozen，可再次Recall或由调用方显式`ResumeEditing`。`ResumeEditing`�
 
 ### 4.4 Why no snapshot
 
-本设计显式选择 temporal separation，而不是 concurrent snapshot isolation。Freeze preparation允许产生一份只在
-本次调用中使用的immutable commit candidate，供codec与renderer读取；它不会从public API逃逸、不会跨epoch保留，
-也不参与旧ID的后续resolve。本设计删除的是public/retained/versioned `MemoPodSnapshot`、revision、CAS、
+本设计显式选择 temporal separation，而不是 concurrent snapshot isolation。Freeze preparation产生 immutable
+commit candidate；成功提交后作为当前 Frozen document 保留，供请求时投影并标识本进程 epoch。它不会从public
+API逃逸，ResumeEditing即撤销；不跨epoch保留来支持旧ID的后续resolve。本设计删除的是public/retained/versioned `MemoPodSnapshot`、revision、CAS、
 snapshot-scoped lookup与多版本回收；代价是上层必须保证：
 
 1. 同一个 Pod 同时只有一个 owner；
@@ -270,11 +271,11 @@ storage document 与 provider prompt 是两种独立 canonical representation：
 Editable entry mutations只修改内存working state并设置`Dirty`。`FreezeAsync`是提交边界：
 
 1. 在可取消的preparation阶段验证complete state、UTF-16/UTF-8、ID ordering、大小和重复项；
-2. 预先生成canonical storage bytes与internal frozen prompt；
+2. 捕获immutable document并预先生成canonical storage bytes；不渲染prompt；
 3. 若Dirty，在可取消阶段写same-directory temporary file并flush/close；
 4. 在进入publish前执行最后一次cancellation check，随后进入不可取消的settlement fence；
 5. `Create(...)`首次提交使用atomic no-clobber/create-if-absent，已从exact document `Open`的Pod才允许replace；
-6. publish被证明成功后，只执行不应失败的内存赋值：`Dirty=false`、保存预计算prompt、切换Frozen；
+6. publish被证明成功后，只执行不应失败的内存赋值：`Dirty=false`、保存本次document epoch、清空prompt cache、切换Frozen；
 7. publish前可证明未修改authority的失败/取消保持Editable与原Dirty；
 8. publish可能已经发生但settlement不能证明时，invalidate当前handle并要求discard+reopen，禁止继续业务API。
 
@@ -326,13 +327,13 @@ IDs按allocation ordinal递增且唯一、允许gap、所有现存ID小于`NextM
 哪些内容”的语义。durable hard cap必须先由本地资源预算锁定；route/model-specific默认cap与token estimator
 可以在provider canary后单独收紧，不能让live provider结果反向决定storage wire能否解析。
 
-`Open`只执行schema/local structural hard bounds并生成provider-neutral frozen prompt；当前route/model cap变小不得
+`Open`只执行机读schema/local structural hard bounds并保留document，不生成prompt；当前route/model cap变小不得
 使一个既有committed Pod无法Open、ResumeEditing或修复。route/model cap只在`RecallAsync` provider call之前
 preflight；超限抛出typed local limit failure并保持Pod Frozen，不得误报为provider failure。
 
-同一storage schema version的logical/storage/render hard bounds必须相容：任何可由`FreezeAsync`成功提交的V2
-document都必须能被V2 `Open`重新生成prompt。renderer升级不得用更小hard bound把既有合法document变成孤儿；
-确需收紧时必须升schema/renderer contract并另立migration设计。
+同一storage schema version的logical/storage hard bounds必须相容：任何成功提交的V2 document都必须能被
+V2 `Open`读取。渲染失败或投影超限只阻止该次Recall，不阻止健康document的Open、编辑、Freeze或原Note保存；
+不因渲染样式或请求限额变化而升级durable schema。请求组装须在provider调用前完成投影与本地预算检查。
 
 Remove只承诺从下一次successfully committed active Pod state移除该ID。V2 storage document只保存active memos，
 因此首版Freeze会把removed Memo物理移出下一份document；这是V2 representation，不是public API对未来backend的
@@ -355,7 +356,9 @@ MemoPodFrozenPrompt
 ```
 
 `MemoPodFrozenPrompt`不从production API detached返回；它只由MemoPod/Recall service在当前Frozen epoch内部
-消费。测试可以通过internal surface验证bytes/hash。
+消费。缓存可以清空或替换，不充当Frozen epoch；测试可以通过internal surface验证bytes/hash。
+`FrozenPromptSha256`只描述本次实际送出的corpus投影，即使await期间缓存替换，结果仍报告捕获的投影digest。
+Epoch按本进程immutable document对象校验；`ResumeEditing → 原样Freeze`即使机读hash相同也使旧在途Recall失效。
 
 Recall request 使用现有 Completion abstractions：
 
@@ -391,9 +394,9 @@ renderer 同时满足两个不同合同：
 - Topic在Create后immutable；DerivedInfo-only更新保留MemoId且不改变prompt bytes/hash，正文更新仍通过Remove+Append获得新ID；
 - 纠错采用同一Freeze内`Remove(oldId) + Append(newText)`，因此V2的cache破坏范围仍从old entry开始；删除
   Replace的首版收益是ID/text不变量与API简化，不虚构额外cache收益；
-- `ResumeEditing` 使 cached prompt失效；下一次 Freeze重新生成。
+- `ResumeEditing` 撤销document epoch并清空缓存；下一次Freeze建立新epoch，下一次Recall才按需生成prompt。
 
-Frozen 阶段因此构成一个自然 cache epoch：可在完全相同的 prefix上执行多次 query。若产品实际每次 Freeze
+Frozen 阶段保持同一机读内容，通常可在完全相同的prefix上执行多次query；渲染缓存不是生命周期身份。若产品实际每次 Freeze
 之后只查询一次，cache收益可能很弱；实现必须观测 `queriesPerFrozenEpoch`，不能以静态单价代替真实证据。
 Recall调用传入`PromptCacheReuseHint.ReuseExpectedSoon`表达经济意图；对DeepSeek当前只代表implicit/best-effort
 行为，不是cache breakpoint或命中保证。2026-08-19复核的
@@ -487,7 +490,7 @@ production surface不混用result union与exception两套取消语义：
 - caller cancellation原样传播`OperationCanceledException`；
 - Pod非Frozen或Invalidated属于本地lifecycle misuse，在provider call前抛出。
 
-除成功返回外，上述failure/cancellation都不产生半成品result，也不改变Frozen phase或cached prompt。是否对
+除成功返回外，上述failure/cancellation都不产生半成品result，也不撤销Frozen document epoch；已生成的派生缓存可继续复用。是否对
 invalid model output做一次受限retry属于Host policy；首版默认不自动retry。上层可以明确选择“本轮不带 Memo
 继续”或“拒绝主 completion”，但必须保留no-match与unavailable的区别。
 
@@ -603,7 +606,7 @@ Track C1/C2是route-specific证据旁路；它们不改变MemoPod library主链�
 
 - public `Create`/`Open`/`FreezeAsync`/`ResumeEditing`、persistence、prompt renderer、Completion request、concurrency。
 
-WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的公开状态。完整phase machine只在WP-04
+WP-01不得交付“已经Frozen但尚无durable document”的公开状态。完整phase machine只在WP-04
 一次性成为production surface。
 
 **Tentative write scope**
@@ -719,7 +722,7 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 - public `Create`/`Open`、全部read/Append/Remove、`FreezeAsync`与`ResumeEditing`；
 - Dirty table、provisional→committed ID边界、Frozen全部mutation拒绝；
 - Freeze的cancellable preparation、cancellation fence、durable settlement与无失败内存publish；
-- Frozen内部prompt/hash缓存与ResumeEditing失效；
+- Frozen机读document epoch、Recall时lazy prompt/hash缓存与ResumeEditing撤销epoch；
 - `CommitIndeterminate`时invalidate handle并强制discard/reopen。
 
 **Out of scope**
@@ -735,9 +738,10 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 **Validation**
 
 - `Create`首次Freeze no-clobber；`Open`从strict committed document进入Frozen；
-- 最大合法durable V2 document可成功Open/render；renderer hard bound覆盖storage语言允许状态的最坏canonical
-  projection；Recall只施加本地prompt/hydration bounds，Completion有意不提供caller-selected output cap；
-- Dirty false的Editable refreeze不重写authority，但会重建prompt并进入Frozen；
+- 最大合法durable V2 document可成功Open；故障renderer不影响Open/Freeze/机读读取与durability确认，Recall在provider前失败；
+- Recall施加本地prompt/hydration bounds，Completion有意不提供caller-selected output cap；
+- Dirty false的Editable refreeze不重写authority、不渲染，但建立新epoch并拒绝原样refreeze前的在途Recall；
+- 缓存清空/投影样式替换不使在途Recall失效；其结果digest对应该次实际发出的投影；
 - mutation×Frozen和Freeze/Resume非法转换完整negative matrix；
 - preparation cancel/fault保持Editable和原Dirty；successful settlement得到Frozen/Dirty false；
 - publisher已报告`Published`后caller token立刻取消，Freeze仍成功且进入Frozen；post-publish cleanup失败只记
@@ -751,7 +755,7 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 
 **Done when**
 
-- public Freeze从首次出现起就同时满足“valid document + durable settlement + cached prompt + Frozen”，不存在
+- public Freeze从首次出现起就同时满足“valid document + durable settlement + new document epoch + Frozen”，不存在
   后续工作包才能补齐的弱化版本。
 
 ### WP-05：provider-neutral recall service

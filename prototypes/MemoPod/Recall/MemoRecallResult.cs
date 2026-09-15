@@ -24,6 +24,7 @@ public sealed class MemoRecallResult {
     }
 
     public ImmutableArray<Memo> Memos { get; }
+    /// <summary>Digest of the corpus projection used by this call, not a durable Pod state or epoch identity.</summary>
     public string FrozenPromptSha256 { get; }
     public CompletionUsage Usage { get; }
 }

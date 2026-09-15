@@ -9,6 +9,9 @@ public sealed partial class MemoPod {
 
     private MemoPodPhase _phase;
     private MemoPodPublishMode _nextPublishMode;
+    // The immutable document object identifies this handle's Frozen lifecycle.
+    // A prompt cache can be discarded without revoking the document epoch.
+    private MemoPodDocument? _frozenDocument;
     private MemoPodFrozenPrompt? _frozenPrompt;
     private bool _dirty;
     private bool _invalidated;
@@ -19,7 +22,7 @@ public sealed partial class MemoPod {
         MemoPodPhase phase,
         MemoPodPublishMode nextPublishMode,
         bool dirty,
-        MemoPodFrozenPrompt? frozenPrompt,
+        MemoPodDocument? frozenDocument,
         MemoPodLifecycleTestHooks testHooks
     ) {
         _rootPath = rootPath;
@@ -27,7 +30,7 @@ public sealed partial class MemoPod {
         _phase = phase;
         _nextPublishMode = nextPublishMode;
         _dirty = dirty;
-        _frozenPrompt = frozenPrompt;
+        _frozenDocument = frozenDocument;
         _testHooks = testHooks;
     }
 
@@ -119,13 +122,34 @@ public sealed partial class MemoPod {
 
     internal MemoPodFrozenPrompt FrozenPrompt {
         get {
-            ThrowIfInvalidated();
-            RequirePhase(MemoPodPhase.Frozen, nameof(FrozenPrompt));
-            return _frozenPrompt
-                ?? throw new InvalidOperationException(
-                    "The Frozen MemoPod has no cached prompt."
-                );
+            // Explicit diagnostic access shares the request's lazy projection.
+            // Normal store reads and lifecycle operations never use this path.
+            return GetOrCreateFrozenPrompt(RequireFrozenDocument());
         }
+    }
+
+    internal void ClearPromptCache() {
+        _ = RequireFrozenDocument();
+        _frozenPrompt = null;
+    }
+
+    private MemoPodDocument RequireFrozenDocument() {
+        ThrowIfInvalidated();
+        RequirePhase(MemoPodPhase.Frozen, nameof(RequireFrozenDocument));
+        return _frozenDocument ?? throw new InvalidOperationException(
+            "The Frozen MemoPod has no committed document snapshot.");
+    }
+
+    private MemoPodFrozenPrompt GetOrCreateFrozenPrompt(MemoPodDocument document) {
+        RequireSameFrozenEpoch(document);
+        if (_frozenPrompt is { } cached) { return cached; }
+        _testHooks.BeforeRender?.Invoke(document);
+        MemoPodFrozenPrompt rendered = _testHooks.RenderPrompt is { } render
+            ? render(document) ?? throw new InvalidOperationException("The MemoPod renderer returned no prompt.")
+            : MemoPodPromptRenderer.Render(document);
+        RequireSameFrozenEpoch(document);
+        _frozenPrompt = rendered;
+        return rendered;
     }
 
     internal static MemoPod CreateForTesting(
@@ -175,7 +199,7 @@ public sealed partial class MemoPod {
             MemoPodPhase.Editable,
             MemoPodPublishMode.CreateNew,
             dirty: true,
-            frozenPrompt: null,
+            frozenDocument: null,
             testHooks
         );
     }
@@ -202,15 +226,13 @@ public sealed partial class MemoPod {
             );
         }
 
-        testHooks.BeforeRender?.Invoke(document);
-        MemoPodFrozenPrompt prompt = MemoPodPromptRenderer.Render(document);
         return new MemoPod(
             paths.RootPath,
             MemoPodWorkingAggregate.FromDocument(document),
             MemoPodPhase.Frozen,
             MemoPodPublishMode.ReplaceExisting,
             dirty: false,
-            prompt,
+            document,
             testHooks
         );
     }

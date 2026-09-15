@@ -262,12 +262,13 @@ public sealed class MemoPodRecallLimitsAndProviderTests {
     }
 
     [Fact]
-    public async Task SameFrozenPromptReferenceDefinesRecallEpoch() {
+    public async Task UnchangedRefreezeStillRevokesThePreviousRecallEpoch() {
         using MemoPodRecallFixture fixture =
             await MemoPodRecallFixture.CreateAsync(
                 exactTexts: ["memo"]
             );
         MemoPodFrozenPrompt firstEpoch = fixture.Pod.FrozenPrompt;
+        string stateIdentity = fixture.Pod.ComputeStateIdentity();
         var client = new FakeMemoRecallCompletionClient {
             Handler = (self, request, _) => {
                 fixture.Pod.ResumeEditing();
@@ -288,6 +289,8 @@ public sealed class MemoPodRecallLimitsAndProviderTests {
             ));
 
         Assert.Equal(MemoPodPhase.Frozen, fixture.Pod.Phase);
+        Assert.Equal(stateIdentity, fixture.Pod.ComputeStateIdentity());
+        Assert.Equal(firstEpoch.Sha256, fixture.Pod.FrozenPrompt.Sha256);
         Assert.NotSame(firstEpoch, fixture.Pod.FrozenPrompt);
         Assert.Equal(1, client.InvocationCount);
     }

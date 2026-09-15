@@ -21,11 +21,9 @@ public sealed partial class MemoPod {
         ArgumentNullException.ThrowIfNull(options);
         cancellationToken.ThrowIfCancellationRequested();
 
-        MemoPodFrozenPrompt frozenPrompt = _frozenPrompt
-            ?? throw new InvalidOperationException(
-                "The Frozen MemoPod has no cached prompt."
-            );
-        RequireSameFrozenEpoch(frozenPrompt);
+        MemoPodDocument frozenDocument = RequireFrozenDocument();
+        MemoPodFrozenPrompt frozenPrompt = GetOrCreateFrozenPrompt(frozenDocument);
+        cancellationToken.ThrowIfCancellationRequested();
         if (frozenPrompt.Utf8Length
             > options.MaximumFrozenPromptUtf8Bytes) {
             throw MemoPodRecallValidation.LocalLimit(
@@ -48,6 +46,8 @@ public sealed partial class MemoPod {
         );
 
         CompletionResult completionResult;
+        RequireSameFrozenEpoch(frozenDocument);
+        cancellationToken.ThrowIfCancellationRequested();
         try {
             completionResult = await completionClient.StreamCompletionAsync(
                 request,
@@ -98,6 +98,7 @@ public sealed partial class MemoPod {
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        RequireSameFrozenEpoch(frozenDocument);
         if (completionResult is null) {
             throw MemoPodRecallValidation.ProviderFailure(
                 "MemoPod recall provider returned no completion result."
@@ -163,7 +164,7 @@ public sealed partial class MemoPod {
             toolCall.Call.RawArgumentsJson,
             options.MaxResults
         );
-        RequireSameFrozenEpoch(frozenPrompt);
+        RequireSameFrozenEpoch(frozenDocument);
 
         var memos = ImmutableArray.CreateBuilder<Memo>(ids.Length);
         long hydratedUtf8Bytes = 0;
@@ -185,7 +186,7 @@ public sealed partial class MemoPod {
             memos.Add(memo);
         }
 
-        RequireSameFrozenEpoch(frozenPrompt);
+        RequireSameFrozenEpoch(frozenDocument);
         return new MemoRecallResult(
             memos.MoveToImmutable(),
             frozenPrompt.Sha256,
@@ -193,10 +194,10 @@ public sealed partial class MemoPod {
         );
     }
 
-    private void RequireSameFrozenEpoch(MemoPodFrozenPrompt frozenPrompt) {
+    private void RequireSameFrozenEpoch(MemoPodDocument frozenDocument) {
         ThrowIfInvalidated();
         if (_phase is not MemoPodPhase.Frozen
-            || !ReferenceEquals(_frozenPrompt, frozenPrompt)) {
+            || !ReferenceEquals(_frozenDocument, frozenDocument)) {
             throw new InvalidOperationException(
                 "The MemoPod Frozen epoch changed during recall."
             );

@@ -2,7 +2,7 @@
 
 This project exposes the Linux-only public `MemoPod` Editable/Frozen lifecycle.
 `Create` starts an in-memory Editable Pod without creating storage;
-`FreezeAsync` renders and durably commits the complete Pod before entering
+`FreezeAsync` durably commits the machine-readable complete Pod before entering
 Frozen; `Open` strictly reads a committed document and returns a Frozen Pod;
 `ResumeEditing` explicitly returns it to the write phase.
 The object is a single-owner, sequential orchestration unit and is not
@@ -17,13 +17,18 @@ immutable snapshot even when a later update creates a replacement snapshot for
 the same ID. IDs returned by Append are provisional until a successful Freeze
 commits the aggregate; committed and removed IDs are never reused.
 
-Frozen Pods cache an internal deterministic provider-neutral prompt. Prompt v3
+Frozen Pods lazily project an internal deterministic provider-neutral prompt when
+assembling Recall requests. `Open` and `FreezeAsync` never render it. Prompt v3
 contains the Pod header plus only each Memo's `id` and `exact_text`; DerivedInfo
 remains in the durable document but never enters `ObservationMessage` or the
 recall selector corpus. A DerivedInfo-only update therefore changes the
 complete document state identity while preserving frozen prompt bytes/hash.
-The cache is invalidated by `ResumeEditing` and rebuilt by every Freeze,
-including a clean refreeze that does not rewrite the durable document. An
+The optional cache is independent of the Frozen document epoch: eviction or
+presentation changes do not revoke in-flight recalls. `ResumeEditing` revokes
+the epoch; even a clean refreeze creates a new epoch without rewriting durable
+bytes. Rendering failures leave the committed document readable and the Pod
+Frozen, and fail before invoking the provider. `FrozenPromptSha256` describes
+only the corpus projection sent by that Recall invocation. An
 indeterminate commit invalidates the current handle; callers must discard it
 and `Open` the strict durable authority again.
 

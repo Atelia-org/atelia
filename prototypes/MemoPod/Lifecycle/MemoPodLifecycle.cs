@@ -7,9 +7,7 @@ public sealed partial class MemoPod {
         cancellationToken.ThrowIfCancellationRequested();
 
         MemoPodDocument candidate = _working.CaptureDocument();
-        _testHooks.BeforeRender?.Invoke(candidate);
-        MemoPodFrozenPrompt prompt = MemoPodPromptRenderer.Render(candidate);
-        _testHooks.AfterRenderBeforePublish?.Invoke(candidate);
+        _testHooks.AfterCaptureBeforePublish?.Invoke(candidate);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (_dirty) {
@@ -27,6 +25,7 @@ public sealed partial class MemoPod {
                     );
                 case MemoPodPublishSettlement.CommitIndeterminate:
                     _invalidated = true;
+                    _frozenDocument = null;
                     _frozenPrompt = null;
                     throw MemoPodPersistenceErrors.CommitIndeterminate(
                         result.Failure
@@ -44,7 +43,8 @@ public sealed partial class MemoPod {
         // no cancellation observation or fallible callback.
         _nextPublishMode = MemoPodPublishMode.ReplaceExisting;
         _dirty = false;
-        _frozenPrompt = prompt;
+        _frozenDocument = candidate;
+        _frozenPrompt = null;
         _phase = MemoPodPhase.Frozen;
         return Task.CompletedTask;
     }
@@ -53,6 +53,7 @@ public sealed partial class MemoPod {
         ThrowIfInvalidated();
         RequirePhase(MemoPodPhase.Frozen, nameof(ResumeEditing));
 
+        _frozenDocument = null;
         _frozenPrompt = null;
         _dirty = false;
         _phase = MemoPodPhase.Editable;

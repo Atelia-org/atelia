@@ -190,7 +190,7 @@ public sealed class MemoPodLifecycleTests : IDisposable {
     }
 
     [Fact]
-    public async Task DirtyFalseRefreezeRendersWithoutPublishingOrRewriting() {
+    public async Task CleanRefreezePublishesNoBytesAndProjectsOnlyOnDemand() {
         MemoPod created = MemoPod.Create(_root, PodId, "topic");
         created.Append("memo");
         await created.FreezeAsync();
@@ -204,19 +204,22 @@ public sealed class MemoPodLifecycleTests : IDisposable {
             )
         );
         MemoPod pod = MemoPod.OpenForTesting(_root, PodId, hooks);
-        renderCount = 0;
+        Assert.Equal(0, renderCount);
         MemoPodFrozenPrompt firstPrompt = pod.FrozenPrompt;
+        Assert.Equal(1, renderCount);
+        renderCount = 0;
         MemoPodStorePaths paths = MemoPodStoreLayout.Resolve(_root, PodId);
         byte[] before = File.ReadAllBytes(paths.DocumentPath);
 
         pod.ResumeEditing();
         await pod.FreezeAsync();
 
-        Assert.Equal(1, renderCount);
+        Assert.Equal(0, renderCount);
         Assert.Equal(0, publishCount);
         Assert.Equal(MemoPodPhase.Frozen, pod.Phase);
         Assert.Equal(firstPrompt.Sha256, pod.FrozenPrompt.Sha256);
         Assert.NotSame(firstPrompt, pod.FrozenPrompt);
+        Assert.Equal(1, renderCount);
         Assert.Equal(before, File.ReadAllBytes(paths.DocumentPath));
     }
 
@@ -254,23 +257,21 @@ public sealed class MemoPodLifecycleTests : IDisposable {
 
     [Fact]
     public async Task PreparationFaultAndCancellationPreserveEditableWork() {
-        bool failRender = true;
-        bool cancelAfterRender = true;
+        bool failPreparation = true;
+        bool cancelPreparation = true;
         using var cancellation = new CancellationTokenSource();
         MemoPod pod = MemoPod.CreateForTesting(
             _root,
             PodId,
             "topic",
             new MemoPodLifecycleTestHooks(
-                BeforeRender: _ => {
-                    if (failRender) {
-                        failRender = false;
-                        throw new IOException("render fixture");
+                AfterCaptureBeforePublish: _ => {
+                    if (failPreparation) {
+                        failPreparation = false;
+                        throw new IOException("preparation fixture");
                     }
-                },
-                AfterRenderBeforePublish: _ => {
-                    if (cancelAfterRender) {
-                        cancelAfterRender = false;
+                    if (cancelPreparation) {
+                        cancelPreparation = false;
                         cancellation.Cancel();
                     }
                 }
@@ -291,14 +292,14 @@ public sealed class MemoPodLifecycleTests : IDisposable {
     }
 
     [Fact]
-    public async Task InitiallyCanceledFreezeStopsBeforeCandidateRendering() {
-        int renderCount = 0;
+    public async Task InitiallyCanceledFreezeStopsBeforeCandidatePreparation() {
+        int captureCount = 0;
         MemoPod pod = MemoPod.CreateForTesting(
             _root,
             PodId,
             "topic",
             new MemoPodLifecycleTestHooks(
-                BeforeRender: _ => renderCount++
+                AfterCaptureBeforePublish: _ => captureCount++
             )
         );
         pod.Append("memo");
@@ -309,7 +310,7 @@ public sealed class MemoPodLifecycleTests : IDisposable {
             () => pod.FreezeAsync(cancellation.Token)
         );
 
-        Assert.Equal(0, renderCount);
+        Assert.Equal(0, captureCount);
         Assert.Equal(MemoPodPhase.Editable, pod.Phase);
         Assert.Empty(Directory.EnumerateFileSystemEntries(_root));
     }
