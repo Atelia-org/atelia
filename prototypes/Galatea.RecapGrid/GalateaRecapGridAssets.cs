@@ -7,11 +7,11 @@ namespace Atelia.Galatea.RecapGrid;
 
 /// <summary>Code-owned, provider-free Galatea RecapGrid assets.</summary>
 public static class GalateaRecapGridAssets {
-    public const string RollingRewriteZhCnV6 =
-        "galatea-rolling-rewrite-zh-cn-v6";
+    public const string RollingRewriteZhCnV7 =
+        "galatea-rolling-rewrite-zh-cn-v7";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([RollingRewriteZhCnV6]);
+        Array.AsReadOnly([RollingRewriteZhCnV7]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -20,7 +20,7 @@ public static class GalateaRecapGridAssets {
     ) {
         if (!string.Equals(
                 assetId,
-                RollingRewriteZhCnV6,
+                RollingRewriteZhCnV7,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
@@ -37,7 +37,6 @@ public static class GalateaRecapGridAssets {
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ),
             parameters.CharacterName,
-            parameters.PlayerName,
             RecapGridLimits.MaximumUserPromptUtf8Bytes
         );
         string autobiographyPrompt = GalateaPromptTemplate.Render(
@@ -46,7 +45,6 @@ public static class GalateaRecapGridAssets {
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ),
             parameters.CharacterName,
-            parameters.PlayerName,
             RecapGridLimits.MaximumUserPromptUtf8Bytes
         );
         string characterName = parameters.CharacterName.Value;
@@ -107,15 +105,11 @@ public static class GalateaRecapGridAssets {
 
 public sealed record GalateaRecapGridAssetParameters {
     public GalateaRecapGridAssetParameters(
-        GalateaCharacterName characterName,
-        GalateaPlayerName playerName
+        GalateaCharacterName characterName
     ) {
         CharacterName = characterName
             ?? throw new ArgumentNullException(nameof(characterName));
-        PlayerName = playerName
-            ?? throw new ArgumentNullException(nameof(playerName));
     }
 
     public GalateaCharacterName CharacterName { get; }
-    public GalateaPlayerName PlayerName { get; }
 }

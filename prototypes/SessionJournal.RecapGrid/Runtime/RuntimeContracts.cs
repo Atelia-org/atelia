@@ -235,15 +235,30 @@ public interface IRecapCompletionRouteResolver {
 }
 
 public sealed record RecapCompletionRuntimeOptions {
+    public const long DefaultMaximumInputUtf8Bytes = 16L * 1024 * 1024;
+
     public RecapCompletionRuntimeOptions(
-        CompletionInvocationOptions? invocationOptions = null
+        CompletionInvocationOptions? invocationOptions = null,
+        long maximumInputUtf8Bytes = DefaultMaximumInputUtf8Bytes
     ) {
         InvocationOptions = invocationOptions
             ?? CompletionInvocationOptions.Default;
         InvocationOptions.Validate();
+        if (maximumInputUtf8Bytes <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(maximumInputUtf8Bytes));
+        }
+        MaximumInputUtf8Bytes = maximumInputUtf8Bytes;
     }
 
     public CompletionInvocationOptions InvocationOptions { get; }
+
+    /// <summary>
+    /// Local limit on the complete projected request's UTF-8 text payload,
+    /// including system, prior, history and work tail. This is neither native
+    /// wire nor JSON-container size and never enters stored content, Timeline
+    /// load, recipe identity or a durable request commitment.
+    /// </summary>
+    public long MaximumInputUtf8Bytes { get; }
 }
 
 public enum RecapCompletionWorkRole {

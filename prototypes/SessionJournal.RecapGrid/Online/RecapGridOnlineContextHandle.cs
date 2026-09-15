@@ -96,7 +96,7 @@ public sealed class RecapGridOnlineContextHandle :
 
     public async ValueTask<RecapGridOnlinePassResult>
         CatchUpMaintenanceAsync(
-        string? pendingObservation,
+        SessionInputContent? pendingObservation,
         CancellationToken cancellationToken = default
     ) {
         var budget = new OnlineOperationBudget(

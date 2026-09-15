@@ -185,6 +185,41 @@ public sealed partial class RecapCompletionRuntime {
                 telemetryCode = "BatchFatalLatched";
                 return NotStarted(prepared);
             }
+            CompletionRequest request;
+            try {
+                request = RuntimeRenderer.ProjectRequest(prepared.Request, _inputProjector);
+                callerToken.ThrowIfCancellationRequested();
+            }
+            catch (Exception exception) when (!IsFatal(exception)
+                && !(exception is OperationCanceledException && callerToken.IsCancellationRequested)) {
+                return Failure(
+                    prepared,
+                    telemetryCode = "InputProjectionFailed",
+                    telemetryDetail = $"Host input projection failed ({exception.GetType().FullName}).",
+                    out providerOutcome
+                );
+            }
+            long inputBytes;
+            try {
+                inputBytes = RuntimeRequestBudget.MeasureInputUtf8Bytes(request);
+            }
+            catch (Exception exception) when (!IsFatal(exception)) {
+                return Failure(
+                    prepared,
+                    telemetryCode = "InputRequestInvalid",
+                    telemetryDetail = $"Projected input measurement failed ({exception.GetType().FullName}).",
+                    out providerOutcome
+                );
+            }
+            callerToken.ThrowIfCancellationRequested();
+            if (inputBytes > _options.MaximumInputUtf8Bytes) {
+                return Failure(
+                    prepared,
+                    telemetryCode = "InputRequestTooLarge",
+                    telemetryDetail = $"Projected input contains {inputBytes} UTF-8 payload bytes; limit is {_options.MaximumInputUtf8Bytes}. No completion was invoked.",
+                    out providerOutcome
+                );
+            }
             started = true;
             timeout = new CancellationTokenSource(
                 prepared.Route.DispatchTimeout
@@ -199,7 +234,7 @@ public sealed partial class RecapCompletionRuntime {
                 elapsed.Elapsed, null, "invoking", null, null,
                 kind: "completion-started");
             completionResult = await prepared.Route.Invoker.InvokeAsync(
-                prepared.Request,
+                request,
                 _options.InvocationOptions,
                 linked.Token
             ).ConfigureAwait(false);

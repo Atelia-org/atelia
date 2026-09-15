@@ -71,6 +71,11 @@ internal static class RuntimeRenderer {
                 case ObservationMessage observation:
                     visible.Add(observation);
                     break;
+                case SessionInputObservationMessage observation:
+                    // Content selection is semantic. The host projects this
+                    // record only at the individual completion boundary.
+                    visible.Add(observation);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"History message subtype '{unit.Message?.GetType().FullName}' is unsupported."
@@ -79,6 +84,38 @@ internal static class RuntimeRenderer {
         }
         return visible;
     }
+
+    internal static CompletionRequest ProjectRequest(
+        CompletionRequest semanticRequest,
+        ISessionInputProjector? projector
+    ) {
+        if (!semanticRequest.PromptPrefix.SharedContextMessages.Any(static message => message is SessionInputObservationMessage)
+            && !semanticRequest.TailMessages.Any(static message => message is SessionInputObservationMessage)) {
+            return semanticRequest;
+        }
+        return new(
+            semanticRequest.ModelId,
+            new CompletionPromptPrefix(
+                semanticRequest.PromptPrefix.SystemPrompt,
+                semanticRequest.PromptPrefix.OutputContract,
+                semanticRequest.PromptPrefix.SharedContextMessages
+                    .Select(message => ProjectInput(message, projector)).ToArray()
+            ),
+            semanticRequest.TailMessages
+                .Select(message => ProjectInput(message, projector)).ToArray()
+        );
+    }
+
+    private static IHistoryMessage ProjectInput(
+        IHistoryMessage message,
+        ISessionInputProjector? projector
+    ) => message is SessionInputObservationMessage observation
+        ? new ObservationMessage(observation.Content.IsStructured
+            ? (projector ?? throw new NotSupportedException(
+                "Structured recap history requires a host input projector."
+            )).Project(observation.Content)
+            : observation.Content.TextValue)
+        : message;
 
     internal static IHistoryMessage RenderWorkTail(FrozenRecapCellWork work) {
         var buffer = new ArrayBufferWriter<byte>();

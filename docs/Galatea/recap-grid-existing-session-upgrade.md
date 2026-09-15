@@ -66,12 +66,10 @@ dispatch_timeout_ms='<approved-positive-timeout-ms>'
 
 character_name="$(jq -er --arg user "$user_id" \
   '.users[] | select(.userId == $user) | .characterName' "$config_dir/config.json")"
-player_name="$(jq -er --arg user "$user_id" \
-  '.users[] | select(.userId == $user) | .playerName' "$config_dir/config.json")"
 
 scaffold_report="$($cli recap-grid scaffold \
-  --asset galatea-rolling-rewrite-zh-cn-v6 \
-  --character-name "$character_name" --player-name "$player_name" \
+  --asset galatea-rolling-rewrite-zh-cn-v7 \
+  --character-name "$character_name" \
   --profile-id '<new-profile-id>' \
   --connection-id "$recap_connection_id" \
   --permission create --permission register-family \
@@ -131,8 +129,8 @@ timeline sync may do a bounded offline selected-lineage audit and can mutate Tim
 ~~~bash
 $cli recap-grid control provision-asset \
   --input "$repo" --branch "$branch" --confirm-ref "$ref_id" \
-  --admission "$admission" --asset galatea-rolling-rewrite-zh-cn-v6 \
-  --character-name "$character_name" --player-name "$player_name"
+  --admission "$admission" --asset galatea-rolling-rewrite-zh-cn-v7 \
+  --character-name "$character_name"
 
 recipe_file="$operator_dir/full-recipe.json"
 compose_report="$($cli recap-grid control compose-full-recipe \

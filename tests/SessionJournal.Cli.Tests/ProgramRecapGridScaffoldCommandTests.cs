@@ -88,13 +88,12 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         string[] arguments = ScaffoldArguments(paths)
             .ReplaceOption(
                 "asset",
-                GalateaRecapGridAssets.RollingRewriteZhCnV6
+                GalateaRecapGridAssets.RollingRewriteZhCnV7
             )
             .ReplaceOption("logical-column-prefix", "world-understanding")
             .AppendOptions(
                 "--logical-column-prefix", "autobiography",
-                "--character-name", CharacterName,
-                "--player-name", "刘世超"
+                "--character-name", CharacterName
             );
 
         (int exitCode, JsonElement report) = RunCaptured(arguments);
@@ -103,10 +102,9 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.Equal("created", report.GetProperty("status").GetString());
         Assert.Equal(0, _factory.CreateCallCount);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName(CharacterName),
-                new GalateaPlayerName("刘世超")
+                new GalateaCharacterName(CharacterName)
             ),
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -204,27 +202,20 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
                      ScaffoldArguments(Paths("galatea-missing-name"))
                          .ReplaceOption(
                              "asset",
-                             GalateaRecapGridAssets.RollingRewriteZhCnV6
+                             GalateaRecapGridAssets.RollingRewriteZhCnV7
                          ),
                      ScaffoldArguments(Paths("galatea-invalid-name"))
                          .ReplaceOption(
                              "asset",
-                             GalateaRecapGridAssets.RollingRewriteZhCnV6
+                             GalateaRecapGridAssets.RollingRewriteZhCnV7
                          )
                          .AppendOptions(
-                             "--character-name", "[invalid]",
-                             "--player-name", "刘世超"
+                             "--character-name", "[invalid]"
                          ),
-                     ScaffoldArguments(Paths("galatea-missing-player"))
-                         .ReplaceOption(
-                             "asset",
-                             GalateaRecapGridAssets.RollingRewriteZhCnV6
-                         )
-                         .AppendOptions("--character-name", "Galatea"),
                      ScaffoldArguments(Paths("galatea-invalid-player"))
                          .ReplaceOption(
                              "asset",
-                             GalateaRecapGridAssets.RollingRewriteZhCnV6
+                             GalateaRecapGridAssets.RollingRewriteZhCnV7
                          )
                          .AppendOptions(
                              "--character-name", "Galatea",

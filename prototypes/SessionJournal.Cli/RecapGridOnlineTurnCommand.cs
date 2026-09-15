@@ -89,6 +89,17 @@ internal static partial class RecapGridCommands {
             ?? throw new InvalidDataException(
                 "The supported online phase has no captured raw head."
             );
+        SessionInputContent systemInstructions = engine.ResolveGoverningSetup(expectedHead).SystemPrompt;
+        if (systemInstructions.IsStructured) {
+            // The generic CLI has no domain projector. Do not replace the
+            // structured setup with raw JSON or a guessed text prompt.
+            return Print(
+                "run-online-turn",
+                "unsupported-input-schema",
+                new { schemaId = systemInstructions.SchemaId, nextAction = "use-the-owning-host" },
+                exitCode: 2
+            );
+        }
         string connectionsPath = options.RequireSingle("connections");
         CliIo.EnsurePathChainHasNoReparsePoint(
             connectionsPath,
@@ -306,7 +317,7 @@ internal static partial class RecapGridCommands {
                 RecapGridOnlinePassResult caughtUp = await online
                     .CatchUpMaintenanceAsync(
                         mode == RecapGridOnlineMode.SendNewTurn
-                            ? message
+                            ? SessionInputContent.Text(message!)
                             : null,
                         CancellationToken.None)
                     .ConfigureAwait(false);

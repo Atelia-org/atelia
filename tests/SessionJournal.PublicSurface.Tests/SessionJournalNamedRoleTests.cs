@@ -132,14 +132,14 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
             rawHistoryAuthorized.Status
         );
 
-        Func<EventAddress, string, CancellationToken, Task<TurnResult>> send =
+        Func<EventAddress, SessionInputContent, CancellationToken, Task<TurnResult>> send =
             engine.SendAsync;
         Func<EventAddress, CancellationToken, Task<ResumeOutcome>> resume =
             engine.ResumeAsync;
         Func<EventAddress, ToolSession, SessionToolRuntimeIdentity,
             CancellationToken, Task<SessionPendingToolBoundaryResult>>
             executePending = engine.ExecutePendingToolToBoundaryAsync;
-        Func<EventAddress, ISessionContextLifecycleCoordinator, string?,
+        Func<EventAddress, ISessionContextLifecycleCoordinator, SessionInputContent?,
             CancellationToken, ValueTask<SessionContextLifecycleResult>>
             prepareLifecycle = engine.PrepareContextLifecycleMaintenanceAsync;
         Assert.NotNull(send);

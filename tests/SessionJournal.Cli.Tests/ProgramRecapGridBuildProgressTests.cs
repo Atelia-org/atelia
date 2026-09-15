@@ -126,7 +126,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         TimelineHeadRef head = ReadTimelineHead(refText);
         Assert.True(head.SelectedPathCount > 0);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6, GalateaParameters, out RecapGridControlRegistrationBundle? bundle));
+            GalateaRecapGridAssets.RollingRewriteZhCnV7, GalateaParameters, out RecapGridControlRegistrationBundle? bundle));
         FamilyDefinition family = Assert.Single(bundle!.Families);
         Assert.Equal(2, bundle.Definitions.Count);
         GridBuildRecipe recipe = GridBuildRecipe.CreateFull(head.TimelineId, head.HeadRowId,

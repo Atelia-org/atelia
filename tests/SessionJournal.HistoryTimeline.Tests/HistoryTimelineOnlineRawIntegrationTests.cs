@@ -1,4 +1,5 @@
 using Atelia.Completion.Abstractions;
+using System.Text.Json;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
@@ -10,6 +11,39 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
     private readonly List<string> _paths = [];
     private readonly IHistoryUnitLoadEstimator _estimator =
         new O200kBaseHistoryUnitLoadEstimator();
+
+    [Fact]
+    public void StructuredObservationCanBeAuditedAndPartitionedAfterReopenWithoutRenderer() {
+        string path = NewPath();
+        EventAddress observation;
+        using JsonDocument json = JsonDocument.Parse("{\"body\":\"semantic raw fact\",\"sender\":\"character-a\"}");
+        SessionInputContent content = SessionInputContent.Structured("test.observation.v1", json.RootElement);
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            observation = writer.AppendObservation(content);
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("answer")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+        }
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        var audit = new List<SessionJournalAuditEvent>();
+        _ = offline.ScanCheckedAuditEvents(audit.Add);
+        Assert.Equal(
+            SessionHistorySemanticCommitment.ComputeObservationContributionSha256(content),
+            Assert.Single(audit.Select(static item => item.Fact).OfType<SessionJournalAuditObservationFact>()).SemanticContributionSha256
+        );
+        var ledger = new InMemoryHistoryTimelineLedger(offline.BranchRefId, Policy('b', maxRawEvents: 8));
+        var coordinator = new HistoryTimelineCoordinator(path, ledger, _estimator);
+        TimelineHeadRef before = coordinator.ReadSnapshotRequired();
+        OnlineSelectedRawCapture capture = Capture(coordinator, before, offline.ReadView);
+
+        var selected = Assert.IsType<HistoryTimelinePlanResult.Selected>(coordinator.PlanNextRow(before, capture));
+        var committed = Assert.IsType<HistoryTimelineCommitResult.Committed>(coordinator.CommitRow(selected.Candidate));
+
+        Assert.Equal(observation, selected.Candidate.Proposal.Descriptor.EndInclusive);
+        Assert.Equal(selected.Candidate.Proposal.Descriptor.RowId, committed.Head.HeadRowId);
+        Assert.True(selected.Candidate.Proposal.Descriptor.MeasuredRenderedUtf8Bytes > 0);
+    }
 
     [Fact]
     public void FreshPlan_ExactRematerializationCommitsOpaqueCandidate() {

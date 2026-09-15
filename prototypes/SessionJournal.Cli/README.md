@@ -80,16 +80,17 @@ asset ID；Galatea operator asset不会进入AgentControl built-in catalog或其
 fingerprint。Control admission 是独立 strict
 canonical 文件，不能从 payload 自授权。
 
-当前Galatea selector已hard-cut为`galatea-rolling-rewrite-zh-cn-v6`。它在`scaffold`与
-`control provision-asset`都要求exactly-one `--character-name <name>`与`--player-name <name>`；两个参数先经
-共享`GalateaCharacterName` / `GalateaPlayerName`验证，再在Family/Definition bundle构造前展开member
-prompt，角色名另外进入topic与semantic heading。其他operator asset携带任一选项会被拒绝；
-unknown、missing或invalid输入均在
-打开repo、写output或构造provider之前fail closed。Family、logical columns、carrier与
-`BlockKey`不随名字改变；使用`Galatea` + `刘世超`时四个canonical bundle digests与旧V5完全相同。
-scaffold与provision必须使用同一对名字。同一Control instance中再次用不同角色名或玩家名provision会复用
-现有V6 operation key并得到`operation-conflict`；现阶段不承诺existing-session rename，也不把
-character/player name或command digest加入receipt/runtime identity。
+当前 Galatea selector 为 `galatea-rolling-rewrite-zh-cn-v7`。`scaffold` 与
+`control provision-asset` 只要求一个 `--character-name <name>`；角色名先经
+`GalateaCharacterName` 验证，再绑定成员指令、topic 与 semantic heading。
+`--player-name` 已移除；新资产按输入各块的来源识别参与者，支持没有 Player 的角色。
+其他 operator asset 不接受 `--character-name`。unknown、missing 或 invalid 输入均在
+打开 repo、写 output 或构造 provider 前拒绝。Family、logical columns、carrier 与
+`BlockKey` 不随角色名改变，两个成员 definition 则随其绑定内容改变。
+scaffold 与 provision 必须使用相同角色名。同一 Control instance 中再次用不同角色名
+provision 会复用 V7 operation key 并得到 `operation-conflict`；不将名字或 command digest
+加入 receipt/runtime identity。已有 V6 资产保持原持久事实；采用 V7 需要按现有
+recipe/build/fulfillment/promotion 流程重建变更的列，注册新资产本身不会替换 active target。
 
 `recap-grid scaffold` 是 provider-free、create-only 的operator bootstrap：对一个
 code-owned operator asset，把operator显式给出的permissions、logical-column prefixes、

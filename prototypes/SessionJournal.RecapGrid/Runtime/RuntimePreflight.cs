@@ -73,6 +73,13 @@ public sealed partial class RecapCompletionRuntime {
 
         IReadOnlyList<IHistoryMessage> visibleHistory =
             RuntimeRenderer.ProjectHistory(batch.HistorySegment.Window);
+        if (_inputProjector is null && visibleHistory.Any(static message =>
+            message is SessionInputObservationMessage { Content.IsStructured: true })) {
+            return new RuntimePreflightResult.Rejected(
+                "InputProjectorUnavailable",
+                "Structured recap history requires a host input projector."
+            );
+        }
         var familyCache = new Dictionary<FamilyDefinitionDigest, PreparedFamily>();
         var prepared = new PreparedRecapWork[batch.OrderedMissingWork.Count];
         int previousOrdinal = -1;

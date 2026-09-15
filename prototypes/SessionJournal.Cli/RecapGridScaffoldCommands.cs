@@ -14,7 +14,6 @@ internal static partial class RecapGridCommands {
         options.EnsureOnly(
             "asset",
             "character-name",
-            "player-name",
             "profile-id",
             "connection-id",
             "semantic-model-id",
@@ -30,11 +29,9 @@ internal static partial class RecapGridCommands {
         );
         string assetId = options.RequireSingle("asset");
         string? characterName = options.GetOptionalSingle("character-name");
-        string? playerName = options.GetOptionalSingle("player-name");
         if (!RecapGridOperatorAssetCatalog.TryCreateRegistrationBundle(
                 assetId,
                 characterName,
-                playerName,
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             return Print(

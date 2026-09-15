@@ -9,14 +9,13 @@ namespace Atelia.Galatea.RecapGrid.Tests;
 
 public sealed class GalateaRecapGridAssetsTests {
     private static GalateaRecapGridAssetParameters GalateaParameters => new(
-        new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("刘世超")
+        new GalateaCharacterName("Galatea")
     );
 
     [Fact]
-    public void RollingRewriteV6_GalateaIsExactV5CanonicalBundle() {
+    public void RollingRewriteV7_CharacterOwnsCanonicalBundle() {
         Assert.Equal(
-            [GalateaRecapGridAssets.RollingRewriteZhCnV6],
+            [GalateaRecapGridAssets.RollingRewriteZhCnV7],
             GalateaRecapGridAssets.AssetIds
         );
         Assert.False(GalateaRecapGridAssets.TryCreateRegistrationBundle(
@@ -27,22 +26,16 @@ public sealed class GalateaRecapGridAssetsTests {
         Assert.Null(unknown);
         Assert.Throws<ArgumentNullException>(() => GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaRecapGridAssets.RollingRewriteZhCnV7,
                 null!,
                 out _
             ));
         Assert.Throws<ArgumentNullException>(() =>
             new GalateaRecapGridAssetParameters(
-                null!,
-                new GalateaPlayerName("刘世超")
-            ));
-        Assert.Throws<ArgumentNullException>(() =>
-            new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea"),
                 null!
             ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -94,12 +87,12 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void Materialization_IsDeterministicAndResourcesAreExact() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? first
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? second
         ));
@@ -119,15 +112,15 @@ public sealed class GalateaRecapGridAssetsTests {
             names
         );
         Assert.Equal(
-            "7484f67f693d327ba397e3399b0d57ecd1b57a97e50d00f85bcbaea219bbbda5",
+            "4e709956122af57ae733ce8ac60fa4f705282813da77cddede4b16932f71c0bf",
             ResourceSha256(PromptResourceLoader.FamilySystemResourceName)
         );
         Assert.Equal(
-            "6d853eb9315ee4f64c11c71b0d68ff4b5bf14a6b783ae6b893ccbd4ac430ca99",
+            "2925857ee9d8d2117cef3b7c8ff593cf697c6970e4d579b3c98c8025dfa11564",
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "03cc0c1014747d9102c957feb5233b95382b3a7200802c3076f96d874b5a7df8",
+            "cf73ba61227c82afb65bb62cede2e50549f27ca72b8afd315ec32fd697896031",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -142,7 +135,6 @@ public sealed class GalateaRecapGridAssetsTests {
                     RecapGridLimits.MaximumUserPromptUtf8Bytes
                 ),
                 GalateaParameters.CharacterName,
-                GalateaParameters.PlayerName,
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ));
         Assert.Equal(first.Definitions[1].DeclarativeSpec.UserPromptTemplate,
@@ -152,7 +144,6 @@ public sealed class GalateaRecapGridAssetsTests {
                     RecapGridLimits.MaximumUserPromptUtf8Bytes
                 ),
                 GalateaParameters.CharacterName,
-                GalateaParameters.PlayerName,
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ));
         string worldSource = PromptResourceLoader.ReadText(
@@ -165,11 +156,11 @@ public sealed class GalateaRecapGridAssetsTests {
         );
         Assert.Contains(GalateaPromptTemplate.CharacterNameToken, worldSource,
             StringComparison.Ordinal);
-        Assert.Contains(GalateaPromptTemplate.PlayerNameToken, worldSource,
+        Assert.DoesNotContain(GalateaPromptTemplate.PlayerNameToken, worldSource,
             StringComparison.Ordinal);
         Assert.Contains(GalateaPromptTemplate.CharacterNameToken,
             autobiographySource, StringComparison.Ordinal);
-        Assert.Contains(
+        Assert.DoesNotContain(
             GalateaPromptTemplate.PlayerNameToken,
             autobiographySource,
             StringComparison.Ordinal
@@ -218,15 +209,14 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void DifferentCharacterNameChangesOnlyCharacterScopedAuthority() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? galatea
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("阿特丽娅"),
-                GalateaParameters.PlayerName
+                new GalateaCharacterName("阿特丽娅")
             ),
             out RecapGridControlRegistrationBundle? renamed
         ));
@@ -276,23 +266,20 @@ public sealed class GalateaRecapGridAssetsTests {
     }
 
     [Fact]
-    public void DifferentPlayerNameChangesMemberDefinitionsOnly() {
+    public void AssetsRequireNoPlayerAndAttributeEachInputSource() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? original
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            new GalateaRecapGridAssetParameters(
-                GalateaParameters.CharacterName,
-                new GalateaPlayerName("Alex")
-            ),
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            new GalateaRecapGridAssetParameters(new GalateaCharacterName("Galatea")),
             out RecapGridControlRegistrationBundle? changed
         ));
 
         Assert.Equal(original!.Families[0].Digest, changed!.Families[0].Digest);
-        Assert.NotEqual(
+        Assert.Equal(
             original.CanonicalCommandDigest,
             changed.CanonicalCommandDigest
         );
@@ -304,7 +291,7 @@ public sealed class GalateaRecapGridAssetsTests {
         );
         Assert.All(changed.Definitions, definition => {
             Assert.Contains(
-                "Alex",
+                "来源",
                 definition.DeclarativeSpec.UserPromptTemplate,
                 StringComparison.Ordinal
             );
@@ -314,14 +301,19 @@ public sealed class GalateaRecapGridAssetsTests {
                 StringComparison.Ordinal
             );
         });
+        Assert.All(changed.Definitions, definition => {
+            Assert.DoesNotContain("${playerName}", definition.DeclarativeSpec.UserPromptTemplate);
+            Assert.Contains("Player、其他 Character、外部工具或 runtime", definition.DeclarativeSpec.UserPromptTemplate);
+            Assert.Contains("来源缺失的历史输入保持", definition.DeclarativeSpec.UserPromptTemplate);
+        });
         Assert.All(changed.Definitions.Zip(original.Definitions), pair =>
-            Assert.NotEqual(pair.Second.Digest, pair.First.Digest));
+            Assert.Equal(pair.Second.Digest, pair.First.Digest));
     }
 
     [Fact]
     public void MemberPrompts_LockSourceAndUncertaintyBoundaries() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -367,7 +359,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AutobiographyPrompt_LocksCharacterScopedCarrierAndTerminalBoundaries() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -427,7 +419,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AutobiographyPrompt_LocksMechanicalFinalScanFixtures() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -501,10 +493,10 @@ public sealed class GalateaRecapGridAssetsTests {
         RecapGridControlRegistrationBundle bundle
     ) => Assert.Equal(
         [
-            "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
-            "a850b9fe6cbe8fe71024430fe2a41815d4d86f26ea7216f976b2d3018551e951",
-            "8c5e08f65341be11b345142ca7caa1512c295662e6145191ab102c83c87a3ab0",
-            "8d60fd46aadda1cb9153d398fce2de8a0b51a2e01a6af6a738f3ccadc0687c77"
+            "75839423ac000cc5401dcdc6d4bb6ef3a3ea365229e57896738d03624696c989",
+            "d6b4c9042180457991c7c3113fda7063b1ff0cfda158b5a2919209b2f58cda7a",
+            "720ac79dc2fd95246cfe32ea513765fb94c3588c70a851c6eec57ba5544d2011",
+            "d5d90e95b5eb282166c66e0b0736301423f2d9ff6084c259ed7d6c681f5289f2"
         ],
         [
             bundle.Families[0].Digest.Value,

@@ -716,9 +716,14 @@ internal static class SessionJournalLegacyImporter {
 
         SessionGoverningSetup setup =
             readOnly.ResolveGoverningSetup(expected.FinalHead);
+        if (setup.SystemPrompt.IsStructured) {
+            throw ImportVerificationError(
+                "legacy import verification requires a text system prompt; structured input is not a legacy export"
+            );
+        }
         if (setup.RuntimeConfig != expected.FinalConfiguration
             || !string.Equals(
-                ComputeUtf8Sha256(setup.SystemPrompt),
+                ComputeUtf8Sha256(setup.SystemPrompt.TextValue),
                 expected.FinalSystemPromptUtf8Sha256,
                 StringComparison.Ordinal
             )

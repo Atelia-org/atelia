@@ -7,6 +7,7 @@ public sealed partial class RecapCompletionRuntime
     private readonly IRecapCompletionRouteResolver _resolver;
     private readonly RecapCompletionRuntimeOptions _options;
     private readonly IRecapCompletionTelemetry? _telemetry;
+    private readonly ISessionInputProjector? _inputProjector;
     private readonly RuntimeLifetime _lifetime;
     private readonly object _routeGate = new();
     private readonly Dictionary<RecapCompletionRouteKey,
@@ -19,11 +20,13 @@ public sealed partial class RecapCompletionRuntime
     public RecapCompletionRuntime(
         IRecapCompletionRouteResolver resolver,
         RecapCompletionRuntimeOptions? options = null,
-        IRecapCompletionTelemetry? telemetry = null
+        IRecapCompletionTelemetry? telemetry = null,
+        ISessionInputProjector? inputProjector = null
     ) {
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _options = options ?? new RecapCompletionRuntimeOptions();
         _telemetry = telemetry;
+        _inputProjector = inputProjector;
         _lifetime = new RuntimeLifetime(DisposeOwnedInvokersAsync);
     }
 

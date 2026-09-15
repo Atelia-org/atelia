@@ -139,7 +139,7 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
         Assert.Equal(SJ.SessionExecutionPhase.Idle, boundary.Phase);
         SJ.SessionGoverningSetup setup =
             inspection.ResolveGoverningSetup(boundary.Head!.Value);
-        Assert.Equal("system-a", setup.SystemPrompt);
+        Assert.Equal(SessionInputContent.Text("system-a"), setup.SystemPrompt);
         Assert.Equal("model-a", setup.RuntimeConfig.ModelId);
         Assert.Equal(
             "surface-a",

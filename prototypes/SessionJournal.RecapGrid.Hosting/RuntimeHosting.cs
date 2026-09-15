@@ -215,7 +215,8 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
         CompletionConnectionsFileConfig connections,
         ICompletionClientFactory clientFactory,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
-        int maximumTelemetryEvents = 1_024
+        int maximumTelemetryEvents = 1_024,
+        ISessionInputProjector? inputProjector = null
     ) {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(connections);
@@ -237,7 +238,8 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
             var runtime = new RecapCompletionRuntime(
                 resolver,
                 runtimeOptions,
-                new LiveRecapCompletionTelemetry(telemetry, null)
+                new LiveRecapCompletionTelemetry(telemetry, null),
+                inputProjector
             );
             return new RecapGridRuntimeHost(registry, runtime, telemetry);
         }
@@ -383,14 +385,16 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         CompletionConnectionsFileConfig connections,
         ICompletionClientFactory clientFactory,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
-        int maximumTelemetryEvents = 1_024
+        int maximumTelemetryEvents = 1_024,
+        ISessionInputProjector? inputProjector = null
     ) => CreateCore(
         routeManifestLoader,
         connections,
         clientFactory,
         agentControl: null,
         runtimeOptions,
-        maximumTelemetryEvents
+        maximumTelemetryEvents,
+        inputProjector
     );
 
     public static RecapGridCompletionHost Create(
@@ -399,7 +403,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         ICompletionClientFactory clientFactory,
         RecapGridAgentControlProfileRegistry agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
-        int maximumTelemetryEvents = 1_024
+        int maximumTelemetryEvents = 1_024,
+        ISessionInputProjector? inputProjector = null
     ) {
         ArgumentNullException.ThrowIfNull(agentControl);
         return CreateCore(
@@ -408,7 +413,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             clientFactory,
             agentControl,
             runtimeOptions,
-            maximumTelemetryEvents
+            maximumTelemetryEvents,
+            inputProjector
         );
     }
 
@@ -425,7 +431,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         CompletionConnectionRegistry registry,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
         int maximumTelemetryEvents = 1_024,
-        IRecapCompletionTelemetry? liveTelemetry = null
+        IRecapCompletionTelemetry? liveTelemetry = null,
+        ISessionInputProjector? inputProjector = null
     ) => CreateWithRegistry(
         routeManifestLoader,
         registry,
@@ -433,7 +440,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         runtimeOptions,
         maximumTelemetryEvents,
         ownsRegistry: false,
-        liveTelemetry: liveTelemetry
+        liveTelemetry: liveTelemetry,
+        inputProjector: inputProjector
     );
 
     /// <summary>
@@ -451,7 +459,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         RecapGridAgentControlProfileRegistry agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
         int maximumTelemetryEvents = 1_024,
-        IRecapCompletionTelemetry? liveTelemetry = null
+        IRecapCompletionTelemetry? liveTelemetry = null,
+        ISessionInputProjector? inputProjector = null
     ) {
         ArgumentNullException.ThrowIfNull(agentControl);
         return CreateWithRegistry(
@@ -461,7 +470,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             runtimeOptions,
             maximumTelemetryEvents,
             ownsRegistry: false,
-            liveTelemetry: liveTelemetry
+            liveTelemetry: liveTelemetry,
+            inputProjector: inputProjector
         );
     }
 
@@ -471,7 +481,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         ICompletionClientFactory clientFactory,
         RecapGridAgentControlProfileRegistry? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
-        int maximumTelemetryEvents
+        int maximumTelemetryEvents,
+        ISessionInputProjector? inputProjector
     ) {
         ArgumentNullException.ThrowIfNull(routeManifestLoader);
         ArgumentNullException.ThrowIfNull(connections);
@@ -486,7 +497,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                 agentControl,
                 runtimeOptions,
                 maximumTelemetryEvents,
-                ownsRegistry: true
+                ownsRegistry: true,
+                inputProjector: inputProjector
             );
         }
         catch {
@@ -502,7 +514,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
         bool ownsRegistry,
-        IRecapCompletionTelemetry? liveTelemetry = null
+        IRecapCompletionTelemetry? liveTelemetry = null,
+        ISessionInputProjector? inputProjector = null
     ) {
         ArgumentNullException.ThrowIfNull(routeManifestLoader);
         ArgumentNullException.ThrowIfNull(registry);
@@ -512,7 +525,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             routeManifestLoader,
             registry);
         var runtime = new RecapCompletionRuntime(
-            resolver, runtimeOptions, new LiveRecapCompletionTelemetry(telemetry, liveTelemetry));
+            resolver, runtimeOptions, new LiveRecapCompletionTelemetry(telemetry, liveTelemetry), inputProjector);
         return new RecapGridCompletionHost(
             registry,
             resolver,

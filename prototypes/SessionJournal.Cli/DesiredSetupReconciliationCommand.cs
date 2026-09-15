@@ -186,11 +186,7 @@ internal static class DesiredSetupReconciliationCommand {
                 connection.CompletionSurfaceId,
                 StringComparison.Ordinal
             )
-            || !string.Equals(
-                governing.SystemPrompt,
-                desiredSystemPrompt,
-                StringComparison.Ordinal
-            )) {
+            || governing.SystemPrompt != SJ.SessionInputContent.Text(desiredSystemPrompt)) {
             throw new InvalidDataException(
                 "Final governing setup does not match the requested connection and system prompt."
             );
@@ -206,7 +202,9 @@ internal static class DesiredSetupReconciliationCommand {
             ready.SystemPromptChanged,
             governing.RuntimeConfig.ModelId,
             governing.RuntimeConfig.CompletionSurfaceId,
-            ComputeUtf8Sha256(governing.SystemPrompt)
+            // This command explicitly accepts a text prompt file. Typed
+            // equality above proves this is the selected semantic text.
+            ComputeUtf8Sha256(desiredSystemPrompt)
         );
     }
 

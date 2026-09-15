@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Data;
 using Atelia.EventJournal;
@@ -13,6 +14,30 @@ public sealed class O200kBaseHistoryUnitLoadEstimatorTests {
 
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator =
         new();
+
+    [Fact]
+    public void StructuredObservationMeasuresStableMachineContentWithoutAProjector() {
+        using JsonDocument json = JsonDocument.Parse("{\"body\":\"角色正文\\n```\",\"sender\":\"character-a\"}");
+        var content = SJ.SessionInputContent.Structured("test.observation.v1", json.RootElement);
+        var message = new SJ.SessionInputObservationMessage(content);
+        string expected = "[structured-observation-content-json]\n"
+            + Encoding.UTF8.GetString(content.ToUtf8Json()) + "\n";
+
+        HistoryUnitLoadRendering measured = HistoryUnitLoadRenderer.Render(message, 4096);
+
+        Assert.Equal(expected, measured.Text);
+        Assert.Equal(Encoding.UTF8.GetByteCount(expected), measured.Utf8Bytes);
+        Assert.Equal(Measure(message), Measure(new SJ.SessionInputObservationMessage(
+            SJ.SessionInputContent.Structured(content.SchemaId!, json.RootElement))));
+        Assert.Equal(
+            Measure(new ObservationMessage("legacy body")),
+            Measure(new SJ.SessionInputObservationMessage(SJ.SessionInputContent.Text("legacy body")))
+        );
+        Assert.Equal(
+            HistoryLoadMeasurementDefectCodes.HistoryLoadInputTooLarge,
+            Assert.Throws<HistoryLoadMeasurementException>(() => HistoryUnitLoadRenderer.Render(message, measured.Utf8Bytes - 1)).Code
+        );
+    }
 
     [Theory]
     [InlineData("Hello, world!", 8)]

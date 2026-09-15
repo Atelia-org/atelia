@@ -8,10 +8,9 @@ public sealed class PublicSurfaceTests {
     [Fact]
     public void ExternalOperatorCanResolveOnlyTheNarrowAssetCatalog() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("刘世超")
+                new GalateaCharacterName("Galatea")
             ),
             out RecapGridControlRegistrationBundle? bundle
         ));

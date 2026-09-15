@@ -29,7 +29,12 @@ public sealed partial class ProgramRecapGridCommandTests {
                 : SessionEventKind.ToolExecutionStarted,
             initial.ExecutionStateAtCapturedHead.HeadKind);
         Assert.Equal(1, initial.ExecutionStateAtCapturedHead.ToolExecutionSequenceCheckpoint);
-        Assert.Single(before, static value => value.Kind == SessionEventKind.CompletionRequestPrepared);
+        SessionJournalAuditEvent legacyPrepared = Assert.Single(before, static value =>
+            value.Kind == SessionEventKind.CompletionRequestPrepared);
+        Assert.Equal(8, legacyPrepared.BodySchemaVersion);
+        byte[] legacyPreparedBytes = ReadReceiptEventPayload(legacyPrepared.Address);
+        SessionRequestCommitment legacyCommitment = Assert.IsType<SessionRequestCommitment>(
+            ReconstructReceiptRequest(legacyPrepared.Address).Manifest.Commitment);
         Assert.Equal(resultAlreadyCommitted ? 1 : 0,
             before.Count(static value => value.Kind == SessionEventKind.ToolResultObserved));
 
@@ -92,9 +97,21 @@ public sealed partial class ProgramRecapGridCommandTests {
             Assert.Single(Assert.Single(visibleResult.Results).Blocks)).Content);
         SessionJournalAuditEvent prepared = after.Last(static value =>
             value.Kind == SessionEventKind.CompletionRequestPrepared);
+        Assert.Equal(9, prepared.BodySchemaVersion);
+        Assert.NotEqual(legacyPrepared.Address, prepared.Address);
+        Assert.Equal(legacyPreparedBytes, ReadReceiptEventPayload(legacyPrepared.Address));
+        Assert.Equal(legacyCommitment, ReconstructReceiptRequest(legacyPrepared.Address).Manifest.Commitment);
         SessionPreparedRequestReconstruction reconstruction = ReconstructReceiptRequest(prepared.Address);
         Assert.Equal(SessionRequestCanonicalizer.Canonicalize(request), reconstruction.CanonicalBytes);
-        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), reconstruction.Manifest.Commitment);
+        Assert.Null(reconstruction.Manifest.Commitment);
+        SessionJournalAuditEvent started = Assert.Single(after, value =>
+            value.Kind == SessionEventKind.CompletionAttemptStarted && value.Parent == prepared.Address);
+        CompletionAttemptStartedBody evidence = Assert.IsType<CompletionAttemptStartedBody>(
+            SessionEventCodec.Decode(SessionEventKind.CompletionAttemptStarted,
+                ReadReceiptEventPayload(started.Address), out int startedVersion));
+        Assert.Equal(2, startedVersion);
+        Assert.Equal(SessionRequestManifestDefaults.CanonicalRequestCodecId, evidence.CanonicalRequestCodecId);
+        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), evidence.Commitment);
     }
 
     [Fact]

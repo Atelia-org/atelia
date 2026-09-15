@@ -91,6 +91,17 @@ internal static class HistoryUnitLoadRenderer {
             maxRenderedUtf8Bytes
         );
         switch (message) {
+            case SJ.SessionInputObservationMessage observation:
+                // This is the fixed machine-content measurement grammar, not
+                // the host's replaceable prompt projection. Old text records
+                // retain their existing H0 measurement byte for byte.
+                writer.AppendField(
+                    observation.Content.IsStructured ? "structured-observation-content-json" : "observation",
+                    observation.Content.IsStructured
+                        ? Encoding.UTF8.GetString(observation.Content.ToUtf8Json())
+                        : observation.Content.TextValue
+                );
+                break;
             case ToolResultsMessage toolResults:
                 RenderToolResults(writer, toolResults);
                 break;

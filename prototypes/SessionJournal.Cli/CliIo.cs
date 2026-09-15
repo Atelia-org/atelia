@@ -7,6 +7,7 @@ internal static class CliIo {
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false,
+        MaxDepth = 128,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 

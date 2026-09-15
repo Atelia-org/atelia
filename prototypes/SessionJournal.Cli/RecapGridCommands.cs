@@ -13,6 +13,8 @@ internal static partial class RecapGridCommands {
         "atelia.session-journal.recap-grid-cli.v1";
     internal const int MaximumReportUtf8Bytes = 16 * 1024 * 1024;
     private const int MaximumInputUtf8Bytes = 1024 * 1024;
+    // Typed input owns up to 64 levels; report DTO wrappers need extra room.
+    private static readonly JsonSerializerOptions ReportJsonOptions = new() { MaxDepth = 128 };
 
     internal static ValueTask<int> RunAsync(
         string[] args,
@@ -164,7 +166,7 @@ internal static partial class RecapGridCommands {
             command,
             status,
             detail
-        });
+        }, ReportJsonOptions);
 
     private static SessionJournalEngine OpenBranch(CliOptions options) {
         string repository = options.RequireSingle("input");

@@ -62,7 +62,7 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             "surface-B",
             after.Governing.RuntimeConfig.CompletionSurfaceId
         );
-        Assert.Equal("prompt-B", after.Governing.SystemPrompt);
+        Assert.Equal(SessionInputContent.Text("prompt-B"), after.Governing.SystemPrompt);
 
         string reportJson = File.ReadAllText(inputs.ReportPath);
         using JsonDocument report = JsonDocument.Parse(reportJson);

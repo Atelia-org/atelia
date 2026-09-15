@@ -324,7 +324,8 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
                 auditEvent => {
                     switch (auditEvent.Fact) {
                         case SessionJournalAuditSystemPromptFact prompt:
-                            capturedPrompt = prompt.SystemPrompt;
+                            Assert.False(prompt.SystemPrompt.IsStructured);
+                            capturedPrompt = prompt.SystemPrompt.TextValue;
                             break;
                         case SessionJournalAuditActionFact action:
                             capturedCorrelationId = action.CorrelationId;

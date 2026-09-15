@@ -22,8 +22,7 @@ namespace Atelia.SessionJournal.Cli.Tests;
 [Collection(ConsoleSerialCollection.Name)]
 public sealed partial class ProgramRecapGridCommandTests : IDisposable {
     private static GalateaRecapGridAssetParameters GalateaParameters => new(
-        new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("刘世超")
+        new GalateaCharacterName("Galatea")
     );
 
     private readonly List<string> _externalPaths = [];
@@ -475,7 +474,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
     public void OperatorProvisionAssetOperationIdentityIsExact() {
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaRecapGridAssets.RollingRewriteZhCnV7,
                 new ControlInstanceId(
                     "0123456789abcdef0123456789abcdef")
             );
@@ -490,7 +489,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                     "0123456789abcdef0123456789abcdef")
             ));
         Assert.Equal(
-            "3101237f27faa78836a7b10feee7e9cf3c074fa59396bcf09ac8fb64cd657017",
+            "6c1f09d7e95fe9910993ad9d368967ea7f3abf55ddf4d189b14ded53332113ad",
             operation.OperationKey
         );
         Assert.Equal(1, operation.ExecutionSequence);
@@ -537,7 +536,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaRecapGridAssets.RollingRewriteZhCnV7,
                 GalateaParameters,
                 out RecapGridControlRegistrationBundle? bundle
             ));
@@ -559,23 +558,22 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7
         ));
         Assert.Equal(1, Run(
             "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "[invalid]",
-            "--player-name", "刘世超"
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "[invalid]"
         ));
         Assert.Equal(1, Run(
             "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
             "--character-name", "Galatea",
             "--player-name", "[invalid]"
         ));
@@ -595,9 +593,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea",
-            "--player-name", "刘世超"
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "Galatea"
         );
         Assert.Equal(2, unauthorizedCode);
         Assert.Equal(
@@ -624,9 +621,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea",
-            "--player-name", "刘世超"
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, appliedCode);
         Assert.Equal("applied", applied.GetProperty("status").GetString());
@@ -660,9 +656,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea",
-            "--player-name", "刘世超"
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, replayCode);
         Assert.Equal("replayed", replay.GetProperty("status").GetString());
@@ -674,9 +669,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "阿特丽娅",
-            "--player-name", "刘世超"
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "阿特丽娅"
         );
         Assert.Equal(2, renameCode);
         Assert.Equal("operation-conflict",
@@ -719,9 +713,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea",
-            "--player-name", "刘世超"
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, reappliedCode);
         Assert.Equal("applied", reapplied.GetProperty("status").GetString());
@@ -736,9 +729,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea",
-            "--player-name", "刘世超"
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, retryCode);
         Assert.Equal("replayed", retry.GetProperty("status").GetString());
@@ -759,7 +751,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaRecapGridAssets.RollingRewriteZhCnV7,
                 GalateaParameters,
                 out RecapGridControlRegistrationBundle? bundle
             ));
@@ -790,9 +782,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea",
-            "--player-name", "刘世超"
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "Galatea"
         ));
         string output = _root + "-full-recipe.json";
         _externalPaths.Add(output);
@@ -2626,17 +2617,21 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         var factory = new DeterministicCompletionClientFactory();
         CompletionConnectionConfig connection = CandidateConnection();
         EventAddress prepared = await CreatePreparedAsync(connection);
+        EventAddress started;
         using (var journal = Atelia.EventJournal.EventJournal.OpenExisting(
                    _root)) {
-            _ = journal.CommitToRef(
+            SessionPreparedRequestReconstruction reconstruction = SessionPreparedRequestReconstructor.Reconstruct(journal, prepared);
+            started = journal.CommitToRef(
                 SessionJournalDefaults.MainBranchName,
                 prepared,
                 SessionEventCodec.Encode(
                     SessionEventKind.CompletionAttemptStarted,
-                    new CompletionAttemptStartedBody()),
+                    new CompletionAttemptStartedBody(
+                        SessionRequestManifestDefaults.CanonicalRequestCodecId,
+                        SessionRequestCanonicalizer.CreateCommitment(reconstruction.Request))),
                 opaqueEventKind:
                     (uint)SessionEventKind.CompletionAttemptStarted,
-                hint: default).Unwrap();
+                hint: default).Unwrap().EventAddress;
         }
         string refId;
         using (SessionJournalEngine reader =
@@ -2659,6 +2654,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             report.GetProperty("status").GetString());
         Assert.Equal(0, factory.CallCount);
         Assert.False(Directory.Exists(Path.Combine(_root, "derived")));
+        using var unchanged = SessionJournalEngine.OpenReadOnly(_root);
+        Assert.Equal(started, unchanged.ReadCurrentHead());
     }
 
     private void CreateJournal(int turns = 1) {
