@@ -48,10 +48,10 @@ internal static class GalateaDelegationOperatorRecovery {
             GalateaConfig config = GalateaConfigLoader.Load(
                 invocation.ConfigPath
             );
-            GalateaUserConfig user = config.Users.SingleOrDefault(value =>
+            GalateaCharacterConfig user = config.Characters.SingleOrDefault(value =>
                     string.Equals(
-                        value.UserId,
-                        evidence.UserId,
+                        value.CharacterId,
+                        evidence.CharacterId,
                         StringComparison.Ordinal
                     ))
                 ?? throw new InvalidDataException(
@@ -67,7 +67,7 @@ internal static class GalateaDelegationOperatorRecovery {
             standardOutput.WriteLine(
                 "Galatea Codex completion recovery: "
                 + $"outcome={result.Outcome}, "
-                + $"userId={GalateaMailboxText.SummarizeForLog(evidence.UserId)}, "
+                + $"userId={GalateaMailboxText.SummarizeForLog(evidence.CharacterId)}, "
                 + $"dispatchId={GalateaMailboxText.SummarizeForLog(evidence.DispatchId)}, "
                 + $"threadId={GalateaMailboxText.SummarizeForLog(evidence.ThreadId)}, "
                 + $"turnId={GalateaMailboxText.SummarizeForLog(evidence.TurnId)}, "
@@ -86,7 +86,7 @@ internal static class GalateaDelegationOperatorRecovery {
     }
 
     internal static GalateaCodexCompletionRecoveryResult Execute(
-        GalateaUserConfig user,
+        GalateaCharacterConfig user,
         GalateaDelegateRouteConfig route,
         GalateaCodexCompletionRecoveryEvidence evidence,
         bool apply
@@ -95,8 +95,8 @@ internal static class GalateaDelegationOperatorRecovery {
         ArgumentNullException.ThrowIfNull(route);
         ValidateEvidence(evidence);
         if (!string.Equals(
-                user.UserId,
-                evidence.UserId,
+                user.CharacterId,
+                evidence.CharacterId,
                 StringComparison.Ordinal)) {
             throw new InvalidDataException(
                 "Recovery evidence userId does not match the selected user."
@@ -477,23 +477,10 @@ internal static class GalateaDelegationOperatorRecovery {
                 + "ACCEPTED_TURN_NOT_VISIBLE and no existing notice."
             );
         }
-        string task = mail.Body
-            ?? throw new InvalidDataException(
-                "The active Accepted dispatch has no durable task body."
-            );
-        byte[] taskBytes;
-        try {
-            taskBytes = StrictUtf8.GetBytes(task);
-        }
-        catch (EncoderFallbackException exception) {
-            throw new InvalidDataException(
-                "The active Accepted dispatch task is not strict Unicode.",
-                exception
-            );
-        }
-        if (taskBytes.Length != evidence.TaskUtf8Bytes
+        GalateaTaskCommitment task = GalateaTaskCommitment.FromStored(mail);
+        if (task.Utf8Bytes != evidence.TaskUtf8Bytes
             || !string.Equals(
-                Sha256(taskBytes),
+                task.Sha256,
                 evidence.TaskSha256,
                 StringComparison.Ordinal
             )) {
@@ -546,7 +533,11 @@ internal static class GalateaDelegationOperatorRecovery {
             before.NextCompletionSequence,
             GalateaReplyNoticeState.Ready,
             ConsumedActionAddress: null,
-            Revision: 0
+            Revision: 0,
+            NoticeFormat: "semantic-notice-v1",
+            Sender: new GalateaSenderSnapshot("delegate", "codex", "Codex"),
+            ThreadId: evidence.ThreadId,
+            TurnId: evidence.TurnId
         );
         GalateaRouteBindingSnapshot expectedRoute = before.Route with {
             ActiveDispatchId = null,
@@ -600,6 +591,7 @@ internal static class GalateaDelegationOperatorRecovery {
             && left.ObservationUtf8Bytes == right.ObservationUtf8Bytes
             && string.Equals(left.ObservationSha256,
                 right.ObservationSha256, StringComparison.Ordinal)
+            && left.BoundInput == right.BoundInput
             && left.CompletionFrontier == right.CompletionFrontier
             && string.Equals(left.ObservationAddress,
                 right.ObservationAddress, StringComparison.Ordinal)
@@ -608,9 +600,9 @@ internal static class GalateaDelegationOperatorRecovery {
     }
 
     private static GalateaDelegationStoreOwner CreateOwner(
-        GalateaUserConfig user
+        GalateaCharacterConfig user
     ) => new(
-        user.UserId,
+        user.CharacterId,
         GalateaDelegationSupervisor.CreateSessionRepositoryId(user.SessionDir)
     );
 
@@ -629,7 +621,7 @@ internal static class GalateaDelegationOperatorRecovery {
                 + "kind=codex-turn-completed."
             );
         }
-        RequireBoundedIdentity(evidence.UserId, "userId");
+        RequireBoundedIdentity(evidence.CharacterId, "userId");
         RequireBoundedIdentity(evidence.DispatchId, "dispatchId");
         RequireBoundedIdentity(evidence.ThreadId, "threadId");
         RequireBoundedIdentity(evidence.TurnId, "turnId");
@@ -642,7 +634,6 @@ internal static class GalateaDelegationOperatorRecovery {
             );
         }
         if (evidence.TaskUtf8Bytes is < 1
-                or > GalateaDelegationStateBounds.MaximumTaskUtf8Bytes
             || evidence.FinalUtf8Bytes is < 1
                 or > GalateaDelegationStateBounds.MaximumTaskUtf8Bytes
             || string.IsNullOrWhiteSpace(evidence.Final)) {
@@ -767,7 +758,7 @@ internal static class GalateaDelegationOperatorRecovery {
 internal sealed record GalateaCodexCompletionRecoveryEvidence(
     int Version,
     string Kind,
-    string UserId,
+    [property: System.Text.Json.Serialization.JsonPropertyName("userId")] string CharacterId,
     string DispatchId,
     string ThreadId,
     string TurnId,

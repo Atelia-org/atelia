@@ -1,5 +1,8 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Encodings.Web;
+using Atelia.SessionJournal;
 using Atelia.Data;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
@@ -10,6 +13,10 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaMemoRecallContractsTests {
+    private static readonly EventAddress RecentStart = new(SizedPtr.Create(4, 4), 1, AddressHint.None);
+    private static readonly EventAddress RecentEnd = new(SizedPtr.Create(12, 4), 1, AddressHint.None);
+    private static GalateaRecentVisibleAction RecentAction(string text) => new(text, RecentStart, RecentEnd);
+
     private static readonly DateTimeOffset Timestamp = new(
         2026,
         9,
@@ -43,8 +50,8 @@ public sealed class GalateaMemoRecallContractsTests {
                 current.GetProperty("externalLocalTimestamp").GetString());
             if (observation.TriggerKind == PlayerTurnObservationTriggerKind.HeartbeatActivation) {
                 Assert.Equal("heartbeat-activation", trigger.GetProperty("kind").GetString());
-                Assert.Equal(PlayerTurnObservationEnvelope.RenderHeartbeatActivationBody(character),
-                    trigger.GetProperty("activationText").GetString());
+                Assert.Equal(character.Value, trigger.GetProperty("characterName").GetString());
+                Assert.Equal(10, trigger.GetProperty("externalIntervalMinutes").GetInt32());
                 Assert.Empty(current.GetProperty("externalNotices").EnumerateArray());
             }
             else {
@@ -69,7 +76,7 @@ public sealed class GalateaMemoRecallContractsTests {
             ]
         );
         GalateaPlayerTurnRecallContext context = Context([
-            new GalateaRecentVisibleAction("她说：\"蓝门\"\\旧城\n")
+            RecentAction("她说：\"蓝门\"\\旧城\n")
         ]);
 
         string rendered = GalateaMemoRecallQueryRenderer.Render(
@@ -79,7 +86,7 @@ public sealed class GalateaMemoRecallContractsTests {
         );
 
         const string Expected =
-            "{\"schema\":\"atelia.galatea.memo-recall-context.v2\","
+            "{\"schema\":\"atelia.galatea.memo-recall-context.v4\","
             + "\"characterName\":\"伽拉忒亚\","
             + "\"retrievalGoal\":\"memories materially useful for the character's next narrative action\","
             + "\"currentTurn\":{"
@@ -90,8 +97,18 @@ public sealed class GalateaMemoRecallContractsTests {
             + "{\"kind\":\"delivery-failure\",\"text\":\"失败\\n原因\"}]},"
             + "\"recentVisibleActions\":[{"
             + "\"ordinalFromNewest\":0,"
+            + "\"kind\":\"gm-visible-action\","
+            + "\"sourceStartInclusive\":\"<start>\","
+            + "\"sourceEndInclusive\":\"<end>\","
             + "\"text\":\"她说：\\\"蓝门\\\"\\\\旧城\\n\"}]}";
-        Assert.Equal(Expected, rendered);
+        JsonObject content = JsonNode.Parse(rendered)!.AsObject();
+        Assert.Equal(GalateaMemoRecallInputContract.Instructions, content["inputMeaning"]!.GetValue<string>());
+        Assert.Contains("currentTurn.trigger.playerText", content["inputMeaning"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Contains("GM 可见", content["inputMeaning"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.True(content.Remove("inputMeaning"));
+        Assert.Equal(Expected.Replace("<start>", EventAddressTextCodec.Format(RecentStart), StringComparison.Ordinal)
+            .Replace("<end>", EventAddressTextCodec.Format(RecentEnd), StringComparison.Ordinal),
+            content.ToJsonString(new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
         Assert.DoesNotContain("Note 已保存", rendered,
             StringComparison.Ordinal);
         Assert.Equal(
@@ -119,7 +136,7 @@ public sealed class GalateaMemoRecallContractsTests {
         string rendered = GalateaMemoRecallQueryRenderer.Render(
             new GalateaCharacterName("Galatea"),
             observation,
-            Context([new GalateaRecentVisibleAction("latest")])
+            Context([RecentAction("latest")])
         );
         using JsonDocument parsed = JsonDocument.Parse(rendered);
         JsonElement root = parsed.RootElement;
@@ -154,8 +171,8 @@ public sealed class GalateaMemoRecallContractsTests {
             new GalateaCharacterName("Galatea"),
             noNoticeObservation,
             Context([
-                new GalateaRecentVisibleAction("older"),
-                new GalateaRecentVisibleAction(largerThanFormerCap)
+                RecentAction("older"),
+                RecentAction(largerThanFormerCap)
             ])
         );
         using (JsonDocument parsed = JsonDocument.Parse(included)) {
@@ -175,7 +192,7 @@ public sealed class GalateaMemoRecallContractsTests {
         string omitted = GalateaMemoRecallQueryRenderer.Render(
             new GalateaCharacterName("Galatea"),
             crowdedObservation,
-            Context([new GalateaRecentVisibleAction(
+            Context([RecentAction(
                 new string('a', 256 * 1024)
             )])
         );
@@ -203,6 +220,8 @@ public sealed class GalateaMemoRecallContractsTests {
             Context([])
         );
         using JsonDocument parsed = JsonDocument.Parse(rendered);
+        Assert.Equal(GalateaMemoRecallInputContract.Instructions,
+            parsed.RootElement.GetProperty("inputMeaning").GetString());
 
         Assert.Equal(
             playerText,
@@ -216,6 +235,15 @@ public sealed class GalateaMemoRecallContractsTests {
             1,
             MemoPodLimits.MaximumRecallQueryUtf8Bytes
         );
+    }
+
+    [Fact]
+    public void RecentVisibleActionRequiresItsSelectedSourceRange() {
+        Assert.Throws<ArgumentException>(() => new GalateaRecentVisibleAction("visible", default, RecentEnd));
+        Assert.Throws<ArgumentException>(() => new GalateaRecentVisibleAction("visible", RecentStart, default));
+        var action = new GalateaRecentVisibleAction("visible", RecentStart, RecentEnd);
+        Assert.Equal(RecentStart, action.SourceStartInclusive);
+        Assert.Equal(RecentEnd, action.SourceEndInclusive);
     }
 
     [Fact]
@@ -288,7 +316,7 @@ public sealed class GalateaMemoRecallContractsTests {
         Assert.Throws<ArgumentException>(() =>
             GalateaMemoRecallSourceIdCodec.Format(podId, default));
         Assert.Throws<ArgumentException>(() =>
-            new GalateaRecentVisibleAction("bad\ud800"));
+            RecentAction("bad\ud800"));
     }
 
     [Fact]
@@ -365,7 +393,7 @@ public sealed class GalateaMemoRecallContractsTests {
 
     [Fact]
     public void StrongRequest_OwnsOnePreliminaryObservationAndContext() {
-        GalateaUserConfig user = User();
+        GalateaCharacterConfig user = User();
         var observation = new PlayerTurnObservation("act", Timestamp);
         GalateaPlayerTurnRecallContext context = Context([]);
         EventAddress boundary = new(
@@ -382,7 +410,7 @@ public sealed class GalateaMemoRecallContractsTests {
         );
         Assert.Same(observation, request.CurrentObservation);
         Assert.Same(context, request.Context);
-        Assert.Same(user, request.User);
+        Assert.Same(user, request.Character);
         Assert.Equal(boundary, request.CompletionBoundary);
         Assert.Throws<ArgumentException>(() =>
             new GalateaPlayerTurnRecallRequest(
@@ -415,11 +443,9 @@ public sealed class GalateaMemoRecallContractsTests {
         actions
     );
 
-    private static GalateaUserConfig User() => new(
+    private static GalateaCharacterConfig User() => new(
         "alice",
-        "password",
         new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("Player"),
         "/session",
         "/delegation",
         "/memory",

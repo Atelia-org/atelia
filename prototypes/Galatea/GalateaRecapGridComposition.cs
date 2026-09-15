@@ -58,7 +58,7 @@ internal sealed class GalateaRecapGridComposition
     internal async ValueTask<GalateaRecapGridTurn> OpenFreshAsync(
         SessionJournalEngine engine,
         string connectionId,
-        string? pendingObservation,
+        SessionInputContent? pendingObservation,
         GalateaRecapGridTargetExpectation targetExpectation,
         CancellationToken cancellationToken
     ) {

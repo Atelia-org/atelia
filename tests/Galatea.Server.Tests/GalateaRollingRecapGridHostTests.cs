@@ -62,7 +62,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             composition
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -77,8 +77,13 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal(3, rows.Length);
         Assert.All(rows, static row => {
             Assert.Equal(2, row.Length);
-            Assert.Same(row[0].Request.PromptPrefix,
-                row[1].Request.PromptPrefix);
+            CompletionPromptPrefix first = row[0].Request.PromptPrefix;
+            CompletionPromptPrefix second = row[1].Request.PromptPrefix;
+            Assert.Equal(first.SystemPrompt, second.SystemPrompt);
+            Assert.Equal(first.OutputContract.SemanticFingerprint,
+                second.OutputContract.SemanticFingerprint);
+            Assert.Equal(first.SharedContextMessages.Select(message => (message.Kind, RenderMessage(message))),
+                second.SharedContextMessages.Select(message => (message.Kind, RenderMessage(message))));
             Assert.NotEqual(Tail(row[0].Request), Tail(row[1].Request));
         });
         RecapInvocation[] firstRow = rows[0];
@@ -194,7 +199,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 _estimator
             )
         )) {
-            UserSessionHost sessionA = await serviceA.GetSessionAsync(
+            CharacterSessionHost sessionA = await serviceA.GetSessionAsync(
                 "alice",
                 CancellationToken.None
             );
@@ -203,7 +208,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             GalateaLiveTurn failed = serviceA.StartTurn(
                 sessionA,
                 "model-a fails one column",
-                new GalateaTurnOptions(AgentConnectionId)
+                new GalateaTurnOptions(AgentConnectionId),
+                GalateaDelegateTestConfiguration.PlayerSender
             );
             GalateaTurnException failure = await Assert.ThrowsAsync<
                 GalateaTurnException>(() => serviceA.RunTurnAsync(
@@ -281,7 +287,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 _estimator
             )
         )) {
-            UserSessionHost sessionB = await serviceB.GetSessionAsync(
+            CharacterSessionHost sessionB = await serviceB.GetSessionAsync(
                 "alice",
                 CancellationToken.None
             );
@@ -370,7 +376,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 _estimator
             )
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -430,7 +436,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 _estimator
             )
         )) {
-            UserSessionHost seedSession = await seedService.GetSessionAsync(
+            CharacterSessionHost seedSession = await seedService.GetSessionAsync(
                 "alice",
                 CancellationToken.None
             );
@@ -461,7 +467,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 "continued-" + request.LogicalColumnId
             )
         );
-        UserSessionHost? session = null;
+        CharacterSessionHost? session = null;
         EventAddress? durableToolResultHead = null;
         int routeLoads = 0;
         RecapGridCompletionHost recoveryCompletion = CreateCompletionHost(
@@ -588,13 +594,15 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             ? RecapGridCompletionHost.Create(
                 routeLoader,
                 frozen,
-                factory
+                factory,
+                inputProjector: GalateaInputProjector.Instance
             )
             : RecapGridCompletionHost.Create(
                 routeLoader,
                 frozen,
                 factory,
-                new RecapGridAgentControlProfileRegistry([agentProfile])
+                new RecapGridAgentControlProfileRegistry([agentProfile]),
+                inputProjector: GalateaInputProjector.Instance
             );
     }
 
@@ -697,7 +705,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 dispatch.Kind,
                 dispatch.ConnectionFingerprint
             ),
-            ContextCandidateSource: new EmptyCandidateSource()
+            ContextCandidateSource: new EmptyCandidateSource(),
+            InputProjector: GalateaInputProjector.Instance
         );
         using SessionJournalEngine engine = SessionJournalEngine.OpenForTest(
             fixture.Path,
@@ -736,7 +745,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             new SessionRuntime(
                 client,
                 CompletionTarget: target,
-                ContextCandidateSource: new EmptyCandidateSource()
+                ContextCandidateSource: new EmptyCandidateSource(),
+                InputProjector: GalateaInputProjector.Instance
             ),
             new SessionJournalTestHooks(
                 SessionJournalFailpoint.AfterActionCommitted
@@ -760,7 +770,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             agent.ToolSession,
             target,
             ToolRuntimeIdentity: agent.RuntimeIdentity,
-            ContextCandidateSource: context
+            ContextCandidateSource: context,
+            InputProjector: GalateaInputProjector.Instance
         ));
         SessionJournalFailpointException failure = await Assert.ThrowsAsync<
             SessionJournalFailpointException>(() => engine.SendAsync(
@@ -787,13 +798,14 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
 
     private static async Task RunFreshAsync(
         GalateaHostService service,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string message
     ) {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             message,
-            new GalateaTurnOptions(AgentConnectionId)
+            new GalateaTurnOptions(AgentConnectionId),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         await service.RunTurnAsync(session, turn, CancellationToken.None);
         service.FinishTurn(session, turn);
@@ -804,11 +816,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         string path,
         IReadOnlyList<CompletionConnectionConfig> connections
     ) => new(
-        [new GalateaUserConfig(
+        [new GalateaCharacterConfig(
             "alice",
-            "pw",
             new GalateaCharacterName("Galatea"),
-            new GalateaPlayerName("刘世超"),
             path,
             path + "-delegation-state",
             path + "-character-memory-state",
@@ -816,6 +826,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt",
             AgentConnectionId)],
+        GalateaDelegateTestConfiguration.Players,
         connections,
         [AgentConnectionId],
         InputNormalizerConnectionId: null,
@@ -882,8 +893,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             if (Directory.Exists(path)) {
                 Directory.Delete(path, recursive: true);
             }
-            foreach (string userId in new[] { "alice", "bob" }) {
-                string home = path + "-home-" + userId;
+            foreach (string characterId in new[] { "alice", "bob" }) {
+                string home = path + "-home-" + characterId;
                 if (Directory.Exists(home)) {
                     Directory.Delete(home, recursive: true);
                 }

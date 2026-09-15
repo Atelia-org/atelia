@@ -53,9 +53,9 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
         using (HttpClient http = lab.Host.CreateClient()) {
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
             Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-            (GalateaHostService service, UserSessionHost session) = await SessionAsync(lab.Host);
+            (GalateaHostService service, CharacterSessionHost session) = await SessionAsync(lab.Host);
             using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-                "/api/v1/chat/turns", new ChatStreamRequest("Seed retained history.", "test"));
+                "/api/v1/characters/alice/chat/turns", new ChatStreamRequest("Seed retained history.", "test"));
             Assert.Equal("completed", (await WaitAsync(accepted, service, session)).Status);
             retainedHead = session.Engine.ReadCurrentHead()!.Value;
             OpenAIResponsesReasoningBlock reasoning = Assert.Single(
@@ -83,9 +83,9 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
         using (HttpClient http = lab.Host.CreateClient()) {
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
             Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-            (GalateaHostService service, UserSessionHost session) = await SessionAsync(lab.Host);
+            (GalateaHostService service, CharacterSessionHost session) = await SessionAsync(lab.Host);
             using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-                "/api/v1/chat/turns/resume", new ResumeTurnRequest(
+                "/api/v1/characters/alice/chat/turns/resume", new ResumeTurnRequest(
                     EventAddressTextCodec.Format(frozenHead), null, RestartUncertainCompletion: true));
             GalateaLiveTurn refused = await WaitAsync(accepted, service, session);
             Assert.Equal("failed", refused.Status);
@@ -147,15 +147,15 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
         using (HttpClient http = lab.Host.CreateClient()) {
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
             Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-            (GalateaHostService service, UserSessionHost session) = await SessionAsync(lab.Host);
+            (GalateaHostService service, CharacterSessionHost session) = await SessionAsync(lab.Host);
             using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-                "/api/v1/chat/turns", new ChatStreamRequest("New request after repair.", "astra"));
+                "/api/v1/characters/alice/chat/turns", new ChatStreamRequest("New request after repair.", "astra"));
             Assert.Equal("completed", (await WaitAsync(accepted, service, session)).Status);
         }
         Assert.Equal(2, factory.Requests.Count);
         await lab.StopAsync();
         await lab.ReopenAsync(factory);
-        (GalateaHostService _, UserSessionHost reopened) = await SessionAsync(lab.Host);
+        (GalateaHostService _, CharacterSessionHost reopened) = await SessionAsync(lab.Host);
         Assert.Equal(SessionExecutionPhase.Idle, reopened.Engine.InspectExecutionBoundary().Phase);
         var turns = reopened.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
         Assert.Equal(2, turns.Count);
@@ -176,13 +176,13 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
         CodexSubscriptionCompletionClientFactory.CompletionSurfaceId,
         CodexSubscriptionCompletionClientFactory.CanonicalBaseAddress);
 
-    private static async Task<(GalateaHostService, UserSessionHost)> SessionAsync(GalateaTestHost host) {
+    private static async Task<(GalateaHostService, CharacterSessionHost)> SessionAsync(GalateaTestHost host) {
         var service = host.Factory.Services.GetRequiredService<GalateaHostService>();
         return (service, await service.GetSessionAsync("alice", CancellationToken.None));
     }
 
     private static async Task<GalateaLiveTurn> WaitAsync(HttpResponseMessage response,
-        GalateaHostService service, UserSessionHost session) {
+        GalateaHostService service, CharacterSessionHost session) {
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var started = Assert.IsType<StartTurnResponseDto>(await response.Content.ReadFromJsonAsync<StartTurnResponseDto>());
         var turn = Assert.IsType<GalateaLiveTurn>(service.FindTurn(session, started.TurnId));

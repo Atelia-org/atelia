@@ -14,7 +14,7 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 /// exclusive filesystem lock and serializes every operation on one handle.
 /// </summary>
 internal sealed partial class CharacterMemorySqliteStore : IDisposable {
-    internal const int SchemaVersion = 3;
+    internal const int SchemaVersion = 4;
     internal const int ApplicationId = 0x47434D31; // "GCM1"
     internal const string DatabaseFileName = "character-memory.sqlite3";
     internal const string LockFileName = "character-memory.lock";
@@ -28,6 +28,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         "319ca61bea7abe13d7536cdbb31302797ff6100f4515dcd08abec1acc18b2faf";
     private const string V3MetaSchemaSha256 =
         "843f6eeaf776183c0195c169f673eb13d75d91548007eeac64d1d2a25641cff6";
+    private const string V4MetaSchemaSha256 =
+        "2dcf15ce5f4a1f79e81ccad5d8538b508a29db7b9ac8ed3f4101f11c2dff1518";
     private const string CaptureSchemaSha256 =
         "bdd6634ced7368d131652007a23eafd62a4345095bf6583e95d707b9531429fd";
     private const string V2NoteSchemaSha256 =
@@ -136,7 +138,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     internal static CharacterMemorySqliteStore OpenExisting(
         string storeDirectory,
         CharacterMemoryStoreOwner owner,
-        CharacterMemoryStoreTestHooks? hooks = null
+        CharacterMemoryStoreTestHooks? hooks = null,
+        bool upgradeLegacyFormat = false
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(storeDirectory);
         GalateaDelegationDurableFiles.RequireLinux();
@@ -167,6 +170,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 create: false
             );
             ConfigureOpenedDatabase(connection);
+            if (ReadPragmaInteger(connection, "user_version") != SchemaVersion && !upgradeLegacyFormat) {
+                throw new InvalidDataException("Character Memory requires an explicit offline format upgrade before opening.");
+            }
             MigrateV1ToV2IfNeeded(
                 connection,
                 owner,
@@ -175,6 +181,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             MigrateV2ToV3IfNeeded(
                 connection, owner, hooks ?? CharacterMemoryStoreTestHooks.None
             );
+            MigrateV3ToV4IfNeeded(connection, owner, hooks ?? CharacterMemoryStoreTestHooks.None);
             CharacterMemoryStatusSnapshot snapshot =
                 ValidateOpenedDatabase(connection, owner);
             return new CharacterMemorySqliteStore(
@@ -495,13 +502,15 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
     private static SqliteConnection OpenConnection(
         string databasePath,
-        bool create
+        bool create,
+        bool readOnly = false
     ) {
+        if (create && readOnly) { throw new ArgumentException("A read-only connection cannot create a Character Memory store."); }
         var builder = new SqliteConnectionStringBuilder {
             DataSource = databasePath,
             Mode = create
                 ? SqliteOpenMode.ReadWriteCreate
-                : SqliteOpenMode.ReadWrite,
+                : readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWrite,
             Cache = SqliteCacheMode.Private,
             Pooling = false,
             DefaultTimeout = 1,
@@ -527,10 +536,11 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     }
 
     private static void ConfigureOpenedDatabase(
-        SqliteConnection connection
+        SqliteConnection connection,
+        bool readOnly = false
     ) {
         ExecutePragma(connection, "PRAGMA foreign_keys = ON;");
-        ExecutePragma(connection, "PRAGMA journal_mode = DELETE;");
+        if (!readOnly) { ExecutePragma(connection, "PRAGMA journal_mode = DELETE;"); }
         ExecutePragma(connection, "PRAGMA synchronous = EXTRA;");
         ExecutePragma(
             connection,
@@ -556,7 +566,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         command.CommandText = """
             CREATE TABLE character_memory_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 3),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 4),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -732,11 +742,11 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     quarantine_code, quarantine_observed_pod_state_identity,
                     store_revision
                 ) VALUES (
-                    1, 3, $user, $repository, $segment, $tail, $head,
+                    1, 4, $user, $repository, $segment, $tail, $head,
                     'Provisioning', $target, NULL, NULL, NULL, NULL, NULL, 0
                 );
                 """;
-            command.Parameters.AddWithValue("$user", owner.UserId);
+            command.Parameters.AddWithValue("$user", owner.CharacterId);
             command.Parameters.AddWithValue(
                 "$repository",
                 owner.SessionRepositoryId
@@ -836,7 +846,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         );
         ValidateGlobalCountInvariants(connection, status);
         ValidateAllDerivedInfoWork(connection);
-        if (expectedVersion == SchemaVersion) {
+        if (expectedVersion >= 3) {
             ValidateReceiptDeliveryRows(connection);
         }
         return status;
@@ -867,7 +877,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             "index:ux_derived_info_single_planned",
             "index:ix_derived_info_pending_schedule",
         ];
-        if (expectedVersion == SchemaVersion) {
+        if (expectedVersion >= 3) {
             expected = [.. expected,
                 "table:note_receipt_delivery",
                 "index:ux_note_receipt_single_bound",
@@ -914,7 +924,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         RequireExactTableSchema(
             connection,
             "character_memory_meta",
-            expectedVersion == 2 ? V2MetaSchemaSha256 : V3MetaSchemaSha256
+            expectedVersion switch { 2 => V2MetaSchemaSha256, 3 => V3MetaSchemaSha256, 4 => V4MetaSchemaSha256,
+                _ => throw Corrupt("Unsupported Character Memory schema version.") }
         );
         RequireExactTableSchema(
             connection,
@@ -931,8 +942,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             "derived_info_work",
             V2DerivedInfoSchemaSha256
         );
-        if (expectedVersion == SchemaVersion) {
-            ValidateReceiptDeliverySchema(connection);
+        if (expectedVersion >= 3) {
+            ValidateReceiptDeliverySchema(connection, expectedVersion);
         }
         RequireExactForeignKeys(connection, "character_note", [
             "source_action_address->note_action_capture.source_action_address:RESTRICT"
@@ -1506,7 +1517,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()
             || reader.GetInt32(0) != expectedVersion
-            || !string.Equals(reader.GetString(1), expected.UserId,
+            || !string.Equals(reader.GetString(1), expected.CharacterId,
                 StringComparison.Ordinal)
             || !string.Equals(reader.GetString(2), expected.SessionRepositoryId,
                 StringComparison.Ordinal)
@@ -1519,7 +1530,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
     private static void ValidateOwner(CharacterMemoryStoreOwner owner) {
         ArgumentNullException.ThrowIfNull(owner);
-        RequireBoundedText(owner.UserId, nameof(owner.UserId));
+        RequireBoundedText(owner.CharacterId, nameof(owner.CharacterId));
         RequireBoundedText(
             owner.SessionRepositoryId,
             nameof(owner.SessionRepositoryId)

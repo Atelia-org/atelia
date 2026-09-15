@@ -28,12 +28,14 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
 
         int exitCode = GalateaDelegationStoreUpgrade.Run(
             ["operator", GalateaDelegationStoreUpgrade.CommandName,
-                "--config", configPath, "--user", fixture.User.UserId, "--apply"],
+                "--config", configPath, "--character", fixture.User.CharacterId, "--apply"],
             output, error
         );
 
         Assert.True(exitCode == 0, error.ToString());
         Assert.Contains("outcome=AlreadyCurrent", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains($"characterId={fixture.User.CharacterId}", output.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("userId=", output.ToString(), StringComparison.Ordinal);
         Assert.Equal(before, DatabaseDigest(fixture.StateDirectory));
         Assert.DoesNotContain(fixture.Final, output.ToString(), StringComparison.Ordinal);
     }
@@ -173,6 +175,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
         Assert.Equal(beforeLease.PlayerText, afterLease.PlayerText);
         Assert.Equal(beforeLease.ExpectedSessionHead,
             afterLease.ExpectedSessionHead);
+        Assert.Equal(beforeLease.BoundInput, afterLease.BoundInput);
         Assert.Equal(beforeLease.RenderedObservation,
             afterLease.RenderedObservation);
         Assert.Equal(beforeLease.ObservationUtf8Bytes,
@@ -495,7 +498,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
     ) => JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object> {
         ["v"] = evidence.Version,
         ["kind"] = evidence.Kind,
-        ["userId"] = evidence.UserId,
+        ["userId"] = evidence.CharacterId,
         ["dispatchId"] = evidence.DispatchId,
         ["threadId"] = evidence.ThreadId,
         ["turnId"] = evidence.TurnId,
@@ -526,11 +529,9 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             TestDirectorySafety.CreateDirectoryNew(sessionDirectory);
             StateDirectory = Path.Combine(_root, "delegation");
             Route = GalateaDelegateTestConfiguration.Create(_root).CodexRoute;
-            User = new GalateaUserConfig(
+            User = new GalateaCharacterConfig(
                 "gpt",
-                "password",
                 new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("Player"),
                 sessionDirectory,
                 StateDirectory,
                 Path.Combine(_root, "character-memory"),
@@ -542,7 +543,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             GalateaDelegationStoreLimits limits =
                 GalateaDelegationSupervisor.CreateLimits(Route);
             var owner = new GalateaDelegationStoreOwner(
-                User.UserId,
+                User.CharacterId,
                 GalateaDelegationSupervisor.CreateSessionRepositoryId(
                     User.SessionDir
                 )
@@ -580,7 +581,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     VisibleActionUtf8Bytes: 12,
                     "extractor-contract-v1",
                     intents
-                )
+                , GalateaDelegationTestInputs.Sender(_store, "Galatea"))
             );
             GalateaDelegationStateSnapshot initial = _store.ReadSnapshot();
             GalateaRouteBindingSnapshot binding = _store.BeginThreadBinding(
@@ -601,7 +602,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                         capture.DispatchIds[0],
                         initial.Mails[0].Revision,
                         bound.Revision
-                    );
+                    , GalateaDelegationTestInputs.Commitment(_store, capture.DispatchIds[0]));
                 GalateaReplyNoticeSnapshot priorNotice =
                     _store.RecordCompletedMail(
                         priorStarted.DispatchId,
@@ -626,7 +627,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 capture.DispatchIds[targetIndex],
                 initial.Mails[targetIndex].Revision,
                 bound.Revision
-            );
+            , GalateaDelegationTestInputs.Commitment(_store, capture.DispatchIds[targetIndex]));
             GalateaOutboundMailSnapshot accepted = _store.RecordMailAccepted(
                 started.DispatchId,
                 started.Revision,
@@ -642,12 +643,13 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             );
             QueuedMailBefore = _store.ReadSnapshot().Mails[targetIndex + 1];
             Final = "exact final reply\nwith UTF-8: 终";
-            byte[] taskBytes = Encoding.UTF8.GetBytes(task);
+            byte[] taskBytes = Encoding.UTF8.GetBytes(
+                GalateaDelegationTestInputs.Task(_store, accepted.DispatchId));
             byte[] finalBytes = Encoding.UTF8.GetBytes(Final);
             Evidence = new GalateaCodexCompletionRecoveryEvidence(
                 GalateaDelegationOperatorRecovery.EvidenceVersion,
                 GalateaDelegationOperatorRecovery.EvidenceKind,
-                User.UserId,
+                User.CharacterId,
                 accepted.DispatchId,
                 "thread-1",
                 "turn-1",
@@ -664,7 +666,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
         }
 
         internal string StateDirectory { get; }
-        internal GalateaUserConfig User { get; }
+        internal GalateaCharacterConfig User { get; }
         internal GalateaDelegateRouteConfig Route { get; }
         internal GalateaCodexCompletionRecoveryEvidence Evidence { get; }
         internal GalateaOutboundMailSnapshot QueuedMailBefore { get; }
@@ -674,7 +676,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             GalateaDelegationSqliteStore.OpenExisting(
                 StateDirectory,
                 new GalateaDelegationStoreOwner(
-                    User.UserId,
+                    User.CharacterId,
                     GalateaDelegationSupervisor.CreateSessionRepositoryId(
                         User.SessionDir
                     )
@@ -686,7 +688,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             GalateaDelegationSqliteStore.OpenExistingReadOnly(
                 StateDirectory,
                 new GalateaDelegationStoreOwner(
-                    User.UserId,
+                    User.CharacterId,
                     GalateaDelegationSupervisor.CreateSessionRepositoryId(
                         User.SessionDir
                     )
@@ -710,13 +712,11 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 Path.Combine(_root, "profile.json"),
                 profile.ToCanonicalBytes()
             );
-            var users = new GalateaUsersFileConfig(
+            var users = new GalateaRootFileConfig(
                 GalateaStrictConfigReader.CurrentConfigVersion,
-                [new GalateaUserFileConfig(
-                    User.UserId,
-                    User.Password,
+                [new GalateaCharacterFileConfig(
+                    User.CharacterId,
                     User.CharacterName.Value,
-                    User.PlayerName.Value,
                     User.SessionDir,
                     User.DelegationStateDir,
                     User.CharacterMemoryStateDir,
@@ -725,11 +725,9 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     User.DefaultConnectionId,
                     CharacterContextTemplate: "prompt ${characterName}"
                 )],
-                RecapGrid: new GalateaRecapGridFileConfig(
-                    "routes.json",
-                    ["profile.json"],
-                    profile.ProfileId
-                )
+                [],
+                new GalateaRuntimeFileConfig(RecapGrid: new GalateaRecapGridFileConfig(
+                    "routes.json", ["profile.json"], profile.ProfileId))
             );
             string configPath = Path.Combine(_root, "config.json");
             File.WriteAllText(

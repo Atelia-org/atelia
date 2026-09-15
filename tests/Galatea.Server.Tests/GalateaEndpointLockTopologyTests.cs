@@ -30,12 +30,13 @@ public sealed class GalateaEndpointLockTopologyTests {
         // runTask settles. Capture the token while the host is still running.
         CancellationToken applicationStopping = host.Factory.Services
             .GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
-        UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn liveTurn = service.StartTurn(
             session,
             "headless runner fixture",
-            new GalateaTurnOptions("test")
+            new GalateaTurnOptions("test"),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         Task runTask = runner.Start(session, liveTurn);
         Assert.Same(runTask, liveTurn.RunTask);
@@ -72,12 +73,13 @@ public sealed class GalateaEndpointLockTopologyTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
         var runner = host.Factory.Services.GetRequiredService<GalateaAcceptedTurnRunner>();
-        UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn liveTurn = service.StartTurn(
             session,
             "shutdown runner fixture",
-            new GalateaTurnOptions("test")
+            new GalateaTurnOptions("test"),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         runner.BeginShutdown();
         Assert.Throws<OperationCanceledException>(() => { _ = runner.Start(session, liveTurn); });
@@ -94,7 +96,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         await using var host = CreateHost();
         var hostService = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await hostService.GetSessionAsync(
+        CharacterSessionHost session = await hostService.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -143,7 +145,8 @@ public sealed class GalateaEndpointLockTopologyTests {
             liveTurn = hostService.StartTurn(
                 session,
                 "lock topology probe",
-                new GalateaTurnOptions("test")
+                new GalateaTurnOptions("test"),
+                GalateaDelegateTestConfiguration.PlayerSender
             );
             liveTurn.PublishStatus(
                 GalateaSseStatusCode.Generating
@@ -151,7 +154,7 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             using var request = new HttpRequestMessage(
                 HttpMethod.Get,
-                $"/api/v1/chat/turns/{liveTurn.TurnId}/events"
+                $"/api/v1/characters/alice/chat/turns/{liveTurn.TurnId}/events"
             );
             response = await client.SendAsync(
                     request,
@@ -208,7 +211,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         await LoginAsync(client);
         GalateaHostService hostService = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await hostService.GetSessionAsync(
+        CharacterSessionHost session = await hostService.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -217,14 +220,15 @@ public sealed class GalateaEndpointLockTopologyTests {
         GalateaLiveTurn liveTurn = hostService.StartTurn(
             session,
             "replay/live fixture",
-            new GalateaTurnOptions("test")
+            new GalateaTurnOptions("test"),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             liveTurn.PublishStatus(GalateaSseStatusCode.Generating);
             liveTurn.PublishTextDelta("replay");
             using var request = new HttpRequestMessage(
                 HttpMethod.Get,
-                $"/api/v1/chat/turns/{liveTurn.TurnId}/events"
+                $"/api/v1/characters/alice/chat/turns/{liveTurn.TurnId}/events"
             );
             using HttpResponseMessage response = await client.SendAsync(
                 request,
@@ -272,13 +276,13 @@ public sealed class GalateaEndpointLockTopologyTests {
         await LoginAsync(client);
         GalateaHostService hostService = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await hostService.GetSessionAsync(
+        CharacterSessionHost session = await hostService.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
 
         using HttpResponseMessage accepted = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest("fatal fixture", "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
@@ -337,11 +341,12 @@ public sealed class GalateaEndpointLockTopologyTests {
             liveTurn = hostService.StartTurn(
                 session,
                 "stop topology probe",
-                new GalateaTurnOptions("test")
+                new GalateaTurnOptions("test"),
+                GalateaDelegateTestConfiguration.PlayerSender
             );
 
             using HttpResponseMessage response = await client.PostAsync(
-                    $"/api/v1/chat/turns/{liveTurn.TurnId}/stop",
+                    $"/api/v1/characters/alice/chat/turns/{liveTurn.TurnId}/stop",
                     content: null
                 )
                 .WaitAsync(EndpointDeadline);
@@ -397,7 +402,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         );
         RecentTurnsResponseDto? idleRecent = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
-                "/api/v1/recent-turns"
+                "/api/v1/characters/alice/recent-turns"
             );
         Assert.NotNull(idleRecent);
         Assert.NotNull(idleRecent!.RewindLatestToken);
@@ -418,7 +423,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         )));
         RecapCadenceProgressSnapshotDto? idleCadence = await client
             .GetFromJsonAsync<RecapCadenceProgressSnapshotDto>(
-                "/api/v1/recap-cadence-progress"
+                "/api/v1/characters/alice/recap-cadence-progress"
             );
         Assert.NotNull(idleCadence);
         Assert.Equal("exact", idleCadence!.Freshness);
@@ -434,14 +439,15 @@ public sealed class GalateaEndpointLockTopologyTests {
             liveTurn = hostService.StartTurn(
                 session,
                 "active topology probe",
-                new GalateaTurnOptions("test")
+                new GalateaTurnOptions("test"),
+                GalateaDelegateTestConfiguration.PlayerSender
             );
             SessionJournalReadDiagnostics before =
                 session.Engine.CaptureReadDiagnostics();
 
             CurrentTurnDto? current = await client
                 .GetFromJsonAsync<CurrentTurnDto>(
-                    "/api/v1/chat/turns/current"
+                    "/api/v1/characters/alice/chat/turns/current"
                 )
                 .WaitAsync(EndpointDeadline);
             Assert.NotNull(current);
@@ -452,7 +458,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             Assert.Null(current.RecoveryHead);
 
             using HttpResponseMessage activeRecent = await client
-                .GetAsync("/api/v1/recent-turns")
+                .GetAsync("/api/v1/characters/alice/recent-turns")
                 .WaitAsync(EndpointDeadline);
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
@@ -466,7 +472,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             );
 
             using HttpResponseMessage activeCadence = await client
-                .GetAsync("/api/v1/recap-cadence-progress")
+                .GetAsync("/api/v1/characters/alice/recap-cadence-progress")
                 .WaitAsync(EndpointDeadline);
             Assert.Equal(
                 HttpStatusCode.ServiceUnavailable,
@@ -481,7 +487,7 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             using HttpResponseMessage busy = await client
                 .PostAsJsonAsync(
-                    "/api/v1/chat/turns",
+                    "/api/v1/characters/alice/chat/turns",
                     new ChatStreamRequest(
                         "must remain busy",
                         ConnectionId: "test"
@@ -497,7 +503,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             Assert.NotEmpty(conflict.Error);
 
             using HttpResponseMessage stop = await client.PostAsync(
-                    $"/api/v1/chat/turns/{liveTurn.TurnId}/stop",
+                    $"/api/v1/characters/alice/chat/turns/{liveTurn.TurnId}/stop",
                     content: null
                 )
                 .WaitAsync(EndpointDeadline);
@@ -543,7 +549,7 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             CurrentTurnDto? current = await client
                 .GetFromJsonAsync<CurrentTurnDto>(
-                    "/api/v1/chat/turns/current"
+                    "/api/v1/characters/alice/chat/turns/current"
                 )
                 .WaitAsync(EndpointDeadline);
 
@@ -636,7 +642,22 @@ public sealed class GalateaEndpointLockTopologyTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "/api/v1/recap-cadence-progress",
+            "const apiBase = characterApiBase(bootstrapConfig.characterId);",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "if (bootstrapConfig.apiBase !== apiBase) throw new Error(\"character API base mismatch\");",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "`${apiBase}/chat/turns/current`",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "`${apiBase}/recap-cadence-progress`",
             script,
             StringComparison.Ordinal
         );
@@ -773,7 +794,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         );
         using HttpResponseMessage response =
             await client.PostAsJsonAsync(
-                "/api/v1/chat/turns",
+                "/api/v1/characters/alice/chat/turns",
                 new ChatStreamRequest(
                     "invalid connection probe",
                     ConnectionId: "missing"
@@ -800,14 +821,14 @@ public sealed class GalateaEndpointLockTopologyTests {
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
-        string html = await client.GetStringAsync("/");
+        string html = await client.GetStringAsync("/characters/alice");
         Assert.Contains("\"id\":\"test\"", html,
             StringComparison.Ordinal);
         Assert.DoesNotContain("hidden-helper", html,
             StringComparison.Ordinal);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "hidden connection probe",
                 ConnectionId: hidden.Id
@@ -818,7 +839,7 @@ public sealed class GalateaEndpointLockTopologyTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );

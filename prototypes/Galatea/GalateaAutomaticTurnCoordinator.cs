@@ -20,36 +20,36 @@ internal sealed class GalateaAutomaticTurnCoordinator(
 ) {
     private readonly ConcurrentDictionary<string, string> _attachFailures = new(StringComparer.Ordinal);
 
-    internal GalateaAgentStatusDto ReadStatus(string userId) {
-        bool enrolled = host.ServerAgentUserIds.Contains(userId, StringComparer.Ordinal);
-        string? connection = enrolled && host.TryGetUser(userId, out var user)
-            ? user.DefaultConnectionId : null;
+    internal GalateaAgentStatusDto ReadStatus(string characterId) {
+        bool enrolled = host.HeartbeatCharacterIds.Contains(characterId, StringComparer.Ordinal);
+        string? connection = enrolled && host.TryGetCharacter(characterId, out var character)
+            ? character.DefaultConnectionId : null;
         string? state = host.IsStopping ? "stopping"
             : host.MaintenanceMode ? "maintenance"
             : !enrolled ? "disabled" : null;
         if (state is not null) { return new(state, connection, null, null, null); }
-        if (_attachFailures.TryGetValue(userId, out string? code)) {
+        if (_attachFailures.TryGetValue(characterId, out string? code)) {
             return new("blocked", connection, null, null, code);
         }
-        return host.ReadAttachedSession(userId)?.ReadAgentStatus()
+        return host.ReadAttachedSession(characterId)?.ReadAgentStatus()
             ?? new("starting", connection, null, null, null);
     }
 
-    internal void BlockAfterFailure(string userId) {
-        UserSessionHost? session = host.ReadAttachedSession(userId);
-        if (session is null) { _attachFailures[userId] = "AUTOMATIC_ADMISSION_FAILED"; }
+    internal void BlockAfterFailure(string characterId) {
+        CharacterSessionHost? session = host.ReadAttachedSession(characterId);
+        if (session is null) { _attachFailures[characterId] = "AUTOMATIC_ADMISSION_FAILED"; }
     }
 
     // Explicitly retries settlement only. It never claims a reply or creates a
     // main-model turn; automatic pulses share this same TurnLock.
-    internal async Task<GalateaAutomaticTurnResult> RetryAdmissionAsync(string userId, CancellationToken ct) {
-        GalateaAgentStatusDto status = ReadStatus(userId);
+    internal async Task<GalateaAutomaticTurnResult> RetryAdmissionAsync(string characterId, CancellationToken ct) {
+        GalateaAgentStatusDto status = ReadStatus(characterId);
         if (status.State is "disabled" or "maintenance" or "stopping") {
             return new GalateaAutomaticTurnResult.Status(status);
         }
         ct.ThrowIfCancellationRequested();
-        UserSessionHost? session = host.ReadAttachedSession(userId);
-        if (session is null || _attachFailures.ContainsKey(userId)) {
+        CharacterSessionHost? session = host.ReadAttachedSession(characterId);
+        if (session is null || _attachFailures.ContainsKey(characterId)) {
             return new GalateaAutomaticTurnResult.Blocked("session-unavailable", "会话尚未就绪；请检查服务端初始化诊断。");
         }
         if (!session.TurnLock.Wait(0)) {
@@ -58,7 +58,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         try {
             ct.ThrowIfCancellationRequested();
             if (host.IsStopping || host.MaintenanceMode) {
-                return new GalateaAutomaticTurnResult.Status(ReadStatus(userId));
+                return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
             }
             if (!session.AutomaticAdmissionFailed) {
                 return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
@@ -83,14 +83,14 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)
             && !ct.IsCancellationRequested && !host.IsStopping) {
             RecordAdmissionFailure(session, exception);
-            DebugUtil.Error("Galatea.Autonomy", $"Admission retry failed: user={userId}", exception);
+            DebugUtil.Error("Galatea.Autonomy", $"Admission retry failed: character={characterId}", exception);
             ApiErrorDto failure = session.AutomaticAdmissionFailure!;
             return new GalateaAutomaticTurnResult.Blocked(failure.Code, failure.Error);
         }
         finally { session.TurnLock.Release(); }
     }
 
-    internal static void RecordAdmissionFailure(UserSessionHost session, Exception exception) {
+    internal static void RecordAdmissionFailure(CharacterSessionHost session, Exception exception) {
         string code = exception is GalateaTurnException { FailureReason: { } reason }
             ? reason : "automatic-admission-failed";
         string message = code switch {
@@ -115,16 +115,16 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         session.PublishAutonomyStatus();
     }
 
-    internal async Task<GalateaAutomaticTurnResult> TryPulseAsync(string userId, CancellationToken ct) {
-        GalateaAgentStatusDto status = ReadStatus(userId);
+    internal async Task<GalateaAutomaticTurnResult> TryPulseAsync(string characterId, CancellationToken ct) {
+        GalateaAgentStatusDto status = ReadStatus(characterId);
         if (status.State is "disabled" or "maintenance" or "stopping") {
             return new GalateaAutomaticTurnResult.Status(status);
         }
-        if (_attachFailures.ContainsKey(userId)) {
+        if (_attachFailures.ContainsKey(characterId)) {
             return new GalateaAutomaticTurnResult.Blocked("automatic-admission-failed", "服务端自动轮次初始化失败；请检查服务端诊断。");
         }
         ct.ThrowIfCancellationRequested();
-        UserSessionHost session = await host.GetSessionAsync(userId, ct).ConfigureAwait(false);
+        CharacterSessionHost session = await host.GetSessionAsync(characterId, ct).ConfigureAwait(false);
         if (!session.TurnLock.Wait(0)) {
             return new GalateaAutomaticTurnResult.Busy(session.GetCurrentTurn()?.TurnId);
         }
@@ -133,7 +133,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         bool transferred = false;
         try {
             ct.ThrowIfCancellationRequested();
-            if (host.IsStopping) { return new GalateaAutomaticTurnResult.Status(ReadStatus(userId)); }
+            if (host.IsStopping) { return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId)); }
             if (session.AutomaticReplyFailed || session.AutomaticAdmissionFailed) {
                 // A settlement retry may have established a more specific
                 // recovery boundary. Keep that diagnosis until explicit turn
@@ -163,8 +163,8 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                     empty ? "会话仓库尚未完成初始化。" : "当前会话存在待恢复的持久化轮次；自动轮次未启动。"
                 );
             }
-            if (!host.TryGetConnection(session.User, null, out CompletionConnectionConfig connection)) {
-                throw new InvalidOperationException("The configured per-user default connection is unavailable.");
+            if (!host.TryGetConnection(session.Character, null, out CompletionConnectionConfig connection)) {
+                throw new InvalidOperationException("The configured per-character default connection is unavailable.");
             }
             await host.PrepareFreshTurnAdmissionAsync(session, recovery, ct).ConfigureAwait(false);
             GalateaReadyReplyTurnStartResult reply = host.StartReadyReplyTurn(session, new(connection.Id));

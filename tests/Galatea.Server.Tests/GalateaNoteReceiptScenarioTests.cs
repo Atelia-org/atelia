@@ -18,7 +18,7 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
             connections: [GalateaNoteReceiptFixture.MainConnection, GalateaNoteReceiptFixture.HelperConnection],
             timeProvider: clock, reportArtifact: output.WriteLine,
             characterNoteExtractorConnectionId: GalateaNoteReceiptFixture.HelperConnection.Id,
-            serverAgentUserIds: ["alice"], enableServerAgentHostedService: true);
+            heartbeatCharacterIds: ["alice"], enableServerAgentHostedService: true);
 
         var first = await GalateaNoteReceiptFixture.StartEpochAsync(lab, clock, firstFactory);
         await GalateaNoteReceiptFixture.AdvanceHeartbeatAsync(first);
@@ -30,11 +30,11 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.Equal(pending.Receipt.CreatedRevision, pending.Receipt.StateRevision);
         Assert.Equal(1, firstFactory.SaveIntents);
         Assert.Equal(1, firstFactory.DerivedCalls);
-        string memoryDirectory = first.Session.User.CharacterMemoryStateDir;
+        string memoryDirectory = first.Session.Character.CharacterMemoryStateDir;
         await lab.StopAsync();
         if (historicalWording) {
             pending = pending with { Receipt = pending.Receipt with {
-                NoticeBody = HistoricalNoteReceiptFixture.OldWording(pending.Receipt.NoticeBody),
+                NoticeBody = HistoricalNoteReceiptFixture.OldWording(CharacterNoteSaveReceipt.CreateDurable(pending.Receipt.Facts!.Memos).Notice.Body), Facts = null, BoundInput = null,
             } };
             HistoricalNoteReceiptFixture.WriteFrozenNotice(memoryDirectory, pending.Receipt);
         }
@@ -60,10 +60,11 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.True(delivered.Receipt.StateRevision > pending.Receipt.StateRevision);
         Assert.Null(delivered.Receipt.RenderedObservation);
         Assert.Equal(EventAddressTextCodec.Format(delivered.Turns[0].ObservationAddress), delivered.Receipt.ObservationAddress);
-        Assert.Equal(delivered.Turns[0].ObservationContent, secondFactory.CurrentObservation);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(secondFactory.CurrentObservation!, out var providerObservation));
-        Assert.Equal(pending.Receipt.NoticeBody,
-            Assert.Single(providerObservation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
+        Assert.Equal(GalateaInputProjector.Instance.Project(delivered.Turns[0].ObservationContent), secondFactory.CurrentObservation);
+        PlayerTurnObservation providerObservation = GalateaObservationContent.ReadPlayerTurn(delivered.Turns[0].ObservationContent);
+        var received = Assert.Single(providerObservation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>());
+        if (historicalWording) { Assert.Equal(pending.Receipt.NoticeBody, received.Body); }
+        else { Assert.Equal(GalateaNoteReceiptFixture.NoteText, Assert.Single(received.Selection!.ExactTexts)); }
         Assert.Equal(0, secondFactory.SaveIntents);
         Assert.Equal(0, secondFactory.DerivedCalls);
         await lab.StopAsync();
@@ -78,7 +79,7 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         using (HttpClient http = lab.Host.CreateClient()) {
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
             Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-            using HttpResponseMessage currentResponse = await http.GetAsync("/api/v1/chat/turns/current");
+            using HttpResponseMessage currentResponse = await http.GetAsync("/api/v1/characters/alice/chat/turns/current");
             Assert.Equal(HttpStatusCode.OK, currentResponse.StatusCode);
         }
         await GalateaNoteReceiptFixture.AdvanceHeartbeatAsync(third);
@@ -87,12 +88,12 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.Equal(delivered.Receipt, final.Receipt); // Includes StateRevision.
         Assert.Equal(pending.Note, final.Note); // Includes MemoId and ExactText.
         Assert.Equal(pending.PodIdentity, final.PodIdentity);
-        Assert.Equal(final.Turns[0].ObservationContent, thirdFactory.CurrentObservation);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(thirdFactory.CurrentObservation!, out var current));
+        Assert.Equal(GalateaInputProjector.Instance.Project(final.Turns[0].ObservationContent), thirdFactory.CurrentObservation);
+        PlayerTurnObservation current = GalateaObservationContent.ReadPlayerTurn(final.Turns[0].ObservationContent);
         Assert.Empty(current.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>());
         int receipts = 0;
         foreach (var turn in final.Turns) {
-            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(turn.ObservationContent, out var observation));
+            PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(turn.ObservationContent);
             Assert.Equal(PlayerTurnObservationTriggerKind.HeartbeatActivation, observation.TriggerKind);
             Assert.Empty(observation.Recalls); // Memo recall is explicitly out of scope.
             receipts += observation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>().Count();

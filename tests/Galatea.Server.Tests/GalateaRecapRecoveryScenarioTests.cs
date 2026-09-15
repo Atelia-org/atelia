@@ -24,7 +24,7 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
     [InlineData(nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted), true, false)]
     [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted), false, true)]
     [InlineData(nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted), true, true)]
-    public async Task AdoptedNonemptyRecap_FrozenRecoverySkipsMaintenanceThenFreshTurnProgresses(
+    public async Task AdoptedNonemptyRecap_SemanticRecoverySkipsMaintenanceThenFreshTurnProgresses(
         string failpointName, bool restartRequired, bool resetStore) {
         SessionJournalFailpoint failpoint = Enum.Parse<SessionJournalFailpoint>(failpointName);
         CompletionConnectionConfig main = Connection("test", "recap-lab-main");
@@ -47,8 +47,6 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         EventAddress frozenHead = await FreezeAsync(lab.SessionDirectory, routesPath,
             main, recap, boundaryFactory, failpoint);
         boundaryFactory.AssertComplete();
-        frozenHead = LegacyPreparedV7Fixture.ReplacePending(lab.SessionDirectory,
-            frozenHead, "old-recap-adapter-" + failpointName);
         SessionPreparedRequestReconstruction frozen = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
         GalateaRecapFixture.AssertAdopted(frozen, 3);
         AssertCells(lab.SessionDirectory, 3);
@@ -57,8 +55,8 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         Assert.Equal(3, frozenAudit.Count(entry => entry.Kind == SessionEventKind.ObservationAccepted));
         Assert.Equal(3, frozenAudit.Count(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared));
         if (resetStore) {
-            // Only this stopped, lab-owned repository is reset. The old v7
-            // Prepared's nonempty context survives after its source cells vanish.
+            // Only this stopped, lab-owned repository is reset. The semantic
+            // Prepared retains selected cell contents after their source store vanishes.
             RecapGridStoreInfo before = ReadStoreInfo(lab.SessionDirectory);
             Assert.True(before.CellCount > 0);
             RecapGridStorePhysicalWitness witness = Assert.IsType<RecapGridStorePrepareResetResult.Prepared>(
@@ -79,13 +77,13 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
             http.Timeout = GalateaRecapFixture.Deadline;
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
             Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-            (GalateaHostService service, UserSessionHost session) = await GalateaRecapFixture.SessionAsync(lab);
+            (GalateaHostService service, CharacterSessionHost session) = await GalateaRecapFixture.SessionAsync(lab);
             var requirement = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 session.Engine.InspectRuntimeRecoveryRequirements());
             Assert.Equal(restartRequired ? SessionDurableDispatchState.StartedOutcomeUncertain
                 : SessionDurableDispatchState.NotStarted, requirement.DispatchState);
             if (restartRequired) {
-                using HttpResponseMessage refusal = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+                using HttpResponseMessage refusal = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
                     new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
                         RestartUncertainCompletion: false));
                 Assert.Equal(HttpStatusCode.Conflict, refusal.StatusCode);
@@ -95,7 +93,7 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
                 Assert.Equal(0, recovery.MainCalls);
                 Assert.Equal(0, recovery.RecapCalls);
             }
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
                 new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
                     RestartUncertainCompletion: restartRequired));
             GalateaLiveTurn resumed = await GalateaRecapFixture.WaitAsync(accepted, service, session);
@@ -107,10 +105,13 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         SessionPreparedRequestReconstruction reopenedRequest = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
         Assert.Equal(frozen.SourcePreparedAddress, reopenedRequest.SourcePreparedAddress);
         Assert.Equal(frozen.CanonicalBytes, reopenedRequest.CanonicalBytes);
-        Assert.Equal(frozen.Manifest.Commitment, reopenedRequest.Manifest.Commitment);
-        Assert.NotEmpty(frozen.Manifest.Plan.ExactContextInputs);
-        Assert.Equal(JsonSerializer.Serialize(frozen.Manifest.Plan.ExactContextInputs),
-            JsonSerializer.Serialize(reopenedRequest.Manifest.Plan.ExactContextInputs));
+        Assert.Equal(JsonSerializer.Serialize(frozen.Manifest.Plan.SemanticContributions),
+            JsonSerializer.Serialize(reopenedRequest.Manifest.Plan.SemanticContributions));
+        IReadOnlyList<SessionRequestCommitment> attempts = GalateaRecapFixture.ReadAttemptCommitments(
+            lab.SessionDirectory, frozen.SourcePreparedAddress!.Value);
+        Assert.Equal(restartRequired ? 2 : 1, attempts.Count);
+        Assert.All(attempts, commitment => Assert.Equal(
+            SessionRequestCanonicalizer.CreateCommitment(reopenedRequest.Request), commitment));
         GalateaRecapFixture.AssertAdopted(reopenedRequest, 3);
         SessionJournalAuditEvent[] recoveredAudit = ReadAudit(lab.SessionDirectory);
         Assert.Equal(frozenPrepared, recoveredAudit.Single(entry => entry.Address == frozenPrepared.Address));
@@ -144,7 +145,7 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
             Assert.Equal(SessionExecutionPhase.Idle, final.InspectExecutionBoundary().Phase);
             var turns = final.ReadRecentCompletedTurns().RequireSnapshot().Turns;
             Assert.Equal(4, turns.Count);
-            Assert.Contains("Fresh observation after nonempty recap recovery.", turns[0].ObservationContent,
+            Assert.Contains("Fresh observation after nonempty recap recovery.", GalateaRecapFixture.ReadPlayerText(turns[0].ObservationContent),
                 StringComparison.Ordinal);
         }
         Assert.Equal(4, ReadAudit(lab.SessionDirectory).Count(entry => entry.Kind == SessionEventKind.ObservationAccepted));
@@ -160,17 +161,19 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         ICompletionClient client = factory.Create(main);
         CompletionDispatchIdentity identity = CompletionDispatchIdentityFactory.Create(main, client);
         var runtime = new SessionRuntime(client, CompletionTarget: new SessionCompletionTargetIdentity(
-            identity.ConnectionId, identity.Kind, identity.ConnectionFingerprint));
+            identity.ConnectionId, identity.Kind, identity.ConnectionFingerprint),
+            InputProjector: GalateaInputProjector.Instance);
         using var timeout = new CancellationTokenSource(GalateaRecapFixture.Deadline);
         using var engine = SessionJournalEngine.OpenForTest(repository, runtime, new SessionJournalTestHooks(failpoint));
         await using RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
             () => RecapGridRouteManifest.DecodeCanonical(File.ReadAllBytes(routesPath)),
             CompletionConnectionConfigLoader.NormalizeAndValidate(new CompletionConnectionsFileConfig(
-                [main, recap], main.Id)), factory);
+                [main, recap], main.Id)), factory, inputProjector: GalateaInputProjector.Instance);
         await using RecapGridOnlineContextHandle online = Assert.IsType<RecapGridOnlineOpenResult.Opened>(
             RecapGridOnlineFactory.Open(engine, completion.Executor, RecapGridOnlineLimits.Production,
                 new O200kBaseHistoryUnitLoadEstimator())).Handle;
-        string observation = GalateaHostService.WrapUserMessageForEngine(
+        SessionInputContent observation = GalateaObservationContent.CreatePlayerAction(
+            GalateaDelegateTestConfiguration.PlayerSender,
             "Frozen nonempty derived-context observation.", DateTimeOffset.UnixEpoch.AddDays(1));
         RecapGridOnlinePassResult pass = await online.CatchUpMaintenanceAsync(observation, timeout.Token);
         Assert.True(pass is RecapGridOnlinePassResult.Ready,

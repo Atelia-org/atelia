@@ -2,7 +2,7 @@
 
 状态：**设计已完成独立审查与本次补充交叉质询；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。**
 
-日期：2026-09-15。范围：Galatea 配置、认证、角色运行身份、输入来源、网页交互，以及 SessionJournal 输入/请求恢复、RecapGrid、CharacterMemory、MemoPod 与 sidecar 的必要接入调整。本次修订完善设计约束；实施与验证状态见工作单，真实实例迁移在集成与故障验证后串行进行。
+修订日期：2026-09-16。范围：Galatea 配置、认证、角色运行身份、输入来源、网页交互，以及 SessionJournal 输入/请求恢复、RecapGrid、CharacterMemory、MemoPod 与 sidecar 的必要接入调整。本次修订完善设计约束；实施与验证状态见工作单，真实实例迁移在集成与故障验证后串行进行。
 
 ## 1. 最小模型与需求来源
 
@@ -122,6 +122,7 @@ API 边界集中解析当前 Player 和目标 Character，不引入权限引擎�
 - Player 动作、角色邮件、Codex 回信、心跳、Note receipt、recall 等按类型保存结构化事实和原始正文；JSON schema 版本描述字段语义。
 - 发送者来源由 runtime 确认并在接纳/capture 时保存名称快照。组合 Observation 各块分别归因；HTTP 注入者与客户端声明的信内署名分别记录。
 - SessionJournal 追加机读输入；recent、undo、投递 proof、DerivedInfo 等直接读字段。给主线和辅助 LLM 的 prompt 在各自请求组装边界投影。
+- 网页可从机读字段独立生成显示文本；纯查询与审计不依赖 LLM 输入投影器。显示文本不成为输入存储、投递证明或身份比较的权威。
 - 辅助请求保留其选中块的来源、时间和类型含义；业务解释属于稳定 schema/指令源。MemoPod 的 Open/Freeze 保存并冻结机读内容，到 Recall 请求时才渲染；清缓存不改变内容身份或冻结周期。
 - md-json 是局部 renderer，ProjectReference 接入；JSON Pointer 列表由当前内容 shape 生成，不进入角色配置或持久输入。
 - 新写入不保存 FrozenTask、渲染后的 Observation/receipt、渲染上下文快照或持久渲染缓存。原正文中的 Markdown、业务指令源文本、LLM 输出和必要 provider opaque 协议内容仍是内容事实。

@@ -11,6 +11,7 @@ internal abstract record GalateaFreshInput {
     internal sealed record PlayerAction : GalateaFreshInput {
         internal PlayerAction(
             string text,
+            GalateaSenderSnapshot sender,
             IEnumerable<PlayerTurnNotice>? notices = null
         ) {
             var observation = new PlayerTurnObservation(
@@ -19,10 +20,16 @@ internal abstract record GalateaFreshInput {
             );
             Text = observation.PlayerText;
             Notices = observation.Notices;
+            ArgumentNullException.ThrowIfNull(sender);
+            if (sender.Kind != "player") {
+                throw new ArgumentException("Player action sender must be a Player.", nameof(sender));
+            }
+            Sender = sender;
         }
 
         internal string Text { get; }
         internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
+        internal GalateaSenderSnapshot Sender { get; }
         internal override string DisplayText => Text;
     }
 
@@ -39,6 +46,8 @@ internal abstract record GalateaFreshInput {
     }
 
     internal sealed record HeartbeatActivation : GalateaFreshInput {
+        // Accepted periodic-activation meaning, not a measurement of wall-clock downtime.
+        internal const int ExternalIntervalMinutes = 10;
         internal HeartbeatActivation(GalateaCharacterName characterName) {
             CharacterName = characterName
                 ?? throw new ArgumentNullException(nameof(characterName));
@@ -57,7 +66,9 @@ internal abstract record GalateaFreshInput {
     /// </summary>
     internal sealed record InboundMail(
         MailboxMessage Message,
-        GalateaInternalMailDeliveryBinding? InternalDelivery = null
+        GalateaInternalMailDeliveryBinding? InternalDelivery = null,
+        GalateaSenderSnapshot? InjectedBy = null,
+        GalateaSenderSnapshot? Sender = null
     )
         : GalateaFreshInput {
         internal override string DisplayText =>

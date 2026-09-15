@@ -49,7 +49,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -61,7 +61,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             turn = service.StartTurn(
                 session,
                 "first",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                     session,
@@ -72,7 +73,16 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             service.FinishTurn(session, turn);
 
             Assert.Equal("completed", turn.Status);
-            Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
+            CharacterNoteReceiptDeliverySnapshot pending = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+                session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
+            CharacterNoteReceiptFacts facts = Assert.IsType<CharacterNoteReceiptFacts>(pending.Facts);
+            Assert.Equal(ExactText, Assert.Single(facts.Memos).ExactText);
+            Assert.Null(pending.NoticeBody);
+            Assert.Null(pending.RenderedObservation);
+            SessionInputContent stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+                .RequireSnapshot().Turns).ObservationContent;
+            Assert.True(stored.IsStructured);
+            Assert.Equal("first", GalateaObservationContent.ReadPlayerTurn(stored).PlayerText);
             Assert.False(helperClient.DerivedInfoStarted.Task.IsCompleted);
         }
         finally {
@@ -122,7 +132,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             .GetRequiredService<GalateaHostService>();
         service.CharacterNoteDerivedInfoDeadlineForTest =
             TimeSpan.FromMilliseconds(75);
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -141,7 +151,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             GalateaLiveTurn second = service.StartTurn(
                 session,
                 "second",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                     session,
@@ -206,7 +217,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             fixture.AppendAndCapture("observation", "throwing cancel note");
             CharacterMemoryStoreOwner owner = fixture.Owner;
             string statePath = fixture.StatePath;
-            UserSessionHost host = fixture.CreateHost(
+            CharacterSessionHost host = fixture.CreateHost(
                 fixture.Enricher,
                 TimeSpan.FromMinutes(5)
             );
@@ -251,7 +262,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         if (mode is ActivePlanMode.Unavailable) {
             fixture.PodAccess.OpenUnavailable = true;
         }
-        await using UserSessionHost host = fixture.CreateHost();
+        await using CharacterSessionHost host = fixture.CreateHost();
 
         if (expectedReason is null) {
             await GalateaHostService
@@ -285,7 +296,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         )) {
             GalateaHostService service = disabled.Factory.Services
                 .GetRequiredService<GalateaHostService>();
-            UserSessionHost session = await service.GetSessionAsync(
+            CharacterSessionHost session = await service.GetSessionAsync(
                 "alice",
                 CancellationToken.None
             );
@@ -303,7 +314,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         );
         GalateaHostService maintenanceService = maintenance.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost maintenanceSession = await maintenanceService
+        CharacterSessionHost maintenanceSession = await maintenanceService
             .GetSessionAsync("alice", CancellationToken.None);
         Assert.Null(maintenanceSession.CharacterMemoryReconciler);
         Assert.Null(maintenanceSession.CharacterNoteDerivedInfoPump);
@@ -312,10 +323,10 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
     [Fact]
     public void ProductionFactoryCreatesPerUserLazyEnrichersFromNoteBinding() {
         CompletionConnectionConfig connection = Connection("helper");
-        IReadOnlyDictionary<string, GalateaUserConfig> users = new[] {
+        IReadOnlyDictionary<string, GalateaCharacterConfig> users = new[] {
             User("first"),
             User("second"),
-        }.ToDictionary(static user => user.UserId, StringComparer.Ordinal);
+        }.ToDictionary(static user => user.CharacterId, StringComparer.Ordinal);
         int clientRequests = 0;
 
         IReadOnlyDictionary<string, ICharacterNoteDerivedInfoEnricher>
@@ -344,7 +355,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
 
     private static async Task RunTurnUnderLockAsync(
         GalateaHostService service,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string connectionId,
         string playerText
     ) {
@@ -353,7 +364,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 playerText,
-                new GalateaTurnOptions(connectionId)
+                new GalateaTurnOptions(connectionId),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                     session,
@@ -369,9 +381,9 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         }
     }
 
-    private static Memo OpenMemo(UserSessionHost session) =>
+    private static Memo OpenMemo(CharacterSessionHost session) =>
         global::Atelia.MemoPod.MemoPod.Open(
-            session.User.CharacterMemoryStateDir,
+            session.Character.CharacterMemoryStateDir,
             CharacterNoteDefaultPodV1.PodId
         ).List().Single();
 
@@ -384,11 +396,9 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         ApiKey: "test-key"
     );
 
-    private static GalateaUserConfig User(string id) => new(
+    private static GalateaCharacterConfig User(string id) => new(
         id,
-        "password",
         new GalateaCharacterName("Galatea " + id),
-        new GalateaPlayerName("Player " + id),
         "/session/" + id,
         "/delegation/" + id,
         "/memory/" + id,
@@ -824,15 +834,13 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             ));
         }
 
-        internal UserSessionHost CreateHost(
+        internal CharacterSessionHost CreateHost(
             ICharacterNoteDerivedInfoEnricher? derivedInfoEnricher = null,
             TimeSpan? derivedInfoProviderDeadline = null
         ) {
-            var user = new GalateaUserConfig(
+            var user = new GalateaCharacterConfig(
                 "user",
-                "password",
                 new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("Player"),
                 Engine.Path,
                 Path.Combine(_root, "delegation"),
                 Path.Combine(_root, "memory"),
@@ -841,14 +849,13 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 "system",
                 "agent"
             );
-            return new UserSessionHost(
+            return new CharacterSessionHost(
                 user,
                 Engine,
                 new RecentTurnsResponseDto([], null,
                     ContextHeaderDto.Empty),
-                GalateaRecapGridTargetExpectation.ForNames(
-                    user.CharacterName,
-                    user.PlayerName
+                GalateaRecapGridTargetExpectation.ForCharacter(
+                    user.CharacterName
                 ),
                 Reconciler,
                 delegationHandle: null,

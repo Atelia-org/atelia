@@ -1,3 +1,4 @@
+import { isStrictUnicode, matchesTaskCommitment, type TaskCommitment } from "../galatea/task-commitment.js";
 import type { ThreadItem } from "../../schemas/v2/ThreadItem.js";
 import type { Turn } from "../../schemas/v2/Turn.js";
 import type {
@@ -16,25 +17,12 @@ export const DefaultGalateaDispatchInspectionLimits = {
   maximumItems: 262_144,
 } as const;
 
-export function isStrictUnicode(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-export function hasExactTaskBody(item: ThreadItem, task: string): boolean {
+export function hasExactTaskBody(item: ThreadItem, task: TaskCommitment): boolean {
   if (item.type !== "userMessage" || !Array.isArray(item.content) || item.content.length !== 1) return false;
   const content = item.content[0];
   return content?.type === "text"
-    && content.text === task
+    && typeof content.text === "string"
+    && matchesTaskCommitment(content.text, task)
     && Array.isArray(content.text_elements)
     && content.text_elements.length === 0;
 }
@@ -44,7 +32,7 @@ export function classifyTurnEvidence(
   turn: Turn,
   items: readonly ThreadItem[],
   dispatchId: string,
-  task: string,
+  task: TaskCommitment,
   maximumFinalUtf8Bytes: number,
   source: GalateaDispatchInspectionSource,
 ): GalateaDispatchInspection {

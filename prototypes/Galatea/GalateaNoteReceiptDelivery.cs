@@ -22,7 +22,8 @@ internal static class GalateaNoteReceiptDelivery {
         var request = new SessionExpectedObservationTurnRequest(
             head,
             EventAddressTextCodec.Parse(bound.ExpectedSessionHead!),
-            bound.RenderedObservation!,
+            bound.BoundInput ?? SessionInputContent.Text(bound.RenderedObservation
+                ?? throw Invalid("Bound receipt has no input evidence.")),
             bound.ObservationAddress is { } address
                 ? EventAddressTextCodec.Parse(address)
                 : null
@@ -57,7 +58,7 @@ internal static class GalateaNoteReceiptDelivery {
         SessionJournalEngine engine,
         CharacterNoteReceiptDeliverySnapshot receipt,
         EventAddress exactBaseHead,
-        string renderedObservation
+        SessionInputContent observation
     ) {
         if (engine.ReadView.ReadCurrentHead() != exactBaseHead) {
             throw Invalid("Receipt delivery base head changed before binding.");
@@ -66,7 +67,7 @@ internal static class GalateaNoteReceiptDelivery {
             receipt.SourceActionAddress,
             receipt.StateRevision,
             EventAddressTextCodec.Format(exactBaseHead),
-            renderedObservation
+            observation
         );
     }
 

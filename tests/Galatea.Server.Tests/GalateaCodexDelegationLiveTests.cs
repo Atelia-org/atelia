@@ -241,8 +241,7 @@ public sealed class GalateaCodexDelegationLiveTests {
         GalateaInspectDelegateDispatchRequest inspectionRequest =
             GalateaInspectDelegateDispatchRequest.ForAccepted(
             request.DispatchId,
-            request.ThreadId,
-            request.Task,
+            request.ThreadId, GalateaTaskCommitment.FromTask(request.Task),
             expectedTurnId
         );
         try {

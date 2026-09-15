@@ -134,10 +134,10 @@ public sealed class GalateaMailboxTests {
         await Login(http);
         GalateaHostService service = testHost.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost alice = await service.GetSessionAsync(
+        CharacterSessionHost alice = await service.GetSessionAsync(
             "alice", CancellationToken.None);
         using HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns", new ChatStreamRequest("send to Bob", main.Id));
+            "/api/v1/characters/alice/chat/turns", new ChatStreamRequest("send to Bob", main.Id));
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         StartTurnResponseDto accepted = Assert.IsType<StartTurnResponseDto>(
             await response.Content.ReadFromJsonAsync<StartTurnResponseDto>());
@@ -150,7 +150,7 @@ public sealed class GalateaMailboxTests {
                 .Count == 0
             && alice.DelegationHandle!.Store.ReadSnapshot().InternalMailOutboxes
                 .SingleOrDefault()?.State == GalateaInternalMailState.Delivered);
-        UserSessionHost bob = Assert.IsType<UserSessionHost>(
+        CharacterSessionHost bob = Assert.IsType<CharacterSessionHost>(
             service.ReadAttachedSession("bob"));
         // Delivered is the target Observation append, not Completion. Wait
         // for the accepted runner to release its Journal lease before reading
@@ -158,8 +158,7 @@ public sealed class GalateaMailboxTests {
         await WaitUntilAsync(() => bob.GetCurrentTurn() is null);
         SessionCompletedTurnProjection received = Assert.Single(
             bob.Engine.ReadRecentCompletedTurns(1).RequireSnapshot().Turns);
-        Assert.True(GalateaMailboxObservationEnvelope.TryUnwrap(
-            received.ObservationContent, out MailboxMessage mail));
+        MailboxMessage mail = GalateaObservationContent.ReadMailboxContent(received.ObservationContent);
         Assert.Equal("Galatea", mail.From);
         Assert.Equal("Bob", mail.To);
         Assert.Equal("hello Bob", mail.Body);
@@ -176,11 +175,11 @@ public sealed class GalateaMailboxTests {
             _ => Message()
         );
         CompletionConnectionConfig connection = Connection("extractor");
-        IReadOnlyDictionary<string, GalateaUserConfig> users = new[] {
+        IReadOnlyDictionary<string, GalateaCharacterConfig> users = new[] {
             User("alice", "Alice"),
             User("bob", "Bob"),
             User("alice-again", "Alice")
-        }.ToDictionary(static value => value.UserId, StringComparer.Ordinal);
+        }.ToDictionary(static value => value.CharacterId, StringComparer.Ordinal);
         IReadOnlyDictionary<string, IOutboundMailExtractor> extractors =
             GalateaHostService.CreateOutboundMailExtractors(
                 users,
@@ -422,7 +421,7 @@ public sealed class GalateaMailboxTests {
         await Login(http);
 
         HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new { from = "Outside Alice", subject = "Question", body = "Please reply <carefully>." }
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -432,7 +431,7 @@ public sealed class GalateaMailboxTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -447,10 +446,7 @@ public sealed class GalateaMailboxTests {
             session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns
         );
-        Assert.True(GalateaMailboxObservationEnvelope.TryUnwrap(
-            persisted.ObservationContent,
-            out MailboxMessage mail
-        ));
+        MailboxMessage mail = GalateaObservationContent.ReadMailboxContent(persisted.ObservationContent);
         Assert.Equal(accepted.MessageId, mail.MessageId);
         Assert.Equal("Galatea", mail.To);
         Assert.Equal("Please reply <carefully>.", mail.Body);
@@ -470,7 +466,7 @@ public sealed class GalateaMailboxTests {
         );
 
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
-            RecentTurnsResponseDto>("/api/v1/recent-turns"))!;
+            RecentTurnsResponseDto>("/api/v1/characters/alice/recent-turns"))!;
         Assert.Null(recent.RewindLatestToken);
         Assert.Contains("Outside Alice", Assert.Single(recent.Turns).UserText);
         Assert.Contains("Please reply <carefully>.", recent.Turns[0].UserText);
@@ -510,7 +506,7 @@ public sealed class GalateaMailboxTests {
         StartTurnResponseDto failedExtraction = await PostPlayerTurn(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
         await service.FindTurn(session, failedExtraction.TurnId)!
             .RunTask!.WaitAsync(Deadline);
@@ -523,11 +519,11 @@ public sealed class GalateaMailboxTests {
             .RunTask!.WaitAsync(Deadline);
         Assert.Single(session.DelegationHandle.Store.ReadSnapshot().Mails);
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
-            RecentTurnsResponseDto>("/api/v1/recent-turns"))!;
+            RecentTurnsResponseDto>("/api/v1/characters/alice/recent-turns"))!;
         Assert.NotNull(recent.RewindLatestToken);
 
         HttpResponseMessage pop = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns/pop-latest",
+            "/api/v1/characters/alice/chat/turns/pop-latest",
             new { rewindLatestToken = recent.RewindLatestToken }
         );
         Assert.Equal(HttpStatusCode.OK, pop.StatusCode);
@@ -575,7 +571,7 @@ public sealed class GalateaMailboxTests {
         await Login(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -614,14 +610,14 @@ public sealed class GalateaMailboxTests {
         using HttpClient http = host.CreateClient();
 
         HttpResponseMessage unauthenticated = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new { from = "Alice", body = "hello" }
         );
         Assert.Equal(HttpStatusCode.Unauthorized, unauthenticated.StatusCode);
         await Login(http);
 
         HttpResponseMessage extra = await http.PostAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new StringContent(
                 "{\"from\":\"Alice\",\"body\":\"hello\",\"to\":\"Mallory\"}",
                 Encoding.UTF8,
@@ -630,17 +626,17 @@ public sealed class GalateaMailboxTests {
         );
         Assert.Equal(HttpStatusCode.BadRequest, extra.StatusCode);
         HttpResponseMessage blank = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new { from = " ", body = "hello" }
         );
         Assert.Equal(HttpStatusCode.BadRequest, blank.StatusCode);
         HttpResponseMessage injectedFrom = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new { from = "Alice\nBcc: Mallory", body = "hello" }
         );
         Assert.Equal(HttpStatusCode.BadRequest, injectedFrom.StatusCode);
         HttpResponseMessage injectedSubject = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new {
                 from = "Alice",
                 subject = "hello\u2028Injected",
@@ -650,7 +646,7 @@ public sealed class GalateaMailboxTests {
         Assert.Equal(HttpStatusCode.BadRequest,
             injectedSubject.StatusCode);
         HttpResponseMessage large = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new {
                 from = "Alice",
                 body = new string(
@@ -672,7 +668,7 @@ public sealed class GalateaMailboxTests {
         using HttpClient maintenanceHttp = maintenance.CreateClient();
         await Login(maintenanceHttp);
         HttpResponseMessage blocked = await maintenanceHttp.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
+            "/api/v1/characters/alice/mailbox/inbound",
             new { from = "Alice", body = "hello" }
         );
         Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
@@ -682,7 +678,7 @@ public sealed class GalateaMailboxTests {
         HttpClient http
     ) {
         HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new { message = "please continue", connectionId = "test" }
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -702,12 +698,12 @@ public sealed class GalateaMailboxTests {
     ) {
         JsonObject config = JsonNode.Parse(
             File.ReadAllText(host.ConfigPath))!.AsObject();
-        JsonArray users = config["users"]!.AsArray();
+        JsonArray users = config["characters"]!.AsArray();
         JsonObject user = users[0]!.DeepClone().AsObject();
         string configDirectory = Path.GetDirectoryName(host.ConfigPath)
             ?? throw new InvalidOperationException("Test config has no directory.");
-        user["userId"] = userId;
-        user["characterName"] = characterName;
+        user["id"] = userId;
+        user["name"] = characterName;
         user["sessionDir"] = Path.Combine(host.RootDirectory, "session-" + userId);
         user["delegationStateDir"] = Path.Combine(configDirectory,
             "delegation-state", userId);
@@ -771,14 +767,12 @@ public sealed class GalateaMailboxTests {
         string evidence
     ) => new(recipient, null, body, null, evidence);
 
-    private static GalateaUserConfig User(
+    private static GalateaCharacterConfig User(
         string userId,
         string characterName
     ) => new(
         userId,
-        "password",
         new GalateaCharacterName(characterName),
-        new GalateaPlayerName("Player"),
         "/tmp/session-" + userId,
         "/tmp/delegation-" + userId,
         "/tmp/character-memory-" + userId,

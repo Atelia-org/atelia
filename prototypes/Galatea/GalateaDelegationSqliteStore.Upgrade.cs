@@ -5,7 +5,7 @@ namespace Atelia.Galatea.Server;
 internal sealed record GalateaDelegationStoreUpgradeResult(string Outcome, string? BackupPath);
 
 internal sealed partial class GalateaDelegationSqliteStore {
-    /// <summary>Explicit offline upgrade. Ordinary opens accept only V4.</summary>
+    /// <summary>Explicit offline upgrade. Ordinary opens accept only V5.</summary>
     internal static GalateaDelegationStoreUpgradeResult UpgradeExisting(
         string storeDirectory, GalateaDelegationStoreOwner owner,
         GalateaDelegationStoreLimits limits, bool apply,
@@ -33,11 +33,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 _ = ValidateOpenedDatabase(source, owner, limits);
                 return new("AlreadyCurrent", null);
             }
-            if (version is not (1 or 2 or 3)) {
+            if (version is not (1 or 2 or 3 or 4)) {
                 throw new InvalidDataException($"Delegation schema version {version} cannot be upgraded.");
             }
-            if (version == 3) {
-                ValidateV3UpgradeSource(source, owner, limits);
+            if (version is 3 or 4) {
+                ValidateV3UpgradeSource(source, owner, limits, version);
             } else {
                 ValidateLegacyUpgradeSource(source, owner, limits, version);
             }
@@ -47,10 +47,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 2 => UpgradeRecoveryColumnsSql + UpgradeMetaToV3Sql
                     + UpgradeV3ToV4Sql,
                 3 => UpgradeV3ToV4Sql,
+                4 => string.Empty,
                 _ => throw new InvalidOperationException("Unexpected upgrade version.")
             };
+            sql += UpgradeV4ToV5Sql;
             // The only legacy projection lives in this offline upgrader. A
-            // disposable copy lets dry-run validate the exact future V4 state
+            // disposable copy lets dry-run validate the exact future V5 state
             // without runtime dual-format readers or modifying the source.
             using (var projected = new SqliteConnection("Data Source=:memory:")) {
                 projected.Open();
@@ -62,7 +64,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             }
             if (!apply) { return new("DryRunReady", null); }
             backupPath = CreateUpgradeBackup(source, databasePath, owner, limits, version);
-            string operation = $"upgrade-delegation-v{version}-to-v4";
+            string operation = $"upgrade-delegation-v{version}-to-v5";
             using SqliteTransaction transaction = source.BeginTransaction(deferred: false);
             using SqliteCommand upgrade = source.CreateCommand();
             upgrade.Transaction = transaction;
@@ -142,11 +144,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static void ValidateV3UpgradeSource(
         SqliteConnection source,
         GalateaDelegationStoreOwner owner,
-        GalateaDelegationStoreLimits limits
+        GalateaDelegationStoreLimits limits,
+        int version = 3
     ) {
-        ValidateSchemaIdentity(source, expectedVersion: 3);
+        ValidateSchemaIdentity(source, expectedVersion: version);
         RequireOwner(source, transaction: null, owner, limits,
-            expectedVersion: 3);
+            expectedVersion: version);
         using (SqliteCommand integrity = source.CreateCommand()) {
             integrity.CommandText = "PRAGMA integrity_check;";
             if (!string.Equals(integrity.ExecuteScalar() as string, "ok",
@@ -173,8 +176,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         using (SqliteConnection backup = OpenConnection(backupPath, create: false)) {
             source.BackupDatabase(backup);
             ConfigureOpenedDatabase(backup, readOnly: true);
-            if (version == 3) {
-                ValidateV3UpgradeSource(backup, owner, limits);
+            if (version is 3 or 4) {
+                ValidateV3UpgradeSource(backup, owner, limits, version);
             } else {
                 ValidateLegacyUpgradeSource(backup, owner, limits, version);
             }
@@ -323,5 +326,55 @@ internal sealed partial class GalateaDelegationSqliteStore {
         CREATE INDEX ix_internal_mail_target_state
         ON internal_mail_outbox(target_user_id, state);
         PRAGMA user_version = 4;
+        """;
+    private const string UpgradeV4ToV5Sql = """
+        ALTER TABLE delegation_meta RENAME TO delegation_meta_old;
+        CREATE TABLE delegation_meta (
+            singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
+            schema_version INTEGER NOT NULL CHECK(schema_version = 5),
+            user_id TEXT NOT NULL,
+            session_repository_id TEXT NOT NULL,
+            capture_frontier_segment_number INTEGER NOT NULL
+                CHECK(capture_frontier_segment_number BETWEEN 1 AND 4294967295),
+            capture_frontier_tail_offset INTEGER NOT NULL
+                CHECK(capture_frontier_tail_offset >= 4 AND capture_frontier_tail_offset % 4 = 0),
+            baseline_selected_head TEXT NULL,
+            maximum_queued_mails INTEGER NOT NULL CHECK(maximum_queued_mails >= 1),
+            maximum_task_utf8_bytes INTEGER NOT NULL CHECK(maximum_task_utf8_bytes >= 1),
+            maximum_reply_utf8_bytes INTEGER NOT NULL CHECK(maximum_reply_utf8_bytes >= 1),
+            maximum_inbox_replies INTEGER NOT NULL CHECK(maximum_inbox_replies >= 1),
+            maximum_inbox_utf8_bytes INTEGER NOT NULL
+                CHECK(maximum_inbox_utf8_bytes >= maximum_reply_utf8_bytes),
+            next_completion_sequence INTEGER NOT NULL CHECK(next_completion_sequence >= 1),
+            revision INTEGER NOT NULL CHECK(revision >= 0)
+        ) STRICT;
+        INSERT INTO delegation_meta (
+            singleton, schema_version, user_id, session_repository_id,
+            capture_frontier_segment_number, capture_frontier_tail_offset,
+            baseline_selected_head, maximum_queued_mails, maximum_task_utf8_bytes,
+            maximum_reply_utf8_bytes, maximum_inbox_replies, maximum_inbox_utf8_bytes,
+            next_completion_sequence, revision
+        ) SELECT singleton, 5, user_id, session_repository_id,
+            capture_frontier_segment_number, capture_frontier_tail_offset,
+            baseline_selected_head, maximum_queued_mails, maximum_task_utf8_bytes,
+            maximum_reply_utf8_bytes, maximum_inbox_replies, maximum_inbox_utf8_bytes,
+            next_completion_sequence, revision
+        FROM delegation_meta_old;
+        DROP TABLE delegation_meta_old;
+
+        ALTER TABLE outbound_mail ADD COLUMN content_format TEXT NOT NULL DEFAULT 'legacy-task' CHECK(content_format IN ('legacy-task', 'semantic-mail-v1'));
+        ALTER TABLE outbound_mail ADD COLUMN sender_name TEXT NULL;
+        ALTER TABLE outbound_mail ADD COLUMN task_sha256 TEXT NULL;
+        ALTER TABLE outbound_mail ADD COLUMN task_utf8_bytes INTEGER NULL CHECK(task_utf8_bytes IS NULL OR task_utf8_bytes > 0);
+        ALTER TABLE internal_mail_outbox ADD COLUMN bound_input TEXT NULL;
+        ALTER TABLE reply_lease ADD COLUMN bound_input TEXT NULL;
+        ALTER TABLE reply_notice ADD COLUMN notice_format TEXT NOT NULL DEFAULT 'legacy-text' CHECK(notice_format IN ('legacy-text', 'semantic-notice-v1'));
+        ALTER TABLE reply_notice ADD COLUMN sender_kind TEXT NULL;
+        ALTER TABLE reply_notice ADD COLUMN sender_id TEXT NULL;
+        ALTER TABLE reply_notice ADD COLUMN sender_name TEXT NULL;
+        ALTER TABLE reply_notice ADD COLUMN detail TEXT NULL;
+        ALTER TABLE reply_notice ADD COLUMN thread_id TEXT NULL;
+        ALTER TABLE reply_notice ADD COLUMN turn_id TEXT NULL;
+        PRAGMA user_version = 5;
         """;
 }

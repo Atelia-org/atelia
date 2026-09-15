@@ -27,7 +27,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .GetRequiredService<GalateaHostService>();
         var diagnostics = new List<string>();
         service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -39,7 +39,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             session,
             "寻找和旧城区有关的记忆",
             new GalateaTurnOptions("test")
-        );
+        , sender: GalateaDelegateTestConfiguration.PlayerSender);
         await service.RunTurnAsync(
                 session,
                 turn,
@@ -68,18 +68,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         );
         Assert.Single(main.Requests);
 
-        PlayerTurnObservation observation = Assert.Single(
-            session.Engine.ReadRecentCompletedTurns(1)
-                .RequireSnapshot().Turns
-        ).ObservationContent is string stored
-            && PlayerTurnObservationEnvelope.TryUnwrap(
-                stored,
-                out PlayerTurnObservation parsed
-            )
-                ? parsed
-                : throw new Xunit.Sdk.XunitException(
-                    "The production turn did not persist a canonical Observation."
-        );
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(Assert.Single(
+            session.Engine.ReadRecentCompletedTurns(1).RequireSnapshot().Turns).ObservationContent);
         Assert.Empty(observation.Recalls);
         string diagnostic = Assert.Single(diagnostics);
         using JsonDocument diagnosticJson = JsonDocument.Parse(diagnostic);
@@ -127,7 +117,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .GetRequiredService<GalateaHostService>();
         var diagnostics = new List<string>();
         service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -174,10 +164,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .OfType<ObservationMessage>()
             .Last();
         string finalContent = Assert.IsType<string>(finalMessage.Content);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            finalContent,
-            out PlayerTurnObservation requestedObservation
-        ));
+        PlayerTurnObservation requestedObservation = ReadRequestedObservation(finalContent);
         PlayerTurnRecall selected = Assert.Single(
             requestedObservation.Recalls
         );
@@ -191,14 +178,16 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             selected.Entry.SourceId
         );
         Assert.Equal(
-            $"标题：{title}\n\n正文：\n{exactText}",
-            selected.Body
+            exactText,
+            selected.ExactText
         );
 
         SessionCompletedTurnProjection persisted = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.Equal(finalContent, persisted.ObservationContent);
+        Assert.Equal(title, selected.Title);
+        Assert.NotNull(selected.PodStateIdentity);
+        Assert.Equal(finalContent, GalateaInputProjector.Instance.Project(persisted.ObservationContent));
 
         _ = await RunTypedTurnAsync(service, session, triggerKind,
             "继续使用刚才的记忆");
@@ -209,8 +198,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             string observationContent = Assert.IsType<string>(main.Requests[index]
                 .PromptPrefix.SharedContextMessages.OfType<ObservationMessage>()
                 .Last().Content);
-            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-                observationContent, out PlayerTurnObservation observation));
+            PlayerTurnObservation observation = ReadRequestedObservation(observationContent);
             using JsonDocument selectorEnvelope = JsonDocument.Parse(Assert.IsType<string>(
                 Assert.IsType<ObservationMessage>(Assert.Single(
                     recall.Requests[index].TailMessages)).Content));
@@ -218,11 +206,18 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                 selectorEnvelope.RootElement.GetProperty("schema").GetString());
             using JsonDocument query = JsonDocument.Parse(Assert.IsType<string>(
                 selectorEnvelope.RootElement.GetProperty("query").GetString()));
-            Assert.Equal("atelia.galatea.memo-recall-context.v2",
+            Assert.Equal("atelia.galatea.memo-recall-context.v4",
                 query.RootElement.GetProperty("schema").GetString());
+            Assert.Equal(GalateaMemoRecallInputContract.Instructions, query.RootElement.GetProperty("inputMeaning").GetString());
+            foreach (JsonElement action in query.RootElement.GetProperty("recentVisibleActions").EnumerateArray()) {
+                Assert.Equal("gm-visible-action", action.GetProperty("kind").GetString());
+                Assert.NotEqual(default, EventAddressTextCodec.Parse(action.GetProperty("sourceStartInclusive").GetString()!));
+                Assert.NotEqual(default, EventAddressTextCodec.Parse(action.GetProperty("sourceEndInclusive").GetString()!));
+            }
             JsonElement current = query.RootElement.GetProperty("currentTurn");
             Assert.Equal(triggerKind,
                 current.GetProperty("trigger").GetProperty("kind").GetString());
+            Assert.Equal(triggerKind == "player-action" ? "player" : "runtime", current.GetProperty("sender").GetProperty("kind").GetString());
             Assert.Equal(observation.ExternalLocalTimestamp,
                 current.GetProperty("externalLocalTimestamp").GetDateTimeOffset());
             Assert.Equal(triggerKind switch {
@@ -231,9 +226,17 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                 _ => PlayerTurnObservationTriggerKind.DelegateReply,
             }, observation.TriggerKind);
             if (triggerKind == "delegate-reply") {
+                JsonElement helperNotice = Assert.Single(current.GetProperty("externalNotices").EnumerateArray());
+                PlayerTurnNotice.Reply mainNotice = Assert.IsType<PlayerTurnNotice.Reply>(
+                    Assert.Single(observation.Notices, notice => notice is PlayerTurnNotice.Reply));
                 Assert.Equal("外层执行者已恢复，请继续查看蓝门。",
-                    Assert.Single(current.GetProperty("externalNotices")
-                        .EnumerateArray()).GetProperty("text").GetString());
+                    helperNotice.GetProperty("body").GetString());
+                Assert.Equal("delegate", helperNotice.GetProperty("sender").GetProperty("kind").GetString());
+                Assert.Equal("codex", helperNotice.GetProperty("sender").GetProperty("id").GetString());
+                Assert.Equal(mainNotice.DispatchId, helperNotice.GetProperty("dispatchId").GetString());
+                Assert.Equal(mainNotice.NoticeId, helperNotice.GetProperty("noticeId").GetString());
+                Assert.Equal(mainNotice.ThreadId, helperNotice.GetProperty("threadId").GetString());
+                Assert.Equal(mainNotice.TurnId, helperNotice.GetProperty("turnId").GetString());
                 Assert.False(current.GetProperty("trigger")
                     .TryGetProperty("playerText", out _));
             }
@@ -257,7 +260,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
 
     private static async Task<GalateaLiveTurn> RunTypedTurnAsync(
         GalateaHostService service,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string triggerKind,
         string playerText
     ) {
@@ -270,7 +273,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         }
         else {
             turn = triggerKind == "player-action"
-                ? service.StartTurn(session, playerText, new GalateaTurnOptions("test"))
+                ? service.StartTurn(session, playerText, new GalateaTurnOptions("test"), sender: GalateaDelegateTestConfiguration.PlayerSender)
                 : session.StartTurn(new GalateaFreshInput.HeartbeatActivation(
                     new GalateaCharacterName("Alice")), new GalateaTurnOptions("test"));
         }
@@ -298,7 +301,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             "extractor-contract-v1", [new SendMailIntent(
                 GalateaDelegateConfigReader.CanonicalRecipient,
                 Subject: null, Body: "seed task", InReplyToMessageId: null,
-                EvidenceQuote: "seeded")]));
+                EvidenceQuote: "seeded")], new GalateaSenderSnapshot("character", store.ReadSnapshot().Owner.CharacterId, "Alice")));
         string dispatchId = Assert.Single(captured.DispatchIds);
         // The production supervisor is the sole writer of binding/dispatch
         // transitions. Directly seeding those states raced its fallback pulse.
@@ -307,13 +310,15 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             notice.DispatchId == dispatchId && notice.State == GalateaReplyNoticeState.Ready));
     }
 
-    private static PlayerTurnObservation ReadPersistedObservation(UserSessionHost session) {
-        string content = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
-            .RequireSnapshot().Turns).ObservationContent;
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(content,
-            out PlayerTurnObservation observation));
-        return observation;
-    }
+    private static PlayerTurnObservation ReadPersistedObservation(CharacterSessionHost session) =>
+        GalateaObservationContent.ReadPlayerTurn(Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+            .RequireSnapshot().Turns).ObservationContent);
+
+    // This decoder asserts the actual transient md-json request; durable reads above use typed facts.
+    private static PlayerTurnObservation ReadRequestedObservation(string requestText) =>
+        GalateaObservationContent.ReadPlayerTurn(SessionInputContent.Structured(GalateaObservationContent.SchemaId,
+            Atelia.MdJson.MdJsonSerializer.Read(requestText)));
+
 
     [Fact]
     public async Task ConfiguredSelectorFailurePreventsMainCompletion() {
@@ -328,7 +333,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .GetRequiredService<GalateaHostService>();
         var diagnostics = new List<string>();
         service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -336,7 +341,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             session,
             syntheticContext,
             new GalateaTurnOptions("test")
-        );
+        , sender: GalateaDelegateTestConfiguration.PlayerSender);
 
         GalateaTurnException failure = await Assert.ThrowsAsync<GalateaTurnException>(() =>
             service.RunTurnAsync(
@@ -387,7 +392,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .GetRequiredService<GalateaHostService>();
         var diagnostics = new List<string>();
         service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -395,7 +400,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             session,
             "ordinary synthetic input",
             new GalateaTurnOptions("test")
-        );
+        , sender: GalateaDelegateTestConfiguration.PlayerSender);
 
         await service.RunTurnAsync(session, turn, CancellationToken.None)
             .WaitAsync(Deadline);
@@ -427,7 +432,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .GetRequiredService<GalateaHostService>();
         service.MemoRecallDiagnosticSinkForTest = _ =>
             throw new InvalidOperationException("synthetic sink failure");
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -435,7 +440,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             session,
             "continue after diagnostic failure",
             new GalateaTurnOptions("test")
-        );
+        , sender: GalateaDelegateTestConfiguration.PlayerSender);
 
         await service.RunTurnAsync(session, turn, CancellationToken.None)
             .WaitAsync(Deadline);
@@ -457,21 +462,21 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         using var login = await GalateaTestHost.LoginAsync(client);
         var service = host.Factory.Services.GetRequiredService<GalateaHostService>();
         var session = await service.GetSessionAsync("alice", CancellationToken.None);
-        using var accepted = await client.PostAsJsonAsync("/api/v1/chat/turns",
+        using var accepted = await client.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
             new { message = "继续", connectionId = "test" });
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         using var receipt = JsonDocument.Parse(await accepted.Content.ReadAsStringAsync());
         string turnId = receipt.RootElement.GetProperty("turnId").GetString()!;
         var turn = service.FindTurn(session, turnId)!;
         await turn.RunTask!.WaitAsync(Deadline);
-        string stream = await client.GetStringAsync($"/api/v1/chat/turns/{turnId}/events");
+        string stream = await client.GetStringAsync($"/api/v1/characters/alice/chat/turns/{turnId}/events");
         Assert.Contains("\"code\":\"memo-recall-failed\"", stream);
         Assert.DoesNotContain("selector transport unavailable", stream);
-        using var agent = JsonDocument.Parse(await client.GetStringAsync("/api/v1/agent/status"));
+        using var agent = JsonDocument.Parse(await client.GetStringAsync("/api/v1/characters/alice/agent/status"));
         Assert.Equal("waiting", agent.RootElement.GetProperty("state").GetString());
         Assert.Equal(JsonValueKind.Number,
             agent.RootElement.GetProperty("nextActivationAtUnixTimeMilliseconds").ValueKind);
-        using var mailbox = JsonDocument.Parse(await client.GetStringAsync("/api/v1/mailbox/status"));
+        using var mailbox = JsonDocument.Parse(await client.GetStringAsync("/api/v1/characters/alice/mailbox/status"));
         Assert.Equal("no-mail", mailbox.RootElement.GetProperty("state").GetString());
         Assert.Empty(main.Requests);
         Assert.Empty(session.Engine.ReadRecentCompletedTurns(1).RequireSnapshot().Turns);
@@ -491,7 +496,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -522,7 +527,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             maintenanceMode: maintenanceMode,
-            serverAgentUserIds: serverAgentUserIds,
+            heartbeatCharacterIds: serverAgentUserIds,
             connections: [
                 Connection("test", "main-model"),
                 Connection("recall", "recall-model"),
@@ -625,7 +630,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             Assert.True(_started.TryGetValue(request.DispatchId, out var started),
                 "The controlled delegate cannot complete an unknown dispatch.");
             Assert.Equal(started!.ThreadId, request.ThreadId);
-            Assert.Equal(started.Task, request.Task);
+            Assert.Equal(GalateaTaskCommitment.FromTask(started.Task), request.TaskCommitment);
             Assert.Equal(TurnId(request.DispatchId), request.ExpectedTurnId);
             return Task.FromResult<GalateaDelegateDispatchInspection>(new GalateaDelegateDispatchInspection.Completed(
                 request.DispatchId, ThreadId, TurnId(request.DispatchId),

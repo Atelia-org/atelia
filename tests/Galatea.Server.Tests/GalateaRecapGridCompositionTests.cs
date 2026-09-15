@@ -35,9 +35,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     private readonly List<string> _paths = [];
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
     private static GalateaRecapGridTargetExpectation DefaultExpectation =>
-        GalateaRecapGridTargetExpectation.ForNames(
-            new GalateaCharacterName("Galatea"),
-            new GalateaPlayerName("刘世超")
+        GalateaRecapGridTargetExpectation.ForCharacter(
+            new GalateaCharacterName("Galatea")
         );
 
     [Fact]
@@ -67,7 +66,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     "A raw-only turn must not load recap routes.");
             },
             Connections(connection),
-            candidateFactory);
+            candidateFactory,
+            inputProjector: GalateaInputProjector.Instance);
         var candidate = new GalateaRecapGridComposition(
             completion,
             RecapGridOnlineLimits.Production,
@@ -95,13 +95,14 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate,
             timeProvider: clock);
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
 
         GalateaLiveTurn fresh = service.StartTurn(
             session,
             "fresh candidate",
-            new GalateaTurnOptions(connection.Id));
+            new GalateaTurnOptions(connection.Id),
+            GalateaDelegateTestConfiguration.PlayerSender);
         await service.RunTurnAsync(session, fresh, CancellationToken.None);
         service.FinishTurn(session, fresh);
 
@@ -115,10 +116,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns
         );
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            completed.ObservationContent,
-            out PlayerTurnObservation observation
-        ));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(completed.ObservationContent);
         Assert.Equal(
             new DateTimeOffset(
                 2026,
@@ -172,9 +170,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             )
         );
         GalateaRecapGridTargetExpectation expected =
-            GalateaRecapGridTargetExpectation.ForNames(
-                new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("刘世超")
+            GalateaRecapGridTargetExpectation.ForCharacter(
+                new GalateaCharacterName("Galatea")
             );
         GalateaRecapGridTargetAlignment.Unprovisioned timelineAbsent =
             Assert.IsType<GalateaRecapGridTargetAlignment.Unprovisioned>(
@@ -330,7 +327,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     );
                 },
                 Connections(connection),
-                provider
+                provider,
+            inputProjector: GalateaInputProjector.Instance
             ),
             RecapGridOnlineLimits.Production,
             _estimator
@@ -340,7 +338,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             composition
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -429,7 +427,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     "Mismatch must fail before current routes."
                 ),
                 Connections(connection),
-                provider
+                provider,
+            inputProjector: GalateaInputProjector.Instance
             ),
             RecapGridOnlineLimits.Production,
             _estimator
@@ -439,7 +438,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             composition
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -453,7 +452,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "accepted before target drift",
-            new GalateaTurnOptions(connection.Id)
+            new GalateaTurnOptions(connection.Id),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         EventAddress? rawHead = session.Engine.ReadCurrentHead();
         int setupCount = CountSystemPromptSetups(session.Engine);
@@ -502,7 +502,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     "Mismatch must fail before current routes."
                 ),
                 Connections(connection),
-                provider
+                provider,
+            inputProjector: GalateaInputProjector.Instance
             ),
             RecapGridOnlineLimits.Production,
             _estimator
@@ -512,7 +513,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             composition
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -572,7 +573,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 ]);
             },
             Connections(connection),
-            candidateFactory);
+            candidateFactory,
+            inputProjector: GalateaInputProjector.Instance);
         var candidate = new GalateaRecapGridComposition(
             completion,
             RecapGridOnlineLimits.Production,
@@ -584,7 +586,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             TargetExpectations(
                 GalateaRecapGridTargetExpectation.ForTarget(recipe.Target)
             ));
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
 
         await RunFreshAsync(service, session, connection.Id, "first clue");
@@ -830,7 +832,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 File.ReadAllBytes(routesPath)),
             Connections(connection),
             galateaFactory,
-            new RecapGridAgentControlProfileRegistry([agentProfile]));
+            new RecapGridAgentControlProfileRegistry([agentProfile]),
+            inputProjector: GalateaInputProjector.Instance);
         var candidate = new GalateaRecapGridComposition(
             completion,
             RecapGridOnlineLimits.Production,
@@ -844,7 +847,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                                  targetRecipe.Target
                              )
                          ))) {
-            UserSessionHost session = await service.GetSessionAsync(
+            CharacterSessionHost session = await service.GetSessionAsync(
                 "alice", CancellationToken.None);
             await RunFreshAsync(
                 service, session, connection.Id, "same next clue");
@@ -903,10 +906,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(
             "same next clue",
             cliTail.Content);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            galateaTail.Content,
-            out PlayerTurnObservation playerTurnObservation
-        ));
+        JsonElement value = Atelia.MdJson.MdJsonSerializer.Read(Assert.IsType<string>(galateaTail.Content));
+        PlayerTurnObservation playerTurnObservation = GalateaObservationContent.ReadPlayerTurn(
+            SessionInputContent.Structured(GalateaObservationContent.SchemaId, value));
         Assert.Equal("same next clue", playerTurnObservation.PlayerText);
         Assert.NotNull(playerTurnObservation.ExternalLocalTimestamp);
     }
@@ -948,7 +950,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     "Frozen recovery must not load recap routes.");
             },
             Connections(connection),
-            candidateFactory);
+            candidateFactory,
+            inputProjector: GalateaInputProjector.Instance);
         var candidate = new GalateaRecapGridComposition(
             completion,
             RecapGridOnlineLimits.Production,
@@ -957,11 +960,11 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             Config(path, connection, CurrentFinalizedSystemPrompt),
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate);
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
         Assert.Equal(
             FrozenRecoverySystemPrompt,
-            session.Engine.ResolveGoverningSetup(recoveryHead).SystemPrompt);
+            session.Engine.ResolveGoverningSetup(recoveryHead).SystemPrompt.TextValue);
         int setupCountBeforeRecovery = CountSystemPromptSetups(
             session.Engine);
         Assert.Equal(1, setupCountBeforeRecovery);
@@ -1009,7 +1012,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             session.Engine.ReadCurrentHead());
         Assert.Equal(
             FrozenRecoverySystemPrompt,
-            session.Engine.ResolveGoverningSetup(currentHead).SystemPrompt);
+            session.Engine.ResolveGoverningSetup(currentHead).SystemPrompt.TextValue);
         Assert.Equal(0, routeLoads);
         Assert.Equal(before, File.ReadAllBytes(sentinel));
     }
@@ -1080,7 +1083,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             ),
             Connections(connection),
             candidateFactory,
-            new RecapGridAgentControlProfileRegistry([profile])
+            new RecapGridAgentControlProfileRegistry([profile]),
+            inputProjector: GalateaInputProjector.Instance
         );
         var candidate = new GalateaRecapGridComposition(
             completion,
@@ -1092,7 +1096,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1179,7 +1183,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             ),
             Connections(connection),
             candidateFactory,
-            new RecapGridAgentControlProfileRegistry([profile])
+            new RecapGridAgentControlProfileRegistry([profile]),
+            inputProjector: GalateaInputProjector.Instance
         );
         var candidate = new GalateaRecapGridComposition(
             completion,
@@ -1191,7 +1196,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1305,7 +1310,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             ),
             Connections(connection),
             factory,
-            new RecapGridAgentControlProfileRegistry([profile])
+            new RecapGridAgentControlProfileRegistry([profile]),
+            inputProjector: GalateaInputProjector.Instance
         );
         var candidate = new GalateaRecapGridComposition(
             completion,
@@ -1317,7 +1323,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1400,7 +1406,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 "Mismatch must fail before recap route loading."),
             Connections(connection),
             factory,
-            new RecapGridAgentControlProfileRegistry([profile]));
+            new RecapGridAgentControlProfileRegistry([profile]),
+            inputProjector: GalateaInputProjector.Instance);
         var candidate = new GalateaRecapGridComposition(
             completion,
             RecapGridOnlineLimits.Production,
@@ -1409,7 +1416,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             Config(path, connection),
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate);
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
         GalateaLiveTurn turn = service.StartRecovery(
             session,
@@ -1448,7 +1455,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 static () => throw new InvalidOperationException(
                     "Raw-only maintenance must not load routes."),
                 Connections(connection),
-                factory),
+                factory,
+            inputProjector: GalateaInputProjector.Instance),
             RecapGridOnlineLimits.Production,
             _estimator);
         await using (candidate) {
@@ -1518,7 +1526,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(recoveryHead),
                 connection.Id
@@ -1530,7 +1538,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.NotNull(accepted);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1595,7 +1603,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(recoveryHead),
                 hidden.Id
@@ -1608,7 +1616,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.NotNull(accepted);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1714,7 +1722,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             static () => throw new InvalidOperationException(
                 "Disposal must not load routes."),
             Connections(connection),
-            new RejectingFactory());
+            new RejectingFactory(),
+            inputProjector: GalateaInputProjector.Instance);
         var candidate = new GalateaRecapGridComposition(
             completion,
             RecapGridOnlineLimits.Production,
@@ -1722,11 +1731,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         var service = new GalateaHostService(
             new GalateaConfig(
                 [
-                    new GalateaUserConfig(
+                    new GalateaCharacterConfig(
                         "alice",
-                        "pw",
                         new GalateaCharacterName("Galatea"),
-                        new GalateaPlayerName("刘世超"),
                         first,
                         first + "-delegation-state",
                         first + "-character-memory-state",
@@ -1734,11 +1741,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         GalateaSessionProvisioning.ExistingOnly,
                         "test system prompt",
                         connection.Id),
-                    new GalateaUserConfig(
+                    new GalateaCharacterConfig(
                         "bob",
-                        "pw",
-                        new GalateaCharacterName("Galatea"),
-                        new GalateaPlayerName("刘世超"),
+                        new GalateaCharacterName("Galatea-bob"),
                         second,
                         second + "-delegation-state",
                         second + "-character-memory-state",
@@ -1747,6 +1752,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         "test system prompt",
                         connection.Id)
                 ],
+                GalateaDelegateTestConfiguration.Players,
                 [connection],
                 [connection.Id],
                 InputNormalizerConnectionId: null,
@@ -1958,10 +1964,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         string characterName
     ) {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName(characterName),
-                new GalateaPlayerName("刘世超")
+                new GalateaCharacterName(characterName)
             ),
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -2426,12 +2431,13 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
 
     private static async Task RunFreshAsync(
         GalateaHostService service,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string connectionId,
         string message
     ) {
         GalateaLiveTurn turn = service.StartTurn(
-            session, message, new GalateaTurnOptions(connectionId));
+            session, message, new GalateaTurnOptions(connectionId),
+            GalateaDelegateTestConfiguration.PlayerSender);
         await service.RunTurnAsync(session, turn, CancellationToken.None);
         service.FinishTurn(session, turn);
         Assert.Equal("completed", turn.Status);
@@ -2465,11 +2471,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         CompletionConnectionConfig connection,
         string systemPrompt = "test system prompt"
     ) => new(
-        [new GalateaUserConfig(
+        [new GalateaCharacterConfig(
             "alice",
-            "pw",
             new GalateaCharacterName("Galatea"),
-            new GalateaPlayerName("刘世超"),
             path,
             path + "-delegation-state",
             path + "-character-memory-state",
@@ -2477,6 +2481,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             GalateaSessionProvisioning.ExistingOnly,
             systemPrompt,
             connection.Id)],
+        GalateaDelegateTestConfiguration.Players,
         [connection],
         [connection.Id],
         InputNormalizerConnectionId: null,

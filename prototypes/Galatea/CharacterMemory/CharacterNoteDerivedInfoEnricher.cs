@@ -12,6 +12,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.Galatea.Prompts;
 using Atelia.MemoPod;
+using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server.CharacterMemory;
 
@@ -27,7 +28,7 @@ internal sealed record CharacterNoteDerivedInfoTarget(
 
 internal sealed record CharacterNoteDerivedInfoEnrichmentRequest {
     internal CharacterNoteDerivedInfoEnrichmentRequest(
-        string observationContent,
+        SessionInputContent observationContent,
         string visibleActionText,
         IReadOnlyList<CharacterNoteDerivedInfoTarget> targets
     ) {
@@ -46,7 +47,7 @@ internal sealed record CharacterNoteDerivedInfoEnrichmentRequest {
         Targets = Array.AsReadOnly(targets.ToArray());
     }
 
-    internal string ObservationContent { get; }
+    internal SessionInputContent ObservationContent { get; }
 
     internal string VisibleActionText { get; }
 
@@ -113,8 +114,11 @@ internal static class CharacterNoteDerivedInfoTargetRenderer {
         CharacterNoteDerivedInfoEnrichmentRequest request
     ) {
         ArgumentNullException.ThrowIfNull(request);
+        // Materialization and durable work retain the typed Observation. This method
+        // runs only while assembling the actual auxiliary LLM request.
+        string observation = GalateaInputProjector.Instance.Project(request.ObservationContent);
         int observationBytes = RequireText(
-            request.ObservationContent,
+            observation,
             TextExtractorBounds.MaximumTargetTextUtf8Bytes,
             "observationContent"
         );
@@ -174,7 +178,7 @@ internal static class CharacterNoteDerivedInfoTargetRenderer {
             writer.WriteString("schema", SchemaId);
             writer.WriteString(
                 "observationContent",
-                request.ObservationContent
+                observation
             );
             writer.WriteString(
                 "visibleActionText",
@@ -246,7 +250,7 @@ internal sealed class CharacterNoteDerivedInfoEnricher
     private const string ContractIdPrefix =
         "atelia.galatea.character-note-derived-info-enricher.v1.";
     private const string SemanticContractVersion =
-        "atelia.galatea.character-note-derived-info-enricher.semantic.v1";
+        "atelia.galatea.character-note-derived-info-enricher.semantic.v2";
     private const string ToolContractVersion =
         "emit-character-note-derived-info-batch.v1";
     internal const string ToolName =
@@ -267,6 +271,8 @@ Every title, gist, and summary must be non-empty, already trimmed, contain no co
 Call emit_character_note_derived_info_batch exactly once. Its items must cover every input target exactly once, preserve input order, and copy each artifactOrdinal exactly. Never omit, add, duplicate, or reorder items. If a faithful batch cannot be produced, emit no fabricated data.
 
 Ordinary response text is diagnostic only. Use emit_character_note_derived_info_batch for the batch artifact.
+""" + "\n\n" + GalateaSystemInstructionContent.ObservationInputMeaning + "\n\n" + """
+The shared Observation rules above apply to the observationContent component of this target. visibleActionText is the GM-visible provider Action narration selected from that completed turn; it is not an attributed Character utterance, even when it contains quoted dialogue. The ordered targets remain the authoritative saved ExactText. Missing source fields in legacy Observation content remain unknown; do not infer an author from the currently configured Character or Player.
 """;
 
     private const string UserPromptTemplate = """

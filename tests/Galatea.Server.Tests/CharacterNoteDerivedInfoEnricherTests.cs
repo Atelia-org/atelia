@@ -5,11 +5,36 @@ using Atelia.Completion.Abstractions;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.MemoPod;
+using Atelia.MdJson;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class CharacterNoteDerivedInfoEnricherTests {
+    [Fact]
+    public async Task StructuredObservation_RemainsTypedUntilAuxiliaryProviderProjection() {
+        ScriptedClient client = CallsClient(BatchCall("""
+{"items":[{"artifactOrdinal":0,"title":"门","gist":"门是开着的。","summary":"角色记下门处于开启状态。"}]}
+"""));
+        var content = GalateaObservationContent.CreatePlayerAction(
+            new GalateaSenderSnapshot("player", "player-main", "访客"),
+            "我打开门。\r\n```\n原文\n```", DateTimeOffset.UnixEpoch);
+        var request = new CharacterNoteDerivedInfoEnrichmentRequest(content,
+            "门打开了。", [new(0, "门是开着的。")]);
+        string stored = content.JsonValue.GetRawText();
+
+        _ = await CreateEnricher(client).EnrichAsync(request, CancellationToken.None);
+
+        Assert.Same(content, request.ObservationContent);
+        Assert.Equal(stored, request.ObservationContent.JsonValue.GetRawText());
+        string targetText = CharacterNoteDerivedInfoTargetRenderer.Render(request);
+        using JsonDocument target = JsonDocument.Parse(targetText);
+        string projected = target.RootElement.GetProperty("observationContent").GetString()!;
+        Assert.Equal("player-main", MdJsonSerializer.Read(projected).GetProperty("sender").GetProperty("id").GetString());
+        ObservationMessage actual = Assert.IsType<ObservationMessage>(Assert.Single(client.LastRequest!.TailMessages));
+        Assert.Contains(SecurityElement.Escape(targetText), actual.Content, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task RequestUsesCanonicalTargetAndOneNestedBatchTool() {
         ScriptedClient client = CallsClient(BatchCall("""
@@ -56,6 +81,12 @@ public sealed class CharacterNoteDerivedInfoEnricherTests {
             completionRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
+        Assert.Contains(GalateaSystemInstructionContent.ObservationInputMeaning,
+            completionRequest.PromptPrefix.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("GM-visible provider Action narration",
+            completionRequest.PromptPrefix.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Missing source fields in legacy Observation content remain unknown",
+            completionRequest.PromptPrefix.SystemPrompt, StringComparison.Ordinal);
         Assert.Contains(
             "one-sentence impression",
             completionRequest.PromptPrefix.SystemPrompt,

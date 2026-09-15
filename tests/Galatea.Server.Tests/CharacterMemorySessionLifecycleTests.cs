@@ -24,7 +24,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
         )!);
         File.WriteAllBytes(host.CharacterMemoryStateDirectory, sentinel);
 
-        UserSessionHost session = await GetSessionAsync(host);
+        CharacterSessionHost session = await GetSessionAsync(host);
 
         Assert.Null(session.CharacterMemoryReconciler);
         Assert.True(File.Exists(host.CharacterMemoryStateDirectory));
@@ -51,7 +51,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
         )!);
         File.WriteAllBytes(host.CharacterMemoryStateDirectory, sentinel);
 
-        UserSessionHost session = await GetSessionAsync(host);
+        CharacterSessionHost session = await GetSessionAsync(host);
 
         Assert.Null(session.CharacterMemoryReconciler);
         Assert.True(File.Exists(host.CharacterMemoryStateDirectory));
@@ -74,7 +74,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
         );
         Assert.False(Path.Exists(host.CharacterMemoryStateDirectory));
 
-        UserSessionHost session = await GetSessionAsync(host);
+        CharacterSessionHost session = await GetSessionAsync(host);
 
         CharacterNoteDefaultPodReconciler reconciler = Assert.IsType<
             CharacterNoteDefaultPodReconciler
@@ -82,7 +82,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
         CharacterMemoryStatusSnapshot status =
             reconciler.ReadStatusSnapshot();
         Assert.Equal(CharacterMemoryStoreState.Ready, status.StoreState);
-        Assert.Equal("alice", status.Owner.UserId);
+        Assert.Equal("alice", status.Owner.CharacterId);
         Assert.Equal(
             CharacterMemorySessionComposition.CreateSessionRepositoryId(
                 host.SessionDirectory
@@ -118,7 +118,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
         );
         await CreateStoreAsync(host, owner, baseline);
 
-        UserSessionHost session = await GetSessionAsync(host);
+        CharacterSessionHost session = await GetSessionAsync(host);
 
         CharacterMemoryStatusSnapshot status = Assert.IsType<
             CharacterNoteDefaultPodReconciler
@@ -165,7 +165,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
         try {
             GalateaHostService service = host.Factory.Services
                 .GetRequiredService<GalateaHostService>();
-            UserSessionHost session = await service.GetSessionAsync(
+            CharacterSessionHost session = await service.GetSessionAsync(
                 "alice",
                 CancellationToken.None
             );
@@ -199,7 +199,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
         }
     }
 
-    private static async Task<UserSessionHost> GetSessionAsync(
+    private static async Task<CharacterSessionHost> GetSessionAsync(
         GalateaTestHost host
     ) {
         GalateaHostService service = host.Factory.Services

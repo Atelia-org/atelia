@@ -24,17 +24,17 @@ public sealed class GalateaAgentStatusContractTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             maintenanceMode: maintenance,
-            serverAgentUserIds: enrolled ? ["alice"] : [],
+            heartbeatCharacterIds: enrolled ? ["alice"] : [],
             enableServerAgentHostedService: maintenance
         );
         using HttpClient client = fixture.CreateClient();
-        using HttpResponseMessage anonymous = await client.GetAsync("/api/v1/agent/status");
+        using HttpResponseMessage anonymous = await client.GetAsync("/api/v1/characters/alice/agent/status");
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
         GalateaHostService host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
 
         for (int index = 0; index < 2; index++) {
-            using HttpResponseMessage response = await client.GetAsync("/api/v1/agent/status");
+            using HttpResponseMessage response = await client.GetAsync("/api/v1/characters/alice/agent/status");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.True(response.Headers.CacheControl?.NoStore);
             using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -65,14 +65,14 @@ public sealed class GalateaAgentStatusContractTests {
         using HttpClient client = fixture.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
         using HttpResponseMessage disabled = await client.PostAsync(
-            "/api/v1/mailbox/ready-turn", Json("{}")
+            "/api/v1/characters/alice/mailbox/ready-turn", Json("{}")
         );
         Assert.Equal(HttpStatusCode.OK, disabled.StatusCode);
         using JsonDocument document = JsonDocument.Parse(await disabled.Content.ReadAsStringAsync());
         Assert.Equal("disabled", document.RootElement.GetProperty("state").GetString());
 
         foreach (string body in new[] { "{\"connectionId\":\"test\"}", "{\"connectionId\":null}", "{\"unexpected\":1}" }) {
-            using HttpResponseMessage rejected = await client.PostAsync("/api/v1/mailbox/ready-turn", Json(body));
+            using HttpResponseMessage rejected = await client.PostAsync("/api/v1/characters/alice/mailbox/ready-turn", Json(body));
             Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         }
         Assert.Null(fixture.Factory.Services.GetRequiredService<GalateaHostService>().ReadAttachedSession("alice"));
@@ -85,17 +85,17 @@ public sealed class GalateaAgentStatusContractTests {
         await using var fixture = GalateaTestHost.Create(
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient client = fixture.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
         GalateaHostService host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         try {
             var head = session.Engine.ReadCurrentHead();
             GalateaAutonomyCadenceStatus before = session.AutonomyCadence.ProjectStatus();
-            using HttpResponseMessage response = await client.GetAsync("/api/v1/agent/status")
+            using HttpResponseMessage response = await client.GetAsync("/api/v1/characters/alice/agent/status")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(head, session.Engine.ReadCurrentHead());

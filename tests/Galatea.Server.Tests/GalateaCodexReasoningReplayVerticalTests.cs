@@ -40,7 +40,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using HttpClient http = host.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-        (GalateaHostService service, UserSessionHost session) = await GetSessionAsync(host);
+        (GalateaHostService service, CharacterSessionHost session) = await GetSessionAsync(host);
 
         GalateaLiveTurn oldTurn = await StartAndWaitAsync(
             http, service, session, "First turn.", "test");
@@ -79,36 +79,36 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
     public async Task PreviousProjectionFrozenV7Request_ExplicitRestartUsesCurrentAdapter(
         string failpoint, SessionDurableDispatchState expectedDispatchState) {
         var factory = new CodexFixtureFactory();
-        await using var host = CreateHost(factory);
         CompletionConnectionConfig connection = Connection("test", OldModel);
+        await using var host = GalateaTestHost.CreateMissingSession(factory,
+            DisabledGalateaUserMessageNormalizer.Instance, connections: [connection]);
         using var client = (OpenAICodexResponsesClient)factory.Create(connection);
-        using (var engine = SessionJournalEngine.Open(host.SessionDirectory)) {
-            ReconcileModel(engine, connection);
+        bool started = expectedDispatchState == SessionDurableDispatchState.StartedOutcomeUncertain;
+        Assert.Equal(started ? "AfterCompletionAttemptStartedCommitted" : "AfterRequestPreparedCommitted", failpoint);
+        EventAddress frozenHead = LegacyPreparedV7Fixture.CreatePending(host.SessionDirectory,
+            connection, client, started, PreviousCodexAdapterFingerprint);
+        SessionPreparedRequestReconstruction exact = GalateaRecapFixture.ReadLatestPrepared(host.SessionDirectory);
+        Assert.Equal(2, exact.Manifest.Plan.ExactContextInputs.Length);
+        using (var audit = SessionJournalEngine.OpenReadOnly(host.SessionDirectory)) {
+            var events = new List<SessionJournalAuditEvent>();
+            audit.ScanCheckedAuditEvents(events.Add);
+            Assert.Equal(1, events.Single(entry => entry.Kind == SessionEventKind.SystemPromptSetup).BodySchemaVersion);
+            Assert.Equal(1, events.Single(entry => entry.Kind == SessionEventKind.ObservationAccepted).BodySchemaVersion);
+            Assert.Equal(7, events.Single(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared).BodySchemaVersion);
         }
-        EventAddress frozenHead = await GalateaDurableRecoveryVerticalTests
-            .CreateRecoveryBoundaryAsync(host.SessionDirectory, connection, client,
-                failpoint, expectedDispatchState == SessionDurableDispatchState.NotStarted
-                    ? SessionExecutionPhase.AwaitingCompletionDispatch
-                    : SessionExecutionPhase.AwaitingCompletion,
-                (engine, runtime) => {
-                    engine.UseRuntime(runtime);
-                    return ValueTask.FromResult<IAsyncDisposable>(new EmptyRuntimeBinding());
-                });
-        frozenHead = LegacyPreparedV7Fixture.ReplacePending(
-            host.SessionDirectory, frozenHead, PreviousCodexAdapterFingerprint);
         Assert.Empty(factory.Requests);
         Assert.Equal(0, factory.CredentialReads);
 
         using HttpClient http = host.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-        (GalateaHostService service, UserSessionHost session) = await GetSessionAsync(host);
+        (GalateaHostService service, CharacterSessionHost session) = await GetSessionAsync(host);
         var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
             session.Engine.InspectRuntimeRecoveryRequirements());
         Assert.Equal(expectedDispatchState, frozen.DispatchState);
 
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead),
                 ConnectionId: null, RestartUncertainCompletion: true));
         GalateaLiveTurn recovered = await WaitForTurnAsync(accepted, service, session);
@@ -119,6 +119,11 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         Assert.Equal(1, factory.CredentialReads);
         Assert.Equal(OldAnswer, session.Engine.ReadRecentCompletedTurns().RequireSnapshot()
             .Turns[0].TerminalAction.Message.GetFlattenedText());
+        OpenAIResponsesReasoningBlock reasoning = Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot()
+            .Turns[0].TerminalAction.Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
+        Assert.Equal(OldModel, reasoning.Origin.Model);
+        using JsonDocument rawReasoning = JsonDocument.Parse(reasoning.RawItemJson);
+        Assert.Equal(ReasoningCanary, rawReasoning.RootElement.GetProperty("encrypted_content").GetString());
     }
 
     [Fact]
@@ -132,7 +137,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using (var engine = SessionJournalEngine.Open(host.SessionDirectory)) {
             ReconcileModel(engine, oldConnection);
             engine.UseRuntime(GalateaDurableRecoveryVerticalTests.CreateFixtureRuntime(
-                oldConnection, oldClient));
+                oldConnection, oldClient) with { InputProjector = GalateaInputProjector.Instance });
             await engine.SendAsync(GalateaUserMessageEnvelope.Wrap("First turn."),
                 CancellationToken.None);
             ReconcileModel(engine, newConnection);
@@ -149,9 +154,9 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using HttpClient http = host.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-        (GalateaHostService service, UserSessionHost session) = await GetSessionAsync(host);
+        (GalateaHostService service, CharacterSessionHost session) = await GetSessionAsync(host);
         using (HttpResponseMessage refused = await http.PostAsJsonAsync(
-                   "/api/v1/chat/turns/resume",
+                   "/api/v1/characters/alice/chat/turns/resume",
                    new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead),
                        ConnectionId: null, RestartUncertainCompletion: false))) {
             Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
@@ -164,7 +169,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         Assert.Equal(startedHead, session.Engine.ReadCurrentHead());
 
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead),
                 ConnectionId: null, RestartUncertainCompletion: true));
         GalateaLiveTurn recovered = await WaitForTurnAsync(accepted, service, session);
@@ -191,7 +196,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using (var engine = SessionJournalEngine.Open(host.SessionDirectory)) {
             ReconcileModel(engine, connection);
             engine.UseRuntime(GalateaDurableRecoveryVerticalTests.CreateFixtureRuntime(
-                connection, new UnsupportedCarrierSeedClient()));
+                connection, new UnsupportedCarrierSeedClient()) with { InputProjector = GalateaInputProjector.Instance });
             await engine.SendAsync(GalateaUserMessageEnvelope.Wrap("Seed legacy carrier."),
                 CancellationToken.None);
             await using IAsyncDisposable online = await BindRawOnlyRuntimeAsync(engine,
@@ -228,7 +233,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
-            await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/chat/turns/current"));
+            await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
         Assert.Equal("idle", current.Status);
         Assert.False(current.RestartRequired);
         Assert.Null(current.RecoveryHead);
@@ -263,7 +268,8 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
                 await online.CatchUpMaintenanceAsync(pendingObservation));
             engine.UseRuntime(runtime with {
                 ContextCandidateSource = online.CandidateSource,
-                ContextLifecycle = online.Lifecycle
+                ContextLifecycle = online.Lifecycle,
+                InputProjector = GalateaInputProjector.Instance
             });
             return online;
         }
@@ -273,7 +279,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         }
     }
 
-    private static async Task<(GalateaHostService, UserSessionHost)> GetSessionAsync(
+    private static async Task<(GalateaHostService, CharacterSessionHost)> GetSessionAsync(
         GalateaTestHost host) {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -281,15 +287,15 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
     }
 
     private static async Task<GalateaLiveTurn> StartAndWaitAsync(HttpClient http,
-        GalateaHostService service, UserSessionHost session, string text,
+        GalateaHostService service, CharacterSessionHost session, string text,
         string connectionId) {
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns", new ChatStreamRequest(text, connectionId));
+            "/api/v1/characters/alice/chat/turns", new ChatStreamRequest(text, connectionId));
         return await WaitForTurnAsync(accepted, service, session);
     }
 
     private static async Task<GalateaLiveTurn> WaitForTurnAsync(
-        HttpResponseMessage accepted, GalateaHostService service, UserSessionHost session) {
+        HttpResponseMessage accepted, GalateaHostService service, CharacterSessionHost session) {
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         StartTurnResponseDto started = Assert.IsType<StartTurnResponseDto>(
             await accepted.Content.ReadFromJsonAsync<StartTurnResponseDto>());
@@ -315,10 +321,6 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
             && item.GetProperty("role").GetString() == "assistant"
             && item.GetProperty("content").EnumerateArray().Any(content =>
                 content.GetProperty("text").GetString() == OldAnswer));
-    }
-
-    private sealed class EmptyRuntimeBinding : IAsyncDisposable {
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class CodexFixtureFactory : ICompletionClientFactory,

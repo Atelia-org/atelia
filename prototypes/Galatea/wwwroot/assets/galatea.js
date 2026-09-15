@@ -122,11 +122,37 @@ export function requireMailboxStatus(value) {
   return status;
 }
 
-export async function fetchMailboxStatus(fetchImpl) {
+export function characterApiBase(characterId) {
+  if (typeof characterId !== "string" || characterId.length === 0) {
+    throw new Error("character ID is required");
+  }
+  // Match Uri.EscapeDataString's RFC 3986 segment encoding in the page bootstrap.
+  const segment = encodeURIComponent(characterId).replace(/[!'()*]/g,
+    (value) => `%${value.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `/api/v1/characters/${segment}`;
+}
+
+export function connectionPreferenceKey(playerId, characterId) {
+  if (typeof playerId !== "string" || playerId.length === 0) {
+    throw new Error("player ID is required");
+  }
+  characterApiBase(characterId);
+  return `galatea:connection:${JSON.stringify([playerId, characterId])}`;
+}
+
+function requireCharacterApiBase(apiBase) {
+  if (typeof apiBase !== "string" || !/^\/api\/v1\/characters\/[^/]+$/.test(apiBase)) {
+    throw new Error("explicit character API base is required");
+  }
+  return apiBase;
+}
+
+export async function fetchMailboxStatus(fetchImpl, apiBase) {
   if (typeof fetchImpl !== "function") {
     throw new Error("mailbox status fetch implementation is required");
   }
-  const response = await fetchImpl("/api/v1/mailbox/status", {
+  requireCharacterApiBase(apiBase);
+  const response = await fetchImpl(`${apiBase}/mailbox/status`, {
     method: "GET",
     credentials: "same-origin",
     cache: "no-store",
@@ -297,9 +323,10 @@ export function requireAgentStatus(value) {
 // Observation only. Every response is fenced against page lifecycle and local
 // turn mutations; a slow GET cannot overwrite a newer send, rewind or SSE result.
 export function createAgentStatusFollower({
-  fetchImpl, publishStatus, publishCurrent, publishRecent, attachTurn,
+  apiBase, fetchImpl, publishStatus, publishCurrent, publishRecent, attachTurn,
   getRevision, isBusy, setTimeoutFn, clearTimeoutFn,
 }) {
+  requireCharacterApiBase(apiBase);
   let enabled = false;
   let generation = 0;
   let timer = null;
@@ -330,12 +357,12 @@ export function createAgentStatusFollower({
     const current = () => enabled && epoch === generation && revision === getRevision();
     let statusPublished = false;
     try {
-      const status = await read("/api/v1/agent/status", requireAgentStatus);
+      const status = await read(`${apiBase}/agent/status`, requireAgentStatus);
       if (!current()) return;
       publishStatus(status);
       statusPublished = true;
       if (isBusy()) return;
-      const turn = await read("/api/v1/chat/turns/current", requireCurrentTurn);
+      const turn = await read(`${apiBase}/chat/turns/current`, requireCurrentTurn);
       if (!current() || isBusy()) return;
       publishCurrent(turn);
       if (turn.status === "running") {
@@ -347,7 +374,7 @@ export function createAgentStatusFollower({
         return;
       }
       if (turn.status === "idle") {
-        const recent = await read("/api/v1/recent-turns", requireRecentTurnsResponse);
+        const recent = await read(`${apiBase}/recent-turns`, requireRecentTurnsResponse);
         if (current() && !isBusy()) publishRecent(recent);
       }
     } catch (error) {
@@ -1251,7 +1278,9 @@ async function readJsonResponse(response, validator) {
 function startGalateaApp() {
   const bootstrapConfig = window.galateaBootstrap ?? {};
   const connections = Array.isArray(bootstrapConfig.connections) ? bootstrapConfig.connections : [];
-  const userKey = bootstrapConfig.userId ?? "anonymous";
+  const apiBase = characterApiBase(bootstrapConfig.characterId);
+  if (bootstrapConfig.apiBase !== apiBase) throw new Error("character API base mismatch");
+  const preferenceKey = connectionPreferenceKey(bootstrapConfig.playerId, bootstrapConfig.characterId);
   const maintenanceMode = bootstrapConfig.maintenanceMode === true;
   const streamLimits = requireStreamLimits(bootstrapConfig.streamLimits);
 
@@ -1295,7 +1324,7 @@ function startGalateaApp() {
   }
 
   function connectionStorageKey() {
-    return ["galatea", "connection", userKey].join(":");
+    return preferenceKey;
   }
 
   const turnList = document.getElementById("turn-list");
@@ -1358,7 +1387,7 @@ function startGalateaApp() {
   }
 
   const mailboxStatusPoller = createMailboxStatusPoller({
-    readStatus: () => fetchMailboxStatus(window.fetch.bind(window)),
+    readStatus: () => fetchMailboxStatus(window.fetch.bind(window), apiBase),
     publishStatus: (status, failureCode) => {
       if (status === null) {
         const previous = state.mailboxStatus;
@@ -1489,6 +1518,7 @@ function startGalateaApp() {
   }
 
   const agentFollower = createAgentStatusFollower({
+    apiBase,
     fetchImpl: window.fetch.bind(window),
     publishStatus: publishAgentStatus,
     publishCurrent: publishObservedCurrent,
@@ -1683,7 +1713,7 @@ function startGalateaApp() {
 
   async function loadRecentTurns() {
     const recent = await fetchJson(
-      "/api/v1/recent-turns",
+      `${apiBase}/recent-turns`,
       requireRecentTurnsResponse,
     );
     applyRecentTurnsPayload(recent);
@@ -1694,7 +1724,7 @@ function startGalateaApp() {
 
   async function loadRecapCadenceProgress() {
     const progress = await fetchJson(
-      "/api/v1/recap-cadence-progress",
+      `${apiBase}/recap-cadence-progress`,
       requireRecapCadenceProgressSnapshot,
     );
     state.recapCadenceProgress =
@@ -1944,7 +1974,7 @@ function startGalateaApp() {
 
   async function loadCurrentTurn() {
     return await fetchJson(
-      "/api/v1/chat/turns/current",
+      `${apiBase}/chat/turns/current`,
       requireCurrentTurn,
     );
   }
@@ -2059,7 +2089,7 @@ function startGalateaApp() {
 
     let response;
     try {
-      response = await fetch("/api/v1/chat/turns/pop-latest", {
+      response = await fetch(`${apiBase}/chat/turns/pop-latest`, {
         method: "POST",
         credentials: "same-origin",
         headers: {
@@ -2177,6 +2207,8 @@ function startGalateaApp() {
 
     markRecapCadenceProgressStale("active-turn");
     state.activeTurnId = normalizedTurnId;
+    const turnContext = document.getElementById("live-turn-context");
+    if (turnContext) turnContext.textContent = `${bootstrapConfig.characterName ?? bootstrapConfig.characterId} · Turn ${normalizedTurnId}`;
     state.activeTurnOrigin = origin;
     const generation = ++state.streamGeneration;
     let reconciliationFailures = 0;
@@ -2186,7 +2218,7 @@ function startGalateaApp() {
       setStreaming(true, status || "正在连接生成流…");
 
       try {
-        const response = await fetch(`/api/v1/chat/turns/${encodeURIComponent(normalizedTurnId)}/events`, {
+        const response = await fetch(`${apiBase}/chat/turns/${encodeURIComponent(normalizedTurnId)}/events`, {
           credentials: "same-origin",
         });
 
@@ -2332,7 +2364,7 @@ function startGalateaApp() {
     state.stopRequested = false;
     setStreaming(true, replacingPoppedTurn ? "正在重新生成…" : "正在发送…");
 
-    const response = await fetch("/api/v1/chat/turns", {
+    const response = await fetch(`${apiBase}/chat/turns`, {
       method: "POST",
       credentials: "same-origin",
       headers: {
@@ -2391,7 +2423,7 @@ function startGalateaApp() {
     state.stopRequested = true;
     setStreaming(true, "正在停止生成…");
 
-    const response = await fetch(`/api/v1/chat/turns/${encodeURIComponent(state.activeTurnId)}/stop`, {
+    const response = await fetch(`${apiBase}/chat/turns/${encodeURIComponent(state.activeTurnId)}/stop`, {
       method: "POST",
       credentials: "same-origin",
     });
@@ -2454,7 +2486,7 @@ function startGalateaApp() {
         setStreaming(false, "已保留不确定状态，未重新调用模型。");
         return;
       }
-      const response = await fetch("/api/v1/chat/turns/resume", {
+      const response = await fetch(`${apiBase}/chat/turns/resume`, {
         method: "POST",
         credentials: "same-origin",
         headers: {
@@ -2500,7 +2532,7 @@ function startGalateaApp() {
     refreshComposerMode();
     statusText.textContent = "正在重试未完成处理…";
     try {
-      const response = await fetch("/api/v1/agent/retry-admission", {
+      const response = await fetch(`${apiBase}/agent/retry-admission`, {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json" }, body: "{}",
       });

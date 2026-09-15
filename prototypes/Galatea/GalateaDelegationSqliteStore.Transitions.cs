@@ -9,13 +9,16 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaDelegationCaptureRequest request
     ) {
         ValidateCaptureRequest(request);
+        if (request.Sender.Kind != "character" || request.Sender.Id != _owner.CharacterId) {
+            throw new ArgumentException("Capture sender must be the owning Character.", nameof(request));
+        }
         if (request.InternalTargets is not null) {
             for (int ordinal = 0; ordinal < request.Intents.Count; ordinal++) {
                 if (request.InternalTargets[ordinal] is { } target) {
                     if (string.Equals(request.Intents[ordinal].Recipient,
                             GalateaDelegateConfigReader.CanonicalRecipient,
                             StringComparison.Ordinal)
-                        || string.Equals(target.TargetUserId, _owner.UserId,
+                        || string.Equals(target.TargetCharacterId, _owner.CharacterId,
                             StringComparison.Ordinal)) {
                         throw new ArgumentException(
                             "Internal mail targets must be non-Codex peers.",
@@ -39,7 +42,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 );
             string[] dispatchIds = request.Intents
                 .Select((_, ordinal) => GalateaDelegationDurableContract
-                    .CreateDispatchId(_owner.UserId, sourceAddress, ordinal))
+                    .CreateDispatchId(_owner.CharacterId, sourceAddress, ordinal))
                 .ToArray();
             return ExecuteWrite(
                 "capture-action-batch",
@@ -105,7 +108,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             request.SourceActionAddress,
                             ordinal,
                             dispatchIds[ordinal],
-                            request.Intents[ordinal]
+                            request.Intents[ordinal],
+                            request.Sender.Name
                         );
                         if (request.InternalTargets?[ordinal] is { } target) {
                             InsertInternalMailOutbox(
@@ -183,7 +187,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                                 "Thread binding requires a queued Codex mail."
                             );
                         }
-                        if (StrictUtf8.GetByteCount(body)
+                        if (head.ContentFormat == "legacy-task" && StrictUtf8.GetByteCount(body)
                                 > _limits.MaximumTaskUtf8Bytes) {
                             throw Conflict(
                                 "The FIFO head must settle its durable preflight failure before binding."
@@ -377,9 +381,14 @@ internal sealed partial class GalateaDelegationSqliteStore {
     internal GalateaOutboundMailSnapshot StartQueuedMail(
         string dispatchId,
         long expectedMailRevision,
-        long expectedRouteRevision
+        long expectedRouteRevision,
+        GalateaTaskCommitment taskCommitment
     ) {
         RequireDispatchId(dispatchId);
+        ArgumentNullException.ThrowIfNull(taskCommitment);
+        if (taskCommitment.Utf8Bytes > _limits.MaximumTaskUtf8Bytes) {
+            throw new ArgumentOutOfRangeException(nameof(taskCommitment), "Projected task exceeds the current send limit.");
+        }
         lock (_gate) {
             ThrowIfNotWritable();
             return ExecuteWrite(
@@ -410,7 +419,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     );
                     if (mail.RecoveryFailureCount >= GalateaDelegationDurableContract.MaximumRecoveryFailures
                         || mail.Body is null
-                        || StrictUtf8.GetByteCount(mail.Body)
+                        || mail.ContentFormat == "legacy-task" && StrictUtf8.GetByteCount(mail.Body)
                             > _limits.MaximumTaskUtf8Bytes) {
                         throw Conflict(
                             "Queued mail must settle its durable preflight failure before start."
@@ -433,6 +442,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             UPDATE outbound_mail
                             SET state = 'Started', operation_id = $operation,
                                 requested_thread_id = $thread,
+                                task_sha256 = $taskSha, task_utf8_bytes = $taskBytes,
                                 revision = revision + 1
                             WHERE dispatch_id = $dispatch
                               AND state = 'Queued'
@@ -440,6 +450,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             """;
                         updateMail.Parameters.AddWithValue("$operation", dispatchId);
                         updateMail.Parameters.AddWithValue("$thread", route.ThreadId);
+                        updateMail.Parameters.AddWithValue("$taskSha", taskCommitment.Sha256);
+                        updateMail.Parameters.AddWithValue("$taskBytes", taskCommitment.Utf8Bytes);
                         updateMail.Parameters.AddWithValue("$dispatch", dispatchId);
                         updateMail.Parameters.AddWithValue("$revision", expectedMailRevision);
                         RequireOne(updateMail.ExecuteNonQuery(), "mail start claim");
@@ -464,6 +476,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         State = GalateaDurableMailState.Started,
                         OperationId = dispatchId,
                         RequestedThreadId = route.ThreadId,
+                        TaskSha256 = taskCommitment.Sha256,
+                        TaskUtf8Bytes = taskCommitment.Utf8Bytes,
                         Revision = checked(mail.Revision + 1)
                     };
                 },
@@ -471,7 +485,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     && string.Equals(
                         snapshot.Route.ActiveDispatchId,
                         dispatchId,
-                        StringComparison.Ordinal)
+                        StringComparison.Ordinal),
+                allowConfirmedCommitRecovery: false
             );
         }
     }
@@ -522,7 +537,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         connection,
                         transaction,
                         _limits,
-                        GalateaDelegationDurableContract.TaskTooLargeNotice
+                        string.Empty
                     );
                     (long sequence, long storeRevision) =
                         AllocateCompletionSequence(connection, transaction);
@@ -586,7 +601,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         );
                         insertNotice.Parameters.AddWithValue(
                             "$body",
-                            GalateaDelegationDurableContract.TaskTooLargeNotice
+                            string.Empty
                         );
                         insertNotice.Parameters.AddWithValue(
                             "$stage",
@@ -603,18 +618,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         insertNotice.ExecuteNonQuery();
                     }
                     _ = storeRevision;
-                    return new GalateaReplyNoticeSnapshot(
-                        dispatchId,
-                        dispatchId,
-                        GalateaReplyNoticeKind.DeliveryFailure,
-                        GalateaDelegationDurableContract.TaskTooLargeNotice,
-                        GalateaDelegationDurableContract.TaskTooLargeStage,
-                        GalateaDelegationDurableContract.TaskTooLargeCode,
-                        sequence,
-                        GalateaReplyNoticeState.Ready,
-                        ConsumedActionAddress: null,
-                        Revision: 0
-                    );
+                    return FinalizeSemanticNotice(connection, transaction, dispatchId);
                 },
                 (snapshot, result) => snapshot.Notices.Contains(result)
                     && snapshot.Mails.Any(value =>
@@ -776,11 +780,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string turnId,
         string stage,
         string code,
-        string noticeBody
+        string? detail = null
     ) {
         RequireFailureToken(stage, nameof(stage));
         RequireFailureToken(code, nameof(code));
-        RequireFailureNoticeBody(noticeBody, nameof(noticeBody));
+        if (detail is not null) { RequireFailureNoticeBody(detail, nameof(detail)); }
         return RecordTerminalMail(
             dispatchId,
             expectedMailRevision,
@@ -788,10 +792,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
             turnId,
             GalateaDurableMailState.TerminalFailed,
             GalateaReplyNoticeKind.DeliveryFailure,
-            noticeBody,
+            string.Empty,
             stage,
             code,
-            finalSha256: null
+            finalSha256: null,
+            detail: detail
         );
     }
 
@@ -915,7 +920,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string noticeBody,
         string? stage,
         string? code,
-        string? finalSha256
+        string? finalSha256,
+        string? detail = null
     ) {
         RequireDispatchId(dispatchId);
         RequireWireIdentity(threadId, nameof(threadId));
@@ -946,6 +952,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     bool exact = currentMail.State == targetState
                         && currentNotice is not null
                         && currentNotice.Kind == noticeKind
+                        && (currentNotice.NoticeFormat != "semantic-notice-v1" || currentNotice.Detail == detail)
                         && string.Equals(currentNotice.Body, noticeBody,
                             StringComparison.Ordinal)
                         && string.Equals(currentNotice.Stage, stage,
@@ -993,6 +1000,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                                     StringComparison.Ordinal)))) {
                         throw Conflict("Terminal mail identity or state conflicts.");
                     }
+                    RequireSettledNoticeCapacity(connection, transaction, _limits, dispatchId, noticeKind, noticeBody, stage, code, detail, threadId, turnId);
                     (long sequence, long storeRevision) =
                         AllocateCompletionSequence(connection, transaction);
                     using (SqliteCommand updateMail = connection.CreateCommand()) {
@@ -1063,18 +1071,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         RequireOne(releaseRoute.ExecuteNonQuery(), "terminal route release");
                     }
                     _ = storeRevision;
-                    return new GalateaReplyNoticeSnapshot(
-                        dispatchId,
-                        dispatchId,
-                        noticeKind,
-                        noticeBody,
-                        stage,
-                        code,
-                        sequence,
-                        GalateaReplyNoticeState.Ready,
-                        ConsumedActionAddress: null,
-                        Revision: 0
-                    );
+                    return FinalizeSemanticNotice(connection, transaction, dispatchId, detail);
                 },
                 (snapshot, result) => snapshot.Notices.Contains(result)
                     && snapshot.Route.ActiveDispatchId is null
@@ -1082,10 +1079,59 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
+    // The persisted inbox byte limit retains its payload meaning: old notice
+    // text, new original reply text, or new failure detail. Provenance has its
+    // own strict field bounds (including 1024-byte thread/turn identities) and
+    // row-count bounds: active notices <= MaximumInboxReplies, all notices <=
+    // retained candidate mails with one notice per dispatch. It cannot consume
+    // the space already promised to an active dispatch's maximum reply. No
+    // rendering or JSON-container overhead participates in this accounting.
+    private static long NoticePayloadBytes(GalateaReplyNoticeSnapshot notice) => checked(
+        (long)StrictUtf8.GetByteCount(notice.Body)
+        + (notice.NoticeFormat == "legacy-text" ? 0 : StrictUtf8.GetByteCount(notice.Detail ?? string.Empty)));
+
+    private static void RequireSettledNoticeCapacity(SqliteConnection connection, SqliteTransaction transaction,
+        GalateaDelegationStoreLimits limits, string dispatchId, GalateaReplyNoticeKind kind, string body,
+        string? stage, string? code, string? detail, string? threadId, string? turnId) {
+        GalateaReplyNoticeSnapshot[] existing = ReadNotices(connection, transaction)
+            .Where(static notice => notice.State is GalateaReplyNoticeState.Ready or GalateaReplyNoticeState.Leased).ToArray();
+        long bytes = existing.Sum(NoticePayloadBytes);
+        var sender = kind == GalateaReplyNoticeKind.Reply
+            ? new GalateaSenderSnapshot("delegate", "codex", "Codex") : new GalateaSenderSnapshot("runtime", "galatea", "Galatea");
+        int newBytes = checked((int)NoticePayloadBytes(new(dispatchId, dispatchId, kind, body, stage, code,
+            1, GalateaReplyNoticeState.Ready, null, 0, "semantic-notice-v1", sender, detail, threadId, turnId)));
+        if (existing.Length >= limits.MaximumInboxReplies || bytes > limits.MaximumInboxUtf8Bytes - newBytes) {
+            throw new GalateaDelegationInboxBackpressureException(existing.Length, bytes, 1, newBytes, limits);
+        }
+    }
+
+    private static GalateaReplyNoticeSnapshot FinalizeSemanticNotice(
+        SqliteConnection connection, SqliteTransaction transaction, string dispatchId, string? detail = null
+    ) {
+        using SqliteCommand update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE reply_notice
+            SET notice_format = 'semantic-notice-v1',
+                sender_kind = CASE kind WHEN 'Reply' THEN 'delegate' ELSE 'runtime' END,
+                sender_id = CASE kind WHEN 'Reply' THEN 'codex' ELSE 'galatea' END,
+                sender_name = CASE kind WHEN 'Reply' THEN 'Codex' ELSE 'Galatea' END,
+                detail = $detail,
+                thread_id = (SELECT COALESCE(accepted_thread_id, requested_thread_id) FROM outbound_mail WHERE dispatch_id = $dispatch),
+                turn_id = (SELECT accepted_turn_id FROM outbound_mail WHERE dispatch_id = $dispatch)
+            WHERE dispatch_id = $dispatch;
+            """;
+        update.Parameters.AddWithValue("$dispatch", dispatchId);
+        update.Parameters.AddWithValue("$detail", (object?)detail ?? DBNull.Value);
+        RequireOne(update.ExecuteNonQuery(), "semantic notice facts");
+        return ReadNotices(connection, transaction).Single(notice => notice.DispatchId == dispatchId);
+    }
+
     private T ExecuteWrite<T>(
         string operation,
         Func<SqliteConnection, SqliteTransaction, T> apply,
-        Func<GalateaDelegationStateSnapshot, T, bool> isPublished
+        Func<GalateaDelegationStateSnapshot, T, bool> isPublished,
+        bool allowConfirmedCommitRecovery = true
     ) {
         ThrowIfNotWritable();
         T result;
@@ -1113,10 +1159,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
             reopened,
             transaction: null
         );
-        if (isPublished(snapshot, result)) { return result; }
+        bool published = isPublished(snapshot, result);
+        if (published && allowConfirmedCommitRecovery) { return result; }
         throw new GalateaDelegationCommitOutcomeException(
             operation,
-            "the exact post-state was absent after reopen",
+            published ? "the Start claim was published but its original commit outcome was uncertain; no external dispatch is allowed"
+                : "the exact post-state was absent after reopen",
             uncertain
         );
     }
@@ -1213,7 +1261,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string sourceActionAddress,
         int ordinal,
         string dispatchId,
-        SendMailIntent intent
+        SendMailIntent intent,
+        string senderName
     ) {
         bool routed = string.Equals(
             intent.Recipient,
@@ -1231,12 +1280,13 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 requested_thread_id, accepted_thread_id,
                 accepted_turn_id, terminal_final_sha256,
                 terminal_stage, terminal_code, recovery_failure_count,
-                recovery_last_code, next_retry_at_ms, revision
+                recovery_last_code, next_retry_at_ms, revision,
+                content_format, sender_name
             ) VALUES (
                 $dispatch, $source, $ordinal, $recipient, $subject,
                 $body, $reply, $evidence, $route, $state,
                 NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                0, NULL, NULL, 0
+                0, NULL, NULL, 0, 'semantic-mail-v1', $senderName
             );
             """;
         command.Parameters.AddWithValue("$dispatch", dispatchId);
@@ -1248,6 +1298,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.Parameters.AddWithValue("$reply", (object?)intent.InReplyToMessageId ?? DBNull.Value);
         command.Parameters.AddWithValue("$evidence", intent.EvidenceQuote);
         command.Parameters.AddWithValue("$route", routed ? "Codex" : "Unrouted");
+        command.Parameters.AddWithValue("$senderName", senderName);
         command.Parameters.AddWithValue("$state", routed ? "Queued" : "Unrouted");
         command.ExecuteNonQuery();
     }
@@ -1273,7 +1324,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             );
             """;
         command.Parameters.AddWithValue("$dispatch", dispatchId);
-        command.Parameters.AddWithValue("$targetUser", target.TargetUserId);
+        command.Parameters.AddWithValue("$targetUser", target.TargetCharacterId);
         command.Parameters.AddWithValue("$targetRepository", target.TargetSessionRepositoryId);
         command.Parameters.AddWithValue("$from", target.FromCharacterName);
         command.Parameters.AddWithValue("$message", messageId);
@@ -1291,7 +1342,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             string dispatchId = result.DispatchIds[ordinal];
             if (!snapshot.InternalMailOutboxes.Any(value =>
                     string.Equals(value.DispatchId, dispatchId, StringComparison.Ordinal)
-                    && string.Equals(value.TargetUserId, target.TargetUserId, StringComparison.Ordinal)
+                    && string.Equals(value.TargetCharacterId, target.TargetCharacterId, StringComparison.Ordinal)
                     && string.Equals(value.TargetSessionRepositoryId, target.TargetSessionRepositoryId, StringComparison.Ordinal)
                     && string.Equals(value.FromCharacterName, target.FromCharacterName, StringComparison.Ordinal))) {
                 return false;
@@ -1438,7 +1489,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaInternalMailTarget target,
         string? messageId
     ) => EstimateInternalMailReservation(recipient, subject, body,
-        target.TargetUserId, target.TargetSessionRepositoryId,
+        target.TargetCharacterId, target.TargetSessionRepositoryId,
         target.FromCharacterName, messageId);
 
     private static long EstimateInternalMailReservation(
@@ -1447,7 +1498,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string body,
         GalateaInternalMailOutboxSnapshot outbox
     ) => EstimateInternalMailReservation(recipient, subject, body,
-        outbox.TargetUserId, outbox.TargetSessionRepositoryId,
+        outbox.TargetCharacterId, outbox.TargetSessionRepositoryId,
         outbox.FromCharacterName, outbox.MessageId);
 
     private static long EstimateInternalMailReservation(
@@ -1459,14 +1510,14 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string fromCharacterName,
         string? messageId
     ) {
-        MailboxMessage envelope = MailboxMessage.FromCanonicalEnvelope(
-            messageId ?? new string('0', 32), fromCharacterName, recipient,
-            subject, body);
         return checked((long)TextExtractorUtf8.GetByteCount(targetUserId)
             + TextExtractorUtf8.GetByteCount(targetSessionRepositoryId)
-            + TextExtractorUtf8.GetByteCount(
-                GalateaMailboxObservationEnvelope.Wrap(envelope))
-            + 128);
+            + TextExtractorUtf8.GetByteCount(fromCharacterName)
+            + TextExtractorUtf8.GetByteCount(recipient)
+            + TextExtractorUtf8.GetByteCount(subject ?? string.Empty)
+            + TextExtractorUtf8.GetByteCount(body)
+            + TextExtractorUtf8.GetByteCount(messageId ?? new string('0', 32))
+            + 256);
     }
 
     private static void RequireInboxReservationCapacity(
@@ -1474,18 +1525,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
         SqliteTransaction transaction,
         GalateaDelegationStoreLimits limits
     ) {
-        using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT COUNT(*), COALESCE(SUM(length(CAST(body AS BLOB))), 0)
-            FROM reply_notice WHERE state IN ('Ready', 'Leased');
-            """;
-        using SqliteDataReader reader = command.ExecuteReader();
-        if (!reader.Read()) {
-            throw Corrupt("Inbox reservation capacity query failed.");
-        }
-        long count = reader.GetInt64(0);
-        long bytes = reader.GetInt64(1);
+        GalateaReplyNoticeSnapshot[] notices = ReadNotices(connection, transaction)
+            .Where(static notice => notice.State is GalateaReplyNoticeState.Ready or GalateaReplyNoticeState.Leased).ToArray();
+        long count = notices.Length;
+        long bytes = notices.Sum(NoticePayloadBytes);
         int reservationBytes = Math.Max(
             limits.MaximumReplyUtf8Bytes,
             PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
@@ -1509,28 +1552,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaDelegationStoreLimits limits,
         string noticeBody
     ) {
-        using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT
-                COUNT(*),
-                COALESCE(SUM(length(CAST(body AS BLOB))), 0),
-                (SELECT COUNT(*) FROM route_binding
-                 WHERE active_dispatch_id IS NOT NULL)
-            FROM reply_notice WHERE state IN ('Ready', 'Leased');
-            """;
-        using SqliteDataReader reader = command.ExecuteReader();
-        if (!reader.Read()) {
-            throw Corrupt("Inbox notice capacity query failed.");
-        }
-        long count = reader.GetInt64(0);
-        long bytes = reader.GetInt64(1);
-        int activeReservations = reader.GetInt32(2);
+        GalateaReplyNoticeSnapshot[] notices = ReadNotices(connection, transaction)
+            .Where(static notice => notice.State is GalateaReplyNoticeState.Ready or GalateaReplyNoticeState.Leased).ToArray();
+        long count = notices.Length;
+        long bytes = notices.Sum(NoticePayloadBytes);
+        GalateaRouteBindingSnapshot route = ReadRoute(connection, transaction);
+        int activeReservations = route.ActiveDispatchId is null ? 0 : 1;
         int noticeBytes = StrictUtf8.GetByteCount(noticeBody);
-        int maximumReplyReservationBytes = Math.Max(
-            limits.MaximumReplyUtf8Bytes,
-            PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
-        );
+        int maximumReplyReservationBytes = Math.Max(limits.MaximumReplyUtf8Bytes,
+            PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes);
         int reservedCount = checked(activeReservations + 1);
         int reservedBytes = checked(
             activeReservations * maximumReplyReservationBytes + noticeBytes
@@ -1551,6 +1581,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaDelegationCaptureRequest request
     ) {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Sender);
         if (!Atelia.SessionJournal.EventAddressTextCodec.TryParse(
                 request.SourceActionAddress, out _)) {
             throw new ArgumentException("sourceActionAddress is not canonical.", nameof(request));
@@ -1582,6 +1613,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
             foreach (GalateaInternalMailTarget? target in request.InternalTargets) {
                 if (target is null) { continue; }
                 ValidateInternalMailTarget(target);
+                if (target.FromCharacterName != request.Sender.Name) {
+                    throw new ArgumentException("Internal mail sender name differs from the capture snapshot.", nameof(request));
+                }
             }
         }
     }
@@ -1607,7 +1641,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaInternalMailTarget target
     ) {
         ArgumentNullException.ThrowIfNull(target);
-        RequireBoundedText(target.TargetUserId, nameof(target.TargetUserId));
+        RequireBoundedText(target.TargetCharacterId, nameof(target.TargetCharacterId));
         RequireBoundedText(
             target.TargetSessionRepositoryId,
             nameof(target.TargetSessionRepositoryId)

@@ -19,9 +19,10 @@ internal sealed class GalateaLiveTurn {
 
     public GalateaLiveTurn(
         string userMessage,
-        GalateaTurnOptions options
+        GalateaTurnOptions options,
+        GalateaSenderSnapshot sender
     ) : this(
-        new GalateaFreshInput.PlayerAction(userMessage),
+        new GalateaFreshInput.PlayerAction(userMessage, sender),
         options
     ) { }
 

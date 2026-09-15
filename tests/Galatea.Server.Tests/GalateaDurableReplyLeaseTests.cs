@@ -1,4 +1,7 @@
 using System.Security.Cryptography;
+using System.Text;
+using Atelia.Galatea.Server.CharacterMemory;
+using Atelia.MemoPod;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
@@ -68,7 +71,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             ),
             value => Assert.Equal(
                 "failure-2",
-                Assert.IsType<PlayerTurnNotice.DeliveryFailure>(value).Body
+                Assert.IsType<PlayerTurnNotice.DeliveryFailure>(value).Detail
             )
         );
 
@@ -86,17 +89,14 @@ public sealed class GalateaDurableReplyLeaseTests {
         );
         Assert.Equal(2, snapshot.ActiveLease!.NoticeIds.Count);
 
-        string rendered = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent rendered = CreateInput(
             new PlayerTurnObservation(
                 "player",
                 ObservationTimestamp,
                 lease.ReadNotices()
             )
         );
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            rendered,
-            out PlayerTurnObservation observation
-        ));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(rendered);
         Assert.Equal("player", observation.PlayerText);
         Assert.Equal(
             ObservationTimestamp,
@@ -142,14 +142,14 @@ public sealed class GalateaDurableReplyLeaseTests {
         for (int index = 0; index < 16; index++) {
             fixture.ProduceReadyReply("reply-" + index);
         }
-        var receipt = new PlayerTurnNotice.NoteSaveReceipt("saved receipt");
+        var receipt = Receipt("saved receipt");
         string discriminator = PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator;
         GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
             fixture.Reconciler.BeginCutoff(discriminator, receipt)).Lease;
         Assert.Equal(15, lease.ReadNotices().Count);
         Assert.Equal("reply-15", Assert.Single(fixture.Store.ReadSnapshot().Notices,
             static notice => notice.State == GalateaReplyNoticeState.Ready).Body);
-        string rendered = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent rendered = CreateInput(
             PlayerTurnObservation.CreateDelegateReply(
                 ObservationTimestamp, [.. lease.ReadNotices(), receipt]));
         _ = lease.BindObservationBase(fixture.Engine, fixture.Engine.ReadCurrentHead()!.Value, rendered);
@@ -167,12 +167,13 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         fixture.ProduceReadyReply(new string('x', PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes));
         fixture.ProduceReadyReply(new string('y', PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes));
-        var receipt = new PlayerTurnNotice.NoteSaveReceipt(
-            new string('r', PlayerTurnObservationEnvelope.MaximumNoteSaveReceiptUtf8Bytes));
+        var receipt = new PlayerTurnNotice.NoteSaveReceipt(new CharacterNoteReceiptSelection(
+            Address(99), Enumerable.Range(1, 4).Select(index => MemoId.Parse($"m1:{index:x8}")).ToArray(),
+            Enumerable.Range(0, 4).Select(index => new string((char)('r' + index), CharacterNoteBounds.MaximumExactTextUtf8Bytes)).ToArray()));
         GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
             fixture.Reconciler.BeginCutoff("player", receipt)).Lease;
         Assert.Single(lease.ReadNotices());
-        Assert.True(PlayerTurnObservationEnvelope.FitsEveryValidPlayerText([
+        Assert.True(GalateaObservationContent.FitsEveryValidPlayerText([
             .. lease.ReadNotices(), receipt]));
         lease.RollbackBeforeEffect();
     }
@@ -186,7 +187,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             "player"
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string rendered = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent rendered = CreateInput(
             new PlayerTurnObservation(
                 "player",
                 ObservationTimestamp,
@@ -207,9 +208,9 @@ public sealed class GalateaDurableReplyLeaseTests {
             lease.BindObservationBase(
                 fixture.Engine,
                 baseHead,
-                rendered + " changed"
+                CreateInput(new PlayerTurnObservation("changed", ObservationTimestamp, lease.ReadNotices()))
             ));
-        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             lease.BindObservationBase(
                 fixture.Engine,
                 baseHead,
@@ -231,7 +232,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         Assert.Equal(GalateaReplyLeaseState.ObservationBound, bound.State);
         Assert.Equal(EventAddressTextCodec.Format(baseHead),
             bound.ExpectedSessionHead);
-        Assert.Equal(rendered, bound.RenderedObservation);
+        Assert.Equal(rendered, bound.BoundInput);
     }
 
     [Fact]
@@ -243,27 +244,27 @@ public sealed class GalateaDurableReplyLeaseTests {
             fixture.Reconciler,
             PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator);
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        var receipt = new PlayerTurnNotice.NoteSaveReceipt("saved\n");
+        var receipt = Receipt("saved\n");
         PlayerTurnObservation enriched = PlayerTurnObservation.CreateDelegateReply(
             ObservationTimestamp, [.. lease.ReadNotices(), receipt],
-            [new PlayerTurnRecall(new RecallEntry(RecallType.MemoExactText, "memo-source"), "memory\n")]);
-        string rendered = PlayerTurnObservationEnvelope.Wrap(enriched);
+            [new PlayerTurnRecall(new RecallEntry(RecallType.MemoExactText, GalateaMemoRecallSourceIdCodec.Format(CharacterNoteDefaultPodV1.PodId, MemoId.Parse("m1:00000001"))), CharacterNoteDefaultPodV1.EmptyStateIdentity, "title", "memory\n")]);
+        SessionInputContent rendered = CreateInput(enriched);
         PlayerTurnObservation changed = enriched.WithNotices([
-            new PlayerTurnNotice.Reply("different"),
-            new PlayerTurnNotice.DeliveryFailure("failure"), receipt]);
+            ChangedReply(lease.ReadNotices()[0], "different"),
+            lease.ReadNotices()[1], receipt]);
         Assert.Throws<GalateaDelegationStoreConflictException>(() => lease.BindObservationBase(
-            fixture.Engine, baseHead, PlayerTurnObservationEnvelope.Wrap(changed)));
+            fixture.Engine, baseHead, CreateInput(changed)));
         PlayerTurnObservation reversed = enriched.WithNotices([
-            new PlayerTurnNotice.DeliveryFailure("failure"),
-            new PlayerTurnNotice.Reply("reply"), receipt]);
+            lease.ReadNotices()[1],
+            lease.ReadNotices()[0], receipt]);
         Assert.Throws<GalateaDelegationStoreConflictException>(() => lease.BindObservationBase(
-            fixture.Engine, baseHead, PlayerTurnObservationEnvelope.Wrap(reversed)));
+            fixture.Engine, baseHead, CreateInput(reversed)));
 
         _ = lease.BindObservationBase(fixture.Engine, baseHead, rendered);
         EventAddress observationAddress = fixture.Engine.AppendObservation(rendered);
         _ = lease.RecordObservationCommitted(observationAddress);
         fixture.ReopenStore();
-        Assert.Equal(rendered, fixture.Store.ReadSnapshot().ActiveLease!.RenderedObservation);
+        Assert.Equal(rendered, fixture.Store.ReadSnapshot().ActiveLease!.BoundInput);
         Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Retained>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine));
         EventAddress terminal = AppendTerminal(fixture.Engine, "terminal");
@@ -284,7 +285,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             marker
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string rendered = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent rendered = CreateInput(
             PlayerTurnObservation.CreateDelegateReply(
                 ObservationTimestamp,
                 lease.ReadNotices()
@@ -298,13 +299,11 @@ public sealed class GalateaDurableReplyLeaseTests {
         );
 
         Assert.Equal(marker, bound.PlayerText);
-        Assert.DoesNotContain("player-action", bound.RenderedObservation,
-            StringComparison.Ordinal);
-        int expectedBytes = GalateaBoundedJson.StrictUtf8.GetByteCount(
-            rendered
-        );
+        Assert.Equal("delegate-reply", bound.BoundInput!.JsonValue.GetProperty("kind").GetString());
+        Assert.Null(bound.RenderedObservation);
+        int expectedBytes = rendered.ToUtf8Json().Length;
         string expectedSha256 = Convert.ToHexString(SHA256.HashData(
-            GalateaBoundedJson.StrictUtf8.GetBytes(rendered)
+            rendered.ToUtf8Json()
         )).ToLowerInvariant();
         Assert.Equal(expectedBytes, bound.ObservationUtf8Bytes);
         Assert.Equal(expectedSha256, bound.ObservationSha256);
@@ -314,7 +313,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             fixture.Store.ReadSnapshot().ActiveLease
         );
         Assert.Equal(marker, reopened.PlayerText);
-        Assert.Equal(rendered, reopened.RenderedObservation);
+        Assert.Equal(rendered, reopened.BoundInput);
         Assert.Equal(expectedBytes, reopened.ObservationUtf8Bytes);
         Assert.Equal(expectedSha256, reopened.ObservationSha256);
         Assert.IsType<GalateaDurableReplyLeaseReconcileResult.RolledBack>(
@@ -334,7 +333,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
         IReadOnlyList<PlayerTurnNotice> notices = lease.ReadNotices();
-        string current = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent current = CreateInput(
             PlayerTurnObservation.CreateDelegateReply(
                 ObservationTimestamp,
                 notices
@@ -345,7 +344,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             baseHead,
             current
         );
-        string historical = PlayerTurnObservationEnvelope.Wrap(
+        string historical = LegacyText(
             new PlayerTurnObservation(
                 marker,
                 ObservationTimestamp,
@@ -380,14 +379,14 @@ public sealed class GalateaDurableReplyLeaseTests {
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
         IReadOnlyList<PlayerTurnNotice> notices = lease.ReadNotices();
-        string current = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent current = CreateInput(
             PlayerTurnObservation.CreateDelegateReply(
                 ObservationTimestamp,
                 notices
             )
         );
         _ = lease.BindObservationBase(fixture.Engine, baseHead, current);
-        string historicalCurrent = PlayerTurnObservationEnvelope.Wrap(
+        string historicalCurrent = LegacyText(
             new PlayerTurnObservation(
                 marker,
                 ObservationTimestamp,
@@ -419,7 +418,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             marker
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string historical = PlayerTurnObservationEnvelope.Wrap(
+        string historical = LegacyText(
             new PlayerTurnObservation(
                 marker,
                 ObservationTimestamp,
@@ -427,7 +426,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             )
         );
 
-        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             lease.BindObservationBase(
                 fixture.Engine,
                 baseHead,
@@ -449,7 +448,7 @@ public sealed class GalateaDurableReplyLeaseTests {
                 .DelegateReplyLeasePlayerTextDiscriminator
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string rendered = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent rendered = CreateInput(
             PlayerTurnObservation.CreateDelegateReply(
                 ObservationTimestamp,
                 lease.ReadNotices()
@@ -485,7 +484,7 @@ public sealed class GalateaDurableReplyLeaseTests {
                 "player"
             );
             EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-            string reply = PlayerTurnObservationEnvelope.Wrap(
+            SessionInputContent reply = CreateInput(
                 PlayerTurnObservation.CreateDelegateReply(
                     ObservationTimestamp,
                     lease.ReadNotices()
@@ -507,7 +506,7 @@ public sealed class GalateaDurableReplyLeaseTests {
                     .DelegateReplyLeasePlayerTextDiscriminator
             );
             EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-            string heartbeat = PlayerTurnObservationEnvelope.Wrap(
+            SessionInputContent heartbeat = CreateInput(
                 PlayerTurnObservation.CreateHeartbeatActivation(
                     ObservationTimestamp,
                     new GalateaCharacterName("Galatea")
@@ -533,7 +532,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         );
         IReadOnlyList<PlayerTurnNotice> notices = lease.ReadNotices();
         var options = new GalateaTurnOptions("test");
-        var player = new GalateaFreshInput.PlayerAction("player", notices);
+        var player = new GalateaFreshInput.PlayerAction("player", GalateaDelegateTestConfiguration.PlayerSender, notices);
         var reply = new GalateaFreshInput.DelegateReply(notices);
         var heartbeat = new GalateaFreshInput.HeartbeatActivation(
             new GalateaCharacterName("Galatea")
@@ -594,7 +593,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
         EventAddress observation = fixture.Engine.AppendObservation(
-            bound.RenderedObservation
+            bound.Input
         );
 
         var retained = Assert.IsType<
@@ -634,7 +633,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
         string legacy = ToHistoricalObservation(
-            bound.RenderedObservation,
+            bound.Input,
             useLegacyHeadings: true
         );
         ReplaceRenderedObservation(fixture.DatabasePath, legacy);
@@ -657,7 +656,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
         string timestampedLegacy = ToLegacyHeadings(
-            bound.RenderedObservation
+            bound.Input
         );
         ReplaceRenderedObservation(
             fixture.DatabasePath,
@@ -672,7 +671,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
         string historical = ToHistoricalObservation(
-            bound.RenderedObservation,
+            bound.Input,
             useLegacyHeadings: false
         );
         ReplaceRenderedObservation(fixture.DatabasePath, historical);
@@ -700,7 +699,7 @@ public sealed class GalateaDurableReplyLeaseTests {
     public void ReconcileBound_TerminalRecordsAndConsumes() {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
-        _ = fixture.Engine.AppendObservation(bound.RenderedObservation);
+        _ = fixture.Engine.AppendObservation(bound.Input);
         EventAddress action = AppendTerminal(fixture.Engine, "terminal");
 
         var consumed = Assert.IsType<
@@ -721,7 +720,7 @@ public sealed class GalateaDurableReplyLeaseTests {
     public void ReconcileCommitted_TerminalConsumesAfterPriorRetention() {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
-        _ = fixture.Engine.AppendObservation(bound.RenderedObservation);
+        _ = fixture.Engine.AppendObservation(bound.Input);
         Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Retained>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
         );
@@ -741,7 +740,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
         EventAddress observation = fixture.Engine.AppendObservation(
-            bound.RenderedObservation
+            bound.Input
         );
         Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Retained>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
@@ -768,7 +767,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
         EventAddress observation = fixture.Engine.AppendObservation(
-            bound.RenderedObservation
+            bound.Input
         );
         Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Retained>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
@@ -778,7 +777,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             bound.BaseHead
         ));
         _ = fixture.Engine.AppendObservation(
-            bound.RenderedObservation + " fork"
+            CreateInput(new PlayerTurnObservation("fork", ObservationTimestamp, GalateaObservationContent.ReadPlayerTurn(bound.Input).Notices))
         );
 
         var quarantined = Assert.IsType<
@@ -857,6 +856,42 @@ public sealed class GalateaDurableReplyLeaseTests {
         _ = bound;
     }
 
+    private static SessionInputContent CreateInput(PlayerTurnObservation observation) {
+        GalateaFreshInput fresh = observation.TriggerKind switch {
+            PlayerTurnObservationTriggerKind.PlayerAction => new GalateaFreshInput.PlayerAction(
+                observation.PlayerText, GalateaDelegateTestConfiguration.PlayerSender, observation.Notices),
+            PlayerTurnObservationTriggerKind.DelegateReply => new GalateaFreshInput.DelegateReply(observation.Notices),
+            PlayerTurnObservationTriggerKind.HeartbeatActivation => new GalateaFreshInput.HeartbeatActivation(observation.HeartbeatCharacterName),
+            _ => throw new InvalidOperationException("Unexpected fixture input kind.")
+        };
+        return GalateaObservationContent.Create(fresh, observation.ExternalLocalTimestamp!.Value,
+            new GalateaSenderSnapshot("character", "user", "Galatea"), observation.Notices, observation.Recalls);
+    }
+
+    private static PlayerTurnNotice.NoteSaveReceipt Receipt(string text) => new(new CharacterNoteReceiptSelection(
+        Address(99), [MemoId.Parse("m1:00000001")], [text]));
+
+    private static PlayerTurnNotice.Reply ChangedReply(PlayerTurnNotice notice, string text) {
+        var reply = Assert.IsType<PlayerTurnNotice.Reply>(notice);
+        return new(text, reply.Sender!, reply.DispatchId!, reply.ThreadId, reply.TurnId, reply.NoticeId);
+    }
+
+    // Historical cases intentionally recreate the old text dialect and old
+    // notice rows. Normal new bindings above always use structured content.
+    private static string LegacyText(PlayerTurnObservation observation) {
+        PlayerTurnNotice[] notices = observation.Notices.Select(notice => notice switch {
+            PlayerTurnNotice.Reply reply => (PlayerTurnNotice)new PlayerTurnNotice.Reply(reply.Body),
+            PlayerTurnNotice.DeliveryFailure failure => new PlayerTurnNotice.DeliveryFailure(failure.Detail ?? failure.Body),
+            _ => throw new InvalidOperationException("Unexpected historical fixture notice.")
+        }).ToArray();
+        return PlayerTurnObservationEnvelope.Wrap(observation.WithNotices(notices));
+    }
+
+    private static string ToHistoricalObservation(SessionInputContent input, bool useLegacyHeadings) =>
+        ToHistoricalObservation(LegacyText(GalateaObservationContent.ReadPlayerTurn(input)), useLegacyHeadings);
+    private static string ToLegacyHeadings(SessionInputContent input) =>
+        ToLegacyHeadings(LegacyText(GalateaObservationContent.ReadPlayerTurn(input)));
+
     private static BoundLease CreateBoundLease(Fixture fixture) {
         fixture.ProduceReadyReply("reply");
         GalateaDurableReplyLease lease = BeginCreated(
@@ -864,7 +899,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             "player"
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string rendered = PlayerTurnObservationEnvelope.Wrap(
+        SessionInputContent rendered = CreateInput(
             new PlayerTurnObservation(
                 "player",
                 ObservationTimestamp,
@@ -964,7 +999,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             UPDATE reply_lease
-            SET rendered_observation = $rendered,
+            SET rendered_observation = $rendered, bound_input = NULL,
                 observation_utf8_bytes = $bytes,
                 observation_sha256 = $sha256;
             """;
@@ -980,6 +1015,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             )).ToLowerInvariant()
         );
         Assert.Equal(1, command.ExecuteNonQuery());
+        ExecuteSql(databasePath, "UPDATE reply_notice SET notice_format='legacy-text', sender_kind=NULL, sender_id=NULL, sender_name=NULL, detail=NULL, thread_id=NULL, turn_id=NULL;");
     }
 
     private static long ExecuteScalarLong(string databasePath, string sql) {
@@ -999,7 +1035,7 @@ public sealed class GalateaDurableReplyLeaseTests {
     private sealed record BoundLease(
         GalateaDurableReplyLease Lease,
         EventAddress BaseHead,
-        string RenderedObservation
+        SessionInputContent Input
     );
 
     private sealed class Fixture : IDisposable {
@@ -1103,7 +1139,7 @@ public sealed class GalateaDurableReplyLeaseTests {
                         InReplyToMessageId: null,
                         EvidenceQuote: "evidence"
                     )]
-                ));
+                , GalateaDelegationTestInputs.Sender(Store, "Galatea")));
             GalateaDelegationStateSnapshot snapshot = Store.ReadSnapshot();
             if (snapshot.Route.State == GalateaDelegationRouteState.Unbound) {
                 GalateaRouteBindingSnapshot binding =
@@ -1132,7 +1168,7 @@ public sealed class GalateaDurableReplyLeaseTests {
                 dispatchId,
                 mail.Revision,
                 snapshot.Route.Revision
-            );
+            , GalateaDelegationTestInputs.Commitment(Store, dispatchId));
             if (failure) {
                 _ = Store.RecordFailedMail(
                     dispatchId,

@@ -36,7 +36,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         CharacterMemoryStoreTestHooks hooks
     ) {
         long version = ReadPragmaInteger(connection, "user_version");
-        if (version is 2 or SchemaVersion) { return; }
+        if (version is 2 or 3 or SchemaVersion) { return; }
         if (version != PreviousSchemaVersion) {
             throw Corrupt(
                 $"Character Memory schema version '{version}' is unsupported."
@@ -323,7 +323,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()
             || reader.GetInt32(0) != PreviousSchemaVersion
-            || !string.Equals(reader.GetString(1), expectedOwner.UserId, StringComparison.Ordinal)
+            || !string.Equals(reader.GetString(1), expectedOwner.CharacterId, StringComparison.Ordinal)
             || !string.Equals(reader.GetString(2), expectedOwner.SessionRepositoryId, StringComparison.Ordinal)) {
             throw Corrupt("Character Memory V1 owner identity does not match.");
         }
@@ -433,7 +433,7 @@ internal sealed partial class CharacterMemorySqliteStore {
             HashAlgorithmName.SHA256
         );
         AppendCommitmentPart(hash, V1AuthorityDigestVersion);
-        AppendCommitmentPart(hash, owner.UserId);
+        AppendCommitmentPart(hash, owner.CharacterId);
         AppendCommitmentPart(hash, owner.SessionRepositoryId);
         AppendCommitmentPart(
             hash,

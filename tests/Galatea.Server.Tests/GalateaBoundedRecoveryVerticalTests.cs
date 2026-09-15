@@ -38,8 +38,13 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
         GalateaReplyNoticeSnapshot failed = Assert.Single(afterA.Notices);
         Assert.Equal(GalateaReplyNoticeKind.DeliveryFailure, failed.Kind);
         Assert.Equal("RESULT_UNCONFIRMED", failed.Code);
-        Assert.Contains("结果", failed.Body, StringComparison.Ordinal);
-        Assert.Contains("可能", failed.Body, StringComparison.Ordinal);
+        Assert.Equal("local-recovery", failed.Stage);
+        Assert.Equal("semantic-notice-v1", failed.NoticeFormat);
+        Assert.Empty(failed.Body);
+        PlayerTurnNotice.DeliveryFailure uncertainNotice = Assert.IsType<PlayerTurnNotice.DeliveryFailure>(
+            GalateaDurableNoticeContent.Project(failed));
+        Assert.Equal("RESULT_UNCONFIRMED", uncertainNotice.Code);
+        Assert.Equal(afterA.Mails[0].DispatchId, uncertainNotice.DispatchId);
         // One uncertain start plus seven failed inspections exhaust the eight-failure budget.
         Assert.Equal(7, ReadFrames(sidecar.InputPath, "inspect-dispatch").Length);
 
@@ -113,7 +118,7 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
         : [];
 
     private static string SidecarScript(bool cold) => $$"""
-        printf '%s\n' '{"v":5,"type":"ready"}'
+        printf '%s\n' '{"v":6,"type":"ready"}'
         bindings=0
         if [ -f {{GalateaSidecarProcessFixture.ShellQuote("COUNT")}} ]; then
           bindings=$(cat {{GalateaSidecarProcessFixture.ShellQuote("COUNT")}})
@@ -128,21 +133,21 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
               bindings=$((bindings + 1))
               printf '%s' "$bindings" > {{GalateaSidecarProcessFixture.ShellQuote("COUNT")}}
               binding_id=$(printf '%s' "$line" | sed -n 's/.*"bindingOperationId":"\([^"]*\)".*/\1/p')
-              printf '{"v":5,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-%s"}\n' "$request_id" "$binding_id" "$bindings"
+              printf '{"v":6,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-%s"}\n' "$request_id" "$binding_id" "$bindings"
               ;;
             *'"type":"start-turn"'*)
               if [ "$thread_id" = thread-1 ]; then
-                printf '{"v":5,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"%s","threadId":"%s","code":"{{(cold ? "THREAD_NOT_FOUND" : "START_OUTCOME_UNKNOWN")}}","dispatchState":"{{(cold ? "not-dispatched" : "may-have-dispatched")}}"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":6,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"%s","threadId":"%s","code":"{{(cold ? "THREAD_NOT_FOUND" : "START_OUTCOME_UNKNOWN")}}","dispatchState":"{{(cold ? "not-dispatched" : "may-have-dispatched")}}"}\n' "$request_id" "$dispatch_id" "$thread_id"
               else
                 printf '%s\n' "$dispatch_id" >> {{GalateaSidecarProcessFixture.ShellQuote("ENV")}}
-                printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-2"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-2"}\n' "$request_id" "$dispatch_id" "$thread_id"
               fi
               ;;
             *'"type":"inspect-dispatch"'*)
               if [ "$thread_id" = thread-1 ]; then
-                printf '{"v":5,"type":"failed","stage":"inspect-dispatch","requestId":"%s","dispatchId":"%s","threadId":"%s","code":"INSPECTION_UNAVAILABLE"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":6,"type":"failed","stage":"inspect-dispatch","requestId":"%s","dispatchId":"%s","threadId":"%s","code":"INSPECTION_UNAVAILABLE"}\n' "$request_id" "$dispatch_id" "$thread_id"
               else
-                printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"completed","turnId":"turn-2","final":"B completed","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"completed","turnId":"turn-2","final":"B completed","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
               fi
               ;;
           esac
@@ -166,7 +171,8 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
                     EventAddressTextCodec.FormatNullable(Engine.ReadCurrentHead())), _limits);
             Store.CaptureActionBatch(new("ej1:00000000000010010000000100000000",
                 new string('a', 64), 12, "extractor-contract-v1",
-                bodies.Select(body => new SendMailIntent("Codex", null, body, null, "evidence")).ToArray()));
+                bodies.Select(body => new SendMailIntent("Codex", null, body, null, "evidence")).ToArray(),
+                GalateaDelegationTestInputs.Sender(Store, "Galatea")));
         }
 
         internal SessionJournalEngine Engine { get; }
@@ -186,10 +192,11 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
             Assert.Collection(lease.ReadNotices(),
                 notice => Assert.IsType<PlayerTurnNotice.DeliveryFailure>(notice),
                 notice => Assert.IsType<PlayerTurnNotice.Reply>(notice));
-            string rendered = PlayerTurnObservationEnvelope.Wrap(PlayerTurnObservation.CreateDelegateReply(
-                DateTimeOffset.UnixEpoch, lease.ReadNotices()));
-            lease.BindObservationBase(Engine, Engine.ReadCurrentHead()!.Value, rendered);
-            lease.RecordObservationCommitted(Engine.AppendObservation(rendered));
+            SessionInputContent content = GalateaObservationContent.Create(
+                new GalateaFreshInput.DelegateReply(lease.ReadNotices()), DateTimeOffset.UnixEpoch,
+                GalateaDelegationTestInputs.Sender(Store, "Galatea"));
+            lease.BindObservationBase(Engine, Engine.ReadCurrentHead()!.Value, content);
+            lease.RecordObservationCommitted(Engine.AppendObservation(content));
             Reopen();
             reconciler = new(Store);
             Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Retained>(reconciler.ReconcileActiveLease(Engine));

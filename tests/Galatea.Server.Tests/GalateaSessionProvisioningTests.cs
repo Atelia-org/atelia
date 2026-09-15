@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Galatea.Prompts;
@@ -95,12 +96,12 @@ public sealed class GalateaSessionProvisioningTests {
         GalateaConfig loadedConfig = GalateaConfigLoader.Load(host.ConfigPath);
         Assert.Equal(
             selected.Id,
-            Assert.Single(loadedConfig.Users).DefaultConnectionId
+            Assert.Single(loadedConfig.Characters).DefaultConnectionId
         );
 
         using var ready = new CountdownEvent(16);
         using var start = new ManualResetEventSlim(false);
-        Task<UserSessionHost>[] requests = [
+        Task<CharacterSessionHost>[] requests = [
             .. Enumerable.Range(0, 16).Select(_ => Task.Run(async () => {
                 ready.Signal();
                 start.Wait();
@@ -113,9 +114,9 @@ public sealed class GalateaSessionProvisioningTests {
         bool allReady = ready.Wait(TimeSpan.FromSeconds(15));
         start.Set();
         Assert.True(allReady);
-        UserSessionHost[] sessions = await Task.WhenAll(requests);
+        CharacterSessionHost[] sessions = await Task.WhenAll(requests);
 
-        UserSessionHost session = sessions[0];
+        CharacterSessionHost session = sessions[0];
         Assert.All(sessions, value => Assert.Same(session, value));
         Assert.True(Directory.Exists(host.SessionDirectory));
         AssertFirstTurnReadyRepository(session.Engine);
@@ -132,10 +133,8 @@ public sealed class GalateaSessionProvisioningTests {
             selected.CompletionSurfaceId,
             governing.RuntimeConfig.CompletionSurfaceId
         );
-        Assert.Equal(
-            ExpectedSystemPrompt("resolved ${characterName} prompt"),
-            governing.SystemPrompt
-        );
+        AssertSystemInstructions(governing.SystemPrompt, session.Character,
+            "resolved ${characterName} prompt");
 
         SessionCurrentLineageSnapshot lineage =
             session.Engine.ReadCurrentLineageHeaders();
@@ -176,14 +175,13 @@ public sealed class GalateaSessionProvisioningTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
         GalateaRecapGridTargetExpectation expected =
-            GalateaRecapGridTargetExpectation.ForNames(
-                new GalateaCharacterName(CharacterName),
-                new GalateaPlayerName(PlayerName)
+            GalateaRecapGridTargetExpectation.ForCharacter(
+                new GalateaCharacterName(CharacterName)
             );
         Assert.Equal(expected.TargetDigest, session.TargetExpectation.TargetDigest);
 
@@ -341,7 +339,7 @@ public sealed class GalateaSessionProvisioningTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -400,7 +398,7 @@ public sealed class GalateaSessionProvisioningTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -456,7 +454,7 @@ public sealed class GalateaSessionProvisioningTests {
                    ))) {
         }
 
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -563,7 +561,7 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.False(Directory.Exists(stagingB));
         Assert.True(Directory.Exists(hostA.SessionDirectory));
 
-        UserSessionHost winningSession = winner.Session!;
+        CharacterSessionHost winningSession = winner.Session!;
         AssertFirstTurnReadyRepository(winningSession.Engine);
         SessionExecutionBoundaryInspection boundary =
             winningSession.Engine.InspectExecutionBoundary();
@@ -586,22 +584,21 @@ public sealed class GalateaSessionProvisioningTests {
         var expectedWinnerSetup = winnerIsA
             ? (
                 "model-a",
-                "surface-a",
-                ExpectedSystemPrompt("prompt-a ${characterName}")
+                "surface-a"
             )
             : (
                 "model-b",
-                "surface-b",
-                ExpectedSystemPrompt("prompt-b ${characterName}")
+                "surface-b"
             );
         Assert.Equal(
             expectedWinnerSetup,
             (
                 winnerSetup.RuntimeConfig.ModelId,
-                winnerSetup.RuntimeConfig.CompletionSurfaceId,
-                winnerSetup.SystemPrompt
+                winnerSetup.RuntimeConfig.CompletionSurfaceId
             )
         );
+        AssertSystemInstructions(winnerSetup.SystemPrompt, winningSession.Character,
+            winnerIsA ? "prompt-a ${characterName}" : "prompt-b ${characterName}");
         GalateaHostService winnerService = winnerIsA
             ? serviceA
             : serviceB;
@@ -625,7 +622,7 @@ public sealed class GalateaSessionProvisioningTests {
             attempts[0]
         ) ? serviceA : serviceB;
         await winningSession.DisposeAsync();
-        UserSessionHost reopened = await loserService.GetSessionAsync(
+        CharacterSessionHost reopened = await loserService.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -662,7 +659,7 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.False(File.Exists(host.SessionDirectory));
 
         service.SessionProvisioningHooksForTest = null;
-        UserSessionHost retry = await service.GetSessionAsync(
+        CharacterSessionHost retry = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -713,7 +710,7 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.Equal(0, factory.CreateCallCount);
 
         service.SessionProvisioningHooksForTest = null;
-        UserSessionHost retry = await service.GetSessionAsync(
+        CharacterSessionHost retry = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -814,7 +811,7 @@ public sealed class GalateaSessionProvisioningTests {
         await using var host = GalateaTestHost.CreateMissingSession(
             new CountingCompletionClientFactory(),
             DisabledGalateaUserMessageNormalizer.Instance,
-            agentControlProfile: GalateaTestHost.CreateGalateaV6Profile(
+            agentControlProfile: GalateaTestHost.CreateGalateaV7Profile(
                 permissions,
                 $"missing-{(int)missingPermission}"
             )
@@ -892,10 +889,11 @@ public sealed class GalateaSessionProvisioningTests {
             },
             new CompletionConnectionsFileConfig(
                 config.Connections,
-                Assert.Single(config.Users).DefaultConnectionId
+                Assert.Single(config.Characters).DefaultConnectionId
             ),
             factory,
-            config.RecapGrid!.AgentControlProfiles
+            config.RecapGrid!.AgentControlProfiles,
+            inputProjector: GalateaInputProjector.Instance
         );
         var composition = new GalateaRecapGridComposition(
             completion,
@@ -906,7 +904,7 @@ public sealed class GalateaSessionProvisioningTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             composition
         );
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -916,7 +914,8 @@ public sealed class GalateaSessionProvisioningTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 $"ordinary turn {index}",
-                new GalateaTurnOptions("test")
+                new GalateaTurnOptions("test"),
+                GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                 session,
@@ -958,7 +957,7 @@ public sealed class GalateaSessionProvisioningTests {
             DisabledGalateaUserMessageNormalizer.Instance
         );
         GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
-        RecapGridControlRegistrationBundle bundle = CreateGalateaV6Bundle();
+        RecapGridControlRegistrationBundle bundle = CreateGalateaV7Bundle();
         int routeLoads = 0;
         RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
             () => {
@@ -976,7 +975,8 @@ public sealed class GalateaSessionProvisioningTests {
             },
             new CompletionConnectionsFileConfig(config.Connections, "test"),
             factory,
-            config.RecapGrid!.AgentControlProfiles
+            config.RecapGrid!.AgentControlProfiles,
+            inputProjector: GalateaInputProjector.Instance
         );
         var composition = new GalateaRecapGridComposition(
             completion,
@@ -987,7 +987,7 @@ public sealed class GalateaSessionProvisioningTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             composition
         );
-        UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
         AssertFirstTurnReadyRepository(session.Engine);
         Assert.Equal(0, factory.CreateCallCount);
 
@@ -995,7 +995,8 @@ public sealed class GalateaSessionProvisioningTests {
         // Do not replace the provisioned Cadence, Timeline, Control, or Store.
         for (int index = 1; index <= 4; index++) {
             GalateaLiveTurn turn = service.StartTurn(
-                session, $"clue {index}", new GalateaTurnOptions("test"));
+                session, $"clue {index}", new GalateaTurnOptions("test"),
+                GalateaDelegateTestConfiguration.PlayerSender);
             await service.RunTurnAsync(session, turn, CancellationToken.None);
             service.FinishTurn(session, turn);
             Assert.Equal("completed", turn.Status);
@@ -1017,7 +1018,7 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
-    public async Task ExistingRawOnly_FirstFreshReconcilesRenderedPromptOnceAndProviderUsesIt() {
+    public async Task ExistingRawOnly_FirstFreshReconcilesSemanticSetupOnceAndProjectsForProvider() {
         if (!OperatingSystem.IsLinux()) { return; }
         var factory = new TwoTurnCompletionFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
@@ -1041,8 +1042,7 @@ public sealed class GalateaSessionProvisioningTests {
                    ),
                    profile.Admission,
                    new GalateaRecapGridAssetParameters(
-                       new GalateaCharacterName("Galatea"),
-                       new GalateaPlayerName("刘世超")
+                       new GalateaCharacterName("Galatea")
                    )
                )) {
             originalHead = Assert.IsType<Atelia.EventJournal.EventAddress>(
@@ -1052,7 +1052,7 @@ public sealed class GalateaSessionProvisioningTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1067,7 +1067,8 @@ public sealed class GalateaSessionProvisioningTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 $"ordinary turn {index}",
-                new GalateaTurnOptions("test")
+                new GalateaTurnOptions("test"),
+                GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                 session,
@@ -1081,18 +1082,16 @@ public sealed class GalateaSessionProvisioningTests {
 
         Assert.Equal(
             [
-                ExpectedSystemPrompt("current ${characterName} prompt"),
-                ExpectedSystemPrompt("current ${characterName} prompt")
+                GalateaInputProjector.Instance.Project(session.Character.SystemPrompt),
+                GalateaInputProjector.Instance.Project(session.Character.SystemPrompt)
             ],
             factory.Client.MainSystemPrompts
         );
         var finalHead = Assert.IsType<Atelia.EventJournal.EventAddress>(
             session.Engine.ReadCurrentHead()
         );
-        Assert.Equal(
-            ExpectedSystemPrompt("current ${characterName} prompt"),
-            session.Engine.ResolveGoverningSetup(finalHead).SystemPrompt
-        );
+        AssertSystemInstructions(session.Engine.ResolveGoverningSetup(finalHead).SystemPrompt,
+            session.Character, "current ${characterName} prompt");
     }
 
     [Fact]
@@ -1110,7 +1109,7 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.False(Directory.Exists(host.SessionDirectory));
 
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/v1/recent-turns"
+            "/api/v1/characters/alice/recent-turns"
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         RecentTurnsResponseDto? recent = await response.Content
@@ -1222,7 +1221,7 @@ public sealed class GalateaSessionProvisioningTests {
         RecapGridControlSnapshot controlSnapshot = Assert.IsType<
             RecapGridControlSnapshotResult.Available
         >(control.Reader.ReadSnapshot()).Snapshot;
-        RecapGridControlRegistrationBundle bundle = CreateGalateaV6Bundle();
+        RecapGridControlRegistrationBundle bundle = CreateGalateaV7Bundle();
         GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
             timelineHead.TimelineId,
             bootstrapThroughRowId: null,
@@ -1284,12 +1283,11 @@ public sealed class GalateaSessionProvisioningTests {
         );
     }
 
-    private static RecapGridControlRegistrationBundle CreateGalateaV6Bundle() {
+    private static RecapGridControlRegistrationBundle CreateGalateaV7Bundle() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("刘世超")
+                new GalateaCharacterName("Galatea")
             ),
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -1302,17 +1300,21 @@ public sealed class GalateaSessionProvisioningTests {
         static entry => entry.Kind == SessionEventKind.SystemPromptSetup
     );
 
-    private static string ExpectedSystemPrompt(
-        string characterContextTemplate
-    ) => GalateaSystemPromptComposer.Compose(
-        characterContextTemplate,
-        new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("刘世超"),
-        false,
-        false,
-        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-        homeDir: "/galatea-homes/test"
-    );
+    private static void AssertSystemInstructions(
+        SessionInputContent content,
+        GalateaCharacterConfig character,
+        string characterContextSource
+    ) {
+        Assert.Equal(character.SystemPrompt, content);
+        Assert.Equal(GalateaSystemInstructionContent.SchemaId, content.SchemaId);
+        JsonElement context = Assert.Single(content.JsonValue.GetProperty("instructions")
+            .EnumerateArray(), value => value.GetProperty("kind").GetString() == "character-context");
+        Assert.Equal(characterContextSource, context.GetProperty("source").GetString());
+        JsonElement bindings = content.JsonValue.GetProperty("bindings");
+        Assert.Equal(character.CharacterId, bindings.GetProperty("character").GetProperty("id").GetString());
+        Assert.Equal(character.HomeDir, bindings.GetProperty("homeDir").GetString());
+        Assert.False(bindings.TryGetProperty("player", out _));
+    }
 
     private sealed class CountingCompletionClientFactory
         : ICompletionClientFactory {
@@ -1408,7 +1410,7 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     private static async Task<SessionAttempt> ObserveAsync(
-        Func<Task<UserSessionHost>> action
+        Func<Task<CharacterSessionHost>> action
     ) {
         try {
             return new SessionAttempt(await action(), Error: null);
@@ -1419,7 +1421,7 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     private sealed record SessionAttempt(
-        UserSessionHost? Session,
+        CharacterSessionHost? Session,
         Exception? Error
     );
 

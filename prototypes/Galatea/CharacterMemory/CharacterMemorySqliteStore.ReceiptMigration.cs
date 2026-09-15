@@ -10,7 +10,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         CharacterMemoryStoreTestHooks hooks
     ) {
         long version = ReadPragmaInteger(connection, "user_version");
-        if (version == SchemaVersion) { return; }
+        if (version is 3 or SchemaVersion) { return; }
         if (version != 2) { throw Corrupt("Character Memory schema is not V2 or V3."); }
         const string operation = "migrate-character-memory-v2-to-v3";
         _ = ValidateOpenedDatabase(connection, owner, expectedVersion: 2);
@@ -51,7 +51,7 @@ internal sealed partial class CharacterMemorySqliteStore {
             }
             // Deliberately empty: an old Applied capture does not prove that
             // its old process-local notification is still pending.
-            CreateReceiptDeliverySchema(connection, transaction);
+            CreateReceiptDeliverySchema(connection, transaction, version: 3);
             hooks.BeforeCommit?.Invoke(operation);
             try {
                 transaction.Commit();
@@ -62,7 +62,7 @@ internal sealed partial class CharacterMemorySqliteStore {
             }
         }
         try {
-            _ = ValidateOpenedDatabase(connection, owner);
+            _ = ValidateOpenedDatabase(connection, owner, expectedVersion: 3);
             if (preflight != ReadPreReceiptAuthorityDigest(connection)) {
                 throw Corrupt("Character Memory V3 migration changed existing authority.");
             }

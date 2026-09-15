@@ -10,6 +10,26 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 /// the same transaction that durably settles a newly Applied capture.
 /// </summary>
 internal sealed class CharacterNoteSaveReceipt {
+    internal static PlayerTurnNotice.NoteSaveReceipt SelectForObservation(
+        CharacterNoteReceiptDeliverySnapshot receipt,
+        Func<PlayerTurnNotice.NoteSaveReceipt, bool>? fits = null
+    ) {
+        ArgumentNullException.ThrowIfNull(receipt);
+        if (receipt.Facts is not { } facts) {
+            var legacy = PlayerTurnNotice.NoteSaveReceipt.FromLegacyDurable(receipt.NoticeBody
+                ?? throw new InvalidDataException("Legacy receipt has no frozen body."), receipt.SourceActionAddress);
+            if (fits is not null && !fits(legacy)) { throw new InvalidDataException("Legacy receipt does not fit the selected content plan."); }
+            return legacy;
+        }
+        foreach (bool full in new[] { true, false }) {
+            var selection = new CharacterNoteReceiptSelection(facts, full);
+            var candidate = new PlayerTurnNotice.NoteSaveReceipt(selection);
+            if (GalateaBoundedJson.StrictUtf8.GetByteCount(selection.ToJson().GetRawText())
+                    <= PlayerTurnObservationEnvelope.MaximumNoteSaveReceiptUtf8Bytes
+                && (fits is null || fits(candidate))) { return candidate; }
+        }
+        throw new InvalidDataException("Saved Note identities do not fit the selected content plan.");
+    }
     private static readonly PlayerTurnNotice.Reply MaximumRenderedReply = new(
         new string('~', PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes)
     );

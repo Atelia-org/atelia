@@ -467,8 +467,8 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
                CharacterMemorySqliteStore.OpenExisting(
                    fixture.Path,
                    Owner()
-               )) {
-            Assert.Equal(3, ReadUserVersion(fixture.DatabasePath));
+               , upgradeLegacyFormat: true)) {
+            Assert.Equal(4, ReadUserVersion(fixture.DatabasePath));
             CharacterMemoryStatusSnapshot status = store.ReadStatusSnapshot();
             Assert.Equal(8, status.StoreRevision);
             Assert.Equal(Address(63), status.ActiveSourceAction);
@@ -483,7 +483,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
         }
 
         using CharacterMemorySqliteStore reopened =
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner());
+            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true);
         Assert.Equal(CharacterMemoryDerivedInfoState.Pending,
             reopened.ReadNextDerivedInfoWork()!.State);
     }
@@ -493,7 +493,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
         using var fixture = V1Store.Create(valid: false);
 
         Assert.Throws<InvalidDataException>(() =>
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner()));
+            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true));
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
     }
@@ -516,9 +516,9 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
                 fixture.Path,
                 Owner(),
                 hooks
-            );
+            , upgradeLegacyFormat: true);
         Assert.Equal(1, fired);
-        Assert.Equal(3, ReadUserVersion(fixture.DatabasePath));
+        Assert.Equal(4, ReadUserVersion(fixture.DatabasePath));
         Assert.NotNull(store.ReadDerivedInfoWorkExact(Address(60)));
     }
 
@@ -540,14 +540,14 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
                 fixture.Path,
                 Owner(),
                 hooks
-            ));
+            , upgradeLegacyFormat: true));
         Assert.Equal(1, fired);
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
 
         using CharacterMemorySqliteStore migrated =
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner());
-        Assert.Equal(3, ReadUserVersion(fixture.DatabasePath));
+            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true);
+        Assert.Equal(4, ReadUserVersion(fixture.DatabasePath));
         Assert.NotNull(migrated.ReadDerivedInfoWorkExact(Address(60)));
     }
 
@@ -568,7 +568,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             """);
 
         Assert.Throws<InvalidDataException>(() =>
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner()));
+            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true));
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
     }
@@ -596,7 +596,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
                 fixture.Path,
                 Owner(),
                 hooks
-            ));
+            , upgradeLegacyFormat: true));
         Assert.Equal(1, fired);
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
@@ -624,7 +624,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            ));
+            , upgradeLegacyFormat: true));
     }
 
     [Fact]
@@ -650,7 +650,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            ));
+            , upgradeLegacyFormat: true));
     }
 
     [Fact]
@@ -670,7 +670,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            ));
+            , upgradeLegacyFormat: true));
     }
 
     [Fact]
@@ -706,7 +706,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            ));
+            , upgradeLegacyFormat: true));
     }
 
     [Fact]
@@ -732,7 +732,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            ));
+            , upgradeLegacyFormat: true));
     }
 
     [Fact]
@@ -815,7 +815,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            ));
+            , upgradeLegacyFormat: true));
     }
 
     private static CharacterMemoryDerivedInfoWorkSnapshot ApplyCapture(
@@ -1060,7 +1060,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
                     $active, 0, 'active note', NULL
                 );
                 """;
-            command.Parameters.AddWithValue("$user", Owner().UserId);
+            command.Parameters.AddWithValue("$user", Owner().CharacterId);
             command.Parameters.AddWithValue("$repository", Owner().SessionRepositoryId);
             command.Parameters.AddWithValue("$head", Address(2));
             command.Parameters.AddWithValue("$provision", State('p'));

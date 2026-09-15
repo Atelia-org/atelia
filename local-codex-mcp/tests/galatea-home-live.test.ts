@@ -1,3 +1,4 @@
+import { taskCommitment } from "../src/galatea/task-commitment.js";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
@@ -87,7 +88,7 @@ class LiveSidecar {
   }
 
   async ready(): Promise<void> {
-    assert.deepEqual(await this.wait("ready"), { v: 5, type: "ready" });
+    assert.deepEqual(await this.wait("ready"), { v: 6, type: "ready" });
     assert.equal(await readlink(`/proc/${this.child.pid}/cwd`), "/");
     for (let attempt = 0; this.appServerPid === undefined && attempt < 100; attempt += 1) await delay(20);
     assert.ok(this.appServerPid);
@@ -100,7 +101,7 @@ class LiveSidecar {
 
   async request(input: Omit<GalateaDurableInputFrame, "v" | "requestId"> | Record<string, unknown>): Promise<GalateaDurableOutputFrame> {
     const requestId = `home-canary-${++this.sequence}`;
-    this.child.stdin.write(`${JSON.stringify({ ...input, v: 5, requestId })}\n`);
+    this.child.stdin.write(`${JSON.stringify({ ...input, v: 6, requestId })}\n`);
     return this.wait(requestId);
   }
 
@@ -114,7 +115,7 @@ class LiveSidecar {
   async inspect(threadId: string, dispatchId: string, task: string, expectedTurnId: string | null): Promise<string> {
     const deadline = Date.now() + 180_000;
     while (Date.now() < deadline) {
-      const frame = await this.request({ type: "inspect-dispatch", threadId, dispatchId, task, expectedTurnId });
+      const frame = await this.request({ type: "inspect-dispatch", threadId, dispatchId, ...taskCommitment(task), expectedTurnId });
       assert.equal(frame.type, "dispatch-inspected");
       if (frame.type !== "dispatch-inspected") throw new Error("Expected inspection.");
       if (frame.outcome === "completed") return frame.turnId;

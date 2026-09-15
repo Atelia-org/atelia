@@ -1,6 +1,6 @@
 # Galatea 结构化输入存储与瞬态渲染
 
-状态：**设计已完成独立审查与本次补充交叉质询；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。** 日期：2026-09-15。本次修订只完善设计；文中的验收标准不代表已经通过实现验证。
+状态：**设计已完成独立审查与本次补充交叉质询；实现进行中，见[实施工作单](player-character-implementation-work-order.md)。** 修订日期：2026-09-16。本次修订只完善设计；文中的验收标准不代表已经通过实现验证。
 
 本文是 [Player / Character 分离方案](player-character-separation-design.md) 的输入存储与恢复专题。当前用户已明确：给 LLM 的 user message、Observation、PlayerTurnObservation、Codex session user prompt 等输入，使用稳定机读格式持久化，调用 LLM 时临时渲染；缓存不改变瞬态语义。此决定替代前版新增 FrozenTask 的设计。
 
@@ -26,6 +26,19 @@
 本文规定目标合同；标为旧格式的代码行为是方案形成时的改造基线，施工和验证状态见工作单。相邻文档中的历史要求只作材料；发生冲突时以当前 U1 为准。
 
 ## 2. 持久内容与渲染的边界
+
+下表区分已有数据的职责，不引入四套存储或新的类型层次：
+
+| 对象 | 是否持久化 | 权威边界 |
+|:--|:--|:--|
+| 业务内容 | 是，稳定机读格式 | 原正文、可信来源、时间、种类与版本；供查询和领域校验使用。 |
+| 已有请求内容计划 | 按所在域的既有恢复合同 | 冻结选中的事实、引用、顺序及协议边界；不保存展开后的 prompt。 |
+| LLM 请求文本 | 否，仅请求时生成或进程内缓存 | 将选中内容投影为本次表示；围栏、布局和外置路径不成为持久输入。 |
+| 实际调用尝试的证据 | 按既有 Started / claim 合同 | 保存关联、摘要、长度和结果状态；不等于远端已收到或模型已正确理解。 |
+
+计划与尝试的持久边界见第 4 节；辅助调用保留第 5.2 节的既有提交模型，不因本表新增 WAL。常规 metadata 日志只用于诊断，即使含有相同摘要，也不替代 Started / claim 来决定派发或重试权限。
+
+**替换 md-json 或调整围栏样式，无需迁移业务输入。** 改变正文选择、来源、顺序、可见范围或指令含义则是内容/协议变更，不能以“换 renderer”绕过原有合同。
 
 ### 2.1 持久内容
 
@@ -58,7 +71,7 @@
 
 首版由 SessionJournal 明确区分已有 text Observation 与新版 structured Observation（用持久 schema/tag 区分，不根据字符串像不像 JSON 猜测）。新版内容先通过 Galatea 的领域校验，再用确定的存储 serializer 编码。可以物理承载于现有日志框架，但必须让读取者知道它是结构化内容，不能只往旧 `content` 字符串塞 JSON 后当普通提示词发送。
 
-SessionJournal 核心不引用 Galatea 或 MdJson；由 host 提供窄的输入投影能力。核心负责结构化记录、lineage、执行/恢复和 append 证明；Galatea 解释动作/信件等领域字段，MdJson 只负责表示。当前 CLI 等直接消费者必须选择匹配的投影能力或明确拒绝不支持的输入，不能静默把机读 JSON 当目标 prompt。
+SessionJournal 核心不引用 Galatea 或 MdJson；由 host 提供窄的输入投影能力。核心负责结构化记录、lineage、执行/恢复和 append 证明；Galatea 解释动作/信件等领域字段，MdJson 只负责表示。CLI 等消费者在实际发起 LLM 请求时，必须选择匹配的投影能力或明确拒绝不支持的输入，不能静默把机读 JSON 当目标 prompt。纯机读查询和离线审计不因此依赖 LLM 输入投影器，仍按各自已知 schema 与审计合同读取。
 
 稳定存储编码不等于任意 JSON 文本逐字相同。领域 schema 固定字段语义、顺序规则与 Unicode 保真；写入时使用固定编码，读取时严格验证版本。重开、undo、归因与投递证明依赖已持久的结构/编码，不依赖展示文本、空白排版或当前 renderer。首版不建设跨项目通用 canonical-JSON 平台。
 
@@ -76,7 +89,9 @@ SessionJournal 核心不引用 Galatea 或 MdJson；由 host 提供窄的输入�
 
 新写入不保存 FrozenTask、渲染后的 Observation、渲染版 receipt、展开后的上下文消息或备用 Markdown。也不把这些全文另存为持久缓存或常规请求日志；请求日志保留来源引用、调用身份、摘要、字节数、耗时与结果等诊断事实。业务原文和已有历史证据仍按自身职责保存。
 
-cache miss、清空缓存或替换 renderer 不改变输入事实。缓存只优化本进程中的投影，随内容和当前渲染配置失效；不靠缓存保证跨重启恢复。渲染发生在组装具体 LLM 请求的边界，包括按需进行的字节/token 预算检查；不得让新版 store open、历史查询、audit、receipt 结算调用 renderer。
+cache miss、清空缓存或替换 renderer 不改变输入事实。缓存只优化本进程中的投影，随内容和当前渲染配置失效；不靠缓存保证跨重启恢复。LLM 输入渲染发生在组装具体请求的边界，包括按需进行的字节/token 预算检查；不得让新版 store open、历史查询、audit、receipt 结算依赖 LLM 输入投影器。
+
+UI 可以直接从机读字段生成适合网页的显示文本；该显示投影与 LLM 请求投影分开，不重新选择请求内容，也不成为输入持久化、投递证明、DesiredSetup 或身份比较的权威。这里禁止的是查询对 LLM 包装的依赖，并非禁止网页进行本地格式化。
 
 ## 3. md-json 首版接入
 
@@ -147,7 +162,11 @@ capture 原子保存原信件正文、发送者 CharacterId/名称快照及既�
 
 首版不增加提交 ID：当前 C# transport tombstone 按 dispatchId 拒绝重复 Start，只有对应请求的严格 NotDispatched 才释放；已有 Requeue 同时清 active route。确证未发后同一个 dispatchId 可以重新渲染、重新 claim；Started/Accepted/OutcomeUnknown 不释放、不换承诺。requestId 仍只作 RPC 关联，不把 clientUserMessageId 宣称为远端 exactly-once 保证。
 
-Inspect 传原 task 摘要/长度及 dispatch/thread/已接受 turn；cold/live 核对仍要求唯一匹配 clientId 的 userMessage、单 text、空 text_elements 及正确 thread/turn。对**完整原文**求严格 UTF-8 摘要，不能拼接多个 content 或抽出 body。旧 live cache 使用 UTF-16 摘要，须与新的 durable UTF-8 证据统一；Start、cold、live、operator 同步验收。
+Inspect 传原 task 摘要/长度及 dispatch/thread/已接受 turn。cold 或跨连接 generation 的恢复必须读取唯一匹配 clientId 的 userMessage，验证单 text、空 text_elements、正确 thread/turn 和完整原文承诺；不能拼接多个 content 或抽出 body。
+
+同 generation 的 live 路径还保留一种既有证据：本进程实际 Start 的完整任务承诺，经相关 RPC 响应绑定 Accepted turn，再消费同 thread/turn 的通知。app-server 可返回未包含 userMessage 的稀疏结果；此路径信任其请求/响应关联，证明相关提交与执行，**不声称已经回读远端正文**。凡观察到 userMessage 仍严格核对，矛盾则拒绝；无相关 Start、generation 丢失或 live 缓存不足时走既有 cold 核对，不增加重发权限。不能把全量历史回读新增为已关联 live 结果结算的先决条件。
+
+两类证据均使用本次**完整任务**的严格 UTF-8 摘要。旧 live cache 的 UTF-16 摘要须与 durable 证据统一；Start、cold、live、operator 同步验收。
 
 旧已发送任务的长度不能用新版 Start 大小上限否决：Inspect 不再传全文，仍受现有远端读取/分页边界约束；读取不足明确 unavailable，不能推成未发送。既有旧 schema 中 mail.Body 就是当时 Task，可按原字节取得旧承诺；不能用当前 renderer 包装它，也不补造当时发送者。C#/TS 同步升级为一个新的 Inspect 协议，不必长期保留双 wire。
 
@@ -214,7 +233,7 @@ Codex 临时包装过长时保持未发送的 Queued 工作，报告局部投影
 
 ### 最小实施切片
 
-1. **结构化动作贯穿一条主线**：与主方案身份配置一起完成 schema/tag → append → 查询/undo → md-json request → 明确未发送/已发送的 attempt。用 fake provider 验证，不能将“数据库存 JSON，LLM 恰好也收到该 JSON 字符串”算作接入完成。
+1. **结构化动作贯穿一条主线**：与主方案身份配置一起完成 schema/tag → append → 查询/undo → md-json request → 明确未发送/已发送的 attempt。用 fake provider 验证，不能将“绕过输入投影器，直接发送数据库中的 JSON 字符串”算作接入完成；首版须证明 md-json 请求通路实际生效。未来显式选择 JSON 作为另一种请求表示并不违背存储/渲染分离，本期不为此新增 renderer。
 2. **同一内容通路覆盖全部消费者**：邮件、reply lease、Note、recall、recap、Codex task 与 sidecar 核对，以及 zero Player 后台路径。收口后不存在新版“先渲染再存储”的旁路。
 3. **旧状态和故障闭环**：按真实 schema 边界提供离线升级与旧读取路径，做 crash/reopen、格式切换、CLI 和引用工程验证；然后才形成实例迁移步骤。
 
@@ -227,6 +246,7 @@ SQLite owner/dispatch ID 保持旧值，但本文涉及 receipt、lease、outbox
 | 验收场景 | 通过标准 |
 |:--|:--|
 | 同一持久输入使用两个 renderer，清空所有渲染缓存 | 两次投影可不同；原机读字节、来源、UI/undo 结果与 store reopen 相同。 |
+| 禁用 LLM 输入投影器后运行 recent / undo、纯机读 CLI 与网页展示 | 已知 schema 仍可查询、审计和独立显示；只有实际发起 LLM 请求的路径因缺少投影器而失败。 |
 | 原文含 CR/LF、空白、围栏、伪元数据、深层内容 | JSON 读回和 md-json 局部往返保真；选择路径不成为持久字段。 |
 | 未知 schema、重复键、无效 Unicode、Pointer 误选缺失或非字符串正文 | 内容接纳与投影错误分层报告；不猜字段、不清已接纳正文、不调用外部服务。 |
 | Player 动作附带回信、Note、recall，及 HTTP from 自称 Codex | 各块来源正确；动作语义不变；undo 只恢复动作原文。 |
@@ -236,6 +256,7 @@ SQLite owner/dispatch ID 保持旧值，但本文涉及 receipt、lease、outbox
 | Started/OutcomeUnknown 后重启并换 renderer | 用原发送证据核对；没有 NotDispatched 证明或既有显式授权就不重发。 |
 | Codex task Start、Inspect、operator recovery 跨 renderer 版本 | Inspect 使用原任务承诺，外部任务身份不漂移；Start 的证据先于外部效果持久化。 |
 | live/cold 使用不同缓存、旧任务超新 Start 限额、异常 userMessage 形状 | 原 UTF-8 承诺核对一致；旧任务仍可 Inspect；多消息/多 content/附件不能仅凭匹配正文被接受。 |
+| 稀疏 Start 响应、同 generation 通知与冷重启 | 本进程相关 Start 可建立 live 关联；迟到矛盾 userMessage 被拒绝；清缓存后旧关联不复活，cold 必须回读原 userMessage。 |
 | 目标 append 后、sender settle 前 crash，随后 undo 抢先 | 结构化 exact proof 先结算，至多一次投递、无证据窗口丢失。 |
 | 旧 Prepared / Bound / Applied receipt / reply lease | 旧版本正常读回与恢复；新 renderer 不参与旧 canonical 校验。 |
 | 旧 Pending receipt/reply 进入新 structured Bound，append 后 crash | 原文和已知来源保留；按新绑定的机读内容对账，不补造身份，不重写旧 Bound。 |
@@ -280,3 +301,7 @@ SQLite owner/dispatch ID 保持旧值，但本文涉及 receipt、lease、outbox
 | Pointer 块顺序、md-json Read 的权威 | clarify | 数组/关联表达业务顺序；排版不另成权威，Read 不证明完整性或投递。 |
 
 质询修正了两个容易过度约束的提议：不禁止保持关联的正文块物理重排；不将不可变引用要求扩大为无限保留。没有新增权限模型、全局 ID、渲染版本存储或辅助调用 WAL。
+
+实施复核还纠正了前文对 live 证据的过强概括：既有同 generation 的相关 Start RPC 可处理稀疏响应，而 cold 恢复要求回读唯一 userMessage。第 4.4 节分别列明两条证据链，保留原信任和恢复边界，不把“已经回读远端正文”强加为所有 live 结果的承诺。
+
+2026-09-16 文档复核由需求怀疑者、最小架构师、语义守护者独立检查，再交叉质询。三者未发现需要新增机制的遗漏；本次补上第 2 节职责表，并将 CLI / 历史查询的限制明确为不依赖 **LLM 输入投影器**，保留网页的独立显示能力。另明确诊断日志没有派发权威，以及未来显式选择 JSON 表示仍可遵守分离原则。上述结论只证明设计收敛，不替代实施验收。

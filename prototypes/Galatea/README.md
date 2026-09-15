@@ -1,6 +1,6 @@
 # Galatea
 
-Galatea.Server 是基于 SessionJournal 的多用户 Role-Play Agent host。你可以在网页里交互，也可以让指定角色在服务端持续运行，再通过网页观察。关闭网页不影响已启用的服务端 Agent。
+Galatea.Server 是基于 SessionJournal 的Player 与 Character 分离的 Role-Play Agent host。你可以在网页里交互，也可以让指定角色在服务端持续运行，再通过网页观察。关闭网页不影响已启用的服务端 Agent。
 
 本文介绍日常运行；完整配置、API 和内部机制从[文档索引](../../docs/Galatea/README.md)进入。
 
@@ -23,40 +23,41 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 | 文件 | 需要准备什么 |
 |:--|:--|
-| `config.json` | V9；账号和密码、角色名与玩家名、各状态目录、个人 homeDir、默认连接、监听地址 |
+| `config.json` | V10；Characters 的身份/状态/home/连接、Players 的登录信息、Runtime 设置 |
 | 同目录 `connections.json` | V3；可用连接、可选连接列表，以及全部四个 feature bindings |
 | 同目录 `delegates.json` | V4；有效的 Node/Codex/sidecar 路径与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
-| `recapGrid.agentControlProfileFiles` 指向的文件 | **启动必需，Galatea bootstrap 不会生成**；用 SessionJournal.Cli 的 `recap-grid scaffold` 准备 |
+| `runtime.recapGrid.agentControlProfileFiles` 指向的文件 | **启动必需，Galatea bootstrap 不会生成**；用 SessionJournal.Cli 的 `recap-grid scaffold` 准备 |
 
 字段说明、scaffold 步骤、配置示例和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。Route manifest 按需读取；启动成功并不表示完整 RecapGrid 已激活。
 
-如果 `connections.json` 包含 `openai-codex-responses`，还需在启动环境设置已 provision 的 `ATELIA_CODEX_SUBSCRIPTION_ACCOUNT_FINGERPRINT`。`listenUrls` 与其他连接使用相同规则，可以绑定 `0.0.0.0`。认证文件和环境变量细节也见配置指南。
+如果 `connections.json` 包含 `openai-codex-responses`，还需在启动环境设置已 provision 的 `ATELIA_CODEX_SUBSCRIPTION_ACCOUNT_FINGERPRINT`。`runtime.listenUrls` 与其他连接使用相同规则，可以绑定 `0.0.0.0`。认证文件和环境变量细节也见配置指南。
 
-启动成功后，打开 `listenUrls` 对应的浏览器地址。若配置为 `http://0.0.0.0:3510`，本机访问 `http://127.0.0.1:3510`；使用 `config.json` 中的 `userId` 和密码登录。登录页为 `/login`，交互页为 `/`。
+启动成功后，打开 `runtime.listenUrls` 对应的浏览器地址。若配置为 `http://0.0.0.0:3510`，本机访问 `http://127.0.0.1:3510`；使用 `players[].id` 和密码登录（bootstrap 示例 ID 为 `player-main`）。登录页为 `/login`，登录后 `/` 显示角色目录，选择后进入 `/characters/{characterId}`。登录使用 `galatea_player_auth` cookie；Player 身份不决定唯一角色。
 
 修改配置或连接后需要重启。终端中按 `Ctrl+C` 正常关服，等待进程退出后再维护状态目录。
 
 ## 启用服务端自主运行
 
-在 V9 `config.json` 根对象中，将需要持续运行的账号加入列表。例如该账号的 `userId` 为 `alice`：
+在 V10 `config.json` 的目标 `characters[]` 项内设置：
 
 ```json
-"serverAgentUserIds": ["alice"]
+"heartbeatEnabled": true
 ```
 
-这是配置片段，需合入已有根对象。列表省略或为 `[]` 时，所有账号均不受后台驱动，仍可人工交互。修改后重启生效；没有运行时 enrollment 开关或管理员 pause/resume API。
+省略时为 false。它只控制该角色的周期 pulse，不关闭独立的角色信 relay或人工交互。修改后重启生效；没有
+运行时 enrollment 开关。`players: []` 是合法配置：无人登录，角色仍可心跳、收发信及运行委派。
 
-- 服务端启动时检查已启用账号的 Ready 回信，之后每10秒检查一次；有回信时优先续接。
+- 服务端启动时检查已启用角色的 Ready 回信，之后每10秒检查一次；有回信时优先续接。
 - 没有 Ready 回信时，完整空闲10分钟后可启动一次自主轮次。成功完成主线轮次会重新计时。
-- 自动轮次使用该账号的 `defaultConnectionId`。网页模型选择只影响人工请求。
+- 自动轮次使用该角色的 `defaultConnectionId`。网页模型选择只影响人工请求。
 - 关闭或休眠网页不会停止后台 Agent。重启重新计时，不补跑停机期间的轮次。
 
 自主轮次会正常调用模型；启用的 recall、邮件和笔记处理也会照常执行。当前服务需要由你启动和管理，尚未提供开机启动或进程崩溃后的自动重启部署。
 
 ## 在网页中交互
 
-登录后，页面会显示近期已完成轮次、当前生成内容，以及 Agent、邮箱和 Recap 状态。
+登录后先选择角色；角色页面会显示近期已完成轮次、当前生成内容，以及 Agent、邮箱和 Recap 状态。
 
 | 操作 | 行为 |
 |:--|:--|
@@ -70,7 +71,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 页面可见时会约每5秒读取 Agent 状态，并根据当前情况刷新 recent 或接入生成流。轮询期间已经完成的后台轮次会从 recent 补看；recent 是最近6轮的视图，不是完整历史浏览器。
 
-`POST /api/v1/mailbox/ready-turn` 是已启用账号的 Dev API，网页没有对应按钮。它只立即执行一次条件检查，不强制跳过10分钟间隔。需要使用它或注入来信时，参见 [API 调用示例](../../docs/Galatea/server-api.md)。
+`POST /api/v1/characters/{characterId}/mailbox/ready-turn` 是已启用角色的 Dev API，网页没有对应按钮。它只立即执行一次条件检查，不强制跳过10分钟间隔。需要使用它或注入来信时，参见 [API 调用示例](../../docs/Galatea/server-api.md)。
 
 ## 查看状态
 
@@ -78,8 +79,8 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 | Agent 状态 | 含义与处理 |
 |:--|:--|
-| `disabled` | 账号未加入 `serverAgentUserIds` |
-| `starting` | 正在建立该账号的运行会话 |
+| `disabled` | 角色未设置 `heartbeatEnabled: true` |
+| `starting` | 正在建立该角色的运行会话 |
 | `waiting` | 正常等待空闲间隔；页面倒计时仅供观察，服务端决定何时启动 |
 | `running` | 当前有主线轮次执行中 |
 | `autonomy-paused` | 上次自主轮次失败，空激活暂停，仍会检查 Ready 回信 |
@@ -93,11 +94,11 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 邮箱状态显示排队数量、待续接回信数量及重试原因；它观察的是 Codex 代行链。Recap readiness 表示当前摘要上下文是否可用；cadence 进度表示何时达到摘要构建条件。**HistoryLoad 不是模型 token 数，也不是完整 context window 占用。**
 
-登录后，也可在同一浏览器直接打开这些 JSON 地址：
+登录并选择角色后，也可在同一浏览器打开以下 JSON 地址；将 `{characterId}` 换成经 URL segment 编码的目标 ID：
 
-- `/api/v1/agent/status`：后台 Agent 状态、默认连接、激活时间和原因码。
-- `/api/v1/mailbox/status`：邮件链状态、排队数、Ready notice 数和重试时间。
-- `/api/v1/chat/turns/current`：当前轮次及是否需要恢复。
+- `/api/v1/characters/{characterId}/agent/status`：后台 Agent 状态、默认连接、激活时间和原因码。
+- `/api/v1/characters/{characterId}/mailbox/status`：邮件链状态、排队数、Ready notice 数和重试时间。
+- `/api/v1/characters/{characterId}/chat/turns/current`：当前轮次及是否需要恢复。
 
 前两个状态接口不创建会话或推动后台工作。`recent-turns` 与 `recap-cadence-progress` 则可能先按配置 attach/provision 会话；不能把所有 GET 都当成对磁盘零写。完整返回值见 [API 参考](../../docs/Galatea/server-api.md)。
 
@@ -116,14 +117,14 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 |:--|:--|
 | 启动后生成模板并退出 | 按提示检查模板，准备有效 delegates 路径及 Agent Control profile |
 | Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和服务端异常日志 |
-| 页面显示 `disabled` | 当前登录账号是否在 `serverAgentUserIds` 中，修改后是否重启 |
+| 页面显示 `disabled` | 目标角色是否启用 `heartbeatEnabled`，修改后是否重启 |
 | `blocked` 或需要恢复 | 页面原因码、当前轮次、`Galatea.Autonomy` 与相关服务端错误日志 |
-| 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 旧版 Responses 投影错误；先核对 frozen adapter identity，旧版未完成轮次应在匹配版本上显式恢复，再升级。不要修改 Origin、清空历史或反复重试；详见[模型切换排障与升级边界](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |
+| 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 先核对当前异常与已绑定的 connection/client/API、原生载荷；旧 adapter 标签已不再作为执行身份。未完成轮次只按实际恢复状态显式处理。不要修改 Origin、清空历史或反复重试；详见[模型切换排障与升级边界](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |
 | 主回复已有内容但轮次未结束 | 邮件/笔记后处理可能仍在执行；检查对应日志 |
 | 邮箱持续 backoff 或 `accepted-history-unavailable` | 检查 delegation 日志；已提交任务会保守查询结果，不会自动重发 |
-| Recap 显示 `character-asset-mismatch` | 配置名字与 active asset 是否匹配，不能只改角色/玩家名 |
+| Recap 显示 `character-asset-mismatch` | 配置名字与 active asset 是否匹配，角色语义资产变更须显式采用，Player 名称不再绑定角色 asset |
 
-Character Note 日志及启用 `callLogDir` 后的调用日志可能含完整故事正文；不要提交到 Git。迁移状态前先停服并备份。持续无法查询到 Codex 已完成结果时，按[专门恢复 runbook](../../docs/Galatea/codex-delegation-operator-recovery.md)核实证据。
+启用 `runtime.callLogDir` 后的新 Completion 日志只记摘要、长度、计数、耗时及异常类型，不保存请求/输出全文。Character Note 等领域 Debug 日志和已有旧全文日志仍可能含故事内容，不要提交到 Git。迁移状态前先停服并备份。持续无法查询到 Codex 已完成结果时，按[专门恢复 runbook](../../docs/Galatea/codex-delegation-operator-recovery.md)核实证据。
 
 ## 深入阅读
 
@@ -132,3 +133,10 @@ Character Note 日志及启用 `callLogDir` 后的调用日志可能含完整故
 - [内部机制](../../docs/Galatea/runtime.md)：自动轮次、Mailbox、Character Memory、恢复与资源生命周期。
 - [Codex 代行验证](../../docs/Galatea/codex-delegation-verification.md)：显式启用的 canary 与有日期的历史证据。
 - [文档索引与维护约定](../../docs/Galatea/README.md)：当前指南、源码入口及设计/历史材料的归属。
+
+## 输入保存与升级
+
+新 Observation 和 system setup 保存机读 JSON 事实与来源快照，给 LLM 的 Markdown 在请求时生成。
+新 Prepared 保存所选语义计划，每次 Started 记录实际请求摘要；换格式不授权重发结果未知的调用。
+旧 v7/v8 exact 请求仍走旧恢复合同。V9 配置不能直接启动，真实实例需停服、备份并显式迁移；
+代码接入与实例迁移进度分别见[实施工作单](../../docs/Galatea/player-character-implementation-work-order.md)。

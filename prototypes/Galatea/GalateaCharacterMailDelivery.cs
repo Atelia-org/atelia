@@ -22,7 +22,7 @@ internal sealed class GalateaInternalMailDeliveryBinding(
     internal void BindObservationBase(
         SessionJournalEngine engine,
         EventAddress exactBaseHead,
-        string renderedObservation
+        SessionInputContent renderedObservation
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(renderedObservation);
@@ -49,7 +49,7 @@ internal sealed class GalateaInternalMailDeliveryBinding(
 internal static class GalateaCharacterMailDeliveryReconciler {
     internal static void Reconcile(
         GalateaDelegationSupervisor supervisor,
-        UserSessionHost target,
+        CharacterSessionHost target,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(supervisor);
@@ -57,7 +57,7 @@ internal static class GalateaCharacterMailDeliveryReconciler {
         cancellationToken.ThrowIfCancellationRequested();
 
         IReadOnlyList<GalateaInternalMailSourceOutbox> unsettled = supervisor
-            .ReadInternalMailOutboxesForTarget(target.User.UserId)
+            .ReadInternalMailOutboxesForTarget(target.Character.CharacterId)
             .Where(static value => value.Outbox.State is
                 GalateaInternalMailState.ObservationBound
                 or GalateaInternalMailState.Quarantined)
@@ -83,8 +83,8 @@ internal static class GalateaCharacterMailDeliveryReconciler {
         GalateaInternalMailOutboxSnapshot outbox = source.Outbox;
         string currentRepositoryId =
             GalateaDelegationSupervisor.CreateSessionRepositoryId(
-                target.User.SessionDir);
-        if (!string.Equals(outbox.TargetUserId, target.User.UserId,
+                target.Character.SessionDir);
+        if (!string.Equals(outbox.TargetCharacterId, target.Character.CharacterId,
                 StringComparison.Ordinal)
             || !string.Equals(outbox.TargetSessionRepositoryId,
                 currentRepositoryId, StringComparison.Ordinal)) {
@@ -92,7 +92,7 @@ internal static class GalateaCharacterMailDeliveryReconciler {
                 "A bound character mail targets a different session repository.");
         }
         MailboxMessage message = RestoreMessage(source);
-        if (!string.Equals(message.To, target.User.CharacterName.Value,
+        if (!string.Equals(message.To, target.Character.CharacterName.Value,
                 StringComparison.Ordinal)) {
             throw Blocked("character-mail-target-recipient-mismatch",
                 "A bound character mail recipient does not match the target character.");
@@ -105,7 +105,7 @@ internal static class GalateaCharacterMailDeliveryReconciler {
             EventAddressTextCodec.Parse(outbox.ExpectedSessionHead
                 ?? throw new InvalidDataException(
                     "A bound character mail has no expected session head.")),
-            outbox.RenderedObservation
+            outbox.ObservationContent
                 ?? throw new InvalidDataException(
                     "A bound character mail has no rendered Observation."),
             ExpectedObservationAddress: null

@@ -8,39 +8,39 @@ using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
-internal enum GalateaDelegationUserAvailability {
+internal enum GalateaDelegationCharacterAvailability {
     Uninitialized,
     Writable,
     ReadOnly,
     Unavailable
 }
 
-internal sealed record GalateaDelegationUserStatus(
-    string UserId,
-    GalateaDelegationUserAvailability Availability,
+internal sealed record GalateaDelegationCharacterStatus(
+    string CharacterId,
+    GalateaDelegationCharacterAvailability Availability,
     string? UnavailableCode
 );
 
 /// <summary>One sender-owned outbox row exposed to the target delivery gate.</summary>
 internal sealed record GalateaInternalMailSourceOutbox(
-    string SourceUserId,
+    string SourceCharacterId,
     GalateaDelegationSqliteStore Store,
     GalateaInternalMailOutboxSnapshot Outbox
 );
 
-internal sealed class GalateaDelegationUserUnavailableException
+internal sealed class GalateaDelegationCharacterUnavailableException
     : InvalidOperationException {
-    internal GalateaDelegationUserUnavailableException(
+    internal GalateaDelegationCharacterUnavailableException(
         string userId,
         string code
     ) : base(
         $"Durable delegation for user '{userId}' is unavailable: {code}."
     ) {
-        UserId = userId;
+        CharacterId = userId;
         Code = code;
     }
 
-    internal string UserId { get; }
+    internal string CharacterId { get; }
     internal string Code { get; }
 }
 
@@ -145,15 +145,15 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         }
         GalateaDelegationDurableFiles.RequireLinux();
         GalateaConfigValidation.RequireValidStorageTopology(
-            config.Users,
+            config.Characters,
             config.CallLogDir
         );
         GalateaDelegateConfig delegates =
             GalateaDelegateConfigReader.Validate(config.Delegates);
-        RequireGlobalUserIdentity(config.Users);
-        foreach (GalateaUserConfig user in config.Users) {
+        RequireGlobalUserIdentity(config.Characters);
+        foreach (GalateaCharacterConfig user in config.Characters) {
             _ = GalateaDelegateConfigReader.RequireHomeDirectory(
-                user.HomeDir, user.UserId, delegates.AllowedRoots
+                user.HomeDir, user.CharacterId, delegates.AllowedRoots
             );
         }
 
@@ -175,22 +175,22 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         GalateaDelegationStoreLimits limits = CreateLimits(route);
 
         var openedSlots = new Dictionary<string, UserSlot>(
-            config.Users.Count,
+            config.Characters.Count,
             StringComparer.Ordinal
         );
         IGalateaDurableDelegateTransport? ownedTransport = null;
         try {
-            foreach (GalateaUserConfig user in config.Users) {
+            foreach (GalateaCharacterConfig user in config.Characters) {
                 string sessionDirectory = RequireCanonicalAbsoluteDirectory(
                     user.SessionDir,
-                    $"sessionDir for user '{user.UserId}'"
+                    $"sessionDir for user '{user.CharacterId}'"
                 );
                 string stateDirectory = RequireCanonicalAbsoluteDirectory(
                     user.DelegationStateDir,
-                    $"delegationStateDir for user '{user.UserId}'"
+                    $"delegationStateDir for user '{user.CharacterId}'"
                 );
                 var owner = new GalateaDelegationStoreOwner(
-                    user.UserId,
+                    user.CharacterId,
                     CreateSessionRepositoryId(sessionDirectory)
                 );
                 UserSlot slot = CreateSlot(
@@ -201,7 +201,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                     limits,
                     config.MaintenanceMode
                 );
-                openedSlots.Add(user.UserId, slot);
+                openedSlots.Add(user.CharacterId, slot);
             }
 
             ownedTransport = transport
@@ -270,13 +270,13 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
 
     internal bool IsMaintenanceMode => _maintenanceMode;
 
-    internal IReadOnlyList<GalateaDelegationUserStatus> ReadStatuses() =>
+    internal IReadOnlyList<GalateaDelegationCharacterStatus> ReadStatuses() =>
         _slots.Values
             .Select(static slot => slot.ReadStatus())
-            .OrderBy(static status => status.UserId, StringComparer.Ordinal)
+            .OrderBy(static status => status.CharacterId, StringComparer.Ordinal)
             .ToArray();
 
-    internal GalateaDelegationUserStatus ReadStatus(string userId) {
+    internal GalateaDelegationCharacterStatus ReadStatus(string userId) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
         return GetSlot(userId).ReadStatus();
     }
@@ -292,14 +292,14 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         ArgumentException.ThrowIfNullOrWhiteSpace(targetUserId);
         var result = new List<GalateaInternalMailSourceOutbox>();
         foreach (UserSlot slot in _slots.Values) {
-            GalateaDelegationUserStatus status = slot.ReadStatus();
+            GalateaDelegationCharacterStatus status = slot.ReadStatus();
             if (status.Availability
-                == GalateaDelegationUserAvailability.Uninitialized) {
+                == GalateaDelegationCharacterAvailability.Uninitialized) {
                 continue;
             }
-            if (status.Availability != GalateaDelegationUserAvailability.Writable) {
-                throw new GalateaDelegationUserUnavailableException(
-                    status.UserId,
+            if (status.Availability != GalateaDelegationCharacterAvailability.Writable) {
+                throw new GalateaDelegationCharacterUnavailableException(
+                    status.CharacterId,
                     status.UnavailableCode ?? "STORE_NOT_WRITABLE"
                 );
             }
@@ -307,7 +307,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             foreach (GalateaInternalMailOutboxSnapshot outbox in
                 store.ReadInternalMailOutboxesForTarget(targetUserId)) {
                 result.Add(new GalateaInternalMailSourceOutbox(
-                    status.UserId, store, outbox));
+                    status.CharacterId, store, outbox));
             }
         }
         return result;
@@ -335,7 +335,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 throw new ObjectDisposedException(GetType().Name);
             }
             if (_maintenanceMode) {
-                throw new GalateaDelegationUserUnavailableException(
+                throw new GalateaDelegationCharacterUnavailableException(
                     userId,
                     "MAINTENANCE_READ_ONLY"
                 );
@@ -405,7 +405,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
     }
 
     private static UserSlot CreateSlot(
-        GalateaUserConfig user,
+        GalateaCharacterConfig user,
         string sessionDirectory,
         string stateDirectory,
         GalateaDelegationStoreOwner owner,
@@ -462,7 +462,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             DebugUtil.Warning(
                 LogCategory,
                 "Durable delegation store unavailable: "
-                    + $"user={Safe(user.UserId)}, code={code}, "
+                    + $"user={Safe(user.CharacterId)}, code={code}, "
                     + $"exception={exception.GetType().Name}."
             );
             return UserSlot.Unavailable(
@@ -477,7 +477,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
     }
 
     private static void RequireGlobalUserIdentity(
-        IReadOnlyList<GalateaUserConfig> users
+        IReadOnlyList<GalateaCharacterConfig> users
     ) {
         if (users.Count == 0) {
             throw new InvalidOperationException(
@@ -485,20 +485,20 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             );
         }
         var userIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (GalateaUserConfig user in users) {
-            if (string.IsNullOrWhiteSpace(user.UserId)
-                || !userIds.Add(user.UserId)) {
+        foreach (GalateaCharacterConfig user in users) {
+            if (string.IsNullOrWhiteSpace(user.CharacterId)
+                || !userIds.Add(user.CharacterId)) {
                 throw new InvalidOperationException(
                     "Durable delegation requires exact unique userId values."
                 );
             }
             _ = RequireCanonicalAbsoluteDirectory(
                 user.SessionDir,
-                $"sessionDir for user '{user.UserId}'"
+                $"sessionDir for user '{user.CharacterId}'"
             );
             _ = RequireCanonicalAbsoluteDirectory(
                 user.DelegationStateDir,
-                $"delegationStateDir for user '{user.UserId}'"
+                $"delegationStateDir for user '{user.CharacterId}'"
             );
         }
     }
@@ -602,7 +602,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             DebugUtil.Error(
                 LogCategory,
                 "Durable delegation pulse failed closed: "
-                    + $"user={Safe(slot.UserId)}, code=PULSE_FAILED, "
+                    + $"user={Safe(slot.CharacterId)}, code=PULSE_FAILED, "
                     + $"exception={exception.GetType().Name}."
             );
             resignal = false;
@@ -685,7 +685,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 GalateaExceptionClassifier.IsNonFatal(exception)) {
                 failures.Add(exception);
                 LogCleanupFailure(
-                    $"store user={Safe(slot.UserId)}",
+                    $"store user={Safe(slot.CharacterId)}",
                     exception
                 );
             }
@@ -745,7 +745,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
 
     internal sealed class UserSlot {
         private readonly object _gate = new();
-        private readonly GalateaUserConfig _user;
+        private readonly GalateaCharacterConfig _user;
         private readonly string _sessionDirectory;
         private readonly string _stateDirectory;
         private readonly GalateaDelegationStoreOwner _owner;
@@ -754,18 +754,18 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         private GalateaDurableDelegationDriver? _driver;
         private SessionJournalEngine? _attachedEngine;
         private object? _attachmentToken;
-        private GalateaDelegationUserAvailability _availability;
+        private GalateaDelegationCharacterAvailability _availability;
         private string? _unavailableCode;
         private bool _pulseInFlight;
         private bool _pulseRequested;
 
         private UserSlot(
-            GalateaUserConfig user,
+            GalateaCharacterConfig user,
             string sessionDirectory,
             string stateDirectory,
             GalateaDelegationStoreOwner owner,
             GalateaDelegationStoreLimits limits,
-            GalateaDelegationUserAvailability availability,
+            GalateaDelegationCharacterAvailability availability,
             string? unavailableCode,
             GalateaDelegationSqliteStore? store
         ) {
@@ -779,14 +779,14 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             _store = store;
         }
 
-        internal string UserId => _user.UserId;
+        internal string CharacterId => _user.CharacterId;
 
         internal GalateaDelegationSqliteStore Store {
             get {
                 lock (_gate) {
                     return _store ?? throw new
-                        GalateaDelegationUserUnavailableException(
-                            UserId,
+                        GalateaDelegationCharacterUnavailableException(
+                            CharacterId,
                             _unavailableCode ?? "STORE_UNINITIALIZED"
                         );
                 }
@@ -794,7 +794,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         }
 
         internal static UserSlot Uninitialized(
-            GalateaUserConfig user,
+            GalateaCharacterConfig user,
             string sessionDirectory,
             string stateDirectory,
             GalateaDelegationStoreOwner owner,
@@ -805,13 +805,13 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             stateDirectory,
             owner,
             limits,
-            GalateaDelegationUserAvailability.Uninitialized,
+            GalateaDelegationCharacterAvailability.Uninitialized,
             unavailableCode: null,
             store: null
         );
 
         internal static UserSlot Opened(
-            GalateaUserConfig user,
+            GalateaCharacterConfig user,
             string sessionDirectory,
             string stateDirectory,
             GalateaDelegationStoreOwner owner,
@@ -825,14 +825,14 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             owner,
             limits,
             readOnly
-                ? GalateaDelegationUserAvailability.ReadOnly
-                : GalateaDelegationUserAvailability.Writable,
+                ? GalateaDelegationCharacterAvailability.ReadOnly
+                : GalateaDelegationCharacterAvailability.Writable,
             unavailableCode: null,
             store
         );
 
         internal static UserSlot Unavailable(
-            GalateaUserConfig user,
+            GalateaCharacterConfig user,
             string sessionDirectory,
             string stateDirectory,
             GalateaDelegationStoreOwner owner,
@@ -844,21 +844,21 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             stateDirectory,
             owner,
             limits,
-            GalateaDelegationUserAvailability.Unavailable,
+            GalateaDelegationCharacterAvailability.Unavailable,
             code,
             store: null
         );
 
-        internal GalateaDelegationUserStatus ReadStatus() {
+        internal GalateaDelegationCharacterStatus ReadStatus() {
             lock (_gate) {
-                return new(UserId, _availability, _unavailableCode);
+                return new(CharacterId, _availability, _unavailableCode);
             }
         }
 
         internal GalateaMailboxStatusProjection ReadMailboxStatus() {
             lock (_gate) {
                 if (_availability
-                    == GalateaDelegationUserAvailability.Unavailable) {
+                    == GalateaDelegationCharacterAvailability.Unavailable) {
                     return GalateaMailboxStatusProjection.Unavailable(
                         _unavailableCode ?? "STORE_UNAVAILABLE"
                     );
@@ -874,7 +874,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                     GalateaMailboxStatusProjection status =
                         _store.ReadMailboxStatus();
                     if (_availability
-                        == GalateaDelegationUserAvailability.ReadOnly) {
+                        == GalateaDelegationCharacterAvailability.ReadOnly) {
                         return status with {
                             State = GalateaMailboxStatusState.Unavailable,
                             AttemptCount = 0,
@@ -889,7 +889,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                     DebugUtil.Warning(
                         LogCategory,
                         "Durable mailbox status read failed: "
-                            + $"user={Safe(UserId)}, "
+                            + $"user={Safe(CharacterId)}, "
                             + "code=STORE_READ_FAILED, "
                             + $"exception={exception.GetType().Name}.",
                         exception,
@@ -908,7 +908,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         ) {
             lock (_gate) {
                 if (_availability
-                    != GalateaDelegationUserAvailability.Writable) {
+                    != GalateaDelegationCharacterAvailability.Writable) {
                     return;
                 }
                 try {
@@ -924,12 +924,12 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 catch (Exception exception) when (
                     GalateaExceptionClassifier.IsNonFatal(exception)) {
                     _availability =
-                        GalateaDelegationUserAvailability.Unavailable;
+                        GalateaDelegationCharacterAvailability.Unavailable;
                     _unavailableCode = "DRIVER_CREATE_FAILED";
                     DebugUtil.Error(
                         LogCategory,
                         "Durable delegation driver creation failed closed: "
-                            + $"user={Safe(UserId)}, "
+                            + $"user={Safe(CharacterId)}, "
                             + "code=DRIVER_CREATE_FAILED, "
                             + $"exception={exception.GetType().Name}."
                     );
@@ -944,40 +944,40 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         ) {
             lock (_gate) {
                 if (_availability
-                    == GalateaDelegationUserAvailability.Unavailable) {
-                    throw new GalateaDelegationUserUnavailableException(
-                        UserId,
+                    == GalateaDelegationCharacterAvailability.Unavailable) {
+                    throw new GalateaDelegationCharacterUnavailableException(
+                        CharacterId,
                         _unavailableCode ?? "STORE_UNAVAILABLE"
                     );
                 }
                 if (_availability
-                    == GalateaDelegationUserAvailability.ReadOnly) {
-                    throw new GalateaDelegationUserUnavailableException(
-                        UserId,
+                    == GalateaDelegationCharacterAvailability.ReadOnly) {
+                    throw new GalateaDelegationCharacterUnavailableException(
+                        CharacterId,
                         "MAINTENANCE_READ_ONLY"
                     );
                 }
                 if (_attachmentToken is not null) {
-                    throw new GalateaDelegationUserUnavailableException(
-                        UserId,
+                    throw new GalateaDelegationCharacterUnavailableException(
+                        CharacterId,
                         "SESSION_ALREADY_ATTACHED"
                     );
                 }
                 string engineDirectory = RequireCanonicalAbsoluteDirectory(
                     engine.Path,
-                    $"attached session for user '{UserId}'"
+                    $"attached session for user '{CharacterId}'"
                 );
                 if (!string.Equals(
                         engineDirectory,
                         _sessionDirectory,
                         StringComparison.Ordinal)) {
-                    throw new GalateaDelegationUserUnavailableException(
-                        UserId,
+                    throw new GalateaDelegationCharacterUnavailableException(
+                        CharacterId,
                         "SESSION_IDENTITY_MISMATCH"
                     );
                 }
                 if (_availability
-                    == GalateaDelegationUserAvailability.Uninitialized) {
+                    == GalateaDelegationCharacterAvailability.Uninitialized) {
                     CreateBaselineStore(engine);
                 }
                 try {
@@ -993,23 +993,23 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 catch (Exception exception) when (
                     GalateaExceptionClassifier.IsNonFatal(exception)) {
                     _availability =
-                        GalateaDelegationUserAvailability.Unavailable;
+                        GalateaDelegationCharacterAvailability.Unavailable;
                     _unavailableCode = "DRIVER_CREATE_FAILED";
                     DebugUtil.Error(
                         LogCategory,
                         "Durable delegation driver creation failed closed: "
-                            + $"user={Safe(UserId)}, "
+                            + $"user={Safe(CharacterId)}, "
                             + "code=DRIVER_CREATE_FAILED, "
                             + $"exception={exception.GetType().Name}."
                     );
-                    throw new GalateaDelegationUserUnavailableException(
-                        UserId,
+                    throw new GalateaDelegationCharacterUnavailableException(
+                        CharacterId,
                         _unavailableCode
                     );
                 }
                 _attachedEngine = engine;
                 _attachmentToken = new object();
-                _availability = GalateaDelegationUserAvailability.Writable;
+                _availability = GalateaDelegationCharacterAvailability.Writable;
                 _unavailableCode = null;
                 return _attachmentToken;
             }
@@ -1050,17 +1050,17 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             catch (Exception exception) when (
                 GalateaExceptionClassifier.IsNonFatal(exception)) {
                 _availability =
-                    GalateaDelegationUserAvailability.Unavailable;
+                    GalateaDelegationCharacterAvailability.Unavailable;
                 _unavailableCode = "STORE_CREATE_FAILED";
                 DebugUtil.Error(
                     LogCategory,
                     "Durable delegation baseline creation failed closed: "
-                        + $"user={Safe(UserId)}, "
+                        + $"user={Safe(CharacterId)}, "
                         + "code=STORE_CREATE_FAILED, "
                         + $"exception={exception.GetType().Name}."
                 );
-                throw new GalateaDelegationUserUnavailableException(
-                    UserId,
+                throw new GalateaDelegationCharacterUnavailableException(
+                    CharacterId,
                     _unavailableCode
                 );
             }
@@ -1069,7 +1069,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         internal bool TryBeginPulse() {
             lock (_gate) {
                 if (_availability
-                        != GalateaDelegationUserAvailability.Writable
+                        != GalateaDelegationCharacterAvailability.Writable
                     || _driver is null) {
                     return false;
                 }
@@ -1094,7 +1094,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 );
             }
             return testHooks.PulseAsync is { } pulse
-                ? pulse(UserId, driver, cancellationToken)
+                ? pulse(CharacterId, driver, cancellationToken)
                 : driver.PulseAsync(cancellationToken);
         }
 
@@ -1132,7 +1132,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 DebugUtil.Info(
                     LogCategory,
                     "Durable active dispatch preserved for cold-restart "
-                        + $"reconciliation: user={Safe(UserId)}, "
+                        + $"reconciliation: user={Safe(CharacterId)}, "
                         + $"dispatchId={dispatchId}, state={mail.State}, "
                         + "preservedForColdRestartReconciliation=true."
                 );
@@ -1142,7 +1142,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 DebugUtil.Warning(
                     LogCategory,
                     "Durable delegation shutdown state inspection failed: "
-                        + $"user={Safe(UserId)}, "
+                        + $"user={Safe(CharacterId)}, "
                         + $"exception={exception.GetType().Name}.",
                     exception,
                     DebugEventKind.Failure
@@ -1153,7 +1153,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         internal void MarkUnavailable(string code) {
             lock (_gate) {
                 _availability =
-                    GalateaDelegationUserAvailability.Unavailable;
+                    GalateaDelegationCharacterAvailability.Unavailable;
                 _unavailableCode = code;
             }
         }

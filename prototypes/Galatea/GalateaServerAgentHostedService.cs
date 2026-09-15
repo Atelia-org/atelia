@@ -13,21 +13,21 @@ internal sealed class GalateaServerAgentHostedService(
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) {
         if (host.MaintenanceMode) { return Task.CompletedTask; }
-        return Task.WhenAll(host.ServerAgentUserIds.Select(userId => RunUserAsync(userId, stoppingToken)));
+        return Task.WhenAll(host.HeartbeatCharacterIds.Select(characterId => RunCharacterAsync(characterId, stoppingToken)));
     }
 
-    private async Task RunUserAsync(string userId, CancellationToken ct) {
+    private async Task RunCharacterAsync(string characterId, CancellationToken ct) {
         using var timer = new PeriodicTimer(PulseInterval, host.TimeProvider);
         try {
             do {
                 try {
-                    _ = await coordinator.TryPulseAsync(userId, ct).ConfigureAwait(false);
-                    PulseCompletedForTest?.Invoke(userId);
+                    _ = await coordinator.TryPulseAsync(characterId, ct).ConfigureAwait(false);
+                    PulseCompletedForTest?.Invoke(characterId);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested || host.IsStopping) { return; }
                 catch (Exception ex) when (GalateaExceptionClassifier.IsNonFatal(ex)) {
-                    coordinator.BlockAfterFailure(userId);
-                    DebugUtil.Error("Galatea.Autonomy", $"Automatic admission blocked: user={userId}", ex);
+                    coordinator.BlockAfterFailure(characterId);
+                    DebugUtil.Error("Galatea.Autonomy", $"Automatic admission blocked: character={characterId}", ex);
                 }
             } while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
         }

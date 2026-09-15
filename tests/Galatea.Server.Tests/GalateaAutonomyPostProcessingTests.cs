@@ -7,6 +7,8 @@ using Atelia.Completion.Abstractions;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.MemoPod;
+using Atelia.MdJson;
+using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -50,14 +52,14 @@ public sealed class GalateaAutonomyPostProcessingTests {
             characterNoteExtractorConnectionId: helper.Id,
             playerTurnRecallProviderFactory: (_, _) => recall,
             timeProvider: clock,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -70,7 +72,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
         clock.Advance(TimeSpan.FromSeconds(10));
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
@@ -106,7 +108,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             global::Atelia.MemoPod.MemoPod notes =
                 global::Atelia.MemoPod.MemoPod.Open(
-                    session.User.CharacterMemoryStateDir,
+                    session.Character.CharacterMemoryStateDir,
                     CharacterNoteDefaultPodV1.PodId
                 );
             Assert.Equal(MemoPodPhase.Frozen, notes.Phase);
@@ -120,7 +122,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
         // delivers the saved Note receipt alongside independently recalled memory.
         clock.Advance(TimeSpan.FromMinutes(10));
         using HttpResponseMessage secondResponse = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/ready-turn", new ReadyReplyTurnRequest());
+            "/api/v1/characters/alice/mailbox/ready-turn", new ReadyReplyTurnRequest());
         Assert.Equal(HttpStatusCode.Accepted, secondResponse.StatusCode);
         LoopPulseAcceptedTurnDto secondAccepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
             await secondResponse.Content.ReadFromJsonAsync<LoopPulseAcceptedTurnDto>());
@@ -133,15 +135,15 @@ public sealed class GalateaAutonomyPostProcessingTests {
             Assert.Equal("completed", second.Status);
             Assert.Equal(2, mainClient.CallCount);
             Assert.Equal(2, recall.CallCount);
-            string stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+            SessionInputContent stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns).ObservationContent;
-            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(stored, out PlayerTurnObservation observation));
-            Assert.Contains(NoteText, Assert.Single(observation.Notices
-                .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
+            PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(stored);
+            Assert.Equal(NoteText, Assert.Single(Assert.Single(observation.Notices
+                .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection!.ExactTexts));
             Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
             Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             Assert.Equal(NoteText, Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
-                session.User.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()).ExactText);
+                session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()).ExactText);
         }
         finally {
             session.TurnLock.Release();
@@ -152,7 +154,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
         HttpClient http
     ) {
         using HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/ready-turn",
+            "/api/v1/characters/alice/mailbox/ready-turn",
             new ReadyReplyTurnRequest()
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -221,9 +223,10 @@ public sealed class GalateaAutonomyPostProcessingTests {
             if (call == 2) {
                 string content = Assert.IsType<string>(request.PromptPrefix.SharedContextMessages
                     .OfType<ObservationMessage>().Last().Content);
-                Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(content, out PlayerTurnObservation observation));
-                Assert.Contains(NoteText, Assert.Single(observation.Notices
-                    .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
+                PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(
+                    SessionInputContent.Structured(GalateaObservationContent.SchemaId, MdJsonSerializer.Read(content)));
+                Assert.Equal(NoteText, Assert.Single(Assert.Single(observation.Notices
+                    .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection!.ExactTexts));
                 Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
             }
             observer?.OnTextDelta(text);
@@ -299,8 +302,8 @@ public sealed class GalateaAutonomyPostProcessingTests {
         private int _callCount;
         internal int CallCount => Volatile.Read(ref _callCount);
         internal static PlayerTurnRecall UnrelatedMemory { get; } = new(
-            new RecallEntry(RecallType.MemoExactText, "autonomy-existing-memory"),
-            "An older memory suggests investigating the northern path.");
+            new RecallEntry(RecallType.MemoExactText, GalateaMemoRecallSourceIdCodec.Format(CharacterNoteDefaultPodV1.PodId, MemoId.Parse("m1:0000002a"))),
+            "synthetic-pod-version", "Earlier exploration", "An older memory suggests investigating the northern path.");
 
         public ValueTask<IReadOnlyList<PlayerTurnRecall>> SelectRecallsAsync(
             GalateaPlayerTurnRecallRequest request,

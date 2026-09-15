@@ -24,7 +24,7 @@ public sealed class GalateaHostSmokeTests {
 
         RecapCadenceProgressSnapshotDto? progress = await client
             .GetFromJsonAsync<RecapCadenceProgressSnapshotDto>(
-                "/api/v1/recap-cadence-progress"
+                "/api/v1/characters/alice/recap-cadence-progress"
             );
 
         Assert.NotNull(progress);
@@ -49,14 +49,14 @@ public sealed class GalateaHostSmokeTests {
         );
         using HttpClient client = host.CreateClient();
         using HttpResponseMessage anonymous = await client.GetAsync(
-            "/api/v1/recap-cadence-progress"
+            "/api/v1/characters/alice/recap-cadence-progress"
         );
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         _ = await GalateaTestHost.LoginAsync(client);
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -67,7 +67,7 @@ public sealed class GalateaHostSmokeTests {
         );
 
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/v1/recap-cadence-progress"
+            "/api/v1/characters/alice/recap-cadence-progress"
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         string json = await response.Content.ReadAsStringAsync();
@@ -131,7 +131,7 @@ public sealed class GalateaHostSmokeTests {
         )));
 
         using JsonDocument recent = JsonDocument.Parse(
-            await client.GetStringAsync("/api/v1/recent-turns")
+            await client.GetStringAsync("/api/v1/characters/alice/recent-turns")
         );
         Assert.Equal(
             [
@@ -172,7 +172,7 @@ public sealed class GalateaHostSmokeTests {
             "/api/v1/me"
         );
         Assert.NotNull(me);
-        Assert.Equal("alice", me!.UserId);
+        Assert.Equal("player-main", me!.PlayerId);
         Assert.False(me.MaintenanceMode);
 
         Assert.Same(
@@ -186,7 +186,7 @@ public sealed class GalateaHostSmokeTests {
         );
 
         RecentTurnsResponseDto? recent = await client
-            .GetFromJsonAsync<RecentTurnsResponseDto>("/api/v1/recent-turns");
+            .GetFromJsonAsync<RecentTurnsResponseDto>("/api/v1/characters/alice/recent-turns");
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
         Assert.Equal(ContextHeaderDto.Empty, recent.ContextHeader);
@@ -197,7 +197,7 @@ public sealed class GalateaHostSmokeTests {
         Assert.Equal("unprovisioned", recap.State);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -224,7 +224,7 @@ public sealed class GalateaHostSmokeTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -248,7 +248,7 @@ public sealed class GalateaHostSmokeTests {
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
 
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/v1/recent-turns"
+            "/api/v1/characters/alice/recent-turns"
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         RecentTurnsResponseDto? recent = await response.Content
@@ -276,14 +276,15 @@ public sealed class GalateaHostSmokeTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "no control tool",
-            new GalateaTurnOptions("test")
+            new GalateaTurnOptions("test"),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
 
         await service.RunTurnAsync(session, turn, CancellationToken.None);

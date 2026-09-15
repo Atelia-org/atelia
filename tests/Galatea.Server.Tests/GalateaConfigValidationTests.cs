@@ -55,7 +55,7 @@ public sealed class GalateaConfigValidationTests {
             string configPath = WriteConfig(root,
                 [User("alice", Path.Combine(root, "session"))]);
             JsonObject config = JsonNode.Parse(File.ReadAllText(configPath))!.AsObject();
-            JsonObject user = config["users"]!.AsArray()[0]!.AsObject();
+            JsonObject user = config["characters"]!.AsArray()[0]!.AsObject();
             string home = user["homeDir"]!.GetValue<string>();
             string link = Path.Combine(root, "home-link");
             Directory.CreateSymbolicLink(link, home);
@@ -90,12 +90,12 @@ public sealed class GalateaConfigValidationTests {
                 User("bob", Path.Combine(root, "bob-session"))
             ]);
             GalateaConfig valid = GalateaConfigLoader.Load(configPath);
-            Assert.NotEqual(valid.Users[0].HomeDir, valid.Users[1].HomeDir);
+            Assert.NotEqual(valid.Characters[0].HomeDir, valid.Characters[1].HomeDir);
             JsonObject config = JsonNode.Parse(File.ReadAllText(configPath))!.AsObject();
             string otherHome = nested
-                ? Directory.CreateDirectory(Path.Combine(valid.Users[0].HomeDir, "bob")).FullName
-                : valid.Users[0].HomeDir;
-            config["users"]!.AsArray()[1]!["homeDir"] = otherHome;
+                ? Directory.CreateDirectory(Path.Combine(valid.Characters[0].HomeDir, "bob")).FullName
+                : valid.Characters[0].HomeDir;
+            config["characters"]!.AsArray()[1]!["homeDir"] = otherHome;
             File.WriteAllText(configPath, config.ToJsonString());
             Assert.Throws<InvalidOperationException>(() => GalateaConfigLoader.Load(configPath));
         }
@@ -111,32 +111,20 @@ public sealed class GalateaConfigValidationTests {
             string configPath = WriteConfig(root,
                 [User("alice", Path.Combine(root, "sessions", "alice"))]);
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
-            var ids = new List<string> { "alice" };
-            var constructed = new GalateaConfig(
-                loaded.Users, loaded.Connections, loaded.SelectableConnectionIds,
-                loaded.InputNormalizerConnectionId, loaded.Delegates,
-                RecapGrid: loaded.RecapGrid, ServerAgentUserIds: ids
-            );
-            ids[0] = "missing";
-            Assert.Equal(["alice"], constructed.ServerAgentUserIds);
-
-            ids[0] = "alice";
+            var characters = loaded.Characters.Select(character => character with { HeartbeatEnabled = true }).ToList();
             GalateaConfig initializerConfig = loaded with {
-                ServerAgentUserIds = ids
+                Characters = characters
             };
             var factory = new TrackingFactory();
             await using var service = new GalateaHostService(
                 initializerConfig, factory,
                 DisabledGalateaUserMessageNormalizer.Instance
             );
-            ids[0] = "missing";
-            Assert.Equal(["alice"], service.ServerAgentUserIds);
+            characters[0] = characters[0] with { HeartbeatEnabled = false };
+            Assert.Equal(["alice"], service.HeartbeatCharacterIds);
             Assert.Throws<NotSupportedException>(() =>
-                ((IList<string>)service.ServerAgentUserIds)[0] = "changed");
-            Assert.Throws<InvalidOperationException>(() => new GalateaHostService(
-                initializerConfig, factory,
-                DisabledGalateaUserMessageNormalizer.Instance
-            ));
+                ((IList<string>)service.HeartbeatCharacterIds)[0] = "changed");
+            Assert.Empty(initializerConfig.HeartbeatCharacterIds);
             Assert.Equal(0, factory.CreateCallCount);
         }
         finally {
@@ -149,15 +137,15 @@ public sealed class GalateaConfigValidationTests {
         Type assemblyMarker = typeof(GalateaConfig);
         Type[] exported = assemblyMarker.Assembly.GetExportedTypes();
 
-        Assert.False(typeof(GalateaUsersFileConfig).IsPublic);
-        Assert.False(typeof(GalateaUserFileConfig).IsPublic);
+        Assert.False(typeof(GalateaRootFileConfig).IsPublic);
+        Assert.False(typeof(GalateaCharacterFileConfig).IsPublic);
         Assert.False(typeof(GalateaRecapGridFileConfig).IsPublic);
-        Assert.DoesNotContain(typeof(GalateaUsersFileConfig), exported);
-        Assert.DoesNotContain(typeof(GalateaUserFileConfig), exported);
+        Assert.DoesNotContain(typeof(GalateaRootFileConfig), exported);
+        Assert.DoesNotContain(typeof(GalateaCharacterFileConfig), exported);
         Assert.DoesNotContain(typeof(GalateaRecapGridFileConfig), exported);
 
         Assert.Contains(typeof(GalateaConfig), exported);
-        Assert.Contains(typeof(GalateaUserConfig), exported);
+        Assert.Contains(typeof(GalateaCharacterConfig), exported);
         Assert.Contains(typeof(GalateaMeDto), exported);
         Assert.Contains(typeof(RecentTurnsResponseDto), exported);
     }
@@ -165,68 +153,67 @@ public sealed class GalateaConfigValidationTests {
     [Fact]
     public void RootConfigTemplateStartsWithExactV9AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
-            GalateaConfigTemplateFactory.CreateUsersFile(),
+            GalateaConfigTemplateFactory.CreateRootFile(),
             GalateaJson.Options
         );
 
-        GalateaStrictConfigReader.ValidateUsers(template);
+        GalateaStrictConfigReader.ValidateRoot(template);
         using JsonDocument document = JsonDocument.Parse(template);
         JsonProperty first = document.RootElement
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("9", first.Value.GetRawText());
+        Assert.Equal("10", first.Value.GetRawText());
 
-        GalateaUsersFileConfig? decoded = JsonSerializer.Deserialize(
+        GalateaRootFileConfig? decoded = JsonSerializer.Deserialize(
             template,
-            GalateaJsonContext.Default.GalateaUsersFileConfig
+            GalateaJsonContext.Default.GalateaRootFileConfig
         );
         Assert.NotNull(decoded);
-        Assert.NotNull(decoded.ServerAgentUserIds);
-        Assert.Empty(decoded.ServerAgentUserIds);
+        Assert.All(decoded.Characters, static character => Assert.False(character.HeartbeatEnabled));
         Assert.Equal(["/galatea-homes/alice", "/galatea-homes/bob"],
-            decoded.Users.Select(static user => user.HomeDir));
+            decoded.Characters.Select(static user => user.HomeDir));
         Assert.Equal(
             GalateaStrictConfigReader.CurrentConfigVersion,
             decoded.Version
         );
         Assert.Equal(
             ["sessions/alice", "sessions/bob"],
-            decoded.Users.Select(static user => user.SessionDir)
+            decoded.Characters.Select(static user => user.SessionDir)
         );
         Assert.Equal(
             ["delegation-state/alice", "delegation-state/bob"],
-            decoded.Users.Select(static user => user.DelegationStateDir)
+            decoded.Characters.Select(static user => user.DelegationStateDir)
         );
         Assert.Equal(
             ["character-memory/alice", "character-memory/bob"],
-            decoded.Users.Select(static user =>
+            decoded.Characters.Select(static user =>
                 user.CharacterMemoryStateDir)
         );
         Assert.Equal(
             ["Alice", "Bob"],
-            decoded.Users.Select(static user => user.CharacterName)
+            decoded.Characters.Select(static user => user.CharacterName)
         );
         Assert.Equal(
-            ["Alex", "Blair"],
-            decoded.Users.Select(static user => user.PlayerName)
+            ["玩家"],
+            decoded.Players.Select(static player => player.Name)
         );
-        Assert.All(decoded.Users, static user => Assert.Equal(
+        Assert.All(decoded.Characters, static user => Assert.Equal(
             string.Empty,
             user.CharacterContextTemplate
         ));
-        Assert.All(decoded.Users, static user => Assert.Equal(
+        Assert.All(decoded.Characters, static user => Assert.Equal(
             GalateaDefaults.CharacterContextTemplateFile,
             user.CharacterContextTemplateFile
         ));
         Assert.All(
-            decoded.Users,
+            decoded.Characters,
             static user => Assert.Equal(
                 GalateaSessionProvisioning.CreateIfMissing,
                 user.SessionProvisioning
             )
         );
-        Assert.All(decoded.Users, static user => Assert.Equal(
+        Assert.All(decoded.Characters, static user => Assert.Equal(
             GalateaConfigTemplateFactory.DefaultConnectionId,
             user.DefaultConnectionId
         ));
@@ -254,7 +241,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.False(usersBytes.AsSpan().StartsWith(
                 Encoding.UTF8.GetPreamble()
             ));
-            GalateaStrictConfigReader.ValidateUsers(usersBytes);
+            GalateaStrictConfigReader.ValidateRoot(usersBytes);
 
             string delegatesPath = Path.Combine(
                 root,
@@ -267,25 +254,24 @@ public sealed class GalateaConfigValidationTests {
             );
             GalateaTestHost.WriteDelegatesFile(root);
             JsonObject configured = JsonNode.Parse(File.ReadAllText(configPath))!.AsObject();
-            foreach (JsonNode? value in configured["users"]!.AsArray()) {
+            foreach (JsonNode? value in configured["characters"]!.AsArray()) {
                 JsonObject user = value!.AsObject();
                 user["homeDir"] = Directory.CreateDirectory(Path.Combine(
-                    root, "homes", user["userId"]!.GetValue<string>())).FullName;
+                    root, "homes", user["id"]!.GetValue<string>())).FullName;
             }
             File.WriteAllText(configPath, configured.ToJsonString());
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
             Assert.Equal(["alice", "bob"],
-                loaded.Users.Select(static user => user.UserId));
+                loaded.Characters.Select(static user => user.CharacterId));
             Assert.Equal(
                 ["Alice", "Bob"],
-                loaded.Users.Select(static user =>
+                loaded.Characters.Select(static user =>
                     user.CharacterName.Value)
             );
             Assert.Equal(
-                ["Alex", "Blair"],
-                loaded.Users.Select(static user =>
-                    user.PlayerName.Value)
+                ["玩家"],
+                loaded.Players.Select(static player => player.Name.Value)
             );
             string generatedPrompt = Path.Combine(
                 root,
@@ -295,7 +281,7 @@ public sealed class GalateaConfigValidationTests {
                 GalateaBuiltInCharacterContextTemplate.Utf8.ToArray(),
                 File.ReadAllBytes(generatedPrompt)
             );
-            Assert.All(loaded.Users, static user => Assert.Equal(
+            Assert.All(loaded.Characters, static user => Assert.Equal(
                 GalateaConfigTemplateFactory.DefaultConnectionId,
                 user.DefaultConnectionId
             ));
@@ -304,14 +290,14 @@ public sealed class GalateaConfigValidationTests {
                     Path.Combine(root, "sessions", "alice"),
                     Path.Combine(root, "sessions", "bob")
                 ],
-                loaded.Users.Select(static user => user.SessionDir)
+                loaded.Characters.Select(static user => user.SessionDir)
             );
             Assert.Equal(
                 [
                     Path.Combine(root, "delegation-state", "alice"),
                     Path.Combine(root, "delegation-state", "bob")
                 ],
-                loaded.Users.Select(static user =>
+                loaded.Characters.Select(static user =>
                     user.DelegationStateDir)
             );
             Assert.Equal(
@@ -319,7 +305,7 @@ public sealed class GalateaConfigValidationTests {
                     Path.Combine(root, "character-memory", "alice"),
                     Path.Combine(root, "character-memory", "bob")
                 ],
-                loaded.Users.Select(static user =>
+                loaded.Characters.Select(static user =>
                     user.CharacterMemoryStateDir)
             );
             Assert.False(Directory.Exists(Path.Combine(
@@ -343,11 +329,9 @@ public sealed class GalateaConfigValidationTests {
             string promptPath = Path.Combine(root, promptRelative);
             string configPath = WriteFileConfig(
                 root,
-                [new GalateaUserFileConfig(
+                [new GalateaCharacterFileConfig(
                     "alice",
-                    "pw",
                     "Galatea",
-                    "刘世超",
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
                     Path.Combine(root, "character-memory-state"),
@@ -378,25 +362,27 @@ public sealed class GalateaConfigValidationTests {
                 StringComparison.Ordinal
             );
             GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath);
-            GalateaUserConfig user = Assert.Single(
-                GalateaConfigLoader.Load(configPath).Users
+            GalateaCharacterConfig user = Assert.Single(
+                GalateaConfigLoader.Load(configPath).Characters
             );
-            Assert.Contains("Galatea", user.SystemPrompt,
+            Assert.True(user.SystemPrompt.IsStructured);
+            string projected = GalateaInputProjector.Instance.Project(user.SystemPrompt);
+            Assert.Contains("Galatea", projected,
                 StringComparison.Ordinal);
-            Assert.Contains("刘世超", user.SystemPrompt,
+            Assert.DoesNotContain("刘世超", projected,
                 StringComparison.Ordinal);
-            Assert.Contains("GM carrier", user.SystemPrompt,
+            Assert.Contains("GM carrier", projected,
                 StringComparison.Ordinal);
-            Assert.Contains("## 界外邮箱", user.SystemPrompt,
+            Assert.Contains("## 界外邮箱", projected,
                 StringComparison.Ordinal);
-            Assert.DoesNotContain("### 发信给 Codex", user.SystemPrompt,
+            Assert.DoesNotContain("### 发信给 Codex", projected,
                 StringComparison.Ordinal);
             Assert.DoesNotContain(
                 "### 保存长期 Note",
-                user.SystemPrompt,
+                projected,
                 StringComparison.Ordinal
             );
-            Assert.DoesNotContain("${", user.SystemPrompt,
+            Assert.DoesNotContain("${", projected,
                 StringComparison.Ordinal);
         }
         finally {
@@ -415,11 +401,9 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllBytes(existingPrompt, existing);
             string configPath = WriteFileConfig(
                 root,
-                [new GalateaUserFileConfig(
+                [new GalateaCharacterFileConfig(
                     "alice",
-                    "pw",
                     "Galatea",
-                    "刘世超",
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
                     Path.Combine(root, "character-memory-state"),
@@ -438,12 +422,10 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(
                 configPath,
                 JsonSerializer.Serialize(
-                    GalateaConfigTemplateFactory.CreateUsersFile() with {
-                        Users = [new GalateaUserFileConfig(
+                    GalateaConfigTemplateFactory.CreateRootFile() with {
+                        Characters = [new GalateaCharacterFileConfig(
                             "alice",
-                            "pw",
                             "Galatea",
-                            "刘世超",
                             Path.Combine(root, "session"),
                             Path.Combine(root, "delegation-state"),
                             Path.Combine(root, "character-memory-state"),
@@ -514,7 +496,7 @@ public sealed class GalateaConfigValidationTests {
                 )]
             );
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
-            GalateaUserConfig loadedUser = Assert.Single(loaded.Users);
+            GalateaCharacterConfig loadedUser = Assert.Single(loaded.Characters);
             Assert.Equal(expectedSessionDirectory, loadedUser.SessionDir);
             Assert.Equal(
                 expectedDelegationStateDirectory,
@@ -531,7 +513,7 @@ public sealed class GalateaConfigValidationTests {
                 factory,
                 DisabledGalateaUserMessageNormalizer.Instance
             );
-            UserSessionHost session = await service.GetSessionAsync(
+            CharacterSessionHost session = await service.GetSessionAsync(
                 "alice",
                 CancellationToken.None
             );
@@ -561,7 +543,7 @@ public sealed class GalateaConfigValidationTests {
 
             Assert.Equal(
                 absoluteSessionDirectory,
-                Assert.Single(loaded.Users).SessionDir
+                Assert.Single(loaded.Characters).SessionDir
             );
             Assert.False(Directory.Exists(absoluteSessionDirectory));
         }
@@ -612,18 +594,18 @@ public sealed class GalateaConfigValidationTests {
             );
             Assert.Equal(
                 absolute,
-                Assert.Single(GalateaConfigLoader.Load(configPath).Users)
+                Assert.Single(GalateaConfigLoader.Load(configPath).Characters)
                     .DelegationStateDir
             );
 
-            GalateaUserConfig[] duplicate = [
+            GalateaCharacterConfig[] duplicate = [
                 User("alice", "sessions/alice", "delegation/shared"),
                 User("bob", "sessions/bob", "./delegation/shared")
             ];
             Assert.Throws<InvalidOperationException>(() =>
                 GalateaConfigLoader.Load(WriteConfig(root, duplicate)));
 
-            GalateaUserConfig[] nestedDelegation = [
+            GalateaCharacterConfig[] nestedDelegation = [
                 User("alice", "sessions/alice", "delegation/alice"),
                 User("bob", "sessions/bob", "delegation/alice/bob")
             ];
@@ -633,7 +615,7 @@ public sealed class GalateaConfigValidationTests {
                     nestedDelegation
                 )));
 
-            GalateaUserConfig[] crossUserNesting = [
+            GalateaCharacterConfig[] crossUserNesting = [
                 User(
                     "alice",
                     "sessions/alice",
@@ -717,13 +699,13 @@ public sealed class GalateaConfigValidationTests {
                 )],
                 characterNoteExtractorConnectionId: "test"
             );
-            GalateaUserConfig loaded = Assert.Single(
-                GalateaConfigLoader.Load(configPath).Users
+            GalateaCharacterConfig loaded = Assert.Single(
+                GalateaConfigLoader.Load(configPath).Characters
             );
             Assert.Equal(absolute, loaded.CharacterMemoryStateDir);
             Assert.False(Directory.Exists(absolute));
 
-            GalateaUserConfig[] duplicate = [
+            GalateaCharacterConfig[] duplicate = [
                 User(
                     "alice",
                     "sessions/alice",
@@ -738,7 +720,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.Throws<InvalidOperationException>(() =>
                 GalateaConfigLoader.Load(WriteConfig(root, duplicate)));
 
-            GalateaUserConfig[] nested = [
+            GalateaCharacterConfig[] nested = [
                 User(
                     "alice",
                     "sessions/alice",
@@ -753,7 +735,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.Throws<InvalidOperationException>(() =>
                 GalateaConfigLoader.Load(WriteConfig(root, nested)));
 
-            GalateaUserConfig[] crossUserNesting = [
+            GalateaCharacterConfig[] crossUserNesting = [
                 User(
                     "alice",
                     "sessions/alice",
@@ -891,7 +873,7 @@ public sealed class GalateaConfigValidationTests {
                 "character-memory",
                 "shared"
             );
-            GalateaUserConfig[] duplicateCharacterMemory = [
+            GalateaCharacterConfig[] duplicateCharacterMemory = [
                 User(
                     "alice",
                     Path.Combine(root, "sessions", "alice"),
@@ -905,6 +887,7 @@ public sealed class GalateaConfigValidationTests {
             ];
             var duplicateConfig = new GalateaConfig(
                 duplicateCharacterMemory,
+                [new GalateaPlayerConfig("player-main", new GalateaPlayerName("刘世超"), "pw")],
                 Connections,
                 ["test"],
                 InputNormalizerConnectionId: null,
@@ -918,7 +901,7 @@ public sealed class GalateaConfigValidationTests {
                     DisabledGalateaUserMessageNormalizer.Instance
                 ));
 
-            GalateaUserConfig user = User(
+            GalateaCharacterConfig user = User(
                 "alice",
                 Path.Combine(root, "sessions", "alice"),
                 characterMemoryStateDirectory: Path.Combine(
@@ -928,7 +911,7 @@ public sealed class GalateaConfigValidationTests {
                 )
             );
             GalateaConfig callLogConfig = duplicateConfig with {
-                Users = [user],
+                Characters = [user],
                 CallLogDir = Path.Combine(root, "character-memory")
             };
             Assert.Throws<InvalidOperationException>(() =>
@@ -953,7 +936,7 @@ public sealed class GalateaConfigValidationTests {
     ) {
         string root = NewRoot();
         try {
-            GalateaUserConfig baseline = User(
+            GalateaCharacterConfig baseline = User(
                 "alice",
                 Path.Combine(root, "sessions", "alice")
             );
@@ -979,7 +962,7 @@ public sealed class GalateaConfigValidationTests {
             ];
 
             foreach (string invalidPath in invalidPaths) {
-                GalateaUserConfig invalidUser = storageField switch {
+                GalateaCharacterConfig invalidUser = storageField switch {
                     "sessionDir" => baseline with {
                         SessionDir = invalidPath
                     },
@@ -995,6 +978,7 @@ public sealed class GalateaConfigValidationTests {
                 };
                 var config = new GalateaConfig(
                     [invalidUser],
+                [new GalateaPlayerConfig("player-main", new GalateaPlayerName("刘世超"), "pw")],
                     Connections,
                     ["test"],
                     InputNormalizerConnectionId: null,
@@ -1022,7 +1006,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV9OutsideFirstProperty() {
+    public void RootConfigAcceptsExactV10OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1030,15 +1014,15 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":9,";
+            const string LeadingVersion = "{\"v\":10,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":9}";
+                + ",\"v\":10}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
-            Assert.Equal("alice", Assert.Single(loaded.Users).UserId);
+            Assert.Equal("alice", Assert.Single(loaded.Characters).CharacterId);
         }
         finally {
             Directory.Delete(root, recursive: true);
@@ -1046,7 +1030,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV9AndRejectsOtherVersions() {
+    public void RootConfigRequiresExactIntegerV10AndRejectsOtherVersions() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1054,8 +1038,9 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":9";
+            const string Version = "\"v\":10";
             Assert.Contains(Version, original, StringComparison.Ordinal);
+            Assert.Equal("alice", Assert.Single(GalateaConfigLoader.Load(configPath).Characters).CharacterId);
 
             string[] invalid = [
                 original.Replace(
@@ -1065,7 +1050,7 @@ public sealed class GalateaConfigValidationTests {
                 ),
                 original.Replace(Version, "\"v\":null",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":\"8\"",
+                original.Replace(Version, "\"v\":\"10\"",
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":0",
                     StringComparison.Ordinal),
@@ -1085,13 +1070,15 @@ public sealed class GalateaConfigValidationTests {
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":8",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":10",
+                original.Replace(Version, "\"v\":9",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":9.0",
+                original.Replace(Version, "\"v\":11",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":9e0",
+                original.Replace(Version, "\"v\":10.0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":8",
+                original.Replace(Version, "\"v\":10e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":10",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -1178,14 +1165,19 @@ public sealed class GalateaConfigValidationTests {
                 root,
                 GalateaConfigLoader.ConnectionsFileName
             );
-            byte[] versionless = File.ReadAllBytes(configPath);
+            byte[] original = File.ReadAllBytes(configPath);
+            Assert.Contains("\"v\":10,", System.Text.Encoding.UTF8.GetString(original), StringComparison.Ordinal);
+            byte[] versionless = original;
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":9,",
+                    "\"v\":10,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
             );
+            using (JsonDocument document = JsonDocument.Parse(versionless)) {
+                Assert.False(document.RootElement.TryGetProperty("v", out _));
+            }
             File.WriteAllBytes(configPath, versionless);
             byte[] connectionsBefore = File.ReadAllBytes(connectionsPath);
 
@@ -1238,7 +1230,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.Equal(0, factory.CreateCallCount);
             Assert.Equal(
                 "test",
-                Assert.Single(loaded.Users).DefaultConnectionId
+                Assert.Single(loaded.Characters).DefaultConnectionId
             );
             Assert.Single(service.Connections);
             Assert.False(File.Exists(Path.Combine(root, "routes.json")));
@@ -1338,17 +1330,20 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(
                 configPath,
                 JsonSerializer.Serialize(
-                    new GalateaUsersFileConfig(
+                    new GalateaRootFileConfig(
                         Version: GalateaStrictConfigReader.CurrentConfigVersion,
-                        Users: [FileUser(
+                        Characters: [FileUser(
                             User("alice", Path.Combine(root, "session"))
                         )],
+                    Players: [new GalateaPlayerFileConfig("player-main", "刘世超", "pw")],
+                    Runtime: new GalateaRuntimeFileConfig(
                         RecapGrid: new GalateaRecapGridFileConfig(
                             "routes.json",
                             ["profile.json"],
                             "test-profile"
                         )
-                    ),
+                    )
+                ),
                     GalateaJson.Options
                 )
             );
@@ -1392,18 +1387,18 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":9,\"users\"",
-                    "{\"v\":9,\"unknown\":1,\"users\"",
+                    "{\"v\":10,\"characters\"",
+                    "{\"v\":10,\"unknown\":1,\"characters\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
-                    "\"users\":",
-                    "\"users\":[],\"Users\":",
+                    "\"characters\":",
+                    "\"characters\":[],\"Characters\":",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
-                    "\"userId\":",
-                    "\"nestedUnknown\":1,\"userId\":",
+                    "\"id\":",
+                    "\"nestedUnknown\":1,\"id\":",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
@@ -1567,7 +1562,7 @@ public sealed class GalateaConfigValidationTests {
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
             Assert.Equal(
                 [first.Id, second.Id],
-                loaded.Users.Select(static user => user.DefaultConnectionId)
+                loaded.Characters.Select(static user => user.DefaultConnectionId)
             );
             IReadOnlyList<GalateaConnectionInfoDto> selectable = loaded
                 .Connections
@@ -1577,13 +1572,15 @@ public sealed class GalateaConfigValidationTests {
                 ))
                 .ToArray();
             string aliceHtml = GalateaHtml.RenderAppPage(
-                loaded.Users[0],
+                loaded.Characters[0],
+                loaded.Players[0],
                 selectable,
                 maintenanceMode: false,
                 assetVersion: "test"
             );
             string bobHtml = GalateaHtml.RenderAppPage(
-                loaded.Users[1],
+                loaded.Characters[1],
+                loaded.Players[0],
                 selectable,
                 maintenanceMode: false,
                 assetVersion: "test"
@@ -1668,9 +1665,9 @@ public sealed class GalateaConfigValidationTests {
             )!.AsObject();
 
             GalateaConfig outboundDisabled = Load(original);
-            string disabledPrompt = Assert.Single(
-                outboundDisabled.Users
-            ).SystemPrompt;
+            string disabledPrompt = GalateaInputProjector.Instance.Project(Assert.Single(
+                outboundDisabled.Characters
+            ).SystemPrompt);
             Assert.Null(outboundDisabled.OutboundMailExtractorConnectionId);
             Assert.Null(
                 outboundDisabled.CharacterNoteExtractorConnectionId
@@ -1691,9 +1688,9 @@ public sealed class GalateaConfigValidationTests {
                 GalateaCompletionOwner.OutboundMailExtractorBindingKey
             ] = "test";
             GalateaConfig outboundEnabled = Load(enabled);
-            string enabledPrompt = Assert.Single(
-                outboundEnabled.Users
-            ).SystemPrompt;
+            string enabledPrompt = GalateaInputProjector.Instance.Project(Assert.Single(
+                outboundEnabled.Characters
+            ).SystemPrompt);
             Assert.Equal(
                 "test",
                 outboundEnabled.OutboundMailExtractorConnectionId
@@ -1708,7 +1705,7 @@ public sealed class GalateaConfigValidationTests {
                 StringComparison.Ordinal
             );
             Assert.NotEqual(disabledPrompt, enabledPrompt);
-            Assert.Contains(Assert.Single(outboundEnabled.Users).HomeDir, enabledPrompt,
+            Assert.Contains(Assert.Single(outboundEnabled.Characters).HomeDir, enabledPrompt,
                 StringComparison.Ordinal);
 
             JsonObject noteEnabledJson = original.DeepClone().AsObject();
@@ -1722,9 +1719,9 @@ public sealed class GalateaConfigValidationTests {
             );
             Assert.Null(noteEnabled.MemoRecallConnectionId);
             Assert.Null(noteEnabled.OutboundMailExtractorConnectionId);
-            string noteEnabledPrompt = Assert.Single(
-                noteEnabled.Users
-            ).SystemPrompt;
+            string noteEnabledPrompt = GalateaInputProjector.Instance.Project(Assert.Single(
+                noteEnabled.Characters
+            ).SystemPrompt);
             Assert.DoesNotContain("### 发信给 Codex", noteEnabledPrompt,
                 StringComparison.Ordinal);
             Assert.Contains(
@@ -1744,9 +1741,9 @@ public sealed class GalateaConfigValidationTests {
             bothEnabledJson["bindings"]!.AsObject()[
                 GalateaCompletionOwner.CharacterNoteExtractorBindingKey
             ] = "test";
-            string bothEnabledPrompt = Assert.Single(
-                Load(bothEnabledJson).Users
-            ).SystemPrompt;
+            string bothEnabledPrompt = GalateaInputProjector.Instance.Project(Assert.Single(
+                Load(bothEnabledJson).Characters
+            ).SystemPrompt);
             Assert.True(
                 bothEnabledPrompt.IndexOf(
                     "### 发信给 Codex",
@@ -1831,7 +1828,7 @@ public sealed class GalateaConfigValidationTests {
         string root = NewRoot();
         try {
             GalateaConfig config = LoadConstructionFixture(root) with {
-                Users = [
+                Characters = [
                     User("duplicate", Path.Combine(root, "session-a")),
                     User("duplicate", Path.Combine(root, "session-b")),
                 ],
@@ -1857,7 +1854,7 @@ public sealed class GalateaConfigValidationTests {
         string root = NewRoot();
         try {
             GalateaConfig config = LoadConstructionFixture(root) with {
-                Users = [
+                Characters = [
                     User("duplicate", Path.Combine(root, "session-a")),
                     User("duplicate", Path.Combine(root, "session-b")),
                 ],
@@ -1978,11 +1975,9 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(prompt, "${characterName}");
             configPath = WriteFileConfig(
                 root,
-                [new GalateaUserFileConfig(
+                [new GalateaCharacterFileConfig(
                     "alice",
-                    "pw",
                     "Galatea",
-                    "刘世超",
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
                     Path.Combine(root, "character-memory-state"),
@@ -2096,7 +2091,7 @@ public sealed class GalateaConfigValidationTests {
         string root = NewRoot();
         string upper = Path.Combine(root, "sessions", "Alice");
         string lower = Path.Combine(root, "sessions", "alice");
-        GalateaUserConfig[] users = [
+        GalateaCharacterConfig[] users = [
             User("alice", upper),
             User("bob", lower)
         ];
@@ -2132,7 +2127,7 @@ public sealed class GalateaConfigValidationTests {
 
     private static void AssertRejectedByLoaderAndHost(
         string root,
-        IReadOnlyList<GalateaUserConfig> users,
+        IReadOnlyList<GalateaCharacterConfig> users,
         string expectedNormalizedPath,
         string? expectedNonCanonicalHostUserId = null
     ) {
@@ -2145,6 +2140,7 @@ public sealed class GalateaConfigValidationTests {
         var factory = new TrackingFactory();
         var config = new GalateaConfig(
             users,
+                [new GalateaPlayerConfig("player-main", new GalateaPlayerName("刘世超"), "pw")],
             Connections,
             ["test"],
             InputNormalizerConnectionId: null,
@@ -2165,7 +2161,7 @@ public sealed class GalateaConfigValidationTests {
         }
         else {
             Assert.Contains(
-                $"sessionDir for user '{expectedNonCanonicalHostUserId}'",
+                $"sessionDir for character '{expectedNonCanonicalHostUserId}'",
                 constructionFailure.Message,
                 StringComparison.Ordinal
             );
@@ -2197,7 +2193,7 @@ public sealed class GalateaConfigValidationTests {
 
     private static string WriteConfig(
         string root,
-        IReadOnlyList<GalateaUserConfig> users,
+        IReadOnlyList<GalateaCharacterConfig> users,
         string? callLogDirectory = null,
         IReadOnlyList<string>? listenUrls = null,
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
@@ -2210,11 +2206,13 @@ public sealed class GalateaConfigValidationTests {
         File.WriteAllText(
             configPath,
             JsonSerializer.Serialize(
-                new GalateaUsersFileConfig(
+                new GalateaRootFileConfig(
                     Version: GalateaStrictConfigReader.CurrentConfigVersion,
-                    Users: users.Select(user => FileUser(user) with {
-                        HomeDir = Directory.CreateDirectory(Path.Combine(root, "homes", user.UserId)).FullName
+                    Characters: users.Select(user => FileUser(user) with {
+                        HomeDir = Directory.CreateDirectory(Path.Combine(root, "homes", user.CharacterId)).FullName
                     }).ToArray(),
+                    Players: [new GalateaPlayerFileConfig("player-main", "刘世超", "pw")],
+                    Runtime: new GalateaRuntimeFileConfig(
                     ListenUrls: listenUrls,
                     CallLogDir: callLogDirectory,
                     RecapGrid: new GalateaRecapGridFileConfig(
@@ -2222,6 +2220,7 @@ public sealed class GalateaConfigValidationTests {
                         ["profile.json"],
                         "test-profile"
                     )
+                )
                 ),
                 GalateaJson.Options
             )
@@ -2245,22 +2244,25 @@ public sealed class GalateaConfigValidationTests {
 
     private static string WriteFileConfig(
         string root,
-        IReadOnlyList<GalateaUserFileConfig> users
+        IReadOnlyList<GalateaCharacterFileConfig> users
     ) {
         string configPath = Path.Combine(root, "config.json");
         File.WriteAllText(
             configPath,
             JsonSerializer.Serialize(
-                new GalateaUsersFileConfig(
+                new GalateaRootFileConfig(
                     Version: GalateaStrictConfigReader.CurrentConfigVersion,
-                    Users: users.Select(user => user with {
-                        HomeDir = Directory.CreateDirectory(Path.Combine(root, "homes", user.UserId)).FullName
+                    Characters: users.Select(user => user with {
+                        HomeDir = Directory.CreateDirectory(Path.Combine(root, "homes", user.CharacterId)).FullName
                     }).ToArray(),
+                    Players: [new GalateaPlayerFileConfig("player-main", "刘世超", "pw")],
+                    Runtime: new GalateaRuntimeFileConfig(
                     RecapGrid: new GalateaRecapGridFileConfig(
                         "routes.json",
                         ["profile.json"],
                         "test-profile"
                     )
+                )
                 ),
                 GalateaJson.Options
             )
@@ -2278,13 +2280,11 @@ public sealed class GalateaConfigValidationTests {
         return configPath;
     }
 
-    private static GalateaUserFileConfig FileUser(
-        GalateaUserConfig user
+    private static GalateaCharacterFileConfig FileUser(
+        GalateaCharacterConfig user
     ) => new(
-        user.UserId,
-        user.Password,
+        user.CharacterId,
         user.CharacterName.Value,
-        user.PlayerName.Value,
         user.SessionDir,
         user.DelegationStateDir,
         user.CharacterMemoryStateDir,
@@ -2324,7 +2324,7 @@ public sealed class GalateaConfigValidationTests {
         factory
     );
 
-    private static GalateaUserConfig User(
+    private static GalateaCharacterConfig User(
         string userId,
         string sessionDirectory,
         string? delegationStateDirectory = null,
@@ -2332,9 +2332,7 @@ public sealed class GalateaConfigValidationTests {
         string defaultConnectionId = "test"
     ) => new(
         userId,
-        "pw",
-        new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("刘世超"),
+        new GalateaCharacterName("Character-" + userId),
         sessionDirectory,
         delegationStateDirectory
             ?? sessionDirectory + "-delegation-state-" + userId,
@@ -2342,7 +2340,7 @@ public sealed class GalateaConfigValidationTests {
             ?? sessionDirectory + "-character-memory-state-" + userId,
         GalateaDelegateTestConfiguration.CreateHomeDirectory(sessionDirectory, userId),
         GalateaSessionProvisioning.ExistingOnly,
-        SystemPrompt: "prompt Galatea",
+        SystemPrompt: "prompt Character-" + userId,
         DefaultConnectionId: defaultConnectionId
     );
 

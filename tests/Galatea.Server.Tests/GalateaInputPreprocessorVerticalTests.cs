@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using Atelia.MdJson;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
@@ -52,7 +53,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -70,15 +71,12 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             static value => value.Id
         ));
         Assert.False(service.TryGetConnection(
-            session.User,
+            session.Character,
             helper.Id,
             out _
         ));
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            Assert.Single(session.Engine.ReadRecentCompletedTurns()
-                .RequireSnapshot().Turns).ObservationContent,
-            out PlayerTurnObservation observation
-        ));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(
+            Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns).ObservationContent);
         Assert.Equal("normalized input", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);
     }
@@ -106,7 +104,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             );
             GalateaHostService service = host.Factory.Services
                 .GetRequiredService<GalateaHostService>();
-            UserSessionHost session = await service.GetSessionAsync(
+            CharacterSessionHost session = await service.GetSessionAsync(
                 "alice",
                 CancellationToken.None
             );
@@ -155,7 +153,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -163,7 +161,8 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "direct hidden fresh",
-            new GalateaTurnOptions(hidden.Id)
+            new GalateaTurnOptions(hidden.Id),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             GalateaTurnException failure = await Assert.ThrowsAsync<
@@ -204,7 +203,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         await LoginAsync(client);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -217,7 +216,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             .DelegationHandle!.Store.ReadSnapshot();
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "must fail before normalization",
                 ConnectionId: "test"
@@ -305,17 +304,16 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         string wrapped = Assert.IsType<string>(
             requestedObservation.Content
         );
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            wrapped,
-            out PlayerTurnObservation observation
-        ));
+        SessionInputContent projectedInput = SessionInputContent.Structured(
+            GalateaObservationContent.SchemaId, MdJsonSerializer.Read(wrapped));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         Assert.Equal("normalized input", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);
 
         var persisted = session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot();
         Assert.Equal(
-            wrapped,
+            projectedInput,
             Assert.Single(persisted.Turns).ObservationContent
         );
 
@@ -340,7 +338,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -358,10 +356,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns
         );
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            turn.ObservationContent,
-            out PlayerTurnObservation observation
-        ));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(turn.ObservationContent);
         Assert.Empty(observation.Recalls);
     }
 
@@ -369,11 +364,12 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     public async Task PlayerTurnRecallProvider_InjectsFixedRecallPayload() {
         var completion = new ScriptedCompletionClient("assistant reply");
         var normalizer = new ReturningNormalizer("normalized input");
-        var recall = new PlayerTurnRecall(
+        var recall = PlayerTurnRecall.FromText(
             new RecallEntry(
                 RecallType.MemoGist,
                 "memo-pod:galatea#memo-0001"
             ),
+            "test-pod-version-1",
             "标题：蓝门\n印象：门后有风声。"
         );
         var recallProvider = new FixedPlayerTurnRecallProvider([recall]);
@@ -405,7 +401,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
 
         GalateaPlayerTurnRecallRequest recallRequest =
             Assert.Single(recallProvider.Requests);
-        Assert.Same(session.User, recallRequest.User);
+        Assert.Same(session.Character, recallRequest.Character);
         Assert.Equal(
             "normalized input",
             recallRequest.CurrentObservation.PlayerText
@@ -431,31 +427,22 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         string wrapped = Assert.IsType<string>(
             requestedObservation.Content
         );
-        Assert.Contains(
-            PlayerTurnObservationEnvelope.RecallGistHeading,
-            wrapped,
-            StringComparison.Ordinal
-        );
-        Assert.Contains(
-            "SourceId: memo-pod:galatea#memo-0001",
-            wrapped,
-            StringComparison.Ordinal
-        );
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            wrapped,
-            out PlayerTurnObservation observation
-        ));
+        Assert.Contains("memo-gist", wrapped, StringComparison.Ordinal);
+        SessionInputContent projectedInput = SessionInputContent.Structured(
+            GalateaObservationContent.SchemaId, MdJsonSerializer.Read(wrapped));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         PlayerTurnRecall parsedRecall = Assert.Single(observation.Recalls);
         Assert.Equal(RecallType.MemoGist,
             parsedRecall.Entry.RecallType);
         Assert.Equal("memo-pod:galatea#memo-0001",
             parsedRecall.Entry.SourceId);
-        Assert.Equal(recall.Body, parsedRecall.Body);
+        Assert.Equal(recall.ContentText, parsedRecall.ContentText);
+        Assert.Equal(recall.SourceVersion, parsedRecall.SourceVersion);
 
         var persisted = session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot();
         Assert.Equal(
-            wrapped,
+            projectedInput,
             Assert.Single(persisted.Turns).ObservationContent
         );
 
@@ -466,7 +453,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             recentTurn.UserText,
             StringComparison.Ordinal
         );
-        Assert.Contains(recall.Body, recentTurn.UserText,
+        Assert.Contains(recall.ContentText!, recentTurn.UserText,
             StringComparison.Ordinal);
         Assert.DoesNotContain("SourceId:", recentTurn.UserText,
             StringComparison.Ordinal);
@@ -476,11 +463,12 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     [Fact]
     public async Task PlayerTurnRecallProvider_ReceivesVisibleRecallBarrier() {
         var completion = new ScriptedCompletionClient("assistant reply");
-        var recall = new PlayerTurnRecall(
+        var recall = PlayerTurnRecall.FromText(
             new RecallEntry(
                 RecallType.MemoGist,
                 "memo-pod:galatea#memo-0001"
             ),
+            "test-pod-version-1",
             "标题：蓝门\n印象：门后有风声。"
         );
         var recallProvider = new BarrierAwareRecallProvider(recall);
@@ -494,7 +482,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
 
         var hostService = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await hostService.GetSessionAsync(
+        CharacterSessionHost session = await hostService.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -536,25 +524,20 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             .RequireSnapshot()
             .Turns;
         Assert.Equal(2, turns.Count);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            turns[0].ObservationContent,
-            out PlayerTurnObservation secondObservation
-        ));
+        PlayerTurnObservation secondObservation = GalateaObservationContent.ReadPlayerTurn(turns[0].ObservationContent);
         Assert.Empty(secondObservation.Recalls);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            turns[1].ObservationContent,
-            out PlayerTurnObservation firstObservation
-        ));
+        PlayerTurnObservation firstObservation = GalateaObservationContent.ReadPlayerTurn(turns[1].ObservationContent);
         Assert.Single(firstObservation.Recalls);
     }
 
     [Fact]
     public async Task PersistedRecallPayload_ReopensThroughRecentDisplay() {
-        var recall = new PlayerTurnRecall(
+        var recall = PlayerTurnRecall.FromText(
             new RecallEntry(
                 RecallType.MemoGist,
                 "memo-pod:galatea#memo-0001"
             ),
+            "test-pod-version-1",
             "标题：蓝门\n印象：门后有风声。"
         );
         GalateaTestHost? first = null;
@@ -575,7 +558,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
                 await LoginAsync(client);
                 GalateaHostService service = first.Factory.Services
                     .GetRequiredService<GalateaHostService>();
-                UserSessionHost session = await service.GetSessionAsync(
+                CharacterSessionHost session = await service.GetSessionAsync(
                     "alice",
                     CancellationToken.None
                 );
@@ -615,7 +598,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
                 recentTurn.UserText,
                 StringComparison.Ordinal
             );
-            Assert.Contains(recall.Body, recentTurn.UserText,
+            Assert.Contains(recall.ContentText!, recentTurn.UserText,
                 StringComparison.Ordinal);
             Assert.DoesNotContain("SourceId:", recentTurn.UserText,
                 StringComparison.Ordinal);
@@ -664,7 +647,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
 
         using var cancellation = new CancellationTokenSource();
         Task<HttpResponseMessage> admission = client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "blocked input",
                 ConnectionId: "test"
@@ -732,7 +715,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         string message
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(message, ConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -745,7 +728,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         GetRecentTurnsAsync(HttpClient client) {
         RecentTurnsResponseDto? response = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
-                "/api/v1/recent-turns"
+                "/api/v1/characters/alice/recent-turns"
             );
         return Assert.IsType<RecentTurnsResponseDto>(response);
     }
@@ -755,14 +738,14 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     ) {
         CurrentTurnDto? response = await client
             .GetFromJsonAsync<CurrentTurnDto>(
-                "/api/v1/chat/turns/current"
+                "/api/v1/characters/alice/chat/turns/current"
             );
         return Assert.IsType<CurrentTurnDto>(response);
     }
 
     private static GalateaLiveTurn RequireTurn(
         GalateaHostService hostService,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string turnId
     ) => Assert.IsType<GalateaLiveTurn>(
         hostService.FindTurn(session, turnId)

@@ -15,11 +15,11 @@ namespace Atelia.Galatea.Server.Tests;
 public sealed class CharacterNoteExtractorTests {
     [Fact]
     public async Task CompositionFactoryUsesDisabledSingletonOrLazyPerCharacterExtractors() {
-        IReadOnlyDictionary<string, GalateaUserConfig> users = new[] {
+        IReadOnlyDictionary<string, GalateaCharacterConfig> users = new[] {
             User("alice", "Alice"),
             User("bob", "Bob"),
             User("alice-again", "Alice"),
-        }.ToDictionary(static user => user.UserId, StringComparer.Ordinal);
+        }.ToDictionary(static user => user.CharacterId, StringComparer.Ordinal);
         int getClientCallCount = 0;
         ICompletionClient GetClient() {
             Interlocked.Increment(ref getClientCallCount);
@@ -73,7 +73,7 @@ public sealed class CharacterNoteExtractorTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -85,22 +85,24 @@ public sealed class CharacterNoteExtractorTests {
             "^atelia\\.galatea\\.character-note-extractor\\.v1\\.[0-9a-f]{64}$",
             session.CharacterNoteExtractor.ContractId
         );
-        string finalizedPrompt = session.Engine.ResolveGoverningSetup(
+        SessionInputContent systemInstructions = session.Engine.ResolveGoverningSetup(
             session.Engine.ReadCurrentHead()
                 ?? throw new Xunit.Sdk.XunitException(
                     "The test session has no governing head."
                 )
         ).SystemPrompt;
+        Assert.Equal(GalateaSystemInstructionContent.SchemaId, systemInstructions.SchemaId);
+        JsonElement[] instructions = systemInstructions.JsonValue
+            .GetProperty("instructions").EnumerateArray().ToArray();
+        JsonElement noteInstruction = Assert.Single(instructions,
+            instruction => instruction.GetProperty("kind").GetString() == "character-note-save");
         Assert.Contains(
             "### 保存长期 Note",
-            finalizedPrompt,
+            noteInstruction.GetProperty("source").GetString(),
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(
-            "### 发信给 Codex",
-            finalizedPrompt,
-            StringComparison.Ordinal
-        );
+        Assert.DoesNotContain(instructions,
+            instruction => instruction.GetProperty("kind").GetString() == "outbound-mail");
         Assert.Equal(0, factory.CreateCallCount);
     }
 
@@ -344,7 +346,7 @@ public sealed class CharacterNoteExtractorTests {
     }
 
     [Fact]
-    public async Task TwoTranscribedNotesPersistWithFrozenReceiptAndColdReopenSkipsExtraction() {
+    public async Task TwoTranscribedNotesPersistWithReceiptFactsAndColdReopenSkipsExtraction() {
         // Anonymized shape of the two-Note incident. The response faithfully
         // joins paragraphs; it is deliberately not an ordinal source substring.
         const string Action = """
@@ -368,7 +370,7 @@ public sealed class CharacterNoteExtractorTests {
         string memoryPath = Path.Combine(root, "memory");
         var owner = new CharacterMemoryStoreOwner("user", sessionPath);
         GalateaTerminalActionExtractionTarget target;
-        string receiptBody;
+        CharacterNoteReceiptFacts receiptFacts;
         long receiptRevision;
         string[] memoIds;
         try {
@@ -389,8 +391,12 @@ public sealed class CharacterNoteExtractorTests {
                 memoIds = applied.Memos.Select(static memo => memo.MemoId.Value).ToArray();
                 CharacterNoteReceiptDeliverySnapshot receipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
                     memory.ReadPendingReceiptDelivery());
-                Assert.All(texts, text => Assert.Contains(text, receipt.NoticeBody, StringComparison.Ordinal));
-                receiptBody = receipt.NoticeBody;
+                receiptFacts = Assert.IsType<CharacterNoteReceiptFacts>(receipt.Facts);
+                Assert.Equal(texts, receiptFacts.Memos.Select(static memo => memo.ExactText));
+                Assert.Equal(memoIds, receiptFacts.Memos.Select(static memo => memo.MemoId.Value));
+                Assert.Equal(EventAddressTextCodec.Format(action), receiptFacts.SourceActionAddress);
+                Assert.Null(receipt.NoticeBody);
+                Assert.Null(receipt.RenderedObservation);
                 receiptRevision = receipt.CreatedRevision;
             }
 
@@ -406,7 +412,9 @@ public sealed class CharacterNoteExtractorTests {
                 await reopenedMemory.ReconcileTargetAsync(reopenedEngine, target));
             CharacterNoteReceiptDeliverySnapshot recoveredReceipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
                 reopenedMemory.ReadPendingReceiptDelivery());
-            Assert.Equal(receiptBody, recoveredReceipt.NoticeBody);
+            Assert.Equal(receiptFacts, recoveredReceipt.Facts);
+            Assert.Null(recoveredReceipt.NoticeBody);
+            Assert.Null(recoveredReceipt.RenderedObservation);
             Assert.Equal(receiptRevision, recoveredReceipt.CreatedRevision);
             var pod = global::Atelia.MemoPod.MemoPod.Open(memoryPath, CharacterNoteDefaultPodV1.PodId);
             Assert.Equal(texts, pod.List().Select(static memo => memo.ExactText));
@@ -489,14 +497,12 @@ public sealed class CharacterNoteExtractorTests {
         ApiKey: "test-key"
     );
 
-    private static GalateaUserConfig User(
+    private static GalateaCharacterConfig User(
         string userId,
         string characterName
     ) => new(
         userId,
-        "pw",
         new GalateaCharacterName(characterName),
-        new GalateaPlayerName("Player"),
         Path.Combine(Path.GetTempPath(), "character-note", userId),
         Path.Combine(
             Path.GetTempPath(),

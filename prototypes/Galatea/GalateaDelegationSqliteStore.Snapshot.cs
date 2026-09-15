@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using Atelia.SessionJournal;
 using Atelia.Galatea.Server.Mailbox;
 using Microsoft.Data.Sqlite;
 
@@ -194,7 +196,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                    mail.terminal_final_sha256, mail.terminal_stage,
                    mail.terminal_code, mail.recovery_failure_count,
                    mail.recovery_last_code, mail.next_retry_at_ms,
-                   mail.revision
+                   mail.revision, mail.content_format, mail.sender_name,
+                   mail.task_sha256, mail.task_utf8_bytes
             FROM outbound_mail AS mail
             JOIN action_capture AS capture
               ON capture.source_action_address = mail.source_action_address
@@ -227,7 +230,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 reader.GetInt32(17),
                 ReadNullableString(reader, 18),
                 reader.IsDBNull(19) ? null : reader.GetInt64(19),
-                reader.GetInt64(20)
+                reader.GetInt64(20),
+                reader.GetString(21),
+                ReadNullableString(reader, 22),
+                ReadNullableString(reader, 23),
+                reader.IsDBNull(24) ? null : reader.GetInt32(24)
             ));
         }
         return result;
@@ -248,7 +255,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                    outbox.from_character_name, outbox.message_id, outbox.state,
                    outbox.expected_session_head, outbox.rendered_observation,
                    outbox.observation_address, outbox.quarantine_code,
-                   outbox.revision
+                   outbox.revision, outbox.bound_input
             FROM internal_mail_outbox AS outbox
             JOIN outbound_mail AS mail ON mail.dispatch_id = outbox.dispatch_id
             JOIN action_capture AS capture
@@ -271,7 +278,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 ReadNullableString(reader, 10),
                 ReadNullableString(reader, 11),
                 ReadNullableString(reader, 12),
-                reader.GetInt64(13)
+                reader.GetInt64(13),
+                ReadBoundInput(reader, 14)
             ));
         }
         return result;
@@ -287,11 +295,27 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             SELECT notice_id, dispatch_id, kind, body, stage, code,
                    completion_sequence, state, consumed_action_address,
-                   revision
+                   revision, notice_format, sender_kind, sender_id, sender_name,
+                   detail,
+                   CASE WHEN notice_format = 'legacy-text' THEN
+                       (SELECT COALESCE(mail.accepted_thread_id, mail.requested_thread_id) FROM outbound_mail mail WHERE mail.dispatch_id = reply_notice.dispatch_id)
+                       ELSE thread_id END,
+                   CASE WHEN notice_format = 'legacy-text' THEN
+                       (SELECT mail.accepted_turn_id FROM outbound_mail mail WHERE mail.dispatch_id = reply_notice.dispatch_id)
+                       ELSE turn_id END,
+                   thread_id, turn_id
             FROM reply_notice ORDER BY completion_sequence;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
         while (reader.Read()) {
+            bool legacy = reader.GetString(10) == "legacy-text";
+            if (legacy && (!reader.IsDBNull(11) || !reader.IsDBNull(12) || !reader.IsDBNull(13)
+                || !reader.IsDBNull(17) || !reader.IsDBNull(18))) {
+                throw Corrupt("Legacy notice must retain its original absent stored source columns.");
+            }
+            if (!legacy && (reader.IsDBNull(11) || reader.IsDBNull(12) || reader.IsDBNull(13))) {
+                throw Corrupt("Semantic notice must contain every sender identity field.");
+            }
             result.Add(new GalateaReplyNoticeSnapshot(
                 reader.GetString(0),
                 reader.GetString(1),
@@ -302,7 +326,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 reader.GetInt64(6),
                 ParseExact<GalateaReplyNoticeState>(reader.GetString(7)),
                 ReadNullableString(reader, 8),
-                reader.GetInt64(9)
+                reader.GetInt64(9),
+                reader.GetString(10),
+                reader.IsDBNull(11) ? null : new GalateaSenderSnapshot(reader.GetString(11), reader.GetString(12), reader.GetString(13)),
+                ReadNullableString(reader, 14),
+                ReadNullableString(reader, 15),
+                ReadNullableString(reader, 16)
             ));
         }
         return result;
@@ -318,7 +347,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             SELECT lease_id, state, player_text, expected_session_head,
                    rendered_observation, observation_utf8_bytes,
                    observation_sha256, completion_frontier,
-                   observation_address, revision
+                   observation_address, revision, bound_input
             FROM reply_lease WHERE active_slot = 1;
             """;
         string leaseId;
@@ -331,6 +360,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         long frontier;
         string? observationAddress;
         long revision;
+        SessionInputContent? boundInput;
         using (SqliteDataReader reader = command.ExecuteReader()) {
             if (!reader.Read()) { return null; }
             leaseId = reader.GetString(0);
@@ -343,6 +373,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             frontier = reader.GetInt64(7);
             observationAddress = ReadNullableString(reader, 8);
             revision = reader.GetInt64(9);
+            boundInput = ReadBoundInput(reader, 10);
             if (reader.Read()) {
                 throw Corrupt("Multiple active reply leases exist.");
             }
@@ -360,8 +391,38 @@ internal sealed partial class GalateaDelegationSqliteStore {
             revision,
             GalateaDelegationStateSnapshot.Freeze(
                 ReadLeaseItems(connection, transaction, leaseId)
-            )
+            ),
+            boundInput
         );
+    }
+
+    private static string EncodeBoundInput(SessionInputContent content)
+        => Encoding.UTF8.GetString(content.ToUtf8Json());
+
+    private static void RequireNewBoundObservation(SessionInputContent content) {
+        ArgumentNullException.ThrowIfNull(content);
+        if (!content.IsStructured || content.SchemaId != GalateaObservationContent.SchemaId) {
+            throw new ArgumentException("New delivery bindings require a structured Galatea Observation.", nameof(content));
+        }
+        GalateaObservationContent.Validate(content.JsonValue);
+    }
+
+    private static SessionInputContent? ReadBoundInput(SqliteDataReader reader, int ordinal) {
+        if (reader.IsDBNull(ordinal)) { return null; }
+        string json = reader.GetString(ordinal);
+        if (StrictUtf8.GetByteCount(json) > GalateaDelegationStateBounds.MaximumObservationUtf8Bytes) {
+            throw Corrupt("Bound input exceeds its machine-content limit.");
+        }
+        try {
+            SessionInputContent content = JsonSerializer.Deserialize<SessionInputContent>(json, new JsonSerializerOptions { MaxDepth = 128 })
+                ?? throw Corrupt("Bound input is null.");
+            if (!string.Equals(json, EncodeBoundInput(content), StringComparison.Ordinal)) { throw Corrupt("Bound input is not canonical machine content."); }
+            RequireNewBoundObservation(content);
+            return content;
+        }
+        catch (Exception exception) when (exception is JsonException or ArgumentException or InvalidOperationException) {
+            throw new InvalidDataException("Invalid bound input content.", exception);
+        }
     }
 
     private static List<string> ReadLeaseItems(
@@ -497,7 +558,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 var address = Atelia.SessionJournal.EventAddressTextCodec
                     .Parse(capture.SourceActionAddress);
                 string expectedDispatch = GalateaDelegationDurableContract
-                    .CreateDispatchId(owner.UserId, address, ordinal);
+                    .CreateDispatchId(owner.CharacterId, address, ordinal);
                 if (!string.Equals(
                         mail.DispatchId,
                         expectedDispatch,
@@ -514,7 +575,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     StringComparison.Ordinal)))) {
             throw Corrupt("An outbound mail has no action capture.");
         }
-        ValidateInternalMailOutboxes(mails, internalMailOutboxes);
+        ValidateInternalMailOutboxes(mails, internalMailOutboxes, owner.CharacterId);
         long candidateBytes = mails.Sum(static mail => checked(
             (long)StrictUtf8.GetByteCount(mail.Recipient)
             + StrictUtf8.GetByteCount(mail.Subject ?? string.Empty)
@@ -573,7 +634,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
 
     private static void ValidateInternalMailOutboxes(
         IReadOnlyList<GalateaOutboundMailSnapshot> mails,
-        IReadOnlyList<GalateaInternalMailOutboxSnapshot> outboxes
+        IReadOnlyList<GalateaInternalMailOutboxSnapshot> outboxes,
+        string senderId
     ) {
         if (outboxes.Count > mails.Count
             || outboxes.Select(static value => value.DispatchId)
@@ -596,7 +658,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             }
             try {
                 ValidateInternalMailTarget(new(
-                    outbox.TargetUserId,
+                    outbox.TargetCharacterId,
                     outbox.TargetSessionRepositoryId,
                     outbox.FromCharacterName
                 ));
@@ -604,25 +666,40 @@ internal sealed partial class GalateaDelegationSqliteStore {
             catch (ArgumentException exception) {
                 throw Corrupt("An internal mail target is invalid.", exception);
             }
+            if (outbox.RenderedObservation is not null && outbox.BoundInput is not null) {
+                throw Corrupt("Internal mail has two conflicting bound content representations.");
+            }
+            if (mail.ContentFormat == "semantic-mail-v1" && outbox.RenderedObservation is not null) {
+                throw Corrupt("Semantic mail cannot contain a legacy text binding.");
+            }
+            if (mail.ContentFormat == "semantic-mail-v1" && outbox.FromCharacterName != mail.SenderName) {
+                throw Corrupt("Internal mail sender differs from its atomic capture.");
+            }
+            if (outbox.BoundInput is { } boundInput) {
+                ValidateInternalMailInput(boundInput, outbox, mail, senderId);
+                if (StrictUtf8.GetByteCount(EncodeBoundInput(boundInput)) > GalateaDelegationStateBounds.MaximumObservationUtf8Bytes) {
+                    throw Corrupt("Internal mail bound input exceeds its machine-content limit.");
+                }
+            }
             bool valid = outbox.State switch {
                 GalateaInternalMailState.Pending =>
                     outbox.ExpectedSessionHead is null
-                    && outbox.RenderedObservation is null
+                    && outbox.ObservationContent is null
                     && outbox.ObservationAddress is null
                     && outbox.QuarantineCode is null,
                 GalateaInternalMailState.ObservationBound =>
                     IsCanonicalAddress(outbox.ExpectedSessionHead)
-                    && outbox.RenderedObservation is not null
+                    && outbox.ObservationContent is not null
                     && outbox.ObservationAddress is null
                     && outbox.QuarantineCode is null,
                 GalateaInternalMailState.Delivered =>
                     IsCanonicalAddress(outbox.ExpectedSessionHead)
-                    && outbox.RenderedObservation is not null
+                    && outbox.ObservationContent is not null
                     && IsCanonicalAddress(outbox.ObservationAddress)
                     && outbox.QuarantineCode is null,
                 GalateaInternalMailState.Quarantined =>
                     IsCanonicalAddress(outbox.ExpectedSessionHead)
-                    && outbox.RenderedObservation is not null
+                    && outbox.ObservationContent is not null
                     && outbox.ObservationAddress is null
                     && outbox.QuarantineCode is not null,
                 _ => false
@@ -661,7 +738,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             GalateaReplyNoticeState.Ready or GalateaReplyNoticeState.Leased);
         long actualBytes = notices.Where(static value => value.State is
                 GalateaReplyNoticeState.Ready or GalateaReplyNoticeState.Leased)
-            .Sum(static value => (long)StrictUtf8.GetByteCount(value.Body));
+            .Sum(NoticePayloadBytes);
         int reservations = route.ActiveDispatchId is null ? 0 : 1;
         if (reservations == 1
             && !mails.Any(value => string.Equals(
@@ -750,6 +827,17 @@ internal sealed partial class GalateaDelegationSqliteStore {
             || string.IsNullOrWhiteSpace(mail.Recipient)) {
             throw Corrupt("An outbound mail base shape is invalid.");
         }
+        if (mail.ContentFormat is not ("legacy-task" or "semantic-mail-v1")
+            || (mail.ContentFormat == "semantic-mail-v1" ? string.IsNullOrWhiteSpace(mail.SenderName) : mail.SenderName is not null)
+            || (mail.TaskSha256 is null) != (mail.TaskUtf8Bytes is null)) {
+            throw Corrupt("Outbound mail content format or commitment shape is invalid.");
+        }
+        if (mail.SenderName is not null) { RequireText(mail.SenderName, 1024, nameof(mail.SenderName), false); }
+        if (mail.TaskSha256 is not null) { _ = new GalateaTaskCommitment(mail.TaskSha256, mail.TaskUtf8Bytes!.Value); }
+        if (mail.ContentFormat == "semantic-mail-v1" && mail.OperationId is not null && mail.TaskSha256 is null) {
+            throw Corrupt("Started semantic mail is missing task sending evidence.");
+        }
+        if (mail.OperationId is null && mail.TaskSha256 is not null) { throw Corrupt("Unstarted mail has task sending evidence."); }
         bool valid = mail.State switch {
             GalateaDurableMailState.Unrouted =>
                 !mail.IsCodexRouted
@@ -952,7 +1040,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         bool valid = notice.Revision >= 0
             && string.Equals(notice.NoticeId, notice.DispatchId,
                 StringComparison.Ordinal)
-            && !string.IsNullOrWhiteSpace(notice.Body)
+            && (notice.NoticeFormat == "semantic-notice-v1" && notice.Kind == GalateaReplyNoticeKind.DeliveryFailure
+                ? notice.Body == string.Empty : !string.IsNullOrWhiteSpace(notice.Body))
             && (notice.State switch {
                 GalateaReplyNoticeState.Ready
                     or GalateaReplyNoticeState.Leased =>
@@ -964,6 +1053,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             && notice.Kind switch {
                 GalateaReplyNoticeKind.Reply =>
                     mail.State == GalateaDurableMailState.TerminalCompleted
+                    && notice.Detail is null
                     && notice.Stage is null
                     && notice.Code is null
                     && string.Equals(
@@ -980,6 +1070,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         StringComparison.Ordinal),
                 _ => false
             };
+        if (notice.NoticeFormat is not ("legacy-text" or "semantic-notice-v1")
+            || (notice.NoticeFormat == "legacy-text"
+                ? notice.Sender is not null || notice.Detail is not null
+                    || notice.ThreadId != (mail.AcceptedThreadId ?? mail.RequestedThreadId) || notice.TurnId != mail.AcceptedTurnId
+                : notice.Sender is null
+                    || notice.Sender.Kind != (notice.Kind == GalateaReplyNoticeKind.Reply ? "delegate" : "runtime")
+                    || notice.Sender.Id != (notice.Kind == GalateaReplyNoticeKind.Reply ? "codex" : "galatea")
+                    || notice.Sender.Name != (notice.Kind == GalateaReplyNoticeKind.Reply ? "Codex" : "Galatea")
+                    || notice.ThreadId != (mail.AcceptedThreadId ?? mail.RequestedThreadId)
+                    || notice.TurnId != mail.AcceptedTurnId)) {
+            throw Corrupt("Notice semantic provenance is invalid.");
+        }
         if (!valid) { throw Corrupt("A reply notice shape is invalid."); }
         try {
             RequireDispatchId(notice.NoticeId);
@@ -988,7 +1090,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     nameof(notice.Body), allowLineBreaks: true);
             }
             else {
-                RequireFailureNoticeBody(notice.Body, nameof(notice.Body));
+                if (notice.NoticeFormat == "legacy-text") { RequireFailureNoticeBody(notice.Body, nameof(notice.Body)); }
+                if (notice.Detail is not null) { RequireFailureNoticeBody(notice.Detail, nameof(notice.Detail)); }
                 RequireFailureToken(notice.Stage!, nameof(notice.Stage));
                 RequireFailureToken(notice.Code!, nameof(notice.Code));
             }
@@ -1022,12 +1125,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
         catch (ArgumentException exception) {
             throw Corrupt("Reply lease player text is invalid.", exception);
         }
+        if (lease.RenderedObservation is not null && lease.BoundInput is not null) {
+            throw Corrupt("Reply lease has two conflicting bound content representations.");
+        }
         bool hasObservation = lease.ExpectedSessionHead is not null
-            && lease.RenderedObservation is not null
+            && lease.ObservationContent is not null
             && lease.ObservationUtf8Bytes is not null
             && lease.ObservationSha256 is not null;
         bool shapeValid = lease.State switch {
-            GalateaReplyLeaseState.CutoffFrozen => !hasObservation,
+            GalateaReplyLeaseState.CutoffFrozen => !hasObservation
+                && lease.ExpectedSessionHead is null && lease.ObservationContent is null
+                && lease.ObservationUtf8Bytes is null && lease.ObservationSha256 is null
+                && lease.ObservationAddress is null,
             GalateaReplyLeaseState.ObservationBound => hasObservation
                 && lease.ObservationAddress is null,
             GalateaReplyLeaseState.ObservationCommitted => hasObservation
@@ -1055,6 +1164,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 || notice.CompletionSequence <= frontier) {
                 throw Corrupt("Reply lease membership is inconsistent.");
             }
+            if (lease.RenderedObservation is not null && notice.NoticeFormat != "legacy-text") {
+                throw Corrupt("A lease containing semantic notices cannot contain a legacy text binding.");
+            }
             frontier = notice.CompletionSequence;
         }
         if (frontier != lease.CompletionFrontier) {
@@ -1063,14 +1175,14 @@ internal sealed partial class GalateaDelegationSqliteStore {
         if (hasObservation) {
             int bytes;
             try {
-                bytes = StrictUtf8.GetByteCount(lease.RenderedObservation!);
+                bytes = StrictUtf8.GetByteCount(lease.BoundInput is null ? lease.RenderedObservation! : EncodeBoundInput(lease.BoundInput));
             }
             catch (EncoderFallbackException exception) {
                 throw Corrupt("Reply lease Observation is invalid Unicode.", exception);
             }
             if (bytes != lease.ObservationUtf8Bytes
                 || !string.Equals(
-                    ComputeSha256(lease.RenderedObservation!),
+                    ComputeSha256(lease.BoundInput is null ? lease.RenderedObservation! : EncodeBoundInput(lease.BoundInput)),
                     lease.ObservationSha256,
                     StringComparison.Ordinal)) {
                 throw Corrupt("Reply lease Observation identity is invalid.");
@@ -1079,13 +1191,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 lease,
                 notices
             );
-            if (!PlayerTurnObservationEnvelope.TryUnwrap(
-                    lease.RenderedObservation,
-                    out PlayerTurnObservation parsed)
-                || !StoredLeaseObservationMatches(
-                    parsed,
-                    lease,
-                    expectedNotices)) {
+            PlayerTurnObservation parsed = GalateaObservationContent.ReadPlayerTurn(lease.ObservationContent!);
+            if (!StoredLeaseObservationMatches(parsed, lease, expectedNotices)) {
                 throw Corrupt(
                     "Reply lease Observation is not its canonical cutoff."
                 );

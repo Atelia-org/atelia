@@ -17,10 +17,10 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
     }
 
     internal CharacterNoteReceiptDeliverySnapshot BindReceiptDelivery(
-        string source, long expectedRevision, string expectedHead, string renderedObservation
+        string source, long expectedRevision, string expectedHead, Atelia.SessionJournal.SessionInputContent observation
     ) {
         ThrowIfDisposed();
-        return _store.BindReceiptDelivery(source, expectedRevision, expectedHead, renderedObservation);
+        return _store.BindReceiptDelivery(source, expectedRevision, expectedHead, observation);
     }
 
     internal CharacterNoteReceiptDeliverySnapshot RollbackReceiptDelivery(string source, long expectedRevision) {

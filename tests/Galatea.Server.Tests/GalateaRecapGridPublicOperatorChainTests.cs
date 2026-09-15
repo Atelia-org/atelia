@@ -46,9 +46,8 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
 
         Assert.Equal(0, Run(provider,
             "scaffold",
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
             "--character-name", "Galatea",
-            "--player-name", "刘世超",
             "--profile-id", ProfileId,
             "--connection-id", RecapConnectionId,
             "--permission", "create",
@@ -100,15 +99,13 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--input", repository,
             "--confirm-ref", refText,
             "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea",
-            "--player-name", "刘世超"
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--character-name", "Galatea"
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("刘世超")
+                new GalateaCharacterName("Galatea")
             ),
             out RecapGridControlRegistrationBundle? created
         ));
@@ -175,7 +172,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance
         );
         Assert.Equal(0, provider.CreateCallCount);
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -213,13 +210,11 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
         File.WriteAllText(
             configPath,
             JsonSerializer.Serialize(
-                new GalateaUsersFileConfig(
+                new GalateaRootFileConfig(
                     Version: GalateaStrictConfigReader.CurrentConfigVersion,
-                    Users: [new GalateaUserFileConfig(
+                    Characters: [new GalateaCharacterFileConfig(
                         "alice",
-                        "pw",
                         "Galatea",
-                        "刘世超",
                         repository,
                         repository + "-delegation-state",
                         repository + "-character-memory-state",
@@ -228,11 +223,13 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         AgentConnectionId,
                         "operator-chain ${characterName} system prompt"
                     )],
-                    RecapGrid: new GalateaRecapGridFileConfig(
+                    Players: GalateaDelegateTestConfiguration.Players.Select(player =>
+                        new GalateaPlayerFileConfig(player.PlayerId, player.Name.Value, player.Password)).ToArray(),
+                    Runtime: new GalateaRuntimeFileConfig(RecapGrid: new GalateaRecapGridFileConfig(
                         Path.GetRelativePath(_root, routes),
                         [Path.GetRelativePath(_root, profile)],
                         ProfileId
-                    )
+                    ))
                 ),
                 GalateaJson.Options
             )
@@ -282,13 +279,14 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
 
     private static async Task RunFreshAsync(
         GalateaHostService service,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string message
     ) {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             message,
-            new GalateaTurnOptions(AgentConnectionId)
+            new GalateaTurnOptions(AgentConnectionId),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         await service.RunTurnAsync(session, turn, CancellationToken.None);
         service.FinishTurn(session, turn);

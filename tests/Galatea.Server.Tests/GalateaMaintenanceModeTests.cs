@@ -37,13 +37,13 @@ public sealed class GalateaMaintenanceModeTests {
 
         await AssertMaintenanceConflictAsync(
             await client.PostAsJsonAsync(
-                "/api/v1/chat/turns",
+                "/api/v1/characters/alice/chat/turns",
                 new ChatStreamRequest("must remain unconsumed", "test")
             )
         );
         await AssertMaintenanceConflictAsync(
             await client.PostAsJsonAsync(
-                "/api/v1/chat/turns/resume",
+                "/api/v1/characters/alice/chat/turns/resume",
                 new ResumeTurnRequest(
                     EventAddressTextCodec.Format(initialHead),
                     "test"
@@ -52,13 +52,13 @@ public sealed class GalateaMaintenanceModeTests {
         );
         await AssertMaintenanceConflictAsync(
             await client.PostAsJsonAsync(
-                "/api/v1/mailbox/ready-turn",
+                "/api/v1/characters/alice/mailbox/ready-turn",
                 new ReadyReplyTurnRequest()
             )
         );
         await AssertMaintenanceConflictAsync(
             await client.PostAsJsonAsync(
-                "/api/v1/chat/turns/pop-latest",
+                "/api/v1/characters/alice/chat/turns/pop-latest",
                 new PopLatestTurnRequestDto(
                     EventAddressTextCodec.Format(initialHead)
                 )
@@ -66,13 +66,13 @@ public sealed class GalateaMaintenanceModeTests {
         );
         await AssertMaintenanceConflictAsync(
             await client.PostAsync(
-                "/api/v1/chat/turns/not-running/stop",
+                "/api/v1/characters/alice/chat/turns/not-running/stop",
                 content: null
             )
         );
         using var malformed = new HttpRequestMessage(
             HttpMethod.Post,
-            "/api/v1/chat/turns"
+            "/api/v1/characters/alice/chat/turns"
         ) {
             Content = new StringContent(
                 "{",
@@ -93,12 +93,12 @@ public sealed class GalateaMaintenanceModeTests {
             "/api/v1/me"
         );
         Assert.NotNull(me);
-        Assert.Equal("alice", me!.UserId);
+        Assert.Equal("player-main", me!.PlayerId);
         Assert.True(me.MaintenanceMode);
 
         GalateaMailboxStatusDto? mailboxStatus = await client
             .GetFromJsonAsync<GalateaMailboxStatusDto>(
-                "/api/v1/mailbox/status"
+                "/api/v1/characters/alice/mailbox/status"
             );
         Assert.NotNull(mailboxStatus);
         Assert.Equal("unavailable", mailboxStatus!.State);
@@ -108,7 +108,7 @@ public sealed class GalateaMaintenanceModeTests {
 
         RecentTurnsResponseDto? recent = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
-                "/api/v1/recent-turns"
+                "/api/v1/characters/alice/recent-turns"
             );
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
@@ -124,7 +124,7 @@ public sealed class GalateaMaintenanceModeTests {
 
         RecapCadenceProgressSnapshotDto? cadence = await client
             .GetFromJsonAsync<RecapCadenceProgressSnapshotDto>(
-                "/api/v1/recap-cadence-progress"
+                "/api/v1/characters/alice/recap-cadence-progress"
             );
         Assert.NotNull(cadence);
         Assert.Equal("exact", cadence!.Freshness);
@@ -141,7 +141,7 @@ public sealed class GalateaMaintenanceModeTests {
 
         CurrentTurnDto? current = await client
             .GetFromJsonAsync<CurrentTurnDto>(
-                "/api/v1/chat/turns/current"
+                "/api/v1/characters/alice/chat/turns/current"
             );
         Assert.NotNull(current);
         Assert.Equal("idle", current!.Status);
@@ -150,7 +150,7 @@ public sealed class GalateaMaintenanceModeTests {
         Assert.False(current.RestartRequired);
         Assert.Null(current.RecoveryHead);
 
-        string page = await client.GetStringAsync("/");
+        string page = await client.GetStringAsync("/characters/alice");
         Assert.Contains("维护模式：会话只读", page);
         Assert.Contains("maintenanceMode: true", page);
         Assert.Contains("id=\"message-input\"", page);
@@ -181,7 +181,7 @@ public sealed class GalateaMaintenanceModeTests {
 
         GalateaHostService hostService = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await hostService.GetSessionAsync(
+        CharacterSessionHost session = await hostService.GetSessionAsync(
             "alice",
             CancellationToken.None
         );

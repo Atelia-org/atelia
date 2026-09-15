@@ -10,7 +10,7 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaAdmissionRetryTests {
-    private const string Endpoint = "/api/v1/agent/retry-admission";
+    private const string Endpoint = "/api/v1/characters/alice/agent/retry-admission";
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Theory]
@@ -22,13 +22,13 @@ public sealed class GalateaAdmissionRetryTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [Connection("test"), Connection("note")],
             selectableConnectionIds: ["test"], characterNoteExtractorConnectionId: "note",
-            serverAgentUserIds: ["alice"]);
+            heartbeatCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
-        UserSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         try {
-            GalateaLiveTurn turn = host.StartTurn(session, "save a note", new("test"));
+            GalateaLiveTurn turn = host.StartTurn(session, "save a note", new("test"), GalateaDelegateTestConfiguration.PlayerSender);
             await host.RunTurnAsync(session, turn, CancellationToken.None).WaitAsync(Deadline);
             host.FinishTurn(session, turn);
             turn.Complete();
@@ -76,7 +76,7 @@ public sealed class GalateaAdmissionRetryTests {
         Assert.Equal(1, completion.MainCalls);
         Assert.Null(session.GetCurrentTurn());
         Assert.NotNull(session.CharacterMemoryReconciler.ReadPendingReceiptDelivery());
-        var pod = global::Atelia.MemoPod.MemoPod.Open(session.User.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId);
+        var pod = global::Atelia.MemoPod.MemoPod.Open(session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId);
         Assert.Equal("Remember the blue door.", Assert.Single(pod.List()).ExactText);
         int extracted = completion.ExtractionCalls;
         using var again = await client.PostAsync(Endpoint, Json("{}"));
@@ -92,7 +92,7 @@ public sealed class GalateaAdmissionRetryTests {
         var completion = new Factory();
         await using var fixture = GalateaTestHost.Create(completion,
             DisabledGalateaUserMessageNormalizer.Instance, maintenanceMode: maintenance,
-            serverAgentUserIds: enrolled ? ["alice"] : []);
+            heartbeatCharacterIds: enrolled ? ["alice"] : []);
         using HttpClient client = fixture.CreateClient();
         using var anonymous = await client.PostAsync(Endpoint, Json("{}"));
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
@@ -108,7 +108,7 @@ public sealed class GalateaAdmissionRetryTests {
     public async Task RetryRejectsUnexpectedInputAndDoesNotAttachOrClearInitializationFailure() {
         var completion = new Factory();
         await using var fixture = GalateaTestHost.Create(completion,
-            DisabledGalateaUserMessageNormalizer.Instance, serverAgentUserIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
         using HttpClient client = fixture.CreateClient();
         using var login = await GalateaTestHost.LoginAsync(client);
         foreach (string body in new[] { "null", "{\"connectionId\":\"test\"}", "{\"skip\":true}" }) {
@@ -128,10 +128,10 @@ public sealed class GalateaAdmissionRetryTests {
     public async Task RetryDoesNotClearPendingTurnRecoveryOrAdvanceItsHead() {
         var completion = new Factory();
         await using var fixture = GalateaTestHost.Create(completion,
-            DisabledGalateaUserMessageNormalizer.Instance, serverAgentUserIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
-        UserSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         try {
             session.Engine.AppendObservation(GalateaUserMessageEnvelope.Wrap("pending user input"));
@@ -158,10 +158,10 @@ public sealed class GalateaAdmissionRetryTests {
     [Fact]
     public async Task CancelledRetryKeepsOriginalFailure() {
         await using var fixture = GalateaTestHost.Create(new Factory(),
-            DisabledGalateaUserMessageNormalizer.Instance, serverAgentUserIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
-        UserSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         try { GalateaAutomaticTurnCoordinator.RecordAdmissionFailure(session, new IOException()); }
         finally { session.TurnLock.Release(); }
@@ -176,10 +176,10 @@ public sealed class GalateaAdmissionRetryTests {
     [Fact]
     public async Task RetryDoesNotClearFailureAfterShutdownBegins() {
         await using var fixture = GalateaTestHost.Create(new Factory(),
-            DisabledGalateaUserMessageNormalizer.Instance, serverAgentUserIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
-        UserSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         try { GalateaAutomaticTurnCoordinator.RecordAdmissionFailure(session, new IOException()); }
         finally { session.TurnLock.Release(); }

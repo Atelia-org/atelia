@@ -43,7 +43,7 @@ internal sealed class GalateaAcceptedTurnRunner {
     /// transfers the lock to this runner and binds RunTask; a synchronous failure
     /// leaves admission cleanup and lock release with the caller.
     /// </summary>
-    internal Task Start(UserSessionHost session, GalateaLiveTurn liveTurn) {
+    internal Task Start(CharacterSessionHost session, GalateaLiveTurn liveTurn) {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(liveTurn);
         lock (_gate) {
@@ -76,30 +76,30 @@ internal sealed class GalateaAcceptedTurnRunner {
     }
 
     private async Task RunAsync(
-        UserSessionHost session,
+        CharacterSessionHost session,
         GalateaLiveTurn liveTurn
     ) {
         CancellationToken stopping = _stopping.Token;
         try {
             DebugUtil.Info(
                 "Galatea.TurnRunner",
-                $"Accepted turn start: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}"
+                $"Accepted turn start: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}"
             );
             await hostService.RunTurnAsync(session, liveTurn, stopping);
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested) {
-            DebugUtil.Warning("Galatea.TurnRunner", $"Turn cancelled by shutdown: user={session.User.UserId}, turnId={liveTurn.TurnId}");
+            DebugUtil.Warning("Galatea.TurnRunner", $"Turn cancelled by shutdown: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}");
             liveTurn.PublishError(GalateaSseErrorCode.ServerShutdown);
         }
         catch (GalateaTurnException ex) {
             if (ex.InnerException is not null) {
-                DebugUtil.Error("Galatea.TurnRunner", $"Turn stage failed: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}", ex);
+                DebugUtil.Error("Galatea.TurnRunner", $"Turn stage failed: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}", ex);
             }
-            DebugUtil.Warning("Galatea.TurnRunner", $"Turn failed with GalateaTurnException: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
+            DebugUtil.Warning("Galatea.TurnRunner", $"Turn failed with GalateaTurnException: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
             liveTurn.PublishError(GalateaSseErrorClassifier.Classify(ex));
         }
         catch (Exception ex) when (GalateaExceptionClassifier.IsNonFatal(ex)) {
-            DebugUtil.Error("Galatea.TurnRunner", $"Turn failed with exception: user={session.User.UserId}, turnId={liveTurn.TurnId}", ex);
+            DebugUtil.Error("Galatea.TurnRunner", $"Turn failed with exception: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}", ex);
             liveTurn.PublishError(GalateaSseErrorCode.InternalFailure);
         }
         catch (Exception) {
@@ -118,7 +118,7 @@ internal sealed class GalateaAcceptedTurnRunner {
                 }
                 DebugUtil.Info(
                     "Galatea.TurnRunner",
-                    $"Accepted turn finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, status={liveTurn.Status}"
+                    $"Accepted turn finish: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, status={liveTurn.Status}"
                 );
             }
             finally {

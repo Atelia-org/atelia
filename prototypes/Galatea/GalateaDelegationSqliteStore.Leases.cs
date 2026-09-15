@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
@@ -141,18 +142,17 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string leaseId,
         long expectedLeaseRevision,
         string expectedSessionHead,
-        string renderedObservation
+        SessionInputContent renderedObservation
     ) {
         RequireWireIdentity(leaseId, nameof(leaseId));
         RequireEventAddress(expectedSessionHead, nameof(expectedSessionHead));
-        RequireText(
-            renderedObservation,
-            GalateaDelegationStateBounds.MaximumObservationUtf8Bytes,
-            nameof(renderedObservation),
-            allowLineBreaks: true
-        );
-        int bytes = StrictUtf8.GetByteCount(renderedObservation);
-        string digest = ComputeSha256(renderedObservation);
+        RequireNewBoundObservation(renderedObservation);
+        string encoded = EncodeBoundInput(renderedObservation);
+        int bytes = StrictUtf8.GetByteCount(encoded);
+        if (bytes > GalateaDelegationStateBounds.MaximumObservationUtf8Bytes) {
+            throw new ArgumentOutOfRangeException(nameof(renderedObservation));
+        }
+        string digest = ComputeSha256(encoded);
         lock (_gate) {
             ThrowIfNotWritable();
             return ExecuteWrite(
@@ -165,13 +165,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         GalateaReplyLeaseState.CutoffFrozen,
                         expectedLeaseRevision
                     );
-                    if (!PlayerTurnObservationEnvelope.TryUnwrap(
-                            renderedObservation,
-                            out PlayerTurnObservation parsed)
-                        || parsed.ExternalLocalTimestamp is null) {
-                        throw Conflict(
-                            "Rendered Observation must use the timestamped canonical shape."
-                        );
+                    PlayerTurnObservation parsed = GalateaObservationContent.ReadPlayerTurn(renderedObservation);
+                    if (parsed.ExternalLocalTimestamp is null) {
+                        throw Conflict("Observation must have a captured timestamp.");
                     }
                     PlayerTurnNotice[] expectedNotices =
                         ProjectLeaseNotices(
@@ -193,7 +189,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         UPDATE reply_lease
                         SET state = 'ObservationBound',
                             expected_session_head = $head,
-                            rendered_observation = $observation,
+                            rendered_observation = NULL, bound_input = $observation,
                             observation_utf8_bytes = $bytes,
                             observation_sha256 = $digest,
                             revision = revision + 1
@@ -203,7 +199,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                           AND revision = $revision;
                         """;
                     update.Parameters.AddWithValue("$head", expectedSessionHead);
-                    update.Parameters.AddWithValue("$observation", renderedObservation);
+                    update.Parameters.AddWithValue("$observation", encoded);
                     update.Parameters.AddWithValue("$bytes", bytes);
                     update.Parameters.AddWithValue("$digest", digest);
                     update.Parameters.AddWithValue("$lease", leaseId);
@@ -212,7 +208,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     return lease with {
                         State = GalateaReplyLeaseState.ObservationBound,
                         ExpectedSessionHead = expectedSessionHead,
-                        RenderedObservation = renderedObservation,
+                        RenderedObservation = null,
+                        BoundInput = renderedObservation,
                         ObservationUtf8Bytes = bytes,
                         ObservationSha256 = digest,
                         Revision = checked(lease.Revision + 1)
@@ -648,18 +645,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static void RequireRenderableLease(
         IReadOnlyList<GalateaReplyNoticeSnapshot> notices
     ) {
-        PlayerTurnNotice[] ready = notices.Select(static notice =>
-            notice.Kind switch {
-                GalateaReplyNoticeKind.Reply =>
-                    (PlayerTurnNotice)new PlayerTurnNotice.Reply(
-                        notice.Body
-                    ),
-                GalateaReplyNoticeKind.DeliveryFailure =>
-                    new PlayerTurnNotice.DeliveryFailure(notice.Body),
-                _ => throw Corrupt("Reply notice kind is unknown.")
-            }
-        ).ToArray();
-        if (!PlayerTurnObservationEnvelope.FitsEveryValidPlayerText(ready)) {
+        PlayerTurnNotice[] ready = notices.Select(GalateaDurableNoticeContent.Project).ToArray();
+        if (!GalateaObservationContent.FitsEveryValidPlayerText(ready)) {
             throw new InvalidOperationException(
                 "The reply lease prefix cannot fit every valid player text."
             );
@@ -677,15 +664,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     noticeId,
                     StringComparison.Ordinal
                 ));
-            return notice.Kind switch {
-                GalateaReplyNoticeKind.Reply =>
-                    (PlayerTurnNotice)new PlayerTurnNotice.Reply(
-                        notice.Body
-                    ),
-                GalateaReplyNoticeKind.DeliveryFailure =>
-                    new PlayerTurnNotice.DeliveryFailure(notice.Body),
-                _ => throw Corrupt("Reply notice kind is unknown.")
-            };
+            return GalateaDurableNoticeContent.Project(notice);
         }).ToArray();
     }
 
@@ -746,13 +725,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
             && externalNotices.Length == expectedNotices.Count
             && externalNotices.Zip(
                 expectedNotices,
-                static (actual, expected) =>
-                    actual.GetType() == expected.GetType()
-                    && string.Equals(
-                        actual.Body,
-                        expected.Body,
-                        StringComparison.Ordinal
-                    )
+                (actual, expected) => GalateaDurableNoticeContent.SameContent(actual, expected,
+                    allowLegacyMissingProvenance: allowHistoricalDelegateReply && lease.BoundInput is null)
             ).All(static matches => matches);
     }
 

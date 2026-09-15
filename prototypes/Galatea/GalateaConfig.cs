@@ -2,18 +2,18 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Atelia.Completion;
 using Atelia.Galatea.Prompts;
+using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
 
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Merged runtime configuration. Users (identity + session history + behavior) are
-/// loaded from config.json; LLM connections are loaded from a sibling connections.json.
-/// The two are intentionally decoupled: a user account owns a session history, while a
-/// connection describes an LLM endpoint that can be chosen (and switched) at runtime.
+/// Resolved Characters, registered Players and runtime dependencies. Character
+/// histories and autonomous activity are independent of external Player accounts.
 /// </summary>
 public sealed record GalateaConfig(
-    IReadOnlyList<GalateaUserConfig> Users,
+    IReadOnlyList<GalateaCharacterConfig> Characters,
+    IReadOnlyList<GalateaPlayerConfig> Players,
     IReadOnlyList<CompletionConnectionConfig> Connections,
     IReadOnlyList<string> SelectableConnectionIds,
     string? InputNormalizerConnectionId,
@@ -24,10 +24,9 @@ public sealed record GalateaConfig(
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
-    GalateaRecapGridRuntimeConfig? RecapGrid = null,
-    IReadOnlyList<string>? ServerAgentUserIds = null
+    GalateaRecapGridRuntimeConfig? RecapGrid = null
 ) {
-    // This directory is derived once from the complete config-file user set.
+    // This directory is derived once from the complete config-file character set.
     // Direct in-process test configurations intentionally leave it unset; the
     // character-mail runtime only accepts the loader-produced directory.
     internal GalateaCharacterRecipientDirectory? CharacterRecipientDirectory {
@@ -35,11 +34,8 @@ public sealed record GalateaConfig(
         init;
     }
 
-    public IReadOnlyList<string> ServerAgentUserIds { get; init; } =
-        GalateaConfigValidation.NormalizeServerAgentUserIds(
-            Users,
-            ServerAgentUserIds
-        );
+    public IReadOnlyList<string> HeartbeatCharacterIds =>
+        GalateaConfigValidation.ReadHeartbeatCharacterIds(Characters);
 }
 
 /// <summary>
@@ -64,14 +60,14 @@ internal sealed class GalateaCharacterRecipientDirectory {
     internal IReadOnlyList<GalateaCharacterRecipient> Recipients => _recipients;
 
     internal static GalateaCharacterRecipientDirectory Create(
-        IReadOnlyList<(string UserId, GalateaCharacterName CharacterName)> users
+        IReadOnlyList<(string CharacterId, GalateaCharacterName CharacterName)> characters
     ) {
-        ArgumentNullException.ThrowIfNull(users);
+        ArgumentNullException.ThrowIfNull(characters);
         var byCharacterName = new Dictionary<string, GalateaCharacterRecipient>(
-            users.Count,
+            characters.Count,
             StringComparer.Ordinal
         );
-        foreach ((string userId, GalateaCharacterName characterName) in users) {
+        foreach ((string characterId, GalateaCharacterName characterName) in characters) {
             ArgumentNullException.ThrowIfNull(characterName);
             if (string.Equals(
                     characterName.Value,
@@ -84,7 +80,7 @@ internal sealed class GalateaCharacterRecipientDirectory {
             }
             var recipient = new GalateaCharacterRecipient(
                 characterName,
-                userId,
+                characterId,
                 SessionRepositoryId: null
             );
             if (!byCharacterName.TryAdd(characterName.Value, recipient)) {
@@ -107,31 +103,31 @@ internal sealed class GalateaCharacterRecipientDirectory {
     }
 
     internal static GalateaCharacterRecipientDirectory Create(
-        IReadOnlyList<GalateaUserConfig> users
+        IReadOnlyList<GalateaCharacterConfig> characters
     ) {
-        ArgumentNullException.ThrowIfNull(users);
-        var namedUsers = new (string UserId, GalateaCharacterName CharacterName)[
-            users.Count
+        ArgumentNullException.ThrowIfNull(characters);
+        var namedCharacters = new (string CharacterId, GalateaCharacterName CharacterName)[
+            characters.Count
         ];
-        for (int index = 0; index < users.Count; index++) {
-            GalateaUserConfig user = users[index]
+        for (int index = 0; index < characters.Count; index++) {
+            GalateaCharacterConfig character = characters[index]
                 ?? throw new ArgumentException(
-                    "Character recipient users must not contain null.",
-                    nameof(users)
+                    "Character recipient characters must not contain null.",
+                    nameof(characters)
                 );
-            namedUsers[index] = (user.UserId, user.CharacterName);
+            namedCharacters[index] = (character.CharacterId, character.CharacterName);
         }
-        GalateaCharacterRecipientDirectory namesOnly = Create(namedUsers);
-        var recipients = new List<GalateaCharacterRecipient>(users.Count);
+        GalateaCharacterRecipientDirectory namesOnly = Create(namedCharacters);
+        var recipients = new List<GalateaCharacterRecipient>(characters.Count);
         foreach (GalateaCharacterRecipient recipient in namesOnly.Recipients) {
-            GalateaUserConfig user = users.Single(value => string.Equals(
-                value.UserId,
-                recipient.UserId,
+            GalateaCharacterConfig character = characters.Single(value => string.Equals(
+                value.CharacterId,
+                recipient.CharacterId,
                 StringComparison.Ordinal));
             recipients.Add(recipient with {
                 SessionRepositoryId =
                     GalateaDelegationSupervisor.CreateSessionRepositoryId(
-                        user.SessionDir
+                        character.SessionDir
                     )
             });
         }
@@ -154,12 +150,12 @@ internal sealed class GalateaCharacterRecipientDirectory {
         return _byCharacterName.TryGetValue(characterName, out recipient!);
     }
 
-    internal IReadOnlyList<GalateaCharacterName> GetPeerNames(string userId) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+    internal IReadOnlyList<GalateaCharacterName> GetPeerNames(string characterId) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(characterId);
         return Array.AsReadOnly(_recipients
             .Where(recipient => !string.Equals(
-                recipient.UserId,
-                userId,
+                recipient.CharacterId,
+                characterId,
                 StringComparison.Ordinal))
             .Select(static recipient => recipient.CharacterName)
             .ToArray());
@@ -168,7 +164,7 @@ internal sealed class GalateaCharacterRecipientDirectory {
 
 internal sealed record GalateaCharacterRecipient(
     GalateaCharacterName CharacterName,
-    string UserId,
+    string CharacterId,
     string? SessionRepositoryId
 );
 
@@ -186,29 +182,30 @@ internal sealed record GalateaRecapGridFileConfig(
 );
 
 /// <summary>
-/// Shape of config.json: user accounts, their default Agent selections, and
+/// Shape of config.json: character accounts, their default Agent selections, and
 /// server settings. Provider connection definitions remain in connections.json.
 /// </summary>
-internal sealed record GalateaUsersFileConfig(
+internal sealed record GalateaRootFileConfig(
     [property: JsonPropertyName("v")] int Version,
-    IReadOnlyList<GalateaUserFileConfig> Users,
+    IReadOnlyList<GalateaCharacterFileConfig> Characters,
+    IReadOnlyList<GalateaPlayerFileConfig> Players,
+    GalateaRuntimeFileConfig Runtime
+);
+
+internal sealed record GalateaRuntimeFileConfig(
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
-    GalateaRecapGridFileConfig? RecapGrid = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<string>? ServerAgentUserIds = null
+    GalateaRecapGridFileConfig? RecapGrid = null
 );
 
 /// <summary>
-/// Exact per-user shape read from config.json before paths are resolved and
+/// Exact per-character shape read from config.json before paths are resolved and
 /// character-context templates are materialized.
 /// </summary>
-internal sealed record GalateaUserFileConfig(
-    string UserId,
-    string Password,
-    string CharacterName,
-    string PlayerName,
+internal sealed record GalateaCharacterFileConfig(
+    [property: JsonPropertyName("id")] string CharacterId,
+    [property: JsonPropertyName("name")] string CharacterName,
     string SessionDir,
     string DelegationStateDir,
     string CharacterMemoryStateDir,
@@ -216,21 +213,33 @@ internal sealed record GalateaUserFileConfig(
     GalateaSessionProvisioning SessionProvisioning,
     string DefaultConnectionId,
     string CharacterContextTemplate = "",
-    string? CharacterContextTemplateFile = null
+    string? CharacterContextTemplateFile = null,
+    bool HeartbeatEnabled = false
 );
 
-public sealed record GalateaUserConfig(
-    string UserId,
-    string Password,
+internal sealed record GalateaPlayerFileConfig(
+    [property: JsonPropertyName("id")] string PlayerId,
+    string Name,
+    string Password
+);
+
+public sealed record GalateaPlayerConfig(
+    string PlayerId,
+    GalateaPlayerName Name,
+    string Password
+);
+
+public sealed record GalateaCharacterConfig(
+    string CharacterId,
     GalateaCharacterName CharacterName,
-    GalateaPlayerName PlayerName,
     string SessionDir,
     string DelegationStateDir,
     string CharacterMemoryStateDir,
     string HomeDir,
     GalateaSessionProvisioning SessionProvisioning,
-    string SystemPrompt,
-    string DefaultConnectionId
+    SessionInputContent SystemPrompt,
+    string DefaultConnectionId,
+    bool HeartbeatEnabled = false
 );
 
 [JsonConverter(typeof(JsonStringEnumConverter<GalateaSessionProvisioning>))]
@@ -244,55 +253,40 @@ public enum GalateaSessionProvisioning {
 internal static class GalateaConfigValidation {
     internal const int MaximumConnectionIdUtf8Bytes = 128;
 
-    internal static IReadOnlyList<string> NormalizeServerAgentUserIds(
-        IReadOnlyList<GalateaUserConfig> users,
-        IReadOnlyList<string>? serverAgentUserIds
+    internal static void RequireValidPlayers(IReadOnlyList<GalateaPlayerConfig> players) {
+        ArgumentNullException.ThrowIfNull(players);
+        if (players.Count > GalateaStrictConfigReader.MaximumCharacterCount) {
+            throw new InvalidOperationException("Galatea config contains too many Players.");
+        }
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (GalateaPlayerConfig player in players) {
+            ArgumentNullException.ThrowIfNull(player);
+            GalateaInputContentValidation.RequireText(player.PlayerId, 512, "player id", singleLine: true);
+            ArgumentNullException.ThrowIfNull(player.Name);
+            GalateaInputContentValidation.RequireText(player.Password,
+                GalateaStrictConfigReader.MaximumConfigUtf8Bytes, "player password");
+            if (!ids.Add(player.PlayerId)) { throw new InvalidOperationException("Duplicate Player id: " + player.PlayerId); }
+        }
+    }
+
+    internal static IReadOnlyList<string> ReadHeartbeatCharacterIds(
+        IReadOnlyList<GalateaCharacterConfig> characters
     ) {
-        ArgumentNullException.ThrowIfNull(users);
-        if (serverAgentUserIds is null or { Count: 0 }) {
-            return Array.Empty<string>();
-        }
-        if (serverAgentUserIds.Count > GalateaStrictConfigReader.MaximumUserCount) {
-            throw new InvalidOperationException(
-                "Galatea config serverAgentUserIds exceeds its count cap."
-            );
-        }
-        var userIds = users.Select(static user => user.UserId)
-            .ToHashSet(StringComparer.Ordinal);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var snapshot = new string[serverAgentUserIds.Count];
-        for (int index = 0; index < snapshot.Length; index++) {
-            string userId = serverAgentUserIds[index];
-            if (string.IsNullOrWhiteSpace(userId)) {
-                throw new InvalidOperationException(
-                    $"Galatea config serverAgentUserIds[{index}] must not be blank."
-                );
-            }
-            if (!seen.Add(userId)) {
-                throw new InvalidOperationException(
-                    $"Galatea config serverAgentUserIds contains duplicate userId '{userId}'."
-                );
-            }
-            if (!userIds.Contains(userId)) {
-                throw new InvalidOperationException(
-                    $"Galatea config serverAgentUserIds '{userId}' must exactly match a configured userId."
-                );
-            }
-            snapshot[index] = userId;
-        }
-        return Array.AsReadOnly(snapshot);
+        ArgumentNullException.ThrowIfNull(characters);
+        return Array.AsReadOnly(characters.Where(static character => character.HeartbeatEnabled)
+            .Select(static character => character.CharacterId).ToArray());
     }
 
     internal static void RequireValidConnectionDefaults(
-        IReadOnlyList<GalateaUserConfig> users,
+        IReadOnlyList<GalateaCharacterConfig> characters,
         CompletionConnectionCatalogConfig catalog
     ) {
-        ArgumentNullException.ThrowIfNull(users);
+        ArgumentNullException.ThrowIfNull(characters);
         ArgumentNullException.ThrowIfNull(catalog);
         if (catalog.SelectableConnectionIds is null) {
             throw new InvalidOperationException(
                 "Galatea connections require selectableConnectionIds before "
-                + "per-user defaults can be validated."
+                + "per-character defaults can be validated."
             );
         }
 
@@ -302,45 +296,45 @@ internal static class GalateaConfigValidation {
         var selectable = catalog.SelectableConnectionIds.ToHashSet(
             StringComparer.Ordinal
         );
-        for (int index = 0; index < users.Count; index++) {
-            GalateaUserConfig user = users[index]
+        for (int index = 0; index < characters.Count; index++) {
+            GalateaCharacterConfig character = characters[index]
                 ?? throw new InvalidOperationException(
-                    $"Galatea config user[{index}] must not be null."
+                    $"Galatea config character[{index}] must not be null."
                 );
-            if (string.IsNullOrWhiteSpace(user.DefaultConnectionId)) {
+            if (string.IsNullOrWhiteSpace(character.DefaultConnectionId)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must have a "
+                    $"Galatea config character '{character.CharacterId}' must have a "
                     + "non-empty defaultConnectionId."
                 );
             }
-            if (Encoding.UTF8.GetByteCount(user.DefaultConnectionId)
+            if (Encoding.UTF8.GetByteCount(character.DefaultConnectionId)
                 > MaximumConnectionIdUtf8Bytes) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' defaultConnectionId "
+                    $"Galatea config character '{character.CharacterId}' defaultConnectionId "
                     + "exceeds its UTF-8 byte bound."
                 );
             }
-            if (!connectionIds.Contains(user.DefaultConnectionId)) {
+            if (!connectionIds.Contains(character.DefaultConnectionId)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' defaultConnectionId "
-                    + $"'{user.DefaultConnectionId}' does not exactly match a "
+                    $"Galatea config character '{character.CharacterId}' defaultConnectionId "
+                    + $"'{character.DefaultConnectionId}' does not exactly match a "
                     + "catalog connection id."
                 );
             }
-            if (!selectable.Contains(user.DefaultConnectionId)) {
+            if (!selectable.Contains(character.DefaultConnectionId)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' defaultConnectionId "
-                    + $"'{user.DefaultConnectionId}' is not selectable."
+                    $"Galatea config character '{character.CharacterId}' defaultConnectionId "
+                    + $"'{character.DefaultConnectionId}' is not selectable."
                 );
             }
         }
     }
 
     internal static void RequireValidStorageTopology(
-        IReadOnlyList<GalateaUserConfig> users,
+        IReadOnlyList<GalateaCharacterConfig> characters,
         string? callLogDirectory
     ) {
-        ArgumentNullException.ThrowIfNull(users);
+        ArgumentNullException.ThrowIfNull(characters);
         StringComparer comparer = OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
@@ -349,145 +343,140 @@ internal static class GalateaConfigValidation {
             : StringComparison.Ordinal;
         var sessionOwners = new Dictionary<
             string,
-            (string UserId, string ConfiguredPath)
+            (string CharacterId, string ConfiguredPath)
         >(comparer);
         var delegationOwners = new Dictionary<
             string,
-            (string UserId, string ConfiguredPath)
+            (string CharacterId, string ConfiguredPath)
         >(comparer);
         var characterMemoryOwners = new Dictionary<
             string,
-            (string UserId, string ConfiguredPath)
+            (string CharacterId, string ConfiguredPath)
         >(comparer);
         var normalizedUsers = new List<(
-            string UserId,
+            string CharacterId,
             string SessionDirectory,
             string DelegationStateDirectory,
             string CharacterMemoryStateDirectory,
             string HomeDirectory
-        )>(users.Count);
+        )>(characters.Count);
 
-        for (int index = 0; index < users.Count; index++) {
-            GalateaUserConfig user = users[index]
+        for (int index = 0; index < characters.Count; index++) {
+            GalateaCharacterConfig character = characters[index]
                 ?? throw new InvalidOperationException(
-                    $"Galatea config user[{index}] must not be null."
+                    $"Galatea config character[{index}] must not be null."
                 );
-            if (user.CharacterName is null) {
+            if (character.CharacterName is null) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must have a "
+                    $"Galatea config character '{character.CharacterId}' must have a "
                     + "validated characterName."
                 );
             }
-            if (user.PlayerName is null) {
+            if (character.SystemPrompt is null || (!character.SystemPrompt.IsStructured && string.IsNullOrWhiteSpace(character.SystemPrompt.TextValue))) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must have a "
-                    + "validated playerName."
-                );
-            }
-            if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
-                throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must have a "
+                    $"Galatea config character '{character.CharacterId}' must have a "
                     + "non-empty finalized system prompt."
                 );
             }
-            if (user.SessionProvisioning is not (
+            GalateaSystemInstructionContent.Validate(character.SystemPrompt);
+            if (character.SessionProvisioning is not (
                     GalateaSessionProvisioning.ExistingOnly
                     or GalateaSessionProvisioning.CreateIfMissing)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' has an unknown "
+                    $"Galatea config character '{character.CharacterId}' has an unknown "
                     + "sessionProvisioning policy."
                 );
             }
-            if (string.IsNullOrWhiteSpace(user.SessionDir)) {
+            if (string.IsNullOrWhiteSpace(character.SessionDir)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must have a "
+                    $"Galatea config character '{character.CharacterId}' must have a "
                     + "non-empty sessionDir."
                 );
             }
-            if (string.IsNullOrWhiteSpace(user.DelegationStateDir)) {
+            if (string.IsNullOrWhiteSpace(character.DelegationStateDir)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must have a "
+                    $"Galatea config character '{character.CharacterId}' must have a "
                     + "non-empty delegationStateDir."
                 );
             }
-            if (string.IsNullOrWhiteSpace(user.CharacterMemoryStateDir)) {
+            if (string.IsNullOrWhiteSpace(character.CharacterMemoryStateDir)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must have a "
+                    $"Galatea config character '{character.CharacterId}' must have a "
                     + "non-empty characterMemoryStateDir."
                 );
             }
             string normalizedSession = RequireCanonicalAbsoluteDirectory(
-                user.SessionDir,
-                $"sessionDir for user '{user.UserId}'",
+                character.SessionDir,
+                $"sessionDir for character '{character.CharacterId}'",
                 comparison
             );
             string normalizedDelegation = RequireCanonicalAbsoluteDirectory(
-                user.DelegationStateDir,
-                $"delegationStateDir for user '{user.UserId}'",
+                character.DelegationStateDir,
+                $"delegationStateDir for character '{character.CharacterId}'",
                 comparison
             );
             string normalizedCharacterMemory =
                 RequireCanonicalAbsoluteDirectory(
-                    user.CharacterMemoryStateDir,
-                    $"characterMemoryStateDir for user '{user.UserId}'",
+                    character.CharacterMemoryStateDir,
+                    $"characterMemoryStateDir for character '{character.CharacterId}'",
                     comparison
                 );
             if (sessionOwners.TryGetValue(
                     normalizedSession,
                     out var existingSession)) {
                 throw new InvalidOperationException(
-                    "Galatea config users "
-                    + $"'{existingSession.UserId}' (sessionDir "
-                    + $"'{existingSession.ConfiguredPath}') and '{user.UserId}' "
-                    + $"(sessionDir '{user.SessionDir}') resolve to the "
+                    "Galatea config characters "
+                    + $"'{existingSession.CharacterId}' (sessionDir "
+                    + $"'{existingSession.ConfiguredPath}') and '{character.CharacterId}' "
+                    + $"(sessionDir '{character.SessionDir}') resolve to the "
                     + $"same lexical session path '{normalizedSession}'."
                 );
             }
             sessionOwners.Add(
                 normalizedSession,
-                (user.UserId, user.SessionDir)
+                (character.CharacterId, character.SessionDir)
             );
             if (delegationOwners.TryGetValue(
                     normalizedDelegation,
                     out var existingDelegation)) {
                 throw new InvalidOperationException(
-                    "Galatea config users "
-                    + $"'{existingDelegation.UserId}' (delegationStateDir "
+                    "Galatea config characters "
+                    + $"'{existingDelegation.CharacterId}' (delegationStateDir "
                     + $"'{existingDelegation.ConfiguredPath}') and "
-                    + $"'{user.UserId}' (delegationStateDir "
-                    + $"'{user.DelegationStateDir}') resolve to the same "
+                    + $"'{character.CharacterId}' (delegationStateDir "
+                    + $"'{character.DelegationStateDir}') resolve to the same "
                     + $"lexical delegation state path "
                     + $"'{normalizedDelegation}'."
                 );
             }
             delegationOwners.Add(
                 normalizedDelegation,
-                (user.UserId, user.DelegationStateDir)
+                (character.CharacterId, character.DelegationStateDir)
             );
             if (characterMemoryOwners.TryGetValue(
                     normalizedCharacterMemory,
                     out var existingCharacterMemory)) {
                 throw new InvalidOperationException(
-                    "Galatea config users "
-                    + $"'{existingCharacterMemory.UserId}' "
+                    "Galatea config characters "
+                    + $"'{existingCharacterMemory.CharacterId}' "
                     + "(characterMemoryStateDir "
                     + $"'{existingCharacterMemory.ConfiguredPath}') and "
-                    + $"'{user.UserId}' (characterMemoryStateDir "
-                    + $"'{user.CharacterMemoryStateDir}') resolve to the "
+                    + $"'{character.CharacterId}' (characterMemoryStateDir "
+                    + $"'{character.CharacterMemoryStateDir}') resolve to the "
                     + "same lexical character memory state path "
                     + $"'{normalizedCharacterMemory}'."
                 );
             }
             characterMemoryOwners.Add(
                 normalizedCharacterMemory,
-                (user.UserId, user.CharacterMemoryStateDir)
+                (character.CharacterId, character.CharacterMemoryStateDir)
             );
             string normalizedHome = GalateaDelegateConfigReader.RequireCanonicalDirectory(
-                user.HomeDir,
-                $"homeDir for user '{user.UserId}'"
+                character.HomeDir,
+                $"homeDir for character '{character.CharacterId}'"
             );
             normalizedUsers.Add((
-                user.UserId,
+                character.CharacterId,
                 normalizedSession,
                 normalizedDelegation,
                 normalizedCharacterMemory,
@@ -502,9 +491,9 @@ internal static class GalateaConfigValidation {
             foreach (var session in normalizedUsers) {
                 RequireDisjoint(
                     delegation.DelegationStateDirectory,
-                    $"delegationStateDir for user '{delegation.UserId}'",
+                    $"delegationStateDir for character '{delegation.CharacterId}'",
                     session.SessionDirectory,
-                    $"sessionDir for user '{session.UserId}'",
+                    $"sessionDir for character '{session.CharacterId}'",
                     comparison
                 );
             }
@@ -514,9 +503,9 @@ internal static class GalateaConfigValidation {
                 var other = normalizedUsers[otherIndex];
                 RequireDisjoint(
                     delegation.DelegationStateDirectory,
-                    $"delegationStateDir for user '{delegation.UserId}'",
+                    $"delegationStateDir for character '{delegation.CharacterId}'",
                     other.DelegationStateDirectory,
-                    $"delegationStateDir for user '{other.UserId}'",
+                    $"delegationStateDir for character '{other.CharacterId}'",
                     comparison
                 );
             }
@@ -529,18 +518,18 @@ internal static class GalateaConfigValidation {
             foreach (var session in normalizedUsers) {
                 RequireDisjoint(
                     characterMemory.CharacterMemoryStateDirectory,
-                    $"characterMemoryStateDir for user '{characterMemory.UserId}'",
+                    $"characterMemoryStateDir for character '{characterMemory.CharacterId}'",
                     session.SessionDirectory,
-                    $"sessionDir for user '{session.UserId}'",
+                    $"sessionDir for character '{session.CharacterId}'",
                     comparison
                 );
             }
             foreach (var delegation in normalizedUsers) {
                 RequireDisjoint(
                     characterMemory.CharacterMemoryStateDirectory,
-                    $"characterMemoryStateDir for user '{characterMemory.UserId}'",
+                    $"characterMemoryStateDir for character '{characterMemory.CharacterId}'",
                     delegation.DelegationStateDirectory,
-                    $"delegationStateDir for user '{delegation.UserId}'",
+                    $"delegationStateDir for character '{delegation.CharacterId}'",
                     comparison
                 );
             }
@@ -550,9 +539,9 @@ internal static class GalateaConfigValidation {
                 var other = normalizedUsers[otherIndex];
                 RequireDisjoint(
                     characterMemory.CharacterMemoryStateDirectory,
-                    $"characterMemoryStateDir for user '{characterMemory.UserId}'",
+                    $"characterMemoryStateDir for character '{characterMemory.CharacterId}'",
                     other.CharacterMemoryStateDirectory,
-                    $"characterMemoryStateDir for user '{other.UserId}'",
+                    $"characterMemoryStateDir for character '{other.CharacterId}'",
                     comparison
                 );
             }
@@ -560,18 +549,18 @@ internal static class GalateaConfigValidation {
 
         for (int homeIndex = 0; homeIndex < normalizedUsers.Count; homeIndex++) {
             var home = normalizedUsers[homeIndex];
-            foreach (var user in normalizedUsers) {
-                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
-                    user.SessionDirectory, $"sessionDir for user '{user.UserId}'", comparison);
-                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
-                    user.DelegationStateDirectory, $"delegationStateDir for user '{user.UserId}'", comparison);
-                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
-                    user.CharacterMemoryStateDirectory, $"characterMemoryStateDir for user '{user.UserId}'", comparison);
+            foreach (var character in normalizedUsers) {
+                RequireDisjoint(home.HomeDirectory, $"homeDir for character '{home.CharacterId}'",
+                    character.SessionDirectory, $"sessionDir for character '{character.CharacterId}'", comparison);
+                RequireDisjoint(home.HomeDirectory, $"homeDir for character '{home.CharacterId}'",
+                    character.DelegationStateDirectory, $"delegationStateDir for character '{character.CharacterId}'", comparison);
+                RequireDisjoint(home.HomeDirectory, $"homeDir for character '{home.CharacterId}'",
+                    character.CharacterMemoryStateDirectory, $"characterMemoryStateDir for character '{character.CharacterId}'", comparison);
             }
             for (int otherIndex = homeIndex + 1; otherIndex < normalizedUsers.Count; otherIndex++) {
                 var other = normalizedUsers[otherIndex];
-                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
-                    other.HomeDirectory, $"homeDir for user '{other.UserId}'", comparison);
+                RequireDisjoint(home.HomeDirectory, $"homeDir for character '{home.CharacterId}'",
+                    other.HomeDirectory, $"homeDir for character '{other.CharacterId}'", comparison);
             }
         }
 
@@ -584,28 +573,28 @@ internal static class GalateaConfigValidation {
         string normalizedCallLogs = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(callLogDirectory)
         );
-        foreach (var user in normalizedUsers) {
-            RequireDisjoint(normalizedCallLogs, "callLogDir", user.HomeDirectory,
-                $"homeDir for user '{user.UserId}'", comparison);
+        foreach (var character in normalizedUsers) {
+            RequireDisjoint(normalizedCallLogs, "callLogDir", character.HomeDirectory,
+                $"homeDir for character '{character.CharacterId}'", comparison);
             RequireDisjoint(
                 normalizedCallLogs,
                 "callLogDir",
-                user.SessionDirectory,
-                $"sessionDir for user '{user.UserId}'",
+                character.SessionDirectory,
+                $"sessionDir for character '{character.CharacterId}'",
                 comparison
             );
             RequireDisjoint(
                 normalizedCallLogs,
                 "callLogDir",
-                user.DelegationStateDirectory,
-                $"delegationStateDir for user '{user.UserId}'",
+                character.DelegationStateDirectory,
+                $"delegationStateDir for character '{character.CharacterId}'",
                 comparison
             );
             RequireDisjoint(
                 normalizedCallLogs,
                 "callLogDir",
-                user.CharacterMemoryStateDirectory,
-                $"characterMemoryStateDir for user '{user.UserId}'",
+                character.CharacterMemoryStateDirectory,
+                $"characterMemoryStateDir for character '{character.CharacterId}'",
                 comparison
             );
         }
@@ -667,7 +656,8 @@ public sealed record GalateaConnectionInfoDto(
 );
 
 public sealed record GalateaMeDto(
-    string UserId,
+    string PlayerId,
+    string Name,
     bool MaintenanceMode
 );
 

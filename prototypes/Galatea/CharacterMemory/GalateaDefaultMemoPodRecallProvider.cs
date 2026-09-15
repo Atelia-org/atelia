@@ -63,9 +63,10 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
         string query;
         try {
             query = GalateaMemoRecallQueryRenderer.Render(
-                request.User.CharacterName,
+                request.Character.CharacterName,
                 request.CurrentObservation,
-                request.Context
+                request.Context,
+                request.CurrentInput
             );
         }
         catch (Exception exception) when (ShouldClassify(exception)) {
@@ -89,7 +90,7 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
             );
         }
 
-        MemoRecallResult result;
+        GalateaSettledMemoRecallResult result;
         try {
             result = await _reconciler.RecallSettledDefaultPodAsync(
                     completionClient,
@@ -111,7 +112,8 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
             return GalateaDefaultMemoPodRecallPlanner.Plan(
                 request,
                 CharacterNoteDefaultPodV1.PodId,
-                result.Memos
+                result.Memos,
+                result.PodStateIdentity
             );
         }
         catch (Exception exception) when (ShouldClassify(exception)) {
@@ -238,13 +240,15 @@ internal static class GalateaDefaultMemoPodRecallPlanner {
     internal static IReadOnlyList<PlayerTurnRecall> Select(
         GalateaPlayerTurnRecallRequest request,
         MemoPodId podId,
-        IReadOnlyList<Memo> memos
-    ) => Plan(request, podId, memos).Recalls;
+        IReadOnlyList<Memo> memos,
+        string podStateIdentity
+    ) => Plan(request, podId, memos, podStateIdentity).Recalls;
 
     internal static GalateaMemoRecallPlanningResult Plan(
         GalateaPlayerTurnRecallRequest request,
         MemoPodId podId,
-        IReadOnlyList<Memo> memos
+        IReadOnlyList<Memo> memos,
+        string podStateIdentity
     ) {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(memos);
@@ -254,9 +258,7 @@ internal static class GalateaDefaultMemoPodRecallPlanner {
             );
         }
 
-        _ = PlayerTurnObservationEnvelope.Wrap(
-            request.CurrentObservation
-        );
+        GalateaInputContentValidation.RequireText(podStateIdentity, 256, nameof(podStateIdentity), singleLine: true);
         int evaluatedCount = 0;
         int missingTitleSkipCount = 0;
         int originVisibleSkipCount = 0;
@@ -295,22 +297,11 @@ internal static class GalateaDefaultMemoPodRecallPlanner {
                 continue;
             }
 
-            string body = GalateaMemoExactTextBodyRenderer.Render(
-                memo.Title,
-                memo.ExactText
-            );
-            var recall = new PlayerTurnRecall(entry, body);
+            var recall = new PlayerTurnRecall(entry, podStateIdentity, memo.Title, memo.ExactText);
             PlayerTurnObservation finalObservation = request
                 .CurrentObservation.WithRecalls([recall]);
-            try {
-                _ = PlayerTurnObservationEnvelope.Wrap(finalObservation);
-            }
-            catch (ArgumentOutOfRangeException exception) when (
-                string.Equals(
-                    exception.ParamName,
-                    "rendered",
-                    StringComparison.Ordinal
-                )) {
+            if (!(request.FitsRecalls?.Invoke([recall])
+                    ?? GalateaObservationContent.FitsPlayerTurnContent(finalObservation))) {
                 observationBudgetSkipCount = checked(
                     observationBudgetSkipCount + 1
                 );

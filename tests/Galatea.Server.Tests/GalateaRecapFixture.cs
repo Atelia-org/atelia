@@ -80,10 +80,9 @@ internal static class GalateaRecapFixture {
     internal static Repository Provision(SessionJournalEngine engine, IHistoryUnitLoadEstimator estimator) {
         string path = engine.Path;
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaRecapGridAssets.RollingRewriteZhCnV7,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("刘世超")
+                new GalateaCharacterName("Galatea")
             ),
             out RecapGridControlRegistrationBundle? created
         ));
@@ -159,7 +158,7 @@ internal static class GalateaRecapFixture {
         >(control.Reader.ReadSnapshot()).Snapshot.Head;
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaRecapGridAssets.RollingRewriteZhCnV7,
                 initial.InstanceId
             );
         ControlHeadRef registered = Assert.IsType<
@@ -220,8 +219,8 @@ internal static class GalateaRecapFixture {
         http.Timeout = Deadline;
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-        (GalateaHostService service, UserSessionHost session) = await SessionAsync(lab);
-        using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns",
+        (GalateaHostService service, CharacterSessionHost session) = await SessionAsync(lab);
+        using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(text, MainConnectionId));
         Assert.Equal("completed", (await WaitAsync(accepted, service, session)).Status);
     }
@@ -238,14 +237,14 @@ internal static class GalateaRecapFixture {
         factory.AssertComplete();
     }
 
-    internal static async Task<(GalateaHostService, UserSessionHost)> SessionAsync(GalateaScenarioLab lab) {
+    internal static async Task<(GalateaHostService, CharacterSessionHost)> SessionAsync(GalateaScenarioLab lab) {
         var service = lab.Host.Factory.Services.GetRequiredService<GalateaHostService>();
         using var timeout = new CancellationTokenSource(Deadline);
         return (service, await service.GetSessionAsync("alice", timeout.Token));
     }
 
     internal static async Task<GalateaLiveTurn> WaitAsync(HttpResponseMessage response,
-        GalateaHostService service, UserSessionHost session) {
+        GalateaHostService service, CharacterSessionHost session) {
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var started = Assert.IsType<StartTurnResponseDto>(
             await response.Content.ReadFromJsonAsync<StartTurnResponseDto>());
@@ -263,21 +262,60 @@ internal static class GalateaRecapFixture {
             prepared = events.Last(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared).Address;
         }
         using Journal journal = Journal.OpenReadOnlyExisting(repository);
-        return SessionPreparedRequestReconstructor.Reconstruct(journal, prepared);
+        return SessionPreparedRequestReconstructor.Reconstruct(
+            new SessionJournalEventReader(journal), prepared,
+            projector: GalateaInputProjector.Instance);
     }
 
     internal static void AssertAdopted(SessionPreparedRequestReconstruction frozen, int generation) {
-        Assert.NotEmpty(frozen.Manifest.Plan.ExactContextInputs);
-        string observations = string.Join("\n", frozen.Manifest.Plan.ExactContextInputs
-            .Select(input => input.ContextSnapshot.ObservationMessage));
-        string actions = string.Join("\n", frozen.Manifest.Plan.ExactContextInputs
-            .Select(input => input.ContextSnapshot.ActionMessage));
+        Assert.Null(frozen.Manifest.Commitment);
+        Assert.Empty(frozen.Manifest.Plan.ExactContextInputs);
+        Assert.NotEmpty(frozen.Manifest.Plan.SemanticContributions);
+        string observations = string.Join("\n", frozen.Manifest.Plan.SemanticContributions
+            .Where(input => input.Target.Carrier == ContextHeaderCarrier.Observation)
+            .Select(input => input.ExactText));
+        string actions = string.Join("\n", frozen.Manifest.Plan.SemanticContributions
+            .Where(input => input.Target.Carrier == ContextHeaderCarrier.Action)
+            .Select(input => input.ExactText));
         Assert.Contains(World(generation), observations, StringComparison.Ordinal);
         Assert.Contains(Autobiography(generation), actions, StringComparison.Ordinal);
-        Assert.Equal(frozen.CanonicalBytes.Length, frozen.Manifest.Commitment.ByteLength);
-        Assert.Equal(Convert.ToHexString(SHA256.HashData(frozen.CanonicalBytes)).ToLowerInvariant(),
-            frozen.Manifest.Commitment.Sha256);
-        Assert.Equal(frozen.Manifest.Commitment, SessionRequestCanonicalizer.CreateCommitment(frozen.Request));
+    }
+
+    internal static IReadOnlyList<SessionRequestCommitment> ReadAttemptCommitments(
+        string repository, EventAddress prepared
+    ) {
+        var events = new List<SessionJournalAuditEvent>();
+        using (var engine = SessionJournalEngine.OpenReadOnly(repository)) {
+            engine.ScanCheckedAuditEvents(events.Add);
+        }
+        var byAddress = events.ToDictionary(static entry => entry.Address);
+        using Journal journal = Journal.OpenReadOnlyExisting(repository);
+        var reader = new SessionJournalEventReader(journal);
+        var result = new List<SessionRequestCommitment>();
+        foreach (SessionJournalAuditEvent entry in events.Where(static entry =>
+                     entry.Kind == SessionEventKind.CompletionAttemptStarted)) {
+            EventAddress? parent = entry.Parent;
+            while (parent is { } address && address != prepared
+                   && byAddress[address].Kind == SessionEventKind.CompletionAttemptStarted) {
+                parent = byAddress[address].Parent;
+            }
+            if (parent != prepared) { continue; }
+            using var frame = reader.ReadEvent(entry.Address).Unwrap();
+            var body = Assert.IsType<CompletionAttemptStartedBody>(SessionEventCodec.Decode(
+                SessionEventKind.CompletionAttemptStarted, frame.Payload, out int version));
+            Assert.Equal(2, version);
+            result.Add(Assert.IsType<SessionRequestCommitment>(body.Commitment));
+        }
+        return result;
+    }
+
+    internal static string ReadPlayerText(SessionInputContent content) {
+        if (!content.IsStructured) {
+            return PlayerTurnObservationEnvelope.TryUnwrap(content.TextValue, out PlayerTurnObservation old)
+                ? old.PlayerText : content.TextValue;
+        }
+        Assert.True(GalateaObservationContent.TryReadPlayerText(content, out string text));
+        return text;
     }
 
     internal static (RecapCellArtifact World, RecapCellArtifact Autobiography) ReadHeadCells(string repository) {

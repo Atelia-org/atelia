@@ -7,10 +7,39 @@ public sealed class GalateaDurableDelegateTransportTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task ExactV5FramesAndSixInspectionOutcomesAreTyped() {
+    public async Task InspectAcceptsHistoricCommitmentBeyondCurrentStartLimitWithoutSendingTaskBody() {
+        using var fixture = new GalateaSidecarProcessFixture($$"""
+            printf '%s\n' '{"v":6,"type":"ready"}'
+            while IFS= read -r line; do
+              printf '%s\n' "$line" >> {{Q("INPUT")}}
+              request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+              printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"historic-dispatch","threadId":"historic-thread","outcome":"not-found","source":"persistent"}\n' "$request_id"
+            done
+            """);
+        await using GalateaCodexDurableSidecarClient client = fixture.CreateClient(maximumBodyUtf8Bytes: 64);
+        string historicTask = new('界', 100);
+        GalateaTaskCommitment commitment = GalateaTaskCommitment.FromTask(historicTask);
+        Assert.Equal(300, commitment.Utf8Bytes);
+        Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(await client.InspectDispatchAsync(
+            GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown("historic-dispatch", "historic-thread", commitment),
+            CancellationToken.None));
+        using JsonDocument frame = JsonDocument.Parse(Assert.Single(File.ReadAllLines(fixture.InputPath)));
+        Assert.Equal(6, frame.RootElement.GetProperty("v").GetInt32());
+        Assert.Equal("inspect-dispatch", frame.RootElement.GetProperty("type").GetString());
+        Assert.Equal(commitment.Sha256, frame.RootElement.GetProperty("taskSha256").GetString());
+        Assert.Equal(commitment.Utf8Bytes, frame.RootElement.GetProperty("taskUtf8Bytes").GetInt32());
+        Assert.False(frame.RootElement.TryGetProperty("task", out _));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.StartTurnAsync(
+            new("new-dispatch", "historic-thread", historicTask, fixture.Root), CancellationToken.None));
+        Assert.Single(File.ReadAllLines(fixture.InputPath));
+    }
+
+    [Fact]
+    public async Task ExactV6FramesAndSixInspectionOutcomesAreTyped() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             count=0
             while IFS= read -r line; do
               count=$((count + 1))
@@ -21,28 +50,28 @@ public sealed class GalateaDurableDelegateTransportTests {
               case "$count" in
                 1)
                   binding_id=$(printf '%s' "$line" | sed -n 's/.*"bindingOperationId":"\([^"]*\)".*/\1/p')
-                  printf '{"v":5,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-fixed"}\n' "$request_id" "$binding_id"
+                  printf '{"v":6,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-fixed"}\n' "$request_id" "$binding_id"
                   ;;
                 2)
-                  printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 3)
-                  printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 4)
-                  printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-1","source":"live"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-1","source":"live"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 5)
-                  printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"completed","turnId":"turn-1","final":"完成，包含中文。","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"completed","turnId":"turn-1","final":"完成，包含中文。","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 6)
-                  printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"failed","turnId":"turn-1","code":"TURN_FAILED","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"failed","turnId":"turn-1","code":"TURN_FAILED","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 7)
-                  printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"ambiguous","code":"DISPATCH_BODY_MISMATCH","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"ambiguous","code":"DISPATCH_BODY_MISMATCH","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 8)
-                  printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"unavailable","turnId":"turn-1","code":"ACCEPTED_TURN_NOT_VISIBLE","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"unavailable","turnId":"turn-1","code":"ACCEPTED_TURN_NOT_VISIBLE","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
               esac
             done
@@ -68,38 +97,36 @@ public sealed class GalateaDurableDelegateTransportTests {
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
                     "dispatch-missing",
-                    binding.ThreadId,
-                    "never sent"
+                    binding.ThreadId, GalateaTaskCommitment.FromTask("never sent")),
+                CancellationToken.None
+            ),
+            await client.InspectDispatchAsync(
+                GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1", binding.ThreadId, GalateaTaskCommitment.FromTask("exact\n你好"), "turn-1"
                 ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForAccepted(
-                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                    "dispatch-1", binding.ThreadId, GalateaTaskCommitment.FromTask("exact\n你好"), "turn-1"
                 ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForAccepted(
-                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                    "dispatch-1", binding.ThreadId, GalateaTaskCommitment.FromTask("exact\n你好"), "turn-1"
                 ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForAccepted(
-                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                    "dispatch-1", binding.ThreadId, GalateaTaskCommitment.FromTask("exact\n你好"), "turn-1"
                 ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForAccepted(
-                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
-                ),
-                CancellationToken.None
-            ),
-            await client.InspectDispatchAsync(
-                GalateaInspectDelegateDispatchRequest.ForAccepted(
-                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                    "dispatch-1", binding.ThreadId, GalateaTaskCommitment.FromTask("exact\n你好"), "turn-1"
                 ),
                 CancellationToken.None
             )
@@ -172,7 +199,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             .GetProperty("expectedTurnId").ValueKind);
         Assert.Equal(
             [
-                "dispatchId", "expectedTurnId", "requestId", "task",
+                "dispatchId", "expectedTurnId", "requestId", "taskSha256", "taskUtf8Bytes",
                 "threadId", "type", "v"
             ],
             unknownInspect.RootElement.EnumerateObject()
@@ -189,7 +216,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ConcurrentResponsesAreCorrelatedByRequestId() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r first
             IFS= read -r second
             printf '%s\n' "$first" >> {{Q("INPUT")}}
@@ -198,8 +225,8 @@ public sealed class GalateaDurableDelegateTransportTests {
             first_dispatch=$(printf '%s' "$first" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             second_request=$(printf '%s' "$second" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             second_dispatch=$(printf '%s' "$second" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$second_request" "$second_dispatch" "$second_dispatch"
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$first_request" "$first_dispatch" "$first_dispatch"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$second_request" "$second_dispatch" "$second_dispatch"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$first_request" "$first_dispatch" "$first_dispatch"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -225,21 +252,21 @@ public sealed class GalateaDurableDelegateTransportTests {
     [InlineData("wrong-case")]
     [InlineData("duplicate-property")]
     [InlineData("v2")]
-    public async Task InvalidV5BusinessFrameIsGenerationFatal(string kind) {
+    public async Task InvalidV6BusinessFrameIsGenerationFatal(string kind) {
         string response = kind switch {
             "wrong-identity" =>
-                "printf '{\"v\":5,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"wrong\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
+                "printf '{\"v\":6,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"wrong\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
             "extra-property" =>
-                "printf '{\"v\":5,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"extra\":1}\\n' \"$request_id\"",
+                "printf '{\"v\":6,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"extra\":1}\\n' \"$request_id\"",
             "wrong-case" =>
-                "printf '{\"v\":5,\"type\":\"binding-established\",\"RequestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
+                "printf '{\"v\":6,\"type\":\"binding-established\",\"RequestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
             "duplicate-property" =>
-                "printf '{\"v\":5,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"threadId\":\"thread-2\"}\\n' \"$request_id\"",
+                "printf '{\"v\":6,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"threadId\":\"thread-2\"}\\n' \"$request_id\"",
             _ =>
                 "printf '{\"v\":2,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\"}\\n' \"$request_id\""
         };
         using var fixture = new GalateaSidecarProcessFixture(
-            "printf '%s\\n' '{\"v\":5,\"type\":\"ready\"}'\n"
+            "printf '%s\\n' '{\"v\":6,\"type\":\"ready\"}'\n"
                 + "IFS= read -r line\n"
                 + "request_id=$(printf '%s' \"$line\" | sed -n 's/.*\"requestId\":\"\\([^\"]*\\)\".*/\\1/p')\n"
                 + response
@@ -276,28 +303,28 @@ public sealed class GalateaDurableDelegateTransportTests {
     ) {
         string response = kind switch {
             "missing-source" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "wrong-source-case" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"Persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"Persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "extra-property" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"persistent\",\"extra\":1}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"persistent\",\"extra\":1}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "duplicate-property" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"persistent\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"persistent\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "accepted-not-found" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"not-found\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"not-found\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "outcome-unknown-unavailable" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"ACCEPTED_TURN_NOT_VISIBLE\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"ACCEPTED_TURN_NOT_VISIBLE\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "not-found-live" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"not-found\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"not-found\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "unavailable-live" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"ACCEPTED_TURN_NOT_VISIBLE\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"ACCEPTED_TURN_NOT_VISIBLE\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             "unavailable-wrong-code" =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"INSPECTION_UNAVAILABLE\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"INSPECTION_UNAVAILABLE\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
             _ =>
-                "printf '{\"v\":5,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-2\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\""
+                "printf '{\"v\":6,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-2\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\""
         };
         using var fixture = new GalateaSidecarProcessFixture(
-            "printf '%s\\n' '{\"v\":5,\"type\":\"ready\"}'\n"
+            "printf '%s\\n' '{\"v\":6,\"type\":\"ready\"}'\n"
                 + "IFS= read -r line\n"
                 + "request_id=$(printf '%s' \"$line\" | sed -n 's/.*\"requestId\":\"\\([^\"]*\\)\".*/\\1/p')\n"
                 + "dispatch_id=$(printf '%s' \"$line\" | sed -n 's/.*\"dispatchId\":\"\\([^\"]*\\)\".*/\\1/p')\n"
@@ -310,10 +337,9 @@ public sealed class GalateaDurableDelegateTransportTests {
         GalateaInspectDelegateDispatchRequest request =
             kind == "outcome-unknown-unavailable"
                 ? GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
-                    "dispatch-1", "thread-fixed", "task"
-                )
+                    "dispatch-1", "thread-fixed", GalateaTaskCommitment.FromTask("task"))
                 : GalateaInspectDelegateDispatchRequest.ForAccepted(
-                    "dispatch-1", "thread-fixed", "task", "turn-1"
+                    "dispatch-1", "thread-fixed", GalateaTaskCommitment.FromTask("task"), "turn-1"
                 );
 
         GalateaDurableDelegateTransportException failure =
@@ -346,7 +372,7 @@ public sealed class GalateaDurableDelegateTransportTests {
         string expectedTurnId
     ) {
         using var fixture = new GalateaSidecarProcessFixture(
-            "printf '%s\\n' '{\"v\":5,\"type\":\"ready\"}'\n"
+            "printf '%s\\n' '{\"v\":6,\"type\":\"ready\"}'\n"
         );
         await using GalateaCodexDurableSidecarClient client =
             fixture.CreateClient();
@@ -355,8 +381,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForAccepted(
                     "dispatch-1",
-                    "thread-fixed",
-                    "task",
+                    "thread-fixed", GalateaTaskCommitment.FromTask("task"),
                     expectedTurnId
                 ),
                 CancellationToken.None
@@ -369,12 +394,12 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task GenericAcceptedTurnNotVisibleFailureIsNotSemantic() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"failed","stage":"inspect-dispatch","requestId":"%s","dispatchId":"%s","threadId":"%s","code":"ACCEPTED_TURN_NOT_VISIBLE"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":6,"type":"failed","stage":"inspect-dispatch","requestId":"%s","dispatchId":"%s","threadId":"%s","code":"ACCEPTED_TURN_NOT_VISIBLE"}\n' "$request_id" "$dispatch_id" "$thread_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -387,8 +412,7 @@ public sealed class GalateaDurableDelegateTransportTests {
                     client.InspectDispatchAsync(
                         GalateaInspectDelegateDispatchRequest.ForAccepted(
                             "dispatch-1",
-                            "thread-fixed",
-                            "task",
+                            "thread-fixed", GalateaTaskCommitment.FromTask("task"),
                             "turn-1"
                         ),
                         CancellationToken.None
@@ -407,7 +431,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     [InlineData("PAGE_SHAPE_INVALID")]
     [InlineData("PAGINATION_CURSOR_INVALID")]
     [InlineData("PAGINATION_CURSOR_LOOP")]
-    public async Task V5PaginationAndLiveAmbiguitiesRemainSemantic(
+    public async Task V6PaginationAndLiveAmbiguitiesRemainSemantic(
         string code
     ) {
         string source = code == "LIVE_OBSERVATION_CONFLICT"
@@ -415,12 +439,12 @@ public sealed class GalateaDurableDelegateTransportTests {
             : "persistent";
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"ambiguous","code":"{{code}}","source":"{{source}}"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"ambiguous","code":"{{code}}","source":"{{source}}"}\n' "$request_id" "$dispatch_id" "$thread_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -431,9 +455,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
                     "dispatch-1",
-                    "thread-fixed",
-                    "task"
-                ),
+                    "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                 CancellationToken.None
             );
 
@@ -459,10 +481,10 @@ public sealed class GalateaDurableDelegateTransportTests {
         string expectedCode
     ) {
         string terminal = failureKind == "malformed"
-            ? "printf '%s\\n' '{\"v\":5,\"type\":\"broken\",'"
+            ? "printf '%s\\n' '{\"v\":6,\"type\":\"broken\",'"
             : "exit 7";
         using var fixture = new GalateaSidecarProcessFixture(
-            "printf '%s\\n' '{\"v\":5,\"type\":\"ready\"}'\n"
+            "printf '%s\\n' '{\"v\":6,\"type\":\"ready\"}'\n"
                 + "IFS= read -r line\n"
                 + terminal
                 + "\n"
@@ -482,8 +504,7 @@ public sealed class GalateaDurableDelegateTransportTests {
                     client.InspectDispatchAsync(
                         GalateaInspectDelegateDispatchRequest
                             .ForOutcomeUnknown(
-                                "dispatch-1", "thread-fixed", "task"
-                            ),
+                                "dispatch-1", "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                         CancellationToken.None
                     ));
 
@@ -494,13 +515,13 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ConcurrentBindingDuplicateDoesNotReleaseOwnersClaim() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             binding_id=$(printf '%s' "$line" | sed -n 's/.*"bindingOperationId":"\([^"]*\)".*/\1/p')
             while [ ! -f {{Q("COUNT")}} ]; do sleep 0.01; done
-            printf '{"v":5,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-1"}\n' "$request_id" "$binding_id"
+            printf '{"v":6,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-1"}\n' "$request_id" "$binding_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -533,7 +554,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task BindingOutcomeUnknownCanRetrySameDurableOperation() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             count=0
             while IFS= read -r line; do
               count=$((count + 1))
@@ -541,7 +562,7 @@ public sealed class GalateaDurableDelegateTransportTests {
               if [ "$count" -eq 1 ]; then continue; fi
               request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
               binding_id=$(printf '%s' "$line" | sed -n 's/.*"bindingOperationId":"\([^"]*\)".*/\1/p')
-              printf '{"v":5,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-2"}\n' "$request_id" "$binding_id"
+              printf '{"v":6,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-2"}\n' "$request_id" "$binding_id"
             done
             """
         );
@@ -576,7 +597,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task StartOutcomeUnknownPermanentlyFencesReplayButAllowsInspect() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             count=0
             while IFS= read -r line; do
               count=$((count + 1))
@@ -585,7 +606,7 @@ public sealed class GalateaDurableDelegateTransportTests {
               request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
               dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
               thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-              printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+              printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
             done
             """
         );
@@ -620,8 +641,7 @@ public sealed class GalateaDurableDelegateTransportTests {
         GalateaDelegateDispatchInspection inspection =
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
-                    "dispatch-unknown", "thread-fixed", "exact task"
-                ),
+                    "dispatch-unknown", "thread-fixed", GalateaTaskCommitment.FromTask("exact task")),
                 CancellationToken.None
             );
         Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(inspection);
@@ -635,7 +655,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task CancelledInFlightStartStillFencesReplayAsOutcomeUnknown() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             count=0
             while IFS= read -r line; do
               count=$((count + 1))
@@ -644,7 +664,7 @@ public sealed class GalateaDurableDelegateTransportTests {
               request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
               dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
               thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-              printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+              printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
             done
             """
         );
@@ -682,9 +702,7 @@ public sealed class GalateaDurableDelegateTransportTests {
                 await client.InspectDispatchAsync(
                     GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
                         "dispatch-cancelled",
-                        "thread-fixed",
-                        "exact task"
-                    ),
+                        "thread-fixed", GalateaTaskCommitment.FromTask("exact task")),
                     CancellationToken.None
                 );
             Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(
@@ -705,7 +723,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task InspectionAllowsMultipleRpcsWithinTotalDeadline() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" >> {{Q("INPUT")}}
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
@@ -714,7 +732,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             # Multiple bounded RPCs may exceed the old three-RPC budget,
             # but the whole inspection remains bounded by 45 seconds.
             sleep 6
-            printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -723,8 +741,7 @@ public sealed class GalateaDurableDelegateTransportTests {
         GalateaDelegateDispatchInspection result =
             await client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
-                    "dispatch-1", "thread-fixed", "task"
-                ),
+                    "dispatch-1", "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                 CancellationToken.None
             );
 
@@ -737,7 +754,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task DisposeCompletesInspectionWithoutAggregateDeadline() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
             while IFS= read -r ignored; do :; done
@@ -751,9 +768,7 @@ public sealed class GalateaDurableDelegateTransportTests {
                 client.InspectDispatchAsync(
                     GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
                         "dispatch-1",
-                        "thread-fixed",
-                        "task"
-                    ),
+                        "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                     CancellationToken.None
                 );
             await WaitForLinesAsync(fixture.InputPath, 1);
@@ -784,20 +799,20 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task CancelledInFlightInspectionKeepsGenerationForLateResponse() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r first
             printf '%s\n' "$first" >> {{Q("INPUT")}}
             while [ ! -f {{Q("COUNT")}} ]; do sleep 0.01; done
             request_id=$(printf '%s' "$first" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             dispatch_id=$(printf '%s' "$first" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             thread_id=$(printf '%s' "$first" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
             IFS= read -r second
             printf '%s\n' "$second" >> {{Q("INPUT")}}
             request_id=$(printf '%s' "$second" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             dispatch_id=$(printf '%s' "$second" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             thread_id=$(printf '%s' "$second" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-2","source":"live"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-2","source":"live"}\n' "$request_id" "$dispatch_id" "$thread_id"
             while IFS= read -r ignored; do :; done
             printf '%s' 'graceful-eof' > {{Q("ENV")}}
             """
@@ -808,8 +823,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             Task<GalateaDelegateDispatchInspection> cancelled =
                 client.InspectDispatchAsync(
                     GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
-                        "dispatch-1", "thread-fixed", "task"
-                    ),
+                        "dispatch-1", "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                     cancellation.Token
                 );
             await WaitForLinesAsync(fixture.InputPath, 1);
@@ -823,8 +837,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             GalateaDelegateDispatchInspection inspection =
                 await client.InspectDispatchAsync(
                     GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
-                        "dispatch-2", "thread-fixed", "task"
-                    ),
+                        "dispatch-2", "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                     CancellationToken.None
                 );
 
@@ -841,13 +854,13 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Fact]
-    public async Task UnconfirmedReapPermanentlyBlocksV5Restart() {
+    public async Task UnconfirmedReapPermanentlyBlocksV6Restart() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
-            printf '%s\n' '{"v":5,"type":"broken",'
+            printf '%s\n' '{"v":6,"type":"broken",'
             sleep 30
             """
         );
@@ -862,8 +875,7 @@ public sealed class GalateaDurableDelegateTransportTests {
         Task<GalateaDelegateDispatchInspection> first =
             client.InspectDispatchAsync(
                 GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
-                    "dispatch-1", "thread-fixed", "task"
-                ),
+                    "dispatch-1", "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                 CancellationToken.None
             );
         await WaitForLinesAsync(fixture.InputPath, 1);
@@ -880,8 +892,7 @@ public sealed class GalateaDurableDelegateTransportTests {
                         client.InspectDispatchAsync(
                             GalateaInspectDelegateDispatchRequest
                                 .ForOutcomeUnknown(
-                                    "dispatch-1", "thread-fixed", "task"
-                                ),
+                                    "dispatch-1", "thread-fixed", GalateaTaskCommitment.FromTask("task")),
                             CancellationToken.None
                         ));
             Assert.Equal("SIDECAR_REAP_UNCONFIRMED", blocked.Code);
@@ -900,7 +911,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ColdInnerRestartDelayUsesFiveRpcStartBudget() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
@@ -914,7 +925,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             sleep 3
             sleep 3
             sleep 3
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-after-cold-restart"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-after-cold-restart"}\n' "$request_id" "$dispatch_id" "$thread_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -1039,11 +1050,11 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task NotDispatchedReturnsOnlyOwningClaimAndLateDuplicateCannotReturnNewClaim() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r first
             printf '%s\n' "$first" >> {{Q("INPUT")}}
             first_id=$(printf '%s' "$first" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-            failure=$(printf '{"v":5,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"THREAD_NOT_FOUND","dispatchState":"not-dispatched"}' "$first_id")
+            failure=$(printf '{"v":6,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"THREAD_NOT_FOUND","dispatchState":"not-dispatched"}' "$first_id")
             printf '%s\n' "$failure"
             IFS= read -r second
             printf '%s\n' "$second" >> {{Q("INPUT")}}
@@ -1052,8 +1063,8 @@ public sealed class GalateaDurableDelegateTransportTests {
             IFS= read -r inspection
             printf '%s\n' "$inspection" >> {{Q("INPUT")}}
             inspection_id=$(printf '%s' "$inspection" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","outcome":"not-found","source":"persistent"}\n' "$inspection_id"
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$second_id"
+            printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","outcome":"not-found","source":"persistent"}\n' "$inspection_id"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$second_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -1065,7 +1076,7 @@ public sealed class GalateaDurableDelegateTransportTests {
         Task<GalateaDelegateTurnAccepted> second = client.StartTurnAsync(request, CancellationToken.None);
         await WaitForLinesAsync(fixture.InputPath, 2);
         await client.InspectDispatchAsync(
-            GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown("dispatch-1", "thread-1", "task"),
+            GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown("dispatch-1", "thread-1", GalateaTaskCommitment.FromTask("task")),
             CancellationToken.None);
         var duplicate = await Assert.ThrowsAsync<GalateaDurableDelegateTransportException>(
             () => client.StartTurnAsync(request, CancellationToken.None));
@@ -1080,16 +1091,16 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ConcurrentDuplicateCannotReleaseOriginalPendingStartClaim() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r first
             printf '%s\n' "$first" >> {{Q("INPUT")}}
             first_id=$(printf '%s' "$first" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             while [ ! -f {{Q("COUNT")}} ]; do sleep 0.01; done
-            printf '{"v":5,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"THREAD_NOT_FOUND","dispatchState":"not-dispatched"}\n' "$first_id"
+            printf '{"v":6,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"THREAD_NOT_FOUND","dispatchState":"not-dispatched"}\n' "$first_id"
             IFS= read -r second
             printf '%s\n' "$second" >> {{Q("INPUT")}}
             second_id=$(printf '%s' "$second" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$second_id"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$second_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -1116,11 +1127,11 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task UnknownAndContradictoryDuplicateFailureKeepClaim(string code, string state) {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" >> {{Q("INPUT")}}
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"{{code}}","dispatchState":"{{state}}"}\n' "$request_id"
+            printf '{"v":6,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"{{code}}","dispatchState":"{{state}}"}\n' "$request_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -1143,10 +1154,10 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task InvalidStartDispatchStateIsProtocolFatalAndNeverReleasesClaim(string fields) {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"THREAD_NOT_FOUND"{{fields}}}\n' "$request_id"
+            printf '{"v":6,"type":"failed","stage":"start-turn","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","code":"THREAD_NOT_FOUND"{{fields}}}\n' "$request_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -1170,7 +1181,7 @@ public sealed class GalateaDurableDelegateTransportTests {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             sleep {{readyDelay}}
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r first
             printf '%s\n' "$first" >> {{Q("INPUT")}}
             first_id=$(printf '%s' "$first" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
@@ -1178,14 +1189,14 @@ public sealed class GalateaDurableDelegateTransportTests {
             printf '%s\n' "$second" >> {{Q("INPUT")}}
             second_id=$(printf '%s' "$second" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             sleep {{responseDelay}}
-            printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"dispatch-a","threadId":"thread-a","outcome":"not-found","source":"persistent"}\n' "$first_id"
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-b","threadId":"thread-b","turnId":"turn-b"}\n' "$second_id"
+            printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"dispatch-a","threadId":"thread-a","outcome":"not-found","source":"persistent"}\n' "$first_id"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-b","threadId":"thread-b","turnId":"turn-b"}\n' "$second_id"
             while IFS= read -r ignored; do :; done
             """
         );
         await using var client = fixture.CreateClient(inspectionDeadlineForTest: TimeSpan.FromMilliseconds(deadlineMs));
         Task<GalateaDelegateDispatchInspection> first = client.InspectDispatchAsync(
-            GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown("dispatch-a", "thread-a", "task a"),
+            GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown("dispatch-a", "thread-a", GalateaTaskCommitment.FromTask("task a")),
             CancellationToken.None);
         await WaitForLinesAsync(fixture.InputPath, 1);
         Task<GalateaDelegateTurnAccepted> second = client.StartTurnAsync(
@@ -1205,10 +1216,10 @@ public sealed class GalateaDurableDelegateTransportTests {
             count=$((count + 1))
             printf '%s' "$count" > {{Q("COUNT")}}
             if [ "$count" -eq 1 ]; then exit 7; fi
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id"
             while IFS= read -r ignored; do :; done
             """
         );
@@ -1225,10 +1236,10 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ExecutableStartFailureReturnsClaimSoRepairCanRetrySameDispatch() {
         using var fixture = new GalateaSidecarProcessFixture(
             """
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             IFS= read -r line
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-            printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id"
+            printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"dispatch-1","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id"
             while IFS= read -r ignored; do :; done
             """
         );

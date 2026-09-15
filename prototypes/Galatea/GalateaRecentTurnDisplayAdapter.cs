@@ -99,6 +99,15 @@ internal static class GalateaUserMessageEnvelope {
 }
 
 internal static class GalateaObservationDisplay {
+    internal static string Project(SessionInputContent stored) {
+        ArgumentNullException.ThrowIfNull(stored);
+        if (stored.IsStructured) {
+            if (PlayerTurnObservationClassifier.TryProject(stored, out var projection)) { return projection.DisplayText; }
+            throw new NotSupportedException("Unsupported structured Observation display schema: " + stored.SchemaId);
+        }
+        return Project(stored.TextValue);
+    }
+
     internal static string Project(string? stored) {
         if (GalateaMailboxObservationEnvelope.TryUnwrap(
                 stored,

@@ -52,7 +52,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ));
         ValidateGalateaRouting(normalized);
         GalateaConfigValidation.RequireValidConnectionDefaults(
-            config.Users,
+            config.Characters,
             normalized
         );
 
@@ -73,7 +73,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                         recapGrid.RouteManifestPath
                     ),
                     _registry,
-                    recapGrid.AgentControlProfiles
+                    recapGrid.AgentControlProfiles,
+                    inputProjector: GalateaInputProjector.Instance
                 );
             RecapGrid = new GalateaRecapGridComposition(
                 recapGridHost,

@@ -137,7 +137,8 @@ export class GalateaDurableAdapter {
       const inspection = await this.options.backend.inspectDispatch({
         threadId: frame.threadId,
         dispatchId: frame.dispatchId,
-        task: frame.task,
+        taskSha256: frame.taskSha256,
+        taskUtf8Bytes: frame.taskUtf8Bytes,
         expectedTurnId: frame.expectedTurnId,
         maximumFinalUtf8Bytes: this.options.maximumFinalUtf8Bytes,
       });

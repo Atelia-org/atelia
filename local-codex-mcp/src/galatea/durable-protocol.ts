@@ -4,8 +4,9 @@ import type {
 } from "../backend/galatea-staged-backend.js";
 import { DEFAULT_MAX_TASK_BYTES } from "./limits.js";
 import path from "node:path";
+import { isStrictUnicode, isTaskCommitment } from "./task-commitment.js";
 
-export const GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION = 5 as const;
+export const GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION = 6 as const;
 export { DEFAULT_MAX_TASK_BYTES as DEFAULT_DURABLE_MAX_TASK_BYTES } from "./limits.js";
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
@@ -35,7 +36,8 @@ export interface GalateaInspectDispatchFrame {
   requestId: string;
   dispatchId: string;
   threadId: string;
-  task: string;
+  taskSha256: string;
+  taskUtf8Bytes: number;
   expectedTurnId: string | null;
 }
 
@@ -229,45 +231,48 @@ function parseTaskFrame(
   maximumTaskBytes: number,
 ): GalateaDurableParseResult {
   const keys = type === "inspect-dispatch"
-    ? ["v", "type", "requestId", "dispatchId", "threadId", "task", "expectedTurnId"]
+    ? ["v", "type", "requestId", "dispatchId", "threadId", "taskSha256", "taskUtf8Bytes", "expectedTurnId"]
     : ["v", "type", "requestId", "dispatchId", "threadId", "task", "cwd"];
   if (!hasExactKeys(value, keys)
     || value.v !== GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION
     || value.type !== type
     || !isIdentifier(value.requestId)
     || !isIdentifier(value.dispatchId)
-    || !isIdentifier(value.threadId)
-    || typeof value.task !== "string"
-    || (type === "start-turn" && !isCwd(value.cwd))
-    || (type === "inspect-dispatch"
-      && value.expectedTurnId !== null
-      && !isIdentifier(value.expectedTurnId))
-    || value.task.trim().length === 0) {
+    || !isIdentifier(value.threadId)) {
+    return { ok: false, code: "INVALID_FRAME" };
+  }
+  if (type === "inspect-dispatch") {
+    if (!isTaskCommitment(value)
+      || (value.expectedTurnId !== null && !isIdentifier(value.expectedTurnId))) {
+      return { ok: false, code: "INVALID_FRAME" };
+    }
+    return { ok: true, frame: {
+      v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
+      type,
+      requestId: value.requestId,
+      dispatchId: value.dispatchId,
+      threadId: value.threadId,
+      taskSha256: value.taskSha256,
+      taskUtf8Bytes: value.taskUtf8Bytes,
+      expectedTurnId: value.expectedTurnId as string | null,
+    } };
+  }
+  if (typeof value.task !== "string" || value.task.trim().length === 0
+      || !isStrictUnicode(value.task) || !isCwd(value.cwd)) {
     return { ok: false, code: "INVALID_FRAME" };
   }
   if (byteLength(value.task) > maximumTaskBytes) {
     return { ok: false, code: "FRAME_TOO_LARGE" };
   }
-  return {
-    ok: true,
-    frame: type === "inspect-dispatch" ? {
-      v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
-      type,
-      requestId: value.requestId,
-      dispatchId: value.dispatchId,
-      threadId: value.threadId,
-      task: value.task,
-      expectedTurnId: value.expectedTurnId as string | null,
-    } : {
-      v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
-      type,
-      requestId: value.requestId,
-      dispatchId: value.dispatchId,
-      threadId: value.threadId,
-      task: value.task,
-      cwd: value.cwd as string,
-    },
-  };
+  return { ok: true, frame: {
+    v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
+    type,
+    requestId: value.requestId,
+    dispatchId: value.dispatchId,
+    threadId: value.threadId,
+    task: value.task,
+    cwd: value.cwd,
+  } };
 }
 
 export function parseGalateaDurableFrame(

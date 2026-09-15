@@ -5,12 +5,13 @@ using System.Text.Json;
 using Atelia.Diagnostics;
 using Atelia.Galatea.Prompts;
 using Atelia.MemoPod;
+using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal static class GalateaMemoRecallQueryRenderer {
     internal const string SchemaId =
-        "atelia.galatea.memo-recall-context.v2";
+        "atelia.galatea.memo-recall-context.v4";
     internal const string RetrievalGoal =
         "memories materially useful for the character's next narrative action";
     internal const string ReplyKind = "reply";
@@ -22,11 +23,16 @@ internal static class GalateaMemoRecallQueryRenderer {
     internal static string Render(
         GalateaCharacterName characterName,
         PlayerTurnObservation currentObservation,
-        GalateaPlayerTurnRecallContext context
+        GalateaPlayerTurnRecallContext context,
+        SessionInputContent? currentInput = null
     ) {
         ArgumentNullException.ThrowIfNull(characterName);
         ArgumentNullException.ThrowIfNull(currentObservation);
         ArgumentNullException.ThrowIfNull(context);
+        if (currentInput is not null) {
+            if (currentInput.SchemaId != GalateaObservationContent.SchemaId) { throw new InvalidDataException("Recall query requires known semantic input provenance."); }
+            GalateaObservationContent.Validate(currentInput.JsonValue);
+        }
         if (currentObservation.Recalls.Count != 0) {
             throw new ArgumentException(
                 "Memo recall query requires a preliminary Observation without recalls.",
@@ -51,7 +57,8 @@ internal static class GalateaMemoRecallQueryRenderer {
             currentObservation,
             externalNotices,
             includedNoticeCount,
-            recentVisibleAction: null
+            recentVisibleAction: null,
+            currentInput
         );
         RequireWithinHardLimit(rendered);
 
@@ -62,7 +69,8 @@ internal static class GalateaMemoRecallQueryRenderer {
                 currentObservation,
                 externalNotices,
                 includedNoticeCount + 1,
-                recentVisibleAction: null
+                recentVisibleAction: null,
+                currentInput
             );
             if (candidate.Length
                     > GalateaMemoRecallMvpPolicy.MaximumQueryUtf8Bytes) {
@@ -77,7 +85,7 @@ internal static class GalateaMemoRecallQueryRenderer {
         long omittedNoticeUtf8Bytes = externalNotices
             .Skip(includedNoticeCount)
             .Sum(static notice => (long)GalateaBoundedJson.StrictUtf8
-                .GetByteCount(notice.Body));
+                .GetByteCount(NoticeEvidenceText(notice)));
 
         GalateaRecentVisibleAction? latestAction = context
             .RecentVisibleActions.LastOrDefault();
@@ -101,7 +109,8 @@ internal static class GalateaMemoRecallQueryRenderer {
                 currentObservation,
                 externalNotices,
                 includedNoticeCount,
-                latestAction.Text
+                latestAction,
+                currentInput
             );
             if (candidate.Length
                     <= GalateaMemoRecallMvpPolicy
@@ -133,7 +142,8 @@ internal static class GalateaMemoRecallQueryRenderer {
         PlayerTurnObservation observation,
         IReadOnlyList<PlayerTurnNotice> notices,
         int includedNoticeCount,
-        string? recentVisibleAction
+        GalateaRecentVisibleAction? recentVisibleAction,
+        SessionInputContent? currentInput
     ) {
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output, new() {
@@ -143,7 +153,12 @@ internal static class GalateaMemoRecallQueryRenderer {
             writer.WriteString("schema", SchemaId);
             writer.WriteString("characterName", characterName);
             writer.WriteString("retrievalGoal", RetrievalGoal);
+            writer.WriteString("inputMeaning", GalateaMemoRecallInputContract.Instructions);
             writer.WriteStartObject("currentTurn");
+            if (currentInput is not null) {
+                writer.WritePropertyName("sender");
+                currentInput.JsonValue.GetProperty("sender").WriteTo(writer);
+            }
             writer.WriteString(
                 "externalLocalTimestamp",
                 timestamp.ToString(
@@ -159,9 +174,8 @@ internal static class GalateaMemoRecallQueryRenderer {
                     break;
                 case PlayerTurnObservationTriggerKind.HeartbeatActivation:
                     writer.WriteString("kind", "heartbeat-activation");
-                    writer.WriteString("activationText",
-                        PlayerTurnObservationEnvelope.RenderHeartbeatActivationBody(
-                            observation.HeartbeatCharacterName));
+                    writer.WriteString("characterName", observation.HeartbeatCharacterName.Value);
+                    writer.WriteNumber("externalIntervalMinutes", GalateaFreshInput.HeartbeatActivation.ExternalIntervalMinutes);
                     break;
                 case PlayerTurnObservationTriggerKind.DelegateReply:
                     writer.WriteString("kind", "delegate-reply");
@@ -173,6 +187,10 @@ internal static class GalateaMemoRecallQueryRenderer {
             writer.WriteStartArray("externalNotices");
             for (int index = 0; index < includedNoticeCount; index++) {
                 PlayerTurnNotice notice = notices[index];
+                if (currentInput is not null) {
+                    JsonSerializer.SerializeToElement(GalateaObservationContent.NoticeJson(notice)).WriteTo(writer);
+                    continue;
+                }
                 writer.WriteStartObject();
                 writer.WriteString("kind", notice switch {
                     PlayerTurnNotice.Reply => ReplyKind,
@@ -182,7 +200,13 @@ internal static class GalateaMemoRecallQueryRenderer {
                         "Unsupported external notice kind."
                     )
                 });
-                writer.WriteString("text", notice.Body);
+                if (notice is PlayerTurnNotice.DeliveryFailure { Sender: not null } failure) {
+                    writer.WriteString("code", failure.Code);
+                    writer.WriteString("detail", failure.Detail);
+                    writer.WriteString("stage", failure.Stage);
+                    writer.WriteString("dispatchId", failure.DispatchId);
+                }
+                else { writer.WriteString("text", notice.Body); }
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
@@ -191,7 +215,10 @@ internal static class GalateaMemoRecallQueryRenderer {
             if (recentVisibleAction is not null) {
                 writer.WriteStartObject();
                 writer.WriteNumber("ordinalFromNewest", 0);
-                writer.WriteString("text", recentVisibleAction);
+                writer.WriteString("kind", GalateaRecentVisibleAction.Kind);
+                writer.WriteString("sourceStartInclusive", EventAddressTextCodec.Format(recentVisibleAction.SourceStartInclusive));
+                writer.WriteString("sourceEndInclusive", EventAddressTextCodec.Format(recentVisibleAction.SourceEndInclusive));
+                writer.WriteString("text", recentVisibleAction.Text);
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
@@ -209,4 +236,7 @@ internal static class GalateaMemoRecallQueryRenderer {
             );
         }
     }
+
+    private static string NoticeEvidenceText(PlayerTurnNotice notice) => notice is PlayerTurnNotice.DeliveryFailure { Sender: not null } failure
+        ? failure.Code + failure.Detail + failure.Stage + failure.DispatchId : notice.Body;
 }

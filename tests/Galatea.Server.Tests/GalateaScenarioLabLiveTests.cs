@@ -97,9 +97,9 @@ public sealed class GalateaScenarioLabLiveTests(ITestOutputHelper output) {
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         var service = host.Factory.Services.GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync("alice", ct);
+        CharacterSessionHost session = await service.GetSessionAsync("alice", ct);
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns", new ChatStreamRequest(text, "test"), ct);
+            "/api/v1/characters/alice/chat/turns", new ChatStreamRequest(text, "test"), ct);
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         StartTurnResponseDto started = (await accepted.Content.ReadFromJsonAsync<StartTurnResponseDto>(ct))!;
         GalateaLiveTurn turn = service.FindTurn(session, started.TurnId)!;

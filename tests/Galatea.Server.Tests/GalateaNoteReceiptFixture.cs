@@ -27,7 +27,7 @@ internal static class GalateaNoteReceiptFixture {
     private static CompletionConnectionConfig Connection(string id, string model) => new(
         id, "openai-chat", model, "openai-chat/strict", "http://127.0.0.1:1/", ApiKey: "synthetic-key");
 
-    internal sealed record Epoch(UserSessionHost Session, GalateaAutomaticTurnCoordinator Coordinator,
+    internal sealed record Epoch(CharacterSessionHost Session, GalateaAutomaticTurnCoordinator Coordinator,
         GalateaServerAgentHostedService Loop, GalateaLabClock Clock, Factory Completion);
 
     internal sealed record DurableState(Memo Note, string PodIdentity,
@@ -39,7 +39,7 @@ internal static class GalateaNoteReceiptFixture {
         var coordinator = services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         var loop = Assert.Single(services.GetServices<IHostedService>().OfType<GalateaServerAgentHostedService>());
         await UntilAsync(_ => Task.FromResult(coordinator.ReadStatus("alice").State == "waiting"));
-        UserSessionHost session = Assert.IsType<UserSessionHost>(host.ReadAttachedSession("alice"));
+        CharacterSessionHost session = Assert.IsType<CharacterSessionHost>(host.ReadAttachedSession("alice"));
         Assert.Equal(clock.GetUtcNow().AddMinutes(10).ToUnixTimeMilliseconds(),
             coordinator.ReadStatus("alice").NextActivationAtUnixTimeMilliseconds);
         Assert.Equal(0, completion.TotalCalls);
@@ -66,7 +66,7 @@ internal static class GalateaNoteReceiptFixture {
             await epoch.Session.TurnLock.WaitAsync(cancellationToken);
             try {
                 var pod = global::Atelia.MemoPod.MemoPod.Open(
-                    epoch.Session.User.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId);
+                    epoch.Session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId);
                 return Assert.Single(pod.List()).Title == DerivedTitle
                     && epoch.Session.CharacterMemoryReconciler!.ReadStatusSnapshot().ActiveDerivedInfoSourceAction is null;
             }
@@ -82,7 +82,7 @@ internal static class GalateaNoteReceiptFixture {
             string source = EventAddressTextCodec.Format(turns[^1].TerminalAction.Address);
             var memory = epoch.Session.CharacterMemoryReconciler!;
             return new(Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
-                    epoch.Session.User.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()),
+                    epoch.Session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()),
                 Assert.IsType<string>(memory.ReadStatusSnapshot().SettledDefaultPodStateIdentity),
                 Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(memory.ReadReceiptDeliveryExact(source)),
                 turns);

@@ -8,7 +8,7 @@ namespace Atelia.Galatea.Server;
 /// Explicitly constructed durable delegation current-state authority.
 /// </summary>
 internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
-    internal const int SchemaVersion = 4;
+    internal const int SchemaVersion = 5;
     internal const int ApplicationId = 0x47444C47; // "GDLG"
     internal const string DatabaseFileName = "delegation-state.sqlite3";
     internal const string LockFileName = "delegation-state.lock";
@@ -433,32 +433,33 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "accepted_turn_id", "terminal_final_sha256", "terminal_stage",
             "terminal_code", "recovery_failure_count",
             "recovery_last_code", "next_retry_at_ms", "revision"
-        ], expectedVersion, "frozen_route_policy_fingerprint"));
+        ], expectedVersion, "frozen_route_policy_fingerprint").Concat(expectedVersion >= 5
+            ? ["content_format", "sender_name", "task_sha256", "task_utf8_bytes"] : Array.Empty<string>()).ToArray());
         if (expectedVersion >= 4) {
-            RequireExactColumns(connection, "internal_mail_outbox", [
+            RequireExactColumns(connection, "internal_mail_outbox", new[] {
                 "dispatch_id", "target_user_id", "target_session_repository_id",
                 "from_character_name", "message_id", "state",
                 "expected_session_head", "rendered_observation",
                 "observation_address", "quarantine_code", "revision"
-            ]);
+            }.Concat(expectedVersion >= 5 ? ["bound_input"] : Array.Empty<string>()).ToArray());
         }
         RequireExactColumns(connection, "route_binding", ColumnsForVersion([
             "singleton", "state", "binding_operation_id", "thread_id",
             "policy_fingerprint", "active_dispatch_id",
             "quarantine_code", "revision"
         ], expectedVersion, "policy_fingerprint"));
-        RequireExactColumns(connection, "reply_notice", [
+        RequireExactColumns(connection, "reply_notice", new[] {
             "notice_id", "dispatch_id", "kind", "body", "stage", "code",
             "completion_sequence", "state", "consumed_action_address",
             "revision"
-        ]);
-        RequireExactColumns(connection, "reply_lease", [
+        }.Concat(expectedVersion >= 5 ? ["notice_format", "sender_kind", "sender_id", "sender_name", "detail", "thread_id", "turn_id"] : Array.Empty<string>()).ToArray());
+        RequireExactColumns(connection, "reply_lease", new[] {
             "lease_id", "state", "active_slot", "player_text",
             "expected_session_head", "rendered_observation",
             "observation_utf8_bytes", "observation_sha256",
             "completion_frontier", "observation_address",
             "revision"
-        ]);
+        }.Concat(expectedVersion >= 5 ? ["bound_input"] : Array.Empty<string>()).ToArray());
         RequireExactColumns(connection, "reply_lease_item", [
             "lease_id", "ordinal", "notice_id"
         ]);
@@ -649,7 +650,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()
             || reader.GetInt32(0) != expectedVersion
-            || !string.Equals(reader.GetString(1), expected.UserId,
+            || !string.Equals(reader.GetString(1), expected.CharacterId,
                 StringComparison.Ordinal)
             || !string.Equals(reader.GetString(2),
                 expected.SessionRepositoryId, StringComparison.Ordinal)
@@ -720,7 +721,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         GalateaDelegationStoreOwner owner
     ) {
         ArgumentNullException.ThrowIfNull(owner);
-        RequireBoundedText(owner.UserId, nameof(owner.UserId));
+        RequireBoundedText(owner.CharacterId, nameof(owner.CharacterId));
         RequireBoundedText(
             owner.SessionRepositoryId,
             nameof(owner.SessionRepositoryId)

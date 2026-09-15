@@ -99,6 +99,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             requested_thread_id = CASE WHEN $requeue THEN NULL ELSE requested_thread_id END,
                             accepted_thread_id = CASE WHEN $requeue THEN NULL ELSE accepted_thread_id END,
                             accepted_turn_id = CASE WHEN $requeue THEN NULL ELSE accepted_turn_id END,
+                            task_sha256 = CASE WHEN $requeue THEN NULL ELSE task_sha256 END,
+                            task_utf8_bytes = CASE WHEN $requeue THEN NULL ELSE task_utf8_bytes END,
                             revision = revision + 1
                         WHERE dispatch_id = $dispatch AND revision = $revision;
                         """;
@@ -213,9 +215,13 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string code, bool resetBinding, bool alreadyIncrementedStoreRevision
     ) {
         const string stage = GalateaDelegationDurableContract.LocalRecoveryStage;
-        string body = GalateaDelegationDurableContract.CreateDeliveryFailureNotice(stage, code);
-        RequireFailureNoticeBody(body, nameof(body));
+        string body = string.Empty;
         bool ownsReservation = route.ActiveDispatchId == mail.DispatchId;
+        if (ownsReservation) {
+            RequireSettledNoticeCapacity(connection, transaction, _limits, mail.DispatchId,
+                GalateaReplyNoticeKind.DeliveryFailure, body, stage, code, null,
+                mail.AcceptedThreadId ?? mail.RequestedThreadId, mail.AcceptedTurnId);
+        }
         if (!ownsReservation) {
             RequireInboxNoticeCapacity(connection, transaction, _limits, body);
         }
@@ -248,9 +254,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             ReleaseRecoveryRoute(connection, transaction, route,
                 resetBinding || route.State == GalateaDelegationRouteState.Binding);
         }
-        return new GalateaReplyNoticeSnapshot(mail.DispatchId, mail.DispatchId,
-            GalateaReplyNoticeKind.DeliveryFailure, body, stage, code, sequence,
-            GalateaReplyNoticeState.Ready, ConsumedActionAddress: null, Revision: 0);
+        return FinalizeSemanticNotice(connection, transaction, mail.DispatchId);
     }
 
     private static void RequireActiveRecoveryIdentity(

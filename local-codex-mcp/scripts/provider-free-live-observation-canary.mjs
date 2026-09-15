@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { taskCommitment } from "../dist/src/galatea/task-commitment.js";
 
 // Exercises the production backend and pinned app-server against a localhost SSE
 // fixture. HOME, auth, configuration, workspace, and sessions are disposable.
@@ -148,7 +149,7 @@ stream_max_retries = 0
   assert.equal(user.turnId, accepted.turnId);
   assert.equal(user.item.clientId, dispatchId);
   assert.deepEqual(user.item.content, [{ type: "text", text: task, text_elements: [] }]);
-  const inspect = { threadId, dispatchId, task, expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000 };
+  const inspect = { threadId, dispatchId, ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000 };
   for (let index = 0; index < 10; index += 1) {
     const running = await backend.inspectDispatch(inspect);
     assert.equal(running.kind, "running");

@@ -8,7 +8,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             CREATE TABLE delegation_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 4),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 5),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -82,7 +82,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 next_retry_at_ms INTEGER NULL
                     CHECK(next_retry_at_ms IS NULL
                         OR next_retry_at_ms >= 0),
-                revision INTEGER NOT NULL CHECK(revision >= 0)
+                revision INTEGER NOT NULL CHECK(revision >= 0),
+                content_format TEXT NOT NULL DEFAULT 'legacy-task'
+                    CHECK(content_format IN ('legacy-task', 'semantic-mail-v1')),
+                sender_name TEXT NULL,
+                task_sha256 TEXT NULL,
+                task_utf8_bytes INTEGER NULL CHECK(task_utf8_bytes IS NULL OR task_utf8_bytes > 0)
             ) STRICT;
 
             CREATE UNIQUE INDEX ux_outbound_source_ordinal
@@ -105,7 +110,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 rendered_observation TEXT NULL,
                 observation_address TEXT NULL,
                 quarantine_code TEXT NULL,
-                revision INTEGER NOT NULL CHECK(revision >= 0)
+                revision INTEGER NOT NULL CHECK(revision >= 0),
+                bound_input TEXT NULL
             ) STRICT;
 
             CREATE UNIQUE INDEX ux_internal_mail_message_id
@@ -141,7 +147,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 state TEXT NOT NULL
                     CHECK(state IN ('Ready', 'Leased', 'Consumed')),
                 consumed_action_address TEXT NULL,
-                revision INTEGER NOT NULL CHECK(revision >= 0)
+                revision INTEGER NOT NULL CHECK(revision >= 0),
+                notice_format TEXT NOT NULL DEFAULT 'legacy-text'
+                    CHECK(notice_format IN ('legacy-text', 'semantic-notice-v1')),
+                sender_kind TEXT NULL,
+                sender_id TEXT NULL,
+                sender_name TEXT NULL,
+                detail TEXT NULL,
+                thread_id TEXT NULL,
+                turn_id TEXT NULL
             ) STRICT;
 
             CREATE UNIQUE INDEX ux_reply_notice_completion
@@ -166,7 +180,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 completion_frontier INTEGER NOT NULL
                     CHECK(completion_frontier >= 0),
                 observation_address TEXT NULL,
-                revision INTEGER NOT NULL CHECK(revision >= 0)
+                revision INTEGER NOT NULL CHECK(revision >= 0),
+                bound_input TEXT NULL
             ) STRICT;
 
             CREATE UNIQUE INDEX ux_reply_lease_one_active
@@ -217,7 +232,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 );
                 """;
             meta.Parameters.AddWithValue("$schema", SchemaVersion);
-            meta.Parameters.AddWithValue("$user", owner.UserId);
+            meta.Parameters.AddWithValue("$user", owner.CharacterId);
             meta.Parameters.AddWithValue(
                 "$repository",
                 owner.SessionRepositoryId

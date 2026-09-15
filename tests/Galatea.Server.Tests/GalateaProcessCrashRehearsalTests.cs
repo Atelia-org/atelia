@@ -39,7 +39,7 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
             using HttpClient http = first.CreateClient();
             await LoginAsync(http);
             using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-                "/api/v1/chat/turns",
+                "/api/v1/characters/alice/chat/turns",
                 new ChatStreamRequest(GalateaLabCrashResponsesServer.UserMessage));
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             await provider.FirstReceived.WaitAsync(Deadline);
@@ -68,7 +68,7 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
             using HttpClient http = restarted.CreateClient();
             await LoginAsync(http);
             using (HttpResponseMessage refused = await http.PostAsJsonAsync(
-                       "/api/v1/chat/turns/resume",
+                       "/api/v1/characters/alice/chat/turns/resume",
                        new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead)))) {
                 Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
                 using JsonDocument problem = JsonDocument.Parse(
@@ -78,21 +78,21 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
                 Assert.Equal(1, provider.Calls);
             }
             CurrentTurnDto uncertain = Assert.IsType<CurrentTurnDto>(
-                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/chat/turns/current"));
+                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
             Assert.True(uncertain.RestartRequired);
             Assert.Equal(EventAddressTextCodec.Format(startedHead), uncertain.RecoveryHead);
             Assert.Equal(1, provider.Calls);
 
             provider.AuthorizeRestart();
             using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-                "/api/v1/chat/turns/resume",
+                "/api/v1/characters/alice/chat/turns/resume",
                 new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead),
                     RestartUncertainCompletion: true));
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             var turn = Assert.IsType<StartTurnResponseDto>(
                 await accepted.Content.ReadFromJsonAsync<StartTurnResponseDto>());
             using HttpResponseMessage stream = await http.GetAsync(
-                $"/api/v1/chat/turns/{turn.TurnId}/events");
+                $"/api/v1/characters/alice/chat/turns/{turn.TurnId}/events");
             Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
             provider.AssertComplete();
             // EOF follows terminal publication, but the runner releases its
@@ -129,7 +129,7 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
         while (true) {
             CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
                 await http.GetFromJsonAsync<CurrentTurnDto>(
-                    "/api/v1/chat/turns/current", deadline.Token));
+                    "/api/v1/characters/alice/chat/turns/current", deadline.Token));
             if (current.Status != "running") {
                 Assert.Equal("idle", current.Status);
                 return;

@@ -21,17 +21,14 @@ internal sealed class GalateaRecapGridTargetExpectation {
 
     internal BuildTargetDigest TargetDigest { get; }
 
-    internal static GalateaRecapGridTargetExpectation ForNames(
-        GalateaCharacterName characterName,
-        GalateaPlayerName playerName
+    internal static GalateaRecapGridTargetExpectation ForCharacter(
+        GalateaCharacterName characterName
     ) {
         ArgumentNullException.ThrowIfNull(characterName);
-        ArgumentNullException.ThrowIfNull(playerName);
         if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaRecapGridAssets.RollingRewriteZhCnV7,
                 new GalateaRecapGridAssetParameters(
-                    characterName,
-                    playerName
+                    characterName
                 ),
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {

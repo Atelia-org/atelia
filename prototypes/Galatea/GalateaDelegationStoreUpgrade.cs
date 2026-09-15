@@ -9,21 +9,21 @@ internal static class GalateaDelegationStoreUpgrade {
 
     internal static int Run(string[] args, TextWriter output, TextWriter error) {
         try {
-            (string configPath, string userId, bool apply) = Parse(args);
+            (string configPath, string characterId, bool apply) = Parse(args);
             GalateaConfig config = GalateaConfigLoader.Load(configPath);
-            GalateaUserConfig user = config.Users.SingleOrDefault(value => value.UserId == userId)
-                ?? throw new InvalidDataException("The requested user is not configured.");
+            GalateaCharacterConfig character = config.Characters.SingleOrDefault(value => value.CharacterId == characterId)
+                ?? throw new InvalidDataException("The requested character is not configured.");
             var owner = new GalateaDelegationStoreOwner(
-                user.UserId,
-                GalateaDelegationSupervisor.CreateSessionRepositoryId(user.SessionDir)
+                character.CharacterId,
+                GalateaDelegationSupervisor.CreateSessionRepositoryId(character.SessionDir)
             );
             GalateaDelegationStoreUpgradeResult result = GalateaDelegationSqliteStore.UpgradeExisting(
-                user.DelegationStateDir,
+                character.DelegationStateDir,
                 owner,
                 GalateaDelegationSupervisor.CreateLimits(config.Delegates.CodexRoute),
                 apply
             );
-            output.WriteLine($"Delegation store upgrade: userId={user.UserId}, outcome={result.Outcome}.");
+            output.WriteLine($"Delegation store upgrade: characterId={character.CharacterId}, outcome={result.Outcome}.");
             if (result.BackupPath is not null) { output.WriteLine($"Backup: {result.BackupPath}"); }
             return 0;
         }
@@ -33,18 +33,18 @@ internal static class GalateaDelegationStoreUpgrade {
         }
     }
 
-    private static (string ConfigPath, string UserId, bool Apply) Parse(string[] args) {
+    private static (string ConfigPath, string CharacterId, bool Apply) Parse(string[] args) {
         if (!IsInvocation(args)) { throw Usage(); }
         string? configPath = null;
-        string? userId = null;
+        string? characterId = null;
         bool apply = false;
         for (int index = 2; index < args.Length; index++) {
             switch (args[index]) {
                 case "--config" when configPath is null && index + 1 < args.Length:
                     configPath = args[++index];
                     break;
-                case "--user" when userId is null && index + 1 < args.Length:
-                    userId = args[++index];
+                case "--character" when characterId is null && index + 1 < args.Length:
+                    characterId = args[++index];
                     break;
                 case "--apply" when !apply:
                     apply = true;
@@ -54,12 +54,12 @@ internal static class GalateaDelegationStoreUpgrade {
             }
         }
         if (string.IsNullOrWhiteSpace(configPath) || !Path.IsPathFullyQualified(configPath)
-            || string.IsNullOrWhiteSpace(userId)) { throw Usage(); }
-        return (configPath, userId, apply);
+            || string.IsNullOrWhiteSpace(characterId)) { throw Usage(); }
+        return (configPath, characterId, apply);
     }
 
     private static InvalidDataException Usage() => new(
         "Usage: Galatea.Server operator upgrade-delegation-store "
-        + "--config <absolute-path> --user <userId> [--apply]. The default is dry-run."
+        + "--config <absolute-path> --character <characterId> [--apply]. The default is dry-run."
     );
 }

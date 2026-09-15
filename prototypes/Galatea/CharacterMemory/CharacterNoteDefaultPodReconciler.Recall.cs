@@ -3,8 +3,12 @@ using Atelia.MemoPod;
 
 namespace Atelia.Galatea.Server.CharacterMemory;
 
+internal sealed record GalateaSettledMemoRecallResult(MemoRecallResult Result, string PodStateIdentity) {
+    internal IReadOnlyList<Memo> Memos => Result.Memos;
+}
+
 internal sealed partial class CharacterNoteDefaultPodReconciler {
-    internal async Task<MemoRecallResult> RecallSettledDefaultPodAsync(
+    internal async Task<GalateaSettledMemoRecallResult> RecallSettledDefaultPodAsync(
         ICompletionClient completionClient,
         string modelId,
         string query,
@@ -18,6 +22,7 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         ArgumentNullException.ThrowIfNull(options);
 
         ICharacterNoteDefaultPodHandle settledPod;
+        string settledIdentity;
         await _podMutationGate.WaitAsync(cancellationToken)
             .ConfigureAwait(false);
         try {
@@ -65,12 +70,13 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
                 );
             }
             settledPod = available.Pod;
+            settledIdentity = available.Identity;
         }
         finally {
             _podMutationGate.Release();
         }
 
-        return await settledPod.RecallAsync(
+        MemoRecallResult result = await settledPod.RecallAsync(
                 completionClient,
                 modelId,
                 query,
@@ -78,6 +84,7 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
                 cancellationToken
             )
             .ConfigureAwait(false);
+        return new(result, settledIdentity);
     }
 
     private static void RequireRecallReady(

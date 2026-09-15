@@ -18,7 +18,7 @@ internal static class CharacterMemorySessionComposition {
 
     internal static async ValueTask<CharacterNoteDefaultPodReconciler>
         AttachWritableSessionAsync(
-        GalateaUserConfig user,
+        GalateaCharacterConfig user,
         SessionJournalEngine engine,
         ICharacterNoteExtractor extractor
     ) {
@@ -49,7 +49,7 @@ internal static class CharacterMemorySessionComposition {
             nameof(user.CharacterMemoryStateDir)
         );
         var owner = new CharacterMemoryStoreOwner(
-            user.UserId,
+            user.CharacterId,
             CreateSessionRepositoryId(sessionDirectory)
         );
         if (Path.Exists(storeDirectory)) {

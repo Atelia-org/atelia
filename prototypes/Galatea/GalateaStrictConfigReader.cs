@@ -6,10 +6,10 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 9;
+    internal const int CurrentConfigVersion = 10;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
-    internal const int MaximumUserCount = 256;
+    internal const int MaximumCharacterCount = 256;
     private const int MaximumDepth = 32;
     private const int OpenReadOnly = 0;
     private const int OpenNonBlocking = 0x800;
@@ -18,13 +18,13 @@ internal static class GalateaStrictConfigReader {
     private const uint LinuxFileTypeMask = 0xF000;
     private const uint LinuxRegularFileType = 0x8000;
 
-    internal static byte[] ReadUsersAndValidate(string path) {
+    internal static byte[] ReadAndValidate(string path) {
         byte[] bytes = ReadBoundedRegularFile(
             path,
             MaximumConfigUtf8Bytes,
             "Galatea config"
         );
-        ValidateUsers(bytes);
+        ValidateRoot(bytes);
         return bytes;
     }
 
@@ -169,7 +169,7 @@ internal static class GalateaStrictConfigReader {
         }
     }
 
-    internal static void ValidateUsers(ReadOnlySpan<byte> bytes) {
+    internal static void ValidateRoot(ReadOnlySpan<byte> bytes) {
         try {
             var reader = new Utf8JsonReader(bytes, new JsonReaderOptions {
                 AllowTrailingCommas = false,
@@ -177,7 +177,7 @@ internal static class GalateaStrictConfigReader {
                 MaxDepth = MaximumDepth
             });
             RequireRead(ref reader, JsonTokenType.StartObject, "Galatea config");
-            ValidateUsersObject(ref reader);
+            ValidateRootObject(ref reader);
             if (reader.Read()) {
                 throw new InvalidDataException(
                     "Galatea config JSON contains trailing data."
@@ -202,7 +202,7 @@ internal static class GalateaStrictConfigReader {
         }
     }
 
-    private static void ValidateUsersObject(ref Utf8JsonReader reader) {
+    private static void ValidateRootObject(ref Utf8JsonReader reader) {
         var seen = NewPropertySet();
         while (ReadProperty(ref reader, seen, "config", out string property)) {
             RequireReadValue(ref reader, property);
@@ -210,36 +210,22 @@ internal static class GalateaStrictConfigReader {
                 case "v":
                     RequireExactConfigVersion(ref reader);
                     break;
-                case "users":
+                case "characters":
                     ValidateObjectArray(
                         ref reader,
-                        MaximumUserCount,
-                        "users",
-                        ValidateUserObject
+                        MaximumCharacterCount,
+                        "characters",
+                        ValidateCharacterObject
                     );
                     break;
-                case "listenUrls":
-                    ValidateStringArrayOrNull(ref reader, 256, property);
+                case "players":
+                    ValidateObjectArray(ref reader, MaximumCharacterCount,
+                        "players", ValidatePlayerObject);
                     break;
-                case "serverAgentUserIds":
-                    ValidateStringArrayOrNull(
-                        ref reader,
-                        MaximumUserCount,
-                        property,
-                        allowNull: false
-                    );
-                    break;
-                case "callLogDir":
-                    RequireStringOrNull(reader.TokenType, property);
-                    break;
-                case "maintenanceMode":
-                    RequireToken(reader.TokenType, JsonTokenType.True,
-                        JsonTokenType.False, property);
-                    break;
-                case "recapGrid":
+                case "runtime":
                     RequireToken(reader.TokenType, JsonTokenType.StartObject,
                         property);
-                    ValidateRecapGridObject(ref reader);
+                    ValidateRuntimeObject(ref reader);
                     break;
                 default:
                     throw Unknown("config", property);
@@ -248,6 +234,9 @@ internal static class GalateaStrictConfigReader {
         if (!seen.Contains("v")) {
             throw UnsupportedConfigVersion();
         }
+        foreach (string field in new[] { "characters", "players", "runtime" }) {
+            if (!seen.Contains(field)) { throw new InvalidDataException("Galatea config requires '" + field + "'."); }
+        }
     }
 
     private static void RequireExactConfigVersion(
@@ -255,25 +244,23 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("9"u8)) {
+            || !reader.ValueSpan.SequenceEqual("10"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 9; "
+        "Galatea config requires exact integer version 'v': 10; "
         + "migrate the config before retrying."
     );
 
-    private static void ValidateUserObject(ref Utf8JsonReader reader) {
+    private static void ValidateCharacterObject(ref Utf8JsonReader reader) {
         var seen = NewPropertySet();
-        while (ReadProperty(ref reader, seen, "user", out string property)) {
+        while (ReadProperty(ref reader, seen, "character", out string property)) {
             RequireReadValue(ref reader, property);
             switch (property) {
-                case "userId":
-                case "password":
-                case "characterName":
-                case "playerName":
+                case "id":
+                case "name":
                 case "homeDir":
                 case "sessionDir":
                 case "delegationStateDir":
@@ -288,32 +275,64 @@ internal static class GalateaStrictConfigReader {
                 case "characterContextTemplateFile":
                     RequireStringOrNull(reader.TokenType, property);
                     break;
+                case "heartbeatEnabled":
+                    RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
+                    break;
                 default:
-                    throw Unknown("user", property);
+                    throw Unknown("character", property);
             }
         }
         if (!seen.Contains("homeDir")) {
-            throw new InvalidDataException("user requires string field 'homeDir'.");
+            throw new InvalidDataException("character requires string field 'homeDir'.");
         }
         if (!seen.Contains("sessionProvisioning")) {
             throw new InvalidDataException(
-                "user requires string field 'sessionProvisioning'."
+                "character requires string field 'sessionProvisioning'."
             );
         }
-        if (!seen.Contains("characterName")) {
-            throw new InvalidDataException(
-                "user requires string field 'characterName'."
-            );
-        }
-        if (!seen.Contains("playerName")) {
-            throw new InvalidDataException(
-                "user requires string field 'playerName'."
-            );
+        foreach (string field in new[] { "id", "name", "sessionDir", "delegationStateDir", "characterMemoryStateDir" }) {
+            if (!seen.Contains(field)) { throw new InvalidDataException("character requires string field '" + field + "'."); }
         }
         if (!seen.Contains("defaultConnectionId")) {
             throw new InvalidDataException(
-                "user requires string field 'defaultConnectionId'."
+                "character requires string field 'defaultConnectionId'."
             );
+        }
+    }
+
+    private static void ValidatePlayerObject(ref Utf8JsonReader reader) {
+        var seen = NewPropertySet();
+        while (ReadProperty(ref reader, seen, "player", out string property)) {
+            RequireReadValue(ref reader, property);
+            if (property is not ("id" or "name" or "password")) { throw Unknown("player", property); }
+            RequireToken(reader.TokenType, JsonTokenType.String, property);
+        }
+        foreach (string field in new[] { "id", "name", "password" }) {
+            if (!seen.Contains(field)) { throw new InvalidDataException("player requires string field '" + field + "'."); }
+        }
+    }
+
+    private static void ValidateRuntimeObject(ref Utf8JsonReader reader) {
+        var seen = NewPropertySet();
+        while (ReadProperty(ref reader, seen, "runtime", out string property)) {
+            RequireReadValue(ref reader, property);
+            switch (property) {
+                case "listenUrls":
+                    ValidateStringArrayOrNull(ref reader, 256, property);
+                    break;
+                case "callLogDir":
+                    RequireStringOrNull(reader.TokenType, property);
+                    break;
+                case "maintenanceMode":
+                    RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
+                    break;
+                case "recapGrid":
+                    RequireToken(reader.TokenType, JsonTokenType.StartObject, property);
+                    ValidateRecapGridObject(ref reader);
+                    break;
+                default:
+                    throw Unknown("runtime", property);
+            }
         }
     }
 

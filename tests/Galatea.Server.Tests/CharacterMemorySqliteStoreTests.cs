@@ -65,7 +65,7 @@ public sealed partial class CharacterMemorySqliteStoreTests {
         Assert.Throws<InvalidDataException>(() =>
             CharacterMemorySqliteStore.OpenExisting(
                 directory.Path,
-                owner with { UserId = "other" }
+                owner with { CharacterId = "other" }
             ));
     }
 

@@ -410,11 +410,9 @@ public sealed class GalateaSseV1Tests {
     [Fact]
     public void AppBootstrapOwnsBrowserLimitsAndCacheBustedModule() {
         string html = GalateaHtml.RenderAppPage(
-            new GalateaUserConfig(
+            new GalateaCharacterConfig(
                 "alice",
-                "password",
                 new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("刘世超"),
                 "/session",
                 "/delegation-state",
                 "/character-memory-state",
@@ -423,6 +421,7 @@ public sealed class GalateaSseV1Tests {
                 "prompt",
                 "test"
             ),
+            GalateaDelegateTestConfiguration.Players[0],
             [new GalateaConnectionInfoDto("test", "model")],
             maintenanceMode: false,
             assetVersion: "fixture-token"
@@ -527,7 +526,8 @@ public sealed class GalateaSseV1Tests {
 
     private static GalateaLiveTurn Turn() => new(
         "message",
-        new GalateaTurnOptions("test")
+        new GalateaTurnOptions("test"),
+        GalateaDelegateTestConfiguration.PlayerSender
     );
 
     private static RecentTurnsResponseDto RecentWithAssistantText(

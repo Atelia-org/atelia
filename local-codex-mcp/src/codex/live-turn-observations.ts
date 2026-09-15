@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ThreadItem } from "../../schemas/v2/ThreadItem.js";
 import type { Turn } from "../../schemas/v2/Turn.js";
 import type { GalateaDispatchInspection } from "../backend/galatea-staged-backend.js";
-import { isStrictUnicode } from "./dispatch-inspection.js";
+import { isStrictUnicode, taskCommitment, sameTaskCommitment, type TaskCommitment } from "../galatea/task-commitment.js";
 
 export interface LiveTurnObservationOptions {
   maximumObservations: number;
@@ -12,7 +12,8 @@ export interface LiveTurnObservationOptions {
 export interface LiveStartExpectation {
   readonly threadId: string;
   readonly dispatchId: string;
-  readonly taskDigest: string;
+  readonly taskSha256: string;
+  readonly taskUtf8Bytes: number;
   readonly tracked: boolean;
   terminalBarriers?: Map<string, UnassociatedTerminalCandidate>;
   terminalBarrierOverflow?: boolean;
@@ -46,7 +47,8 @@ interface Observation {
   threadId: string;
   turnId: string;
   dispatchId: string;
-  taskDigest: string;
+  taskSha256: string;
+  taskUtf8Bytes: number;
   userItemId?: string;
   explicit: FinalSlot;
   legacy: FinalSlot;
@@ -62,18 +64,6 @@ function isBoundedIdentifier(value: string): boolean {
   return value.length > 0 && Buffer.byteLength(value, "utf8") <= maximumObservedIdentifierUtf8Bytes;
 }
 
-function utf16Digest(domain: string, value: string): string {
-  const bytes = Buffer.allocUnsafe(value.length * 2);
-  for (let index = 0; index < value.length; index += 1) {
-    bytes.writeUInt16LE(value.charCodeAt(index), index * 2);
-  }
-  return createHash("sha256").update(domain, "utf8").update(bytes).digest("hex");
-}
-
-function taskDigest(task: string): string {
-  return utf16Digest("atelia.galatea.live-turn-task.v1\0", task);
-}
-
 function valueFingerprint(value: unknown): string {
   return createHash("sha256")
     .update("atelia.galatea.live-turn-evidence.v1\0", "utf8")
@@ -81,17 +71,18 @@ function valueFingerprint(value: unknown): string {
     .digest("hex");
 }
 
-function exactUser(item: ThreadItem): { id: string; dispatchId: string; task: string } | undefined {
+function exactUser(item: ThreadItem): { id: string; dispatchId: string } & TaskCommitment | undefined {
   if (item.type !== "userMessage" || typeof item.clientId !== "string"
       || !isBoundedIdentifier(item.id) || !isBoundedIdentifier(item.clientId)
       || !Array.isArray(item.content) || item.content.length !== 1) return undefined;
   const content = item.content[0];
   if (content?.type !== "text" || !Array.isArray(content.text_elements)
-      || content.text_elements.length !== 0) return undefined;
-  return { id: item.id, dispatchId: item.clientId, task: content.text };
+      || content.text_elements.length !== 0 || typeof content.text !== "string"
+      || !isStrictUnicode(content.text) || content.text.length === 0) return undefined;
+  return { id: item.id, dispatchId: item.clientId, ...taskCommitment(content.text) };
 }
 
-function initialUser(turn: Turn): { id: string; dispatchId: string; task: string } | undefined {
+function initialUser(turn: Turn): { id: string; dispatchId: string } & TaskCommitment | undefined {
   const users = turn.items.filter((item) => item.type === "userMessage");
   return users.length === 1 ? exactUser(users[0]!) : undefined;
 }
@@ -148,7 +139,7 @@ export class LiveTurnObservations {
     const expectation: LiveStartExpectation = {
       threadId,
       dispatchId,
-      taskDigest: taskDigest(task),
+      ...taskCommitment(task),
       tracked,
     };
     if (tracked) this.pendingStarts.set(threadId, expectation);
@@ -174,12 +165,12 @@ export class LiveTurnObservations {
         const user = initialUser(turn);
         if (!user
             || user.dispatchId !== expectation.dispatchId
-            || taskDigest(user.task) !== expectation.taskDigest) return false;
+            || !sameTaskCommitment(user, expectation)) return false;
       }
       if (!expectation.tracked) return true;
       const current = this.currentObservation(threadId, turn.id);
       if (current && (current.dispatchId !== expectation.dispatchId
-          || current.taskDigest !== expectation.taskDigest)) return false;
+          || !sameTaskCommitment(current, expectation))) return false;
     }
     this.observeStarted(threadId, turn, true, expectation);
     return true;
@@ -199,7 +190,7 @@ export class LiveTurnObservations {
         this.observeUnassociatedTerminal(expected, turn);
         return;
       }
-      if (user.dispatchId !== expected.dispatchId || taskDigest(user.task) !== expected.taskDigest) return;
+      if (user.dispatchId !== expected.dispatchId || !sameTaskCommitment(user, expected)) return;
       this.observeStarted(threadId, turn, false);
       observation = this.currentObservation(threadId, turn.id);
     }
@@ -235,7 +226,7 @@ export class LiveTurnObservations {
     const user = exactUser(item);
     if (item.type === "userMessage") {
       if (!user || user.dispatchId !== observation.dispatchId
-          || taskDigest(user.task) !== observation.taskDigest
+          || !sameTaskCommitment(user, observation)
           || (observation.userItemId !== undefined && user.id !== observation.userItemId)
           || (observation.explicit.kind === "one" && user.id === observation.explicit.itemId)
           || (observation.legacy.kind === "one" && user.id === observation.legacy.itemId)) {
@@ -289,10 +280,10 @@ export class LiveTurnObservations {
     }
   }
 
-  inspect(threadId: string, turnId: string, dispatchId: string, task: string): GalateaDispatchInspection | undefined {
+  inspect(threadId: string, turnId: string, dispatchId: string, task: TaskCommitment): GalateaDispatchInspection | undefined {
     const observation = this.currentObservation(threadId, turnId);
     if (!observation || observation.dispatchId !== dispatchId
-        || observation.taskDigest !== taskDigest(task)) return undefined;
+        || !sameTaskCommitment(observation, task)) return undefined;
     if (observation.conflict) {
       return { kind: "ambiguous", threadId, source: "live", code: "LIVE_OBSERVATION_CONFLICT" };
     }
@@ -311,12 +302,12 @@ export class LiveTurnObservations {
     threadId: string,
     turnId: string,
     dispatchId: string,
-    task: string,
+    task: TaskCommitment,
   ): boolean {
     const observation = this.currentObservation(threadId, turnId);
     return observation !== undefined
       && observation.dispatchId === dispatchId
-      && observation.taskDigest === taskDigest(task)
+      && sameTaskCommitment(observation, task)
       && observation.pendingCompleted !== undefined
       && !observation.conflict;
   }
@@ -334,11 +325,12 @@ export class LiveTurnObservations {
       const user = initialUser(turn);
       const expected = responseExpectation ?? this.pendingStarts.get(threadId);
       const matchesPending = user !== undefined && expected !== undefined
-        && user.dispatchId === expected.dispatchId && taskDigest(user.task) === expected.taskDigest;
+        && user.dispatchId === expected.dispatchId && sameTaskCommitment(user, expected);
       if (!trustedResponse && !matchesPending) return;
       const identity = responseExpectation ?? (user === undefined ? undefined : {
         dispatchId: user.dispatchId,
-        taskDigest: taskDigest(user.task),
+        taskSha256: user.taskSha256,
+        taskUtf8Bytes: user.taskUtf8Bytes,
       });
       if (!identity) return;
       const terminalCandidate = expected?.terminalBarriers?.get(turn.id);
@@ -348,7 +340,8 @@ export class LiveTurnObservations {
         threadId,
         turnId: turn.id,
         dispatchId: identity.dispatchId,
-        taskDigest: identity.taskDigest,
+        taskSha256: identity.taskSha256,
+        taskUtf8Bytes: identity.taskUtf8Bytes,
         explicit: { kind: "none" },
         legacy: { kind: "none" },
         conflict: false,

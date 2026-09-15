@@ -17,7 +17,7 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         using var fixture = await Fixture.CreateAsync();
         CharacterNoteReceiptDeliverySnapshot pending = fixture.Pending;
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string rendered = fixture.Bind();
+        SessionInputContent rendered = fixture.Bind();
         Assert.Equal(CharacterNoteReceiptDeliveryState.ObservationBound, fixture.Exact.State);
 
         // Models a pre-dispatch stop or a crash after binding but before append.
@@ -46,12 +46,12 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         using var fixture = await Fixture.CreateAsync();
         if (historicalWording) {
             CharacterNoteReceiptDeliverySnapshot historical = fixture.Pending with {
-                NoticeBody = HistoricalNoteReceiptFixture.OldWording(fixture.Pending.NoticeBody),
+                NoticeBody = HistoricalNoteReceiptFixture.OldWording(CharacterNoteSaveReceipt.CreateDurable(fixture.Pending.Facts!.Memos).Notice.Body), Facts = null, BoundInput = null,
             };
             await fixture.ColdReopenAsync(historical);
             Assert.Equal(historical, fixture.Pending);
         }
-        string rendered = fixture.Bind();
+        SessionInputContent rendered = fixture.Bind();
         EventAddress observation = fixture.Engine.AppendObservation(rendered);
         Assert.Equal(CharacterNoteReceiptDeliveryState.ObservationBound, fixture.Exact.State);
 
@@ -85,7 +85,7 @@ public sealed class GalateaNoteReceiptDeliveryTests {
     [Fact]
     public async Task TerminalObservationProof_ColdReopenDeliversWithoutReextracting() {
         using var fixture = await Fixture.CreateAsync();
-        string rendered = fixture.Bind();
+        SessionInputContent rendered = fixture.Bind();
         EventAddress observation = fixture.Engine.AppendObservation(rendered);
         EventAddress terminal = AppendTerminal(fixture.Engine, "received");
 
@@ -215,16 +215,16 @@ public sealed class GalateaNoteReceiptDeliveryTests {
             return fixture;
         }
 
-        internal string Render(CharacterNoteReceiptDeliverySnapshot receipt) =>
-            PlayerTurnObservationEnvelope.Wrap(PlayerTurnObservation.CreateHeartbeatActivation(
-                Timestamp, new GalateaCharacterName("Galatea"),
-                [new PlayerTurnNotice.NoteSaveReceipt(receipt.NoticeBody)]));
+        internal SessionInputContent Render(CharacterNoteReceiptDeliverySnapshot receipt) =>
+            GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Galatea")),
+                Timestamp, new GalateaSenderSnapshot("character", "user", "Galatea"),
+                [CharacterNoteSaveReceipt.SelectForObservation(receipt)]);
 
-        internal string Bind() {
+        internal SessionInputContent Bind() {
             CharacterNoteReceiptDeliverySnapshot pending = Pending;
-            string rendered = Render(pending);
-            GalateaNoteReceiptDelivery.Bind(Memory, Engine, pending, Engine.ReadCurrentHead()!.Value, rendered);
-            return rendered;
+            SessionInputContent content = Render(pending);
+            GalateaNoteReceiptDelivery.Bind(Memory, Engine, pending, Engine.ReadCurrentHead()!.Value, content);
+            return content;
         }
 
         internal async Task ColdReopenAsync(CharacterNoteReceiptDeliverySnapshot? historical = null) {

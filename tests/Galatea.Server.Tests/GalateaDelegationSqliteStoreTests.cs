@@ -158,7 +158,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
                 directory.Path,
-                owner with { UserId = "another-user" },
+                owner with { CharacterId = "another-user" },
                 limits));
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
@@ -507,11 +507,16 @@ public sealed class GalateaDelegationSqliteStoreTests {
             "bind", snapshot.Route.Revision, snapshot.Mails[0].DispatchId, snapshot.Mails[0].Revision);
         GalateaRouteBindingSnapshot bound = fixture.Store.CompleteThreadBinding(
             "bind", "thread", binding.Revision);
-        GalateaOutboundMailSnapshot started = fixture.Store.StartQueuedMail(
-            snapshot.Mails[0].DispatchId,
-            snapshot.Mails[0].Revision,
-            bound.Revision
-        );
+        GalateaTaskCommitment expectedTask = GalateaDelegationTestInputs.Commitment(fixture.Store, snapshot.Mails[0].DispatchId);
+        Assert.Throws<GalateaDelegationCommitOutcomeException>(() => fixture.Store.StartQueuedMail(
+            snapshot.Mails[0].DispatchId, snapshot.Mails[0].Revision, bound.Revision, expectedTask));
+        // An uncertain Start never returns permission to dispatch. Reopen the
+        // actual durable state before independently proving the later outcome.
+        fixture.Reopen(hooks);
+        GalateaOutboundMailSnapshot started = fixture.Store.ReadSnapshot().Mails[0];
+        Assert.Equal(GalateaDurableMailState.Started, started.State);
+        Assert.Equal(expectedTask, GalateaTaskCommitment.FromStored(started));
+
 
         GalateaReplyNoticeSnapshot notice = fixture.Store.RecordCompletedMail(
             started.DispatchId,
@@ -562,14 +567,14 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             fixture.Store.StartQueuedMail(
                 mail.DispatchId, mail.Revision,
-                initial.Route.Revision));
+                initial.Route.Revision, GalateaDelegationTestInputs.Commitment(fixture.Store, mail.DispatchId)));
 
         GalateaRouteBindingSnapshot binding = fixture.Store.BeginThreadBinding(
             "bind-op", initial.Route.Revision, mail.DispatchId, mail.Revision);
         GalateaRouteBindingSnapshot bound = fixture.Store.CompleteThreadBinding(
             "bind-op", "thread-1", binding.Revision);
         GalateaOutboundMailSnapshot started = fixture.Store.StartQueuedMail(
-            mail.DispatchId, mail.Revision, bound.Revision);
+            mail.DispatchId, mail.Revision, bound.Revision, GalateaDelegationTestInputs.Commitment(fixture.Store, mail.DispatchId));
         Assert.Equal(GalateaDurableMailState.Started, started.State);
         Assert.Equal("thread-1", started.RequestedThreadId);
         Assert.Equal(started.DispatchId, started.OperationId);
@@ -613,7 +618,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             fixture.Store.StartQueuedMail(
                 fixture.Store.ReadSnapshot().Mails[1].DispatchId,
                 0,
-                fixture.Store.ReadSnapshot().Route.Revision));
+                fixture.Store.ReadSnapshot().Route.Revision, GalateaDelegationTestInputs.Commitment(fixture.Store, fixture.Store.ReadSnapshot().Mails[1].DispatchId)));
 
         GalateaOutboundMailSnapshot accepted = fixture.Store.RecordMailAccepted(
             mail.DispatchId,
@@ -884,7 +889,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal("second", second.Body);
         Assert.Single(snapshot.Notices);
         Assert.Throws<GalateaDelegationStoreConflictException>(() => fixture.Store.StartQueuedMail(
-            second.DispatchId, second.Revision, snapshot.Route.Revision));
+            second.DispatchId, second.Revision, snapshot.Route.Revision, GalateaDelegationTestInputs.Commitment(fixture.Store, second.DispatchId)));
         ConsumeReadyReply(fixture.Store, reply);
         GalateaReplyNoticeSnapshot failed = fixture.Store.FinishMailLocally(second.DispatchId,
             second.Revision, fixture.Store.ReadSnapshot().Route.Revision, "INVALID_CWD", true);
@@ -953,19 +958,19 @@ public sealed class GalateaDelegationSqliteStoreTests {
             store.CompleteThreadBinding(binding.BindingOperationId!, threadId, binding.Revision);
             snapshot = store.ReadSnapshot();
         }
-        return store.StartQueuedMail(mail.DispatchId, mail.Revision, snapshot.Route.Revision);
+        return store.StartQueuedMail(mail.DispatchId, mail.Revision, snapshot.Route.Revision, GalateaDelegationTestInputs.Commitment(store, mail.DispatchId));
     }
 
     private static void ConsumeReadyReply(GalateaDelegationSqliteStore store, GalateaReplyNoticeSnapshot reply) {
         GalateaReplyLeaseSnapshot lease = store.BeginReplyLeaseMembership("consume-ready", "player",
             [new(reply.NoticeId, reply.Revision)]);
-        lease = store.BindReplyLeaseObservationBase(lease.LeaseId, lease.Revision, Address(20), Observation("player", reply.Body));
+        lease = store.BindReplyLeaseObservationBase(lease.LeaseId, lease.Revision, Address(20), Observation(store, "player", reply.Body));
         lease = store.RecordLeaseObservationCommitted(lease.LeaseId, lease.Revision, Address(21));
         store.ConsumeReplyLease(lease.LeaseId, lease.Revision, Address(22));
     }
 
     [Fact]
-    public void QueuedPreflightFailure_IsFifoTerminalAndCapacityBounded() {
+    public void LegacyQueuedPreflightFailure_IsFifoTerminalAndCapacityBounded() {
         using var directory = new StoreDirectory();
         GalateaDelegationStoreLimits limits = Limits(
             maximumTaskUtf8Bytes: 3,
@@ -992,6 +997,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             Address(91),
             [Mail("Codex", "first"), Mail("Codex", "second")]
         ));
+        GalateaDelegationTestInputs.ImportQueuedLegacyTasks(store);
         GalateaDelegationStateSnapshot initial = store.ReadSnapshot();
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             store.BeginThreadBinding(
@@ -1030,7 +1036,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
     }
 
     [Fact]
-    public void QueuedPreflightFailure_RejectsBodyWithinDurableTaskLimit() {
+    public void LegacyQueuedPreflightFailure_RejectsBodyWithinDurableTaskLimit() {
         using var directory = new StoreDirectory();
         GalateaDelegationStoreLimits limits = Limits(
             maximumTaskUtf8Bytes: 16
@@ -1045,6 +1051,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             Address(92),
             [Mail("Codex", "short")]
         ));
+        GalateaDelegationTestInputs.ImportQueuedLegacyTasks(store);
         GalateaOutboundMailSnapshot mail = store.ReadSnapshot().Mails.Single();
 
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
@@ -1053,7 +1060,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
     }
 
     [Fact]
-    public void QueuedPreflightFailure_CannotPassAnActiveFifoHead() {
+    public void LegacyQueuedPreflightFailure_CannotPassAnActiveFifoHead() {
         using var directory = new StoreDirectory();
         GalateaDelegationStoreLimits limits = Limits(
             maximumTaskUtf8Bytes: 3
@@ -1068,6 +1075,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             Address(93),
             [Mail("Codex", "ok"), Mail("Codex", "oversized")]
         ));
+        GalateaDelegationTestInputs.ImportQueuedLegacyTasks(store);
         GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
         GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
             "bind",
@@ -1082,7 +1090,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             snapshot.Mails[0].DispatchId,
             snapshot.Mails[0].Revision,
             bound.Revision
-        );
+        , GalateaDelegationTestInputs.Commitment(store, snapshot.Mails[0].DispatchId));
         snapshot = store.ReadSnapshot();
 
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
@@ -1113,7 +1121,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             snapshot.Mails[0].DispatchId,
             snapshot.Mails[0].Revision,
             bound.Revision
-        );
+        , GalateaDelegationTestInputs.Commitment(fixture.Store, snapshot.Mails[0].DispatchId));
         _ = fixture.Store.RecordCompletedMail(
             first.DispatchId,
             first.Revision,
@@ -1129,7 +1137,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 second.DispatchId,
                 second.Revision,
                 snapshot.Route.Revision
-            ));
+            , GalateaDelegationTestInputs.Commitment(fixture.Store, second.DispatchId)));
         Assert.Equal(1, backpressure.CurrentCount);
         Assert.Equal(1, backpressure.ReservedCount);
 
@@ -1144,7 +1152,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             lease.LeaseId,
             lease.Revision,
             Address(20),
-            Observation("player", "reply")
+            Observation(fixture.Store, "player", "reply")
         );
         lease = fixture.Store.RecordLeaseObservationCommitted(
             lease.LeaseId,
@@ -1165,7 +1173,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 second.DispatchId,
                 second.Revision,
                 snapshot.Route.Revision
-            );
+            , GalateaDelegationTestInputs.Commitment(fixture.Store, second.DispatchId));
         Assert.Equal(GalateaDurableMailState.Started, newlyStarted.State);
     }
 
@@ -1185,13 +1193,13 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 first.LeaseId,
                 first.Revision,
                 Address(30),
-                Observation("changed player", "reply")
+                Observation(fixture.Store, "changed player", "reply")
             ));
         first = fixture.Store.BindReplyLeaseObservationBase(
             first.LeaseId,
             first.Revision,
             Address(30),
-            Observation("player", "reply")
+            Observation(fixture.Store, "player", "reply")
         );
         fixture.Store.RollbackReplyLease(first.LeaseId, first.Revision);
 
@@ -1235,7 +1243,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             lease.LeaseId,
             lease.Revision,
             Address(40),
-            Observation("player", "reply")
+            Observation(fixture.Store, "player", "reply")
         );
         Assert.Equal(GalateaReplyLeaseState.ObservationBound, lease.State);
         lease = fixture.Store.RecordLeaseObservationCommitted(
@@ -1343,7 +1351,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             lease.LeaseId,
             lease.Revision,
             Address(80),
-            Observation("player", "reply")
+            Observation(fixture.Store, "player", "reply")
         );
         AssertExactAbandonConflictWithoutMutation(
             fixture.Store,
@@ -1511,7 +1519,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         GalateaDelegationCaptureResult capture = store.CaptureActionBatch(new(
             Address(760), Sha('a'), 12, "extractor-contract-v1", [
                 Mail("peer", "message")
-            ], [
+            ], GalateaDelegationTestInputs.Sender(store, "sender-name"), [
                 new GalateaInternalMailTarget(
                     "peer-user", "peer-repository", "sender-name")
             ]
@@ -1530,7 +1538,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         GalateaInternalMailOutboxSnapshot bound =
             store.BindInternalMailObservation(
                 pending.DispatchId, pending.Revision, Address(2),
-                "<inbound-mail>message</inbound-mail>");
+                GalateaDelegationTestInputs.InternalMailInput(store, pending));
         Assert.Equal(GalateaInternalMailState.ObservationBound, bound.State);
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             store.CompleteInternalMailObservation(
@@ -1573,7 +1581,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         _ = store.CaptureActionBatch(new(
             Address(762), Sha('a'), 12, "extractor-contract-v1", [
                 Mail("peer", "message")
-            ], [
+            ], GalateaDelegationTestInputs.Sender(store, "sender-name"), [
                 new GalateaInternalMailTarget(
                     "peer-user", "peer-repository", "sender-name")
             ]
@@ -1626,7 +1634,8 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Sha('a'),
         VisibleActionUtf8Bytes: 12,
         "extractor-contract-v1",
-        intents
+        intents,
+        new GalateaSenderSnapshot("character", Owner().CharacterId, "sender-name")
     );
 
     private static SendMailIntent Mail(string recipient, string body) => new(
@@ -1644,20 +1653,18 @@ public sealed class GalateaDelegationSqliteStoreTests {
 
     private static string Sha(char value) => new(value, 64);
 
-    private static string Observation(string playerText, string reply) =>
-        PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation(
-            playerText,
-            new DateTimeOffset(
-                2026,
-                8,
-                29,
-                14,
-                23,
-                5,
-                TimeSpan.FromHours(8)
-            ),
-            [new PlayerTurnNotice.Reply(reply)]
-        ));
+    private static SessionInputContent Observation(GalateaDelegationSqliteStore store, string playerText, string reply) {
+        GalateaReplyLeaseSnapshot lease = store.ReadSnapshot().ActiveLease!;
+        PlayerTurnNotice.Reply source = Assert.IsType<PlayerTurnNotice.Reply>(
+            Assert.Single(new GalateaDurableReplyLease(store, lease.LeaseId, lease.Revision).ReadNotices()));
+        PlayerTurnNotice.Reply selected = source.IsLegacyDurable
+            ? PlayerTurnNotice.Reply.FromLegacyDurable(reply)
+            : new PlayerTurnNotice.Reply(reply, source.Sender!, source.DispatchId!, source.ThreadId, source.TurnId, source.NoticeId);
+        return GalateaObservationContent.Create(
+            new GalateaFreshInput.PlayerAction(playerText, GalateaDelegateTestConfiguration.PlayerSender),
+            new DateTimeOffset(2026, 8, 29, 14, 23, 5, TimeSpan.FromHours(8)),
+            GalateaDelegationTestInputs.Sender(store, "sender-name"), [selected]);
+    }
 
     private static GalateaReplyLeaseSnapshot BeginBoundCommittedLease(
         GalateaDelegationSqliteStore store,
@@ -1677,7 +1684,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             lease.LeaseId,
             lease.Revision,
             baseHead,
-            Observation("player", "reply")
+            Observation(store, "player", "reply")
         );
         return store.RecordLeaseObservationCommitted(
             lease.LeaseId,
@@ -1719,6 +1726,8 @@ public sealed class GalateaDelegationSqliteStoreTests {
             actual.ActiveLease?.PlayerText);
         Assert.Equal(expected.ActiveLease?.ExpectedSessionHead,
             actual.ActiveLease?.ExpectedSessionHead);
+        Assert.Equal(expected.ActiveLease?.BoundInput,
+            actual.ActiveLease?.BoundInput);
         Assert.Equal(expected.ActiveLease?.RenderedObservation,
             actual.ActiveLease?.RenderedObservation);
         Assert.Equal(expected.ActiveLease?.ObservationUtf8Bytes,
@@ -1817,12 +1826,13 @@ public sealed class GalateaDelegationSqliteStoreTests {
             GalateaDelegationSqliteStore.DatabaseFileName
         );
 
-        internal void Reopen() {
+        internal void Reopen(GalateaDelegationStoreTestHooks? hooks = null) {
             Store.Dispose();
             Store = GalateaDelegationSqliteStore.OpenExisting(
                 _directory.Path,
                 _owner,
-                _limits
+                _limits,
+                hooks
             );
         }
 
@@ -1839,7 +1849,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 snapshot.Mails[0].DispatchId,
                 snapshot.Mails[0].Revision,
                 bound.Revision
-            );
+            , GalateaDelegationTestInputs.Commitment(fixture.Store, snapshot.Mails[0].DispatchId));
             _ = fixture.Store.RecordCompletedMail(
                 started.DispatchId,
                 started.Revision,

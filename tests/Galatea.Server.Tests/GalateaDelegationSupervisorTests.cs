@@ -14,7 +14,7 @@ public sealed class GalateaDelegationSupervisorTests {
     [Fact]
     public async Task SharedTransportUsesEachHomeAndReopensOriginalThreadsAfterHomeChange() {
         using var root = new OwnedRoot();
-        GalateaUserConfig[] users = [
+        GalateaCharacterConfig[] users = [
             User("alice", root.Child("sessions/alice"), root.Child("delegation/alice")),
             User("bob", root.Child("sessions/bob"), root.Child("delegation/bob"))
         ];
@@ -31,7 +31,7 @@ public sealed class GalateaDelegationSupervisorTests {
             config, first,
             testHooks: new(PulseInterval: TimeSpan.FromMilliseconds(10)))) {
             await WaitUntilAsync(() => users.All(user =>
-                supervisor.ReadMailboxStatus(user.UserId).ReadyNoticeCount == 1));
+                supervisor.ReadMailboxStatus(user.CharacterId).ReadyNoticeCount == 1));
         }
         Assert.Equal(1, first.DisposeCount);
         Assert.Equal(2, first.Bindings.Count);
@@ -39,11 +39,11 @@ public sealed class GalateaDelegationSupervisorTests {
         Assert.Equal(users.Select(user => user.HomeDir).Order(),
             first.Starts.Select(request => request.Cwd).Order());
 
-        GalateaUserConfig[] moved = users.Select(user => user with {
+        GalateaCharacterConfig[] moved = users.Select(user => user with {
             HomeDir = Directory.CreateDirectory(user.HomeDir + "-moved").FullName
         }).ToArray();
-        GalateaConfig movedConfig = config with { Users = moved };
-        foreach (GalateaUserConfig user in moved) {
+        GalateaConfig movedConfig = config with { Characters = moved };
+        foreach (GalateaCharacterConfig user in moved) {
             using var store = GalateaDelegationSqliteStore.OpenExisting(
                 user.DelegationStateDir, Owner(user, config.Delegates),
                 Limits(config.Delegates.CodexRoute));
@@ -54,12 +54,12 @@ public sealed class GalateaDelegationSupervisorTests {
             movedConfig, second,
             testHooks: new(PulseInterval: TimeSpan.FromMilliseconds(10)))) {
             await WaitUntilAsync(() => moved.All(user =>
-                supervisor.ReadMailboxStatus(user.UserId).ReadyNoticeCount == 2));
+                supervisor.ReadMailboxStatus(user.CharacterId).ReadyNoticeCount == 2));
         }
         Assert.Equal(1, second.DisposeCount);
         Assert.Empty(second.Bindings);
         Assert.Equal(2, second.Starts.Count);
-        foreach (GalateaUserConfig user in users) {
+        foreach (GalateaCharacterConfig user in users) {
             string thread = Assert.Single(first.Starts, request => request.Cwd == user.HomeDir).ThreadId;
             Assert.Equal(thread, Assert.Single(second.Starts,
                 request => request.Cwd == user.HomeDir + "-moved").ThreadId);
@@ -70,7 +70,7 @@ public sealed class GalateaDelegationSupervisorTests {
         store.CaptureActionBatch(new GalateaDelegationCaptureRequest(
             $"ej1:{sequence:x16}0000000100000000", new string('a', 64),
             VisibleActionUtf8Bytes: 12, "extractor-contract-v1",
-            [new SendMailIntent("Codex", null, "write personal.txt", null, "sent")]));
+            [new SendMailIntent("Codex", null, "write personal.txt", null, "sent")], GalateaDelegationTestInputs.Sender(store, "Galatea")));
 
     private sealed class HomeTransport : IGalateaDurableDelegateTransport {
         internal ConcurrentQueue<GalateaEnsureDelegateBindingRequest> Bindings { get; } = new();
@@ -117,7 +117,7 @@ public sealed class GalateaDelegationSupervisorTests {
         );
 
         Assert.Equal(
-            GalateaDelegationUserAvailability.Uninitialized,
+            GalateaDelegationCharacterAvailability.Uninitialized,
             supervisor.ReadStatus("alice").Availability
         );
         Assert.False(Path.Exists(statePath));
@@ -141,7 +141,7 @@ public sealed class GalateaDelegationSupervisorTests {
             snapshot.Owner.SessionRepositoryId
         );
         Assert.Equal(
-            GalateaDelegationUserAvailability.Writable,
+            GalateaDelegationCharacterAvailability.Writable,
             supervisor.ReadStatus("alice").Availability
         );
 
@@ -171,7 +171,7 @@ public sealed class GalateaDelegationSupervisorTests {
         );
         using (GalateaDelegationSqliteStore created = CreateStore(
                    engine,
-                   writableConfig.Users[0],
+                   writableConfig.Characters[0],
                    writableConfig.Delegates)) {
             _ = created.CaptureActionBatch(
                 new GalateaDelegationCaptureRequest(
@@ -186,7 +186,7 @@ public sealed class GalateaDelegationSupervisorTests {
                         InReplyToMessageId: null,
                         EvidenceQuote: "sent"
                     )]
-                )
+                , GalateaDelegationTestInputs.Sender(created, "Galatea"))
             );
         }
 
@@ -196,13 +196,13 @@ public sealed class GalateaDelegationSupervisorTests {
                          writableTransport,
                          testHooks: NoWorkHooks(TimeSpan.FromDays(1)))) {
             Assert.Equal(
-                GalateaDelegationUserAvailability.Writable,
+                GalateaDelegationCharacterAvailability.Writable,
                 supervisor.ReadStatus("alice").Availability
             );
             Assert.ThrowsAny<IOException>(() =>
                 GalateaDelegationSqliteStore.OpenExisting(
                     statePath,
-                    Owner(writableConfig.Users[0],
+                    Owner(writableConfig.Characters[0],
                         writableConfig.Delegates),
                     Limits(writableConfig.Delegates.CodexRoute)
                 ));
@@ -226,7 +226,7 @@ public sealed class GalateaDelegationSupervisorTests {
                          ))) {
             Assert.True(supervisor.IsMaintenanceMode);
             Assert.Equal(
-                GalateaDelegationUserAvailability.ReadOnly,
+                GalateaDelegationCharacterAvailability.ReadOnly,
                 supervisor.ReadStatus("alice").Availability
             );
             Assert.False(supervisor.Signal());
@@ -243,8 +243,8 @@ public sealed class GalateaDelegationSupervisorTests {
             Assert.Equal(0, mailboxStatus.ReadyNoticeCount);
             Assert.Equal(0, mailboxStatus.AttemptCount);
             Assert.Null(mailboxStatus.NextRetryAtUnixTimeMilliseconds);
-            GalateaDelegationUserUnavailableException failure =
-                Assert.Throws<GalateaDelegationUserUnavailableException>(
+            GalateaDelegationCharacterUnavailableException failure =
+                Assert.Throws<GalateaDelegationCharacterUnavailableException>(
                     () => supervisor.AttachWritableSession("alice", engine)
                 );
             Assert.Equal("MAINTENANCE_READ_ONLY", failure.Code);
@@ -427,22 +427,22 @@ public sealed class GalateaDelegationSupervisorTests {
             CreateSession(lockedSession);
         using SessionJournalEngine corruptEngine =
             CreateSession(corruptSession);
-        GalateaUserConfig locked = User(
+        GalateaCharacterConfig locked = User(
             "locked",
             lockedSession,
             root.Child("delegation/locked")
         );
-        GalateaUserConfig corrupt = User(
+        GalateaCharacterConfig corrupt = User(
             "corrupt",
             corruptSession,
             root.Child("delegation/corrupt")
         );
-        GalateaUserConfig stateWithoutSession = User(
+        GalateaCharacterConfig stateWithoutSession = User(
             "state-without-session",
             root.Child("sessions/missing-with-state"),
             root.Child("delegation/missing-session")
         );
-        GalateaUserConfig unprovisioned = User(
+        GalateaCharacterConfig unprovisioned = User(
             "unprovisioned",
             root.Child("sessions/unprovisioned"),
             root.Child("delegation/unprovisioned"),
@@ -484,7 +484,7 @@ public sealed class GalateaDelegationSupervisorTests {
 
         AssertUnavailable(supervisor, "locked", "STORE_UNAVAILABLE");
         Assert.Equal(
-            GalateaDelegationUserAvailability.Unavailable,
+            GalateaDelegationCharacterAvailability.Unavailable,
             supervisor.ReadStatus("corrupt").Availability
         );
         AssertUnavailable(
@@ -493,10 +493,10 @@ public sealed class GalateaDelegationSupervisorTests {
             "SESSION_MISSING"
         );
         Assert.Equal(
-            GalateaDelegationUserAvailability.Uninitialized,
+            GalateaDelegationCharacterAvailability.Uninitialized,
             supervisor.ReadStatus("unprovisioned").Availability
         );
-        Assert.Throws<GalateaDelegationUserUnavailableException>(() =>
+        Assert.Throws<GalateaDelegationCharacterUnavailableException>(() =>
             supervisor.AttachWritableSession("locked", lockedEngine));
 
         GalateaConfig duplicateUserConfig = Config(root.Path, [
@@ -527,7 +527,7 @@ public sealed class GalateaDelegationSupervisorTests {
         );
         using (GalateaDelegationSqliteStore created = CreateStore(
                    engine,
-                   config.Users[0],
+                   config.Characters[0],
                    config.Delegates)) { }
         var transport = new ProbeTransport();
 
@@ -551,9 +551,9 @@ public sealed class GalateaDelegationSupervisorTests {
         using (GalateaDelegationSqliteStore reopened =
                GalateaDelegationSqliteStore.OpenExisting(
                    statePath,
-                   Owner(config.Users[0], config.Delegates),
+                   Owner(config.Characters[0], config.Delegates),
                    Limits(config.Delegates.CodexRoute))) {
-            Assert.Equal("alice", reopened.ReadSnapshot().Owner.UserId);
+            Assert.Equal("alice", reopened.ReadSnapshot().Owner.CharacterId);
         }
 
         var cleanupFailureTransport = new ProbeTransport(
@@ -582,7 +582,7 @@ public sealed class GalateaDelegationSupervisorTests {
         using GalateaDelegationSqliteStore reopenedAfterAggregate =
             GalateaDelegationSqliteStore.OpenExisting(
                 statePath,
-                Owner(config.Users[0], config.Delegates),
+                Owner(config.Characters[0], config.Delegates),
                 Limits(config.Delegates.CodexRoute)
             );
     }
@@ -642,7 +642,7 @@ public sealed class GalateaDelegationSupervisorTests {
         Assert.ThrowsAny<IOException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
                 statePath,
-                Owner(config.Users[0], config.Delegates),
+                Owner(config.Characters[0], config.Delegates),
                 Limits(config.Delegates.CodexRoute)
             ));
 
@@ -657,10 +657,10 @@ public sealed class GalateaDelegationSupervisorTests {
         using GalateaDelegationSqliteStore reopened =
             GalateaDelegationSqliteStore.OpenExisting(
                 statePath,
-                Owner(config.Users[0], config.Delegates),
+                Owner(config.Characters[0], config.Delegates),
                 Limits(config.Delegates.CodexRoute)
             );
-        Assert.Equal("alice", reopened.ReadSnapshot().Owner.UserId);
+        Assert.Equal("alice", reopened.ReadSnapshot().Owner.CharacterId);
     }
 
     private static void AssertUnavailable(
@@ -668,8 +668,8 @@ public sealed class GalateaDelegationSupervisorTests {
         string userId,
         string code
     ) {
-        GalateaDelegationUserStatus status = supervisor.ReadStatus(userId);
-        Assert.Equal(GalateaDelegationUserAvailability.Unavailable,
+        GalateaDelegationCharacterStatus status = supervisor.ReadStatus(userId);
+        Assert.Equal(GalateaDelegationCharacterAvailability.Unavailable,
             status.Availability);
         Assert.Equal(code, status.UnavailableCode);
     }
@@ -716,10 +716,11 @@ public sealed class GalateaDelegationSupervisorTests {
 
     private static GalateaConfig Config(
         string root,
-        IReadOnlyList<GalateaUserConfig> users,
+        IReadOnlyList<GalateaCharacterConfig> users,
         bool maintenanceMode = false
     ) => new(
-        Users: users,
+        Characters: users,
+        Players: [],
         Connections: [],
         SelectableConnectionIds: [],
         InputNormalizerConnectionId: null,
@@ -727,7 +728,7 @@ public sealed class GalateaDelegationSupervisorTests {
         MaintenanceMode: maintenanceMode
     );
 
-    private static GalateaUserConfig User(
+    private static GalateaCharacterConfig User(
         string userId,
         string sessionPath,
         string statePath,
@@ -735,9 +736,7 @@ public sealed class GalateaDelegationSupervisorTests {
             GalateaSessionProvisioning.CreateIfMissing
     ) => new(
         userId,
-        "pw",
         new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("Player"),
         sessionPath,
         statePath,
         statePath + "-character-memory",
@@ -749,7 +748,7 @@ public sealed class GalateaDelegationSupervisorTests {
 
     private static GalateaDelegationSqliteStore CreateStore(
         SessionJournalEngine engine,
-        GalateaUserConfig user,
+        GalateaCharacterConfig user,
         GalateaDelegateConfig delegates
     ) {
         Directory.CreateDirectory(
@@ -772,10 +771,10 @@ public sealed class GalateaDelegationSupervisorTests {
     }
 
     private static GalateaDelegationStoreOwner Owner(
-        GalateaUserConfig user,
+        GalateaCharacterConfig user,
         GalateaDelegateConfig delegates
     ) => new(
-        user.UserId,
+        user.CharacterId,
         GalateaDelegationSupervisor.CreateSessionRepositoryId(
             user.SessionDir
         )

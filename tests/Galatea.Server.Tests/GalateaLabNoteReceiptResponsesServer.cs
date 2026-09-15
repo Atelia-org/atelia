@@ -26,7 +26,7 @@ internal sealed class GalateaLabNoteReceiptResponsesServer : IAsyncDisposable {
         TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _firstDisconnected = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
-    private string? _noticeBody;
+    private string[]? _receiptFacts;
     private string? _firstBody;
     private Exception? _failure;
     private int _mainCalls;
@@ -65,11 +65,12 @@ internal sealed class GalateaLabNoteReceiptResponsesServer : IAsyncDisposable {
         }
     }
 
-    internal void ExpectReceipt(string noticeBody) {
-        Require(_noticeBody is null && Volatile.Read(ref _totalCalls) == 0,
+    internal void ExpectReceipt(CharacterNoteReceiptDeliverySnapshot receipt) {
+        Require(_receiptFacts is null && Volatile.Read(ref _totalCalls) == 0,
             "The receipt script must be armed exactly once before dispatch.");
-        ArgumentException.ThrowIfNullOrEmpty(noticeBody);
-        _noticeBody = noticeBody;
+        _receiptFacts = receipt.Facts is { } facts
+            ? [facts.SourceActionAddress, .. facts.Memos.SelectMany(memo => new[] { memo.MemoId.Value, memo.ExactText })]
+            : [receipt.NoticeBody ?? throw new InvalidDataException("Missing legacy receipt")];
     }
 
     internal void AuthorizeRestart() {
@@ -121,8 +122,8 @@ internal sealed class GalateaLabNoteReceiptResponsesServer : IAsyncDisposable {
             string? model = request.GetProperty("model").GetString();
             if (model == MainModel) {
                 int call = Interlocked.Increment(ref _mainCalls);
-                Require(_noticeBody is not null && UserInputContains(request, UserMessage)
-                        && UserInputContains(request, _noticeBody),
+                Require(_receiptFacts is not null && UserInputContains(request, UserMessage)
+                        && _receiptFacts.All(fact => UserInputContains(request, fact)),
                     "The main request must contain the synthetic observation and exact frozen receipt.");
                 if (call == 1) {
                     Require(HelperCalls == 0, "The settled seed must not dispatch a helper.");

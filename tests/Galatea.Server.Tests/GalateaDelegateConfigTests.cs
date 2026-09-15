@@ -357,7 +357,7 @@ public sealed class GalateaDelegateConfigTests {
         File.WriteAllText(
             configPath,
             JsonSerializer.Serialize(
-                GalateaConfigTemplateFactory.CreateUsersFile(),
+                GalateaConfigTemplateFactory.CreateRootFile(),
                 GalateaJson.Options
             )
         );

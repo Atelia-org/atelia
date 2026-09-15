@@ -1,3 +1,4 @@
+import { taskCommitment } from "../src/galatea/task-commitment.js";
 import { GalateaStartFailure } from "../src/backend/galatea-staged-backend.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -57,15 +58,15 @@ function frame(
   requestId: string,
 ): GalateaDurableInputFrame {
   return type === "inspect-dispatch" ? {
-    v: 5,
+    v: 6,
     type,
     requestId,
     dispatchId: "dispatch-1",
     threadId: "thread-1",
-    task: "exact task",
+    ...taskCommitment("exact task"),
     expectedTurnId: null,
   } : {
-    v: 5,
+    v: 6,
     type,
     requestId,
     dispatchId: "dispatch-1",
@@ -91,7 +92,7 @@ function harness(maximumOutputFrameBytes = 10_000) {
 test("durable adapter emits one short correlated response for each staged operation", async () => {
   const value = harness();
   await value.adapter.handle({
-    v: 5,
+    v: 6,
     type: "ensure-binding",
     cwd: "/workspace",
     requestId: "request-binding",
@@ -103,16 +104,21 @@ test("durable adapter emits one short correlated response for each staged operat
   assert.equal(value.backend.bindingInput?.cwd, "/workspace");
   assert.equal(value.backend.startInput?.cwd, "/workspace");
   assert.equal("cwd" in value.backend.inspectionInput!, false);
+  assert.equal("task" in value.backend.inspectionInput!, false);
+  assert.deepEqual({
+    taskSha256: value.backend.inspectionInput!.taskSha256,
+    taskUtf8Bytes: value.backend.inspectionInput!.taskUtf8Bytes,
+  }, taskCommitment("exact task"));
   assert.deepEqual(value.frames, [
     {
-      v: 5,
+      v: 6,
       type: "binding-established",
       requestId: "request-binding",
       bindingOperationId: "binding-1",
       threadId: "thread-1",
     },
     {
-      v: 5,
+      v: 6,
       type: "turn-accepted",
       requestId: "request-start",
       dispatchId: "dispatch-1",
@@ -120,7 +126,7 @@ test("durable adapter emits one short correlated response for each staged operat
       turnId: "turn-1",
     },
     {
-      v: 5,
+      v: 6,
       type: "dispatch-inspected",
       requestId: "request-inspect",
       dispatchId: "dispatch-1",
@@ -134,11 +140,11 @@ test("durable adapter emits one short correlated response for each staged operat
 test("shared adapter forwards each operation's cwd independently", async () => {
   const value = harness();
   await value.adapter.handle({
-    v: 5, type: "ensure-binding", requestId: "binding-a", bindingOperationId: "binding-a", cwd: "/home-a",
+    v: 6, type: "ensure-binding", requestId: "binding-a", bindingOperationId: "binding-a", cwd: "/home-a",
   });
   assert.equal(value.backend.bindingInput?.cwd, "/home-a");
   await value.adapter.handle({
-    v: 5, type: "start-turn", requestId: "start-b", dispatchId: "dispatch-b", threadId: "thread-1", task: "task b", cwd: "/home-b",
+    v: 6, type: "start-turn", requestId: "start-b", dispatchId: "dispatch-b", threadId: "thread-1", task: "task b", cwd: "/home-b",
   });
   assert.equal(value.backend.startInput?.cwd, "/home-b");
 });
@@ -150,7 +156,7 @@ test("invalid execution cwd remains a deterministic preflight rejection on the w
     await value.adapter.handle(frame("start-turn", "start-invalid"));
     assert.equal(value.frames.length, 1);
     assert.deepEqual(value.frames[0], {
-      v: 5, type: "failed", stage: "start-turn", requestId: "start-invalid",
+      v: 6, type: "failed", stage: "start-turn", requestId: "start-invalid",
       dispatchId: "dispatch-1", threadId: "thread-1", code, dispatchState: "not-dispatched",
     });
   }
@@ -218,17 +224,17 @@ test("durable adapter preserves Accepted selector and retryable visibility outco
     code: "ACCEPTED_TURN_NOT_VISIBLE",
   };
   await value.adapter.handle({
-    v: 5,
+    v: 6,
     type: "inspect-dispatch",
     requestId: "request-known",
     dispatchId: "dispatch-1",
     threadId: "thread-1",
-    task: "exact task",
+    ...taskCommitment("exact task"),
     expectedTurnId: "turn-expected",
   });
   assert.equal(value.backend.inspectionInput?.expectedTurnId, "turn-expected");
   assert.deepEqual(value.frames[0], {
-    v: 5,
+    v: 6,
     type: "dispatch-inspected",
     requestId: "request-known",
     dispatchId: "dispatch-1",
@@ -249,12 +255,12 @@ test("durable adapter rejects a wrong returned Accepted turn identity", async ()
     source: "live",
   };
   await value.adapter.handle({
-    v: 5,
+    v: 6,
     type: "inspect-dispatch",
     requestId: "request-wrong-turn",
     dispatchId: "dispatch-1",
     threadId: "thread-1",
-    task: "exact task",
+    ...taskCommitment("exact task"),
     expectedTurnId: "turn-expected",
   });
   const result = value.frames[0];

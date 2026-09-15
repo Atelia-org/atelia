@@ -114,8 +114,9 @@ public sealed class CharacterNoteDefaultPodRecallTests {
     public async Task RecallReleasesPodGateAndKeepsOpenedFrozenEpoch() {
         using var fixture = await RuntimeFixture.CreateAsync();
         var client = new BlockingRecallCompletionClient();
+        string? openedEpoch = fixture.Reconciler.ReadStatusSnapshot().SettledDefaultPodStateIdentity;
 
-        Task<MemoRecallResult> recall = fixture.Reconciler
+        Task<GalateaSettledMemoRecallResult> recall = fixture.Reconciler
             .RecallSettledDefaultPodAsync(
                 client,
                 "memo-recall-model",
@@ -141,7 +142,10 @@ public sealed class CharacterNoteDefaultPodRecallTests {
         await advanced.FreezeAsync();
 
         client.Release();
-        Assert.Empty((await recall).Memos);
+        GalateaSettledMemoRecallResult result = await recall;
+        Assert.Empty(result.Memos);
+        Assert.Equal(openedEpoch, result.PodStateIdentity);
+        Assert.NotEqual(advanced.ComputeStateIdentity(), result.PodStateIdentity);
     }
 
     [Fact]
@@ -240,8 +244,8 @@ public sealed class CharacterNoteDefaultPodRecallTests {
         Assert.Null(fixture.Reconciler.ReadStatusSnapshot()
             .ActiveDerivedInfoWork);
         Assert.Equal(
-            "标题：Blue door\n\n正文：\nremember the blue door",
-            recall.Body
+            "remember the blue door",
+            recall.ExactText
         );
     }
 
@@ -313,7 +317,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
                 Request(recallBarrier, originBarrier),
                 CharacterNoteDefaultPodV1.PodId,
                 memos
-            )
+            , podStateIdentity: "test-pod-epoch")
         );
 
         Assert.Equal(
@@ -326,8 +330,8 @@ public sealed class CharacterNoteDefaultPodRecallTests {
         Assert.Equal(RecallType.MemoExactText,
             recall.Entry.RecallType);
         Assert.Equal(
-            "标题：Selected\n\n正文：\nselected body",
-            recall.Body
+            "selected body",
+            recall.ExactText
         );
     }
 
@@ -341,7 +345,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
                 ),
                 CharacterNoteDefaultPodV1.PodId,
                 Array.Empty<Memo>()
-            );
+            , podStateIdentity: "test-pod-epoch");
 
         Assert.Equal(GalateaMemoRecallPlanningOutcome.NoMatch,
             planning.Outcome);
@@ -404,12 +408,12 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             new string('p', GalateaHttpV1.MaximumMessageUtf8Bytes),
             Timestamp,
             [
-                new PlayerTurnNotice.Reply(new string('a', 256 * 1024)),
-                new PlayerTurnNotice.Reply(new string('b', 256 * 1024)),
-                new PlayerTurnNotice.Reply(new string('c', 256 * 1024)),
+                Reply(new string('a', 256 * 1024)),
+                Reply(new string('b', 256 * 1024)),
+                Reply(new string('c', 256 * 1024)),
             ]
         );
-        _ = PlayerTurnObservationEnvelope.Wrap(crowded);
+        Assert.True(GalateaObservationContent.FitsPlayerTurnContent(crowded));
         IReadOnlyList<Memo> candidates = Array.AsReadOnly<Memo>([
             .. podMemos,
             // A null sentinel proves the tail is not evaluated after selection.
@@ -421,7 +425,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
                 Request(recallBarrier, originBarrier, crowded),
                 CharacterNoteDefaultPodV1.PodId,
                 candidates
-            );
+            , podStateIdentity: "test-pod-epoch");
 
         Assert.Equal(GalateaMemoRecallPlanningOutcome.Selected,
             planning.Outcome);
@@ -469,7 +473,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
                 Request(recallBarrier, originBarrier),
                 CharacterNoteDefaultPodV1.PodId,
                 memos
-            );
+            , podStateIdentity: "test-pod-epoch");
 
         Assert.Equal(GalateaMemoRecallPlanningOutcome.AllFiltered,
             planning.Outcome);
@@ -489,27 +493,26 @@ public sealed class CharacterNoteDefaultPodRecallTests {
     public async Task PlannerSupportsAutomaticTriggersWithReceiptAndPreservesBothBarriers() {
         using var pod = await PlannerPod.CreateAsync(("remember", "Memory"));
         Memo memo = Assert.Single(pod.Pod.List());
-        var receipt = new PlayerTurnNotice.NoteSaveReceipt("saved");
+        var receipt = Receipt("saved");
         PlayerTurnObservation[] observations = [
             PlayerTurnObservation.CreateHeartbeatActivation(
                 Timestamp, new GalateaCharacterName("Galatea"), [receipt]),
             PlayerTurnObservation.CreateDelegateReply(
-                Timestamp, [new PlayerTurnNotice.Reply("reply"), receipt])
+                Timestamp, [Reply("reply"), receipt])
         ];
         foreach (PlayerTurnObservation observation in observations) {
             PlayerTurnRecall selected = Assert.Single(GalateaDefaultMemoPodRecallPlanner.Select(
                 Request(RecallBarrier.Empty, CharacterNoteOriginBarrier.Empty, observation),
-                CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+                CharacterNoteDefaultPodV1.PodId, pod.Pod.List(), podStateIdentity: "test-pod-epoch"));
             PlayerTurnObservation final = observation.WithRecalls([selected]);
             Assert.Equal(observation.TriggerKind, final.TriggerKind);
             Assert.Equal(Timestamp, final.ExternalLocalTimestamp);
             Assert.Same(receipt, final.Notices.Last());
-            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-                PlayerTurnObservationEnvelope.Wrap(final), out var parsed));
+            PlayerTurnObservation parsed = GalateaObservationContent.ReadPlayerTurn(Structured(final));
             Assert.Equal(observation.TriggerKind, parsed.TriggerKind);
             Assert.Empty(GalateaDefaultMemoPodRecallPlanner.Select(
                 Request(new RecallBarrier([selected.Entry]), CharacterNoteOriginBarrier.Empty, observation),
-                CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+                CharacterNoteDefaultPodV1.PodId, pod.Pod.List(), podStateIdentity: "test-pod-epoch"));
             var origin = new CharacterNoteVisibleActionIdentity(
                 new EventAddress(Atelia.Data.SizedPtr.Create(12, 4), 1, AddressHint.None),
                 GalateaVisibleActionFingerprint.Derive("visible action"));
@@ -517,7 +520,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
                 new CharacterNoteOriginBarrierEntry(CharacterNoteDefaultPodV1.PodId, memo.Id, origin)]);
             Assert.Empty(GalateaDefaultMemoPodRecallPlanner.Select(
                 Request(RecallBarrier.Empty, originBarrier, observation),
-                CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+                CharacterNoteDefaultPodV1.PodId, pod.Pod.List(), podStateIdentity: "test-pod-epoch"));
         }
     }
 
@@ -529,17 +532,17 @@ public sealed class CharacterNoteDefaultPodRecallTests {
         var observation = PlayerTurnObservation.CreateDelegateReply(
             Timestamp,
             [
-                new PlayerTurnNotice.Reply(new string('a', 240 * 1024)),
-                new PlayerTurnNotice.Reply(new string('b', 240 * 1024)),
-                new PlayerTurnNotice.NoteSaveReceipt(new string('r', 400 * 1024))
+                Reply(new string('a', 240 * 1024)),
+                Reply(new string('b', 240 * 1024)),
+                Receipt(new string('r', 400 * 1024))
             ]);
-        _ = PlayerTurnObservationEnvelope.Wrap(observation);
+        Assert.True(GalateaObservationContent.FitsPlayerTurnContent(observation));
         PlayerTurnRecall selected = Assert.Single(GalateaDefaultMemoPodRecallPlanner.Select(
             Request(RecallBarrier.Empty, CharacterNoteOriginBarrier.Empty, observation),
-            CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+            CharacterNoteDefaultPodV1.PodId, pod.Pod.List(), podStateIdentity: "test-pod-epoch"));
         Assert.Equal(GalateaMemoRecallSourceIdCodec.Format(
             CharacterNoteDefaultPodV1.PodId, pod.Pod.List()[1].Id), selected.Entry.SourceId);
-        _ = PlayerTurnObservationEnvelope.Wrap(observation.WithRecalls([selected]));
+        Assert.True(GalateaObservationContent.FitsPlayerTurnContent(observation.WithRecalls([selected])));
     }
 
     [Fact]
@@ -560,12 +563,12 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             new string('p', GalateaHttpV1.MaximumMessageUtf8Bytes),
             Timestamp,
             [
-                new PlayerTurnNotice.Reply(new string('a', 256 * 1024)),
-                new PlayerTurnNotice.Reply(new string('b', 256 * 1024)),
-                new PlayerTurnNotice.Reply(new string('c', 256 * 1024))
+                Reply(new string('a', 256 * 1024)),
+                Reply(new string('b', 256 * 1024)),
+                Reply(new string('c', 256 * 1024))
             ]
         );
-        _ = PlayerTurnObservationEnvelope.Wrap(crowded);
+        Assert.True(GalateaObservationContent.FitsPlayerTurnContent(crowded));
 
         PlayerTurnRecall recall = Assert.Single(
             GalateaDefaultMemoPodRecallPlanner.Select(
@@ -576,7 +579,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
                 ),
                 CharacterNoteDefaultPodV1.PodId,
                 pod.Pod.List()
-            )
+            , podStateIdentity: "test-pod-epoch")
         );
 
         Assert.Equal(
@@ -633,11 +636,9 @@ public sealed class CharacterNoteDefaultPodRecallTests {
         CharacterNoteOriginBarrier originBarrier,
         PlayerTurnObservation? observation = null
     ) => new(
-        new GalateaUserConfig(
+        new GalateaCharacterConfig(
             "alice",
-            "password",
             new GalateaCharacterName("Galatea"),
-            new GalateaPlayerName("Player"),
             "/session",
             "/delegation",
             "/memory",
@@ -657,6 +658,34 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             originBarrier
         )
     );
+
+    private static PlayerTurnNotice.Reply Reply(string text) => new(text,
+        new GalateaSenderSnapshot("delegate", "codex", "Codex"), "test-dispatch");
+
+    private static PlayerTurnNotice.NoteSaveReceipt Receipt(string text) {
+        if (text.Length > CharacterNoteBounds.MaximumTotalExactTextUtf8Bytes) {
+            // A preexisting receipt may contain substantial frozen formatting.
+            return PlayerTurnNotice.NoteSaveReceipt.FromLegacyDurable(text);
+        }
+        string source = EventAddressTextCodec.Format(new EventAddress(Atelia.Data.SizedPtr.Create(4, 4), 1, AddressHint.None));
+        var memos = new List<CharacterNoteAppliedMemo>();
+        for (int start = 0; start < text.Length; start += 64 * 1024) {
+            int ordinal = memos.Count;
+            memos.Add(new(source, ordinal, CharacterNoteDefaultPodV1.PodId, MemoId.Parse("m1:" + (ordinal + 1).ToString("x8")),
+                text.Substring(start, Math.Min(64 * 1024, text.Length - start))));
+        }
+        return new(new CharacterNoteReceiptSelection(new CharacterNoteReceiptFacts(source, memos), true));
+    }
+
+    private static SessionInputContent Structured(PlayerTurnObservation observation) {
+        GalateaFreshInput fresh = observation.TriggerKind switch {
+            PlayerTurnObservationTriggerKind.HeartbeatActivation => new GalateaFreshInput.HeartbeatActivation(observation.HeartbeatCharacterName),
+            PlayerTurnObservationTriggerKind.DelegateReply => new GalateaFreshInput.DelegateReply(observation.Notices),
+            _ => new GalateaFreshInput.PlayerAction(observation.PlayerText, GalateaDelegateTestConfiguration.PlayerSender)
+        };
+        return GalateaObservationContent.Create(fresh, observation.ExternalLocalTimestamp!.Value,
+            new GalateaSenderSnapshot("character", "alice", "Galatea"), observation.Notices, observation.Recalls);
+    }
 
     private static string Sha256(string text) => Convert.ToHexStringLower(
         SHA256.HashData(Encoding.UTF8.GetBytes(text))

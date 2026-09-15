@@ -7,13 +7,13 @@ using Atelia.Diagnostics;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Production exact V5 transport for durable Codex delegation. The durable
+/// Production exact V6 transport for durable Codex delegation. The durable
 /// store and driver own business correlation and recovery state; this client
 /// owns only the exact sidecar protocol and process transport.
 /// </summary>
 internal sealed class GalateaCodexDurableSidecarClient
     : GalateaSidecarProcessClientBase, IGalateaDurableDelegateTransport {
-    private const int ProtocolVersion = 5;
+    private const int ProtocolVersion = 6;
     private const int OperationStartupMarginMs = 5_000;
     private const int BindingRpcBudgetCount = 5;
     private const int StartTurnRpcBudgetCount = 5;
@@ -144,8 +144,7 @@ internal sealed class GalateaCodexDurableSidecarClient
         var pending = new PendingStart(
             requestId,
             request.DispatchId,
-            request.ThreadId,
-            request.Task
+            request.ThreadId
         );
         byte[] frame = SerializeFrame(new StartTurnWireFrame(
             ProtocolVersion, "start-turn", requestId, request.DispatchId,
@@ -215,11 +214,9 @@ internal sealed class GalateaCodexDurableSidecarClient
             CancellationToken ct
         ) {
         ArgumentNullException.ThrowIfNull(request);
-        ValidateDispatchRequest(
-            request.DispatchId,
-            request.ThreadId,
-            request.Task
-        );
+        GalateaSidecarWire.RequireIdentifier(request.DispatchId, nameof(request.DispatchId));
+        GalateaSidecarWire.RequireIdentifier(request.ThreadId, nameof(request.ThreadId));
+        ArgumentNullException.ThrowIfNull(request.TaskCommitment);
         if (request.ExpectedTurnId is { } expectedTurnId) {
             GalateaSidecarWire.RequireIdentifier(
                 expectedTurnId,
@@ -238,7 +235,6 @@ internal sealed class GalateaCodexDurableSidecarClient
                 requestId,
                 request.DispatchId,
                 request.ThreadId,
-                request.Task,
                 request.ExpectedTurnId
             );
             return await generation.ExecuteAsync(
@@ -249,7 +245,8 @@ internal sealed class GalateaCodexDurableSidecarClient
                         requestId,
                         request.DispatchId,
                         request.ThreadId,
-                        request.Task,
+                        request.TaskCommitment.Sha256,
+                        request.TaskCommitment.Utf8Bytes,
                         request.ExpectedTurnId
                     )),
                     beforeWrite: null,
@@ -1293,21 +1290,18 @@ internal sealed class GalateaCodexDurableSidecarClient
     private sealed class PendingStart(
         string requestId,
         string dispatchId,
-        string threadId,
-        string task
+        string threadId
     ) : PendingRequest<GalateaDelegateTurnAccepted>(requestId),
         IPendingDispatch {
         private readonly PendingDispatchIdentity _identity = new(
             dispatchId,
-            threadId,
-            task
+            threadId
         );
 
         internal bool OwnsStartClaim { get; set; }
         internal bool FrameWriteStarted { get; set; }
         internal string DispatchId => _identity.DispatchId;
         internal string ThreadId => _identity.ThreadId;
-        internal string Task => _identity.Task;
         internal override string DuplicateCode => "DUPLICATE_DISPATCH_ID";
         internal bool Matches(string dispatchId, string threadId) =>
             _identity.Matches(dispatchId, threadId);
@@ -1320,19 +1314,16 @@ internal sealed class GalateaCodexDurableSidecarClient
         string requestId,
         string dispatchId,
         string threadId,
-        string task,
         string? expectedTurnId
     ) : PendingRequest<GalateaDelegateDispatchInspection>(requestId),
         IPendingDispatch {
         private readonly PendingDispatchIdentity _identity = new(
             dispatchId,
-            threadId,
-            task
+            threadId
         );
 
         internal string DispatchId => _identity.DispatchId;
         internal string ThreadId => _identity.ThreadId;
-        internal string Task => _identity.Task;
         internal string? ExpectedTurnId { get; } = expectedTurnId;
         internal override string DuplicateCode => "DUPLICATE_DISPATCH_ID";
         internal bool Matches(string dispatchId, string threadId) =>
@@ -1372,8 +1363,7 @@ internal sealed class GalateaCodexDurableSidecarClient
 
     private sealed record PendingDispatchIdentity(
         string DispatchId,
-        string ThreadId,
-        string Task
+        string ThreadId
     ) {
         internal bool Matches(string dispatchId, string threadId) =>
             string.Equals(DispatchId, dispatchId, StringComparison.Ordinal)
@@ -1405,7 +1395,8 @@ internal sealed class GalateaCodexDurableSidecarClient
         [property: JsonPropertyName("requestId")] string RequestId,
         [property: JsonPropertyName("dispatchId")] string DispatchId,
         [property: JsonPropertyName("threadId")] string ThreadId,
-        [property: JsonPropertyName("task")] string Task,
+        [property: JsonPropertyName("taskSha256")] string TaskSha256,
+        [property: JsonPropertyName("taskUtf8Bytes")] int TaskUtf8Bytes,
         [property: JsonPropertyName("expectedTurnId")]
         string? ExpectedTurnId
     );

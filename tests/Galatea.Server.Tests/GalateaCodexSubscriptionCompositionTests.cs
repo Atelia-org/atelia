@@ -147,7 +147,7 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
 
     private static GalateaConfig Config(
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
-        IReadOnlyList<GalateaUserConfig>? users = null,
+        IReadOnlyList<GalateaCharacterConfig>? users = null,
         IReadOnlyList<string>? listenUrls = null,
         bool useDefaultListenUrls = true
     ) {
@@ -155,6 +155,7 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
             connections ?? [CodexConnection()];
         return new GalateaConfig(
             users ?? [User("alice", effectiveConnections[0].Id)],
+            GalateaDelegateTestConfiguration.Players,
             effectiveConnections,
             effectiveConnections.Select(static value => value.Id).ToArray(),
             InputNormalizerConnectionId: null,
@@ -165,14 +166,12 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         );
     }
 
-    private static GalateaUserConfig User(
+    private static GalateaCharacterConfig User(
         string id,
         string defaultConnectionId = "codex"
     ) => new(
         id,
-        "pw",
         new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("Player"),
         Path.Combine(Path.GetTempPath(), "galatea-codex", id),
         Path.Combine(
             Path.GetTempPath(),

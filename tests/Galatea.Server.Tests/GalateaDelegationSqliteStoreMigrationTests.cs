@@ -13,7 +13,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     public static TheoryData<int, string> LegacyStates {
         get {
             var cases = new TheoryData<int, string>();
-            foreach (int version in new[] { 1, 2, 3 }) {
+            foreach (int version in new[] { 1, 2, 3, 4 }) {
                 foreach (string state in new[] {
                     "Queued", "Binding", "Started", "OutcomeUnknown", "Accepted",
                     "TerminalCompleted", "TerminalFailed", "Quarantined", "Leased", "Consumed"
@@ -41,7 +41,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Equal((long)version, Scalar(result.BackupPath, "PRAGMA user_version;"));
         Assert.Equal(fixture.LegacyRows, ReadBusinessRows(result.BackupPath, normalize: false));
         Assert.Equal(fixture.BusinessRows, ReadBusinessRows(fixture.DatabasePath));
-        Assert.Equal(4L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal(5L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         using (GalateaDelegationSqliteStore store = fixture.Open()) {
             Assert.Equal(fixture.Snapshot, JsonSerializer.Serialize(store.ReadSnapshot()));
         }
@@ -78,7 +78,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         GalateaDelegationStoreUpgradeResult result = fixture.Upgrade(apply: true);
 
         Assert.Equal("Upgraded", result.Outcome);
-        Assert.Equal(4L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal(5L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(0L, Scalar(fixture.DatabasePath,
             "SELECT COUNT(*) FROM internal_mail_outbox;"));
         using GalateaDelegationSqliteStore store = fixture.Open();
@@ -99,7 +99,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             ? new GalateaDelegationStoreTestHooks(AfterCommitBeforeReturn: fail)
             : new GalateaDelegationStoreTestHooks(BeforeCommit: fail);
         Assert.Throws<IOException>(() => fixture.Upgrade(apply: true, hooks));
-        Assert.Equal(afterCommit ? 4L : version,
+        Assert.Equal(afterCommit ? 5L : version,
             Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(afterCommit || version is 2 or 3 ? 0L : 1L, Scalar(fixture.DatabasePath,
             "SELECT count(*) FROM pragma_table_info('outbound_mail') WHERE name = 'frozen_route_policy_fingerprint';"));
@@ -116,7 +116,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         using var fixture = new MigrationFixture("Accepted");
         byte[] before = File.ReadAllBytes(fixture.DatabasePath);
         foreach (GalateaDelegationStoreOwner wrong in new[] {
-            Owner with { UserId = "other" },
+            Owner with { CharacterId = "other" },
             Owner with { SessionRepositoryId = "other-repository" }
         }) {
             Assert.Throws<InvalidDataException>(() =>
@@ -165,6 +165,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     [InlineData(2, "OutcomeUnknown")]
     [InlineData(2, "Accepted")]
     [InlineData(3, "Accepted")]
+    [InlineData(4, "Accepted")]
     public async Task UpgradedActiveMail_InspectsOriginalIdentityWithoutStartingAgain(int version, string state) {
         using var fixture = new MigrationFixture(state, version);
         _ = fixture.Upgrade(apply: true);
@@ -182,7 +183,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         GalateaInspectDelegateDispatchRequest request = Assert.Single(transport.Requests);
         Assert.Equal(original.DispatchId, request.DispatchId);
         Assert.Equal(original.RequestedThreadId, request.ThreadId);
-        Assert.Equal(original.Body, request.Task);
+        Assert.Equal(GalateaTaskCommitment.FromStored(original), request.TaskCommitment);
         Assert.Equal(original.AcceptedTurnId, request.ExpectedTurnId);
         Assert.Equal(0, transport.StartCalls);
         Assert.Equal(GalateaDurableMailState.TerminalCompleted, store.ReadSnapshot().Mails[0].State);
@@ -329,9 +330,14 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
                 new(new EventJournalPhysicalAppendFrontier(head.SegmentNumber, head.Ticket.EndOffsetExclusive), Address(2)),
                 Limits)) {
                 Populate(store, state);
-                Snapshot = JsonSerializer.Serialize(store.ReadSnapshot());
+                // Populate the current state machine, then explicitly export
+                // only the facts available to the historical fixture schema.
             }
             string sourcePath = Path.Combine(sourceDirectory, GalateaDelegationSqliteStore.DatabaseFileName);
+            ConvertSourceToHistoricalContent(sourcePath);
+            using (GalateaDelegationSqliteStore legacyView = GalateaDelegationSqliteStore.OpenExisting(sourceDirectory, Owner, Limits)) {
+                Snapshot = JsonSerializer.Serialize(legacyView.ReadSnapshot());
+            }
             BusinessRows = ReadBusinessRows(sourcePath);
             CreateLegacy(sourcePath, DatabasePath, version);
             LegacyRows = ReadBusinessRows(DatabasePath, normalize: false);
@@ -356,7 +362,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             new SendMailIntent("Codex", null, "original task", null, "sent"),
             new SendMailIntent("Codex", null, "next queued task", null, "sent"),
             new SendMailIntent("other", null, "unrouted task", null, "sent")
-        ]));
+        ], GalateaDelegationTestInputs.Sender(store, "Galatea")));
         if (state == "Queued") { return; }
         GalateaOutboundMailSnapshot mail = store.ReadSnapshot().Mails[0];
         GalateaRouteBindingSnapshot route = store.BeginThreadBinding(
@@ -364,7 +370,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         if (state == "Binding") { return; }
         route = store.CompleteThreadBinding("bind", "original-thread", route.Revision);
         mail = store.ReadSnapshot().Mails[0];
-        mail = store.StartQueuedMail(mail.DispatchId, mail.Revision, route.Revision);
+        mail = store.StartQueuedMail(mail.DispatchId, mail.Revision, route.Revision, GalateaDelegationTestInputs.Commitment(store, mail.DispatchId));
         if (state == "Started") { return; }
         if (state == "OutcomeUnknown") {
             store.MarkMailOutcomeUnknown(mail.DispatchId, mail.Revision, "TRANSPORT_LOST", 0);
@@ -385,22 +391,67 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         if (state == "TerminalCompleted") { return; }
         GalateaReplyLeaseSnapshot lease = store.BeginReplyLeaseMembership(
             "lease", "player", [new(notice.NoticeId, notice.Revision)]);
-        string observation = PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation(
-            "player", DateTimeOffset.UnixEpoch, [new PlayerTurnNotice.Reply("reply")]));
+        SessionInputContent observation = GalateaObservationContent.Create(
+            new GalateaFreshInput.PlayerAction("player", GalateaDelegateTestConfiguration.PlayerSender),
+            DateTimeOffset.UnixEpoch, GalateaDelegationTestInputs.Sender(store, "Galatea"),
+            [GalateaDurableNoticeContent.Project(notice)]);
         lease = store.BindReplyLeaseObservationBase(lease.LeaseId, lease.Revision, Address(20), observation);
         if (state == "Leased") { return; }
         lease = store.RecordLeaseObservationCommitted(lease.LeaseId, lease.Revision, Address(21));
         store.ConsumeReplyLease(lease.LeaseId, lease.Revision, Address(22));
     }
 
+    private static void ConvertSourceToHistoricalContent(string databasePath) {
+        using SqliteConnection connection = Connect(databasePath, SqliteOpenMode.ReadWrite);
+        using SqliteCommand read = connection.CreateCommand();
+        read.CommandText = "SELECT bound_input FROM reply_lease WHERE bound_input IS NOT NULL;";
+        string? inputJson = read.ExecuteScalar() as string;
+        if (inputJson is not null) {
+            SessionInputContent input = JsonSerializer.Deserialize<SessionInputContent>(inputJson)!;
+            PlayerTurnObservation parsed = GalateaObservationContent.ReadPlayerTurn(input);
+            PlayerTurnNotice[] oldNotices = parsed.Notices.Select(notice => notice switch {
+                PlayerTurnNotice.Reply reply => (PlayerTurnNotice)new PlayerTurnNotice.Reply(reply.Body),
+                PlayerTurnNotice.DeliveryFailure failure => new PlayerTurnNotice.DeliveryFailure(failure.Detail!),
+                _ => throw new InvalidDataException("Unexpected historical receipt fixture.")
+            }).ToArray();
+            string oldText = PlayerTurnObservationEnvelope.Wrap(parsed.WithNotices(oldNotices));
+            using SqliteCommand bind = connection.CreateCommand();
+            bind.CommandText = "UPDATE reply_lease SET bound_input=NULL, rendered_observation=$body, observation_utf8_bytes=$bytes, observation_sha256=$sha;";
+            bind.Parameters.AddWithValue("$body", oldText);
+            bind.Parameters.AddWithValue("$bytes", GalateaTaskCommitment.FromTask(oldText).Utf8Bytes);
+            bind.Parameters.AddWithValue("$sha", GalateaTaskCommitment.FromTask(oldText).Sha256);
+            bind.ExecuteNonQuery();
+        }
+        using SqliteCommand convert = connection.CreateCommand();
+        convert.CommandText = """
+            UPDATE outbound_mail SET content_format='legacy-task', sender_name=NULL, task_sha256=NULL, task_utf8_bytes=NULL;
+            UPDATE reply_notice SET body=CASE WHEN kind='DeliveryFailure' THEN COALESCE(detail, code) ELSE body END,
+                notice_format='legacy-text', sender_kind=NULL, sender_id=NULL, sender_name=NULL, detail=NULL, thread_id=NULL, turn_id=NULL;
+            """;
+        convert.ExecuteNonQuery();
+    }
+
     private static void CreateLegacy(string sourcePath, string targetPath, int version) {
         using SqliteConnection target = Connect(targetPath, SqliteOpenMode.ReadWriteCreate);
-        if (version == 3) {
+        if (version is 3 or 4) {
             using (SqliteConnection source = Connect(sourcePath, SqliteOpenMode.ReadOnly)) {
                 source.BackupDatabase(target);
             }
             using SqliteCommand downgrade = target.CreateCommand();
             downgrade.CommandText = """
+                ALTER TABLE outbound_mail DROP COLUMN content_format;
+                ALTER TABLE outbound_mail DROP COLUMN sender_name;
+                ALTER TABLE outbound_mail DROP COLUMN task_sha256;
+                ALTER TABLE outbound_mail DROP COLUMN task_utf8_bytes;
+                ALTER TABLE reply_notice DROP COLUMN notice_format;
+                ALTER TABLE reply_notice DROP COLUMN sender_kind;
+                ALTER TABLE reply_notice DROP COLUMN sender_id;
+                ALTER TABLE reply_notice DROP COLUMN sender_name;
+                ALTER TABLE reply_notice DROP COLUMN detail;
+                ALTER TABLE reply_notice DROP COLUMN thread_id;
+                ALTER TABLE reply_notice DROP COLUMN turn_id;
+                ALTER TABLE reply_lease DROP COLUMN bound_input;
+                ALTER TABLE internal_mail_outbox DROP COLUMN bound_input;
                 DROP INDEX ix_internal_mail_target_state;
                 DROP INDEX ux_internal_mail_message_id;
                 DROP TABLE internal_mail_outbox;
@@ -441,6 +492,15 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
                 DROP TABLE delegation_meta_v4;
                 PRAGMA user_version = 3;
                 """;
+            if (version == 4) {
+                downgrade.CommandText = downgrade.CommandText
+                    .Replace("DROP INDEX ix_internal_mail_target_state;", "", StringComparison.Ordinal)
+                    .Replace("DROP INDEX ux_internal_mail_message_id;", "", StringComparison.Ordinal)
+                    .Replace("DROP TABLE internal_mail_outbox;", "", StringComparison.Ordinal)
+                    .Replace("schema_version = 3", "schema_version = 4", StringComparison.Ordinal)
+                    .Replace("SELECT singleton, 3,", "SELECT singleton, 4,", StringComparison.Ordinal)
+                    .Replace("PRAGMA user_version = 3", "PRAGMA user_version = 4", StringComparison.Ordinal);
+            }
             downgrade.ExecuteNonQuery();
             return;
         }
@@ -490,7 +550,10 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         foreach (string table in Tables) {
             string[] storedColumns = Columns(connection, table).Where(column => !normalize ||
                 column is not ("route_policy_fingerprint" or "policy_fingerprint" or "frozen_route_policy_fingerprint"
-                    or "schema_version" or "ensure_attempt_count" or "ensure_last_code" or "next_ensure_at_ms")).ToArray();
+                    or "schema_version" or "ensure_attempt_count" or "ensure_last_code" or "next_ensure_at_ms"
+                    or "content_format" or "sender_name" or "task_sha256" or "task_utf8_bytes" or "bound_input"
+                    or "notice_format" or "sender_kind" or "sender_id" or "detail")
+                && !(table == "reply_notice" && column is "thread_id" or "turn_id")).ToArray();
             string[] columns = storedColumns.Select(column => normalize ? column switch {
                 "reconcile_attempt_count" => "recovery_failure_count",
                 "reconcile_last_code" => "recovery_last_code",

@@ -255,7 +255,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Materialize,
+                static (_, _) => throw new InvalidOperationException("Prepared DerivedInfo must not rematerialize inputs under a new instruction contract."),
                 mustNotRun
             )
         );

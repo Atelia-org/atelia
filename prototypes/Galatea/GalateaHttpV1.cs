@@ -17,6 +17,54 @@ internal static class GalateaHttpV1 {
     internal static readonly MaintenanceWriteEndpointMetadata
         MaintenanceWrite = new();
 
+    // RouteValues are already partly URL-decoded by ASP.NET. Reading the raw
+    // segment once preserves distinct IDs such as a/b and the literal a%2Fb.
+    internal static bool TryReadCharacterRouteId(HttpContext context, out string characterId) {
+        characterId = string.Empty;
+        string? rawTarget = context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpRequestFeature>()?.RawTarget;
+        if (string.IsNullOrEmpty(rawTarget)) {
+            // Some in-process HTTP hosts supply only an already decoded route
+            // value. It is unambiguous only when no encoded slash/percent can
+            // have survived decoding. Never decode this fallback a second time.
+            string? routed = context.Request.RouteValues["characterId"] as string;
+            if (string.IsNullOrEmpty(routed) || routed.Contains('%') || routed.Contains('/')) return false;
+            characterId = routed;
+            return true;
+        }
+        ReadOnlySpan<char> path = rawTarget.AsSpan();
+        int query = path.IndexOf('?');
+        if (query >= 0) path = path[..query];
+        const string apiPrefix = "/api/v1/characters/";
+        const string pagePrefix = "/characters/";
+        if (path.StartsWith(apiPrefix, StringComparison.OrdinalIgnoreCase)) path = path[apiPrefix.Length..];
+        else if (path.StartsWith(pagePrefix, StringComparison.OrdinalIgnoreCase)) path = path[pagePrefix.Length..];
+        else return false;
+        int separator = path.IndexOf('/');
+        if (separator >= 0) path = path[..separator];
+        if (path.IsEmpty) return false;
+        byte[] encoded = Encoding.UTF8.GetBytes(path.ToString());
+        var decoded = new byte[encoded.Length];
+        int count = 0;
+        for (int i = 0; i < encoded.Length; i++) {
+            if (encoded[i] != (byte)'%') {
+                decoded[count++] = encoded[i];
+                continue;
+            }
+            if (i + 2 >= encoded.Length || !Uri.IsHexDigit((char)encoded[i + 1]) || !Uri.IsHexDigit((char)encoded[i + 2])) return false;
+            decoded[count++] = (byte)((HexValue(encoded[++i]) << 4) | HexValue(encoded[++i]));
+        }
+        try {
+            characterId = new UTF8Encoding(false, true).GetString(decoded, 0, count);
+            return characterId.Length != 0;
+        }
+        catch (DecoderFallbackException) {
+            return false;
+        }
+
+        static int HexValue(byte value) => value <= (byte)'9' ? value - (byte)'0'
+            : (value | 32) - (byte)'a' + 10;
+    }
+
     internal static void ConfigureJson(JsonSerializerOptions options) {
         ArgumentNullException.ThrowIfNull(options);
         options.PropertyNameCaseInsensitive = false;

@@ -353,3 +353,9 @@ pre {
     width: 100%;
   }
 }
+
+.character-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+.character-header h1 { margin: 0 0 .35rem; }
+.character-header nav { display: flex; align-items: center; gap: 1rem; }
+.character-directory { list-style: none; padding: 0; display: grid; gap: 1rem; }
+.character-directory a { display: flex; justify-content: space-between; gap: 1rem; padding: 1.25rem; border: 1px solid currentColor; border-radius: .75rem; text-decoration: none; }

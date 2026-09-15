@@ -2,8 +2,10 @@
 
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
-[runtime.md](runtime.md)。根配置的完整 closed schema 以
-[Root config V9 合同](../SessionJournal/current/contracts/galatea-root-config-v9.md)为准。
+[runtime.md](runtime.md)。根配置当前为 V10；exact 字段由
+[`GalateaStrictConfigReader`](../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与
+[`GalateaRootFileConfig`](../../prototypes/Galatea/GalateaConfig.cs) 定义。
+旧 [V9 合同](../SessionJournal/current/contracts/galatea-root-config-v9.md)仅用于识别升级前数据，不是当前配置入口。
 
 ## 配置目录与首次生成
 
@@ -22,85 +24,95 @@
 - `config.json`；
 - `connections.json`；
 - 同一目录的 `delegates.json`；
-- 每个 user 的缺失、且仍在配置目录内的 `characterContextTemplateFile`。
+- 每个 Character 的缺失、且仍在配置目录内的 `characterContextTemplateFile`。
 
 生成后程序会故意退出，必须检查并修改模板后再次启动。它不会覆盖已有文件，不会猜测 Codex/Node 路径，也不会生成
-`recapGrid.agentControlProfileFiles` 引用的 profile、route manifest 或任何 SessionJournal state。因此首次配置的顺序是：
-先让模板生成并退出，修改密码、角色、连接和 delegate placeholder，创建各 user 的 home，再用下面的 `scaffold` 创建 RecapGrid 文件，最后启动。
+`runtime.recapGrid.agentControlProfileFiles` 引用的 profile、route manifest 或任何 SessionJournal state。因此首次配置的顺序是：
+先让模板生成并退出，修改密码、角色、连接和 delegate placeholder，创建各 Character 的 home，再用下面的 `scaffold` 创建 RecapGrid 文件，最后启动。
 
-默认模板有 `alice`、`bob` 两个示例账户和本地 `local` connection；示例密码、模型 ID、API key 与 delegate 路径都不能直接用于实际服务。
+默认模板有 `alice`、`bob` 两个示例 Character、独立的 `player-main` Player 和本地 `local` connection；密码、模型 ID 与 delegate 路径仍须由操作者填写。
 
 ## `config.json`
 
-根文件必须是 strict V9 JSON：`"v"` 必须是整数 `9`，必须有至少一个 `users` 和一个 `recapGrid` object。未知字段、旧版、未来版、`null` 或 `9.0` 都会拒绝；程序不会自动迁移或重写此文件。升级时应停服、备份，并显式完成 schema 变更。
+根文件必须是 strict V10 JSON：`v` 必须是整数 `10`，根字段为 `v`、`characters`、`players`、`runtime`。
+`characters` 至少一项；`players` 可以为 `[]`。`runtime.recapGrid` 是必需 object。未知字段、旧版、未来版、
+`null` 或 `10.0` 都拒绝；正常启动不会迁移或重写旧文件。
 
-下面是完整、可识别的 V9 形状。除必需的 absolute `homeDir` 外，相对路径以本文件所在的配置目录解析；这里的 loopback `listenUrls` 适合仅本机访问，也可按部署需要改为局域网监听地址。
+下面展示当前字段归属，密码位置仅为占位符；除必需的 absolute `homeDir` 外，相对路径以配置文件目录解析。
 
 ```json
 {
-  "v": 9,
-  "serverAgentUserIds": [],
-  "users": [{
-    "userId": "alice",
-    "password": "REPLACE_WITH_A_PRIVATE_PASSWORD",
-    "characterName": "Alice",
-    "playerName": "Alex",
+  "v": 10,
+  "characters": [{
+    "id": "alice",
+    "name": "Alice",
     "sessionDir": "sessions/alice",
     "delegationStateDir": "delegation-state/alice",
     "characterMemoryStateDir": "character-memory/alice",
     "homeDir": "/galatea-homes/alice",
     "sessionProvisioning": "create-if-missing",
     "defaultConnectionId": "local",
+    "heartbeatEnabled": false,
     "characterContextTemplate": "",
     "characterContextTemplateFile": "prompts/character-context-standard-zh-cn.md"
   }],
-  "listenUrls": ["http://127.0.0.1:3510/"],
-  "callLogDir": null,
-  "maintenanceMode": false,
-  "recapGrid": {
-    "routeManifestPath": "recap-grid-routes.json",
-    "agentControlProfileFiles": ["recap-grid-agent-control-profile.json"],
-    "currentAgentControlProfileId": "default"
+  "players": [{"id": "player-main", "name": "玩家", "password": "REPLACE_WITH_A_PRIVATE_PASSWORD"}],
+  "runtime": {
+    "listenUrls": ["http://127.0.0.1:3510/"],
+    "callLogDir": null,
+    "maintenanceMode": false,
+    "recapGrid": {
+      "routeManifestPath": "recap-grid-routes.json",
+      "agentControlProfileFiles": ["recap-grid-agent-control-profile.json"],
+      "currentAgentControlProfileId": "default"
+    }
   }
 }
 ```
 
-每个 user 的 `userId`、`password`、`characterName`、`playerName`、`sessionDir`、`delegationStateDir`、`characterMemoryStateDir`、`homeDir`、`sessionProvisioning` 和 `defaultConnectionId` 都是业务配置。`characterName` 与 `playerName` 是独立故事身份，不从登录 ID 推导；它们必须已经是 NFC 且没有首尾空白，loader 会拒绝非规范输入而不会自动 `Trim` 或 normalize。全部 `characterName` 必须大小写精确地唯一，且不能为保留收件人 `Codex`；它们同时构成角色间邮件的唯一地址簿。已有 session 不能只改这两个名字，必须停服后迁移或重建 RecapGrid asset 并切换 active recipe；有未结算角色邮件时还须遵守[角色间站内信的身份漂移前提](character-mail-design.md#6-配置漂移与运维前提)。
+Character 的 `id`/`name`、状态目录、home、默认连接与心跳独立于 Player。Player 只提供 `id`、`name`、
+`password`；当前所有已配置并认证的 Player 都是同一级管理员，可以选择任意 Character。`player-main` 是
+bootstrap 示例 ID，不是硬编码角色或权限。`players: []` 没有可登录身份，但不停止角色心跳、来信投递或委派。
+
+名字必须已经是 NFC 且没有首尾空白，loader 不自动 Trim/normalize。Character 名称必须大小写精确地唯一，
+且不能为保留收件人 `Codex`；它们构成角色邮件地址簿。Player 名称不进入 Character 的固定设定或 Recap asset。
+改角色名/设定等语义资产时仍需核对 active recipe；有未结算邮件时遵守
+[角色间站内信的身份漂移前提](character-mail-design.md#6-配置漂移与运维前提)。
 
 `sessionProvisioning` 只有两种闭合策略：
 
 - `existing-only` 只打开已经 provision 的 repository；
-- `create-if-missing` 只会为完全不存在的 `sessionDir` 原子创建首轮 repository：raw 三个 setup event、Cadence、empty Timeline、Control、Store、该 user 的 V6 asset、empty-Timeline full recipe 与 active recipe 在同一 private staging 完成后才发布。
+- `create-if-missing` 只会为完全不存在的 `sessionDir` 原子创建首轮 repository：raw 三个 setup event、Cadence、empty Timeline、Control、Store、该 Character 的 V7 asset、empty-Timeline full recipe 与 active recipe 在同一 private staging 完成后才发布。
 
 这不会读取 route、创建 Completion client 或调用 provider；空 Timeline 的首轮上下文仍是 raw-only。它也绝不补写已有空目录、残缺 repository 或既有 RecapGrid 派生产物。maintenance mode 不会创建 session。
 
-`serverAgentUserIds` 省略或 `[]` 时禁用所有服务端自动轮次；列出的 user 必须存在且不能重复。自动轮次始终使用该 user 的 `defaultConnectionId`，浏览器中当前选中的连接仅影响人工请求。
+每个 Character 的 `heartbeatEnabled` 省略时为 false；true 才加入周期 pulse。它不控制独立的角色信 relay，也不阻止人工交互。自动轮次始终使用该 Character 的 `defaultConnectionId`，浏览器当前连接仅影响人工请求。旧根字段 `serverAgentUserIds` 已删除。
 
 ### 角色上下文
 
-可使用 inline `characterContextTemplate`，或以配置目录为基准的 `characterContextTemplateFile`；后者存在时覆盖 inline 内容。上下文必须含有 `${characterName}`，可选 `${playerName}`，不支持其他变量或递归展开。它只提供角色语境，不定义 GM、输出或邮箱协议；这些 protocol bytes 由代码和 tracked prompt 资源拥有，详见 [prompt 资源说明](prompt/README.md)。
+可使用 inline `characterContextTemplate`，或以配置目录为基准的 `characterContextTemplateFile`；后者存在时覆盖 inline 内容。上下文必须含有 `${characterName}`，拒绝旧 `${playerName}` 和其他变量，不递归展开。旧设定中的固定玩家文字须显式迁移，不能用当前登录 Player 自动补入。它只提供角色语境，不定义 GM、输出或邮箱协议；这些 protocol bytes 由代码和 tracked prompt 资源拥有，详见 [prompt 资源说明](prompt/README.md)。
 
-bootstrap 会为配置目录内的缺失文件目标 create-new；配置目录外的缺失路径不会自动创建。单个 source 以及组合后的最终 system prompt 都有 1 MiB 上限，运行时不会每回合重新读取模板文件。
+bootstrap 会为配置目录内的缺失文件目标 create-new；配置目录外的缺失路径不会自动创建。单个 source 和机读 system-instructions 有独立大小检查；实际投影请求在发送前再次检查。启动时读取并验证 source，SystemPromptSetup 保存原指令源与绑定快照，`${characterName}` 替换及 md-json 包装只在请求时生成；运行时不会每回合重新读取模板文件。
 
 ### 路径、持久状态与日志
 
-`homeDir` 是每个 user 的个人文件目录，也是 Codex 新任务的默认 CWD；初始部署使用 `/galatea-homes/cyber` 与 `/galatea-homes/gpt`。它必须是预先创建的 Linux absolute canonical directory，落在 delegates 的 `allowedRoots` 内；不能与其他 home 或 session、delegation、Character Memory、call-log 目录相同或互相包含。启动只校验，不创建 home 或修补权限。bootstrap 示例使用 `/galatea-homes/alice` 与 `/galatea-homes/bob`，需在启动前按实际用户准备。
+`homeDir` 是每个 Character 的个人文件目录，也是 Codex 新任务的默认 CWD。它必须是预先创建的 Linux absolute canonical directory，落在 delegates 的 `allowedRoots` 内；不能与其他 home 或 session、delegation、Character Memory、call-log 目录相同或互相包含。启动只校验，不创建 home 或修补权限。bootstrap 示例使用 `/galatea-homes/alice` 与 `/galatea-homes/bob`，需在启动前按实际角色准备。
 
-个人目录不更改 Unix `$HOME`、`~`、`CODEX_HOME` 或 Codex 登录身份，不承诺强隔离。角色在 outbound-mail 能力启用时获得实际 home 路径；冻结请求仍使用原始 prompt bytes。修改 homeDir 后重启，旧派发先按原任务身份恢复结果，后续尚未派发任务在同一 Codex thread 使用新目录；不会自动搬移文件。
+个人目录不更改 Unix `$HOME`、`~`、`CODEX_HOME` 或 Codex 登录身份，不承诺强隔离。角色在 outbound-mail 能力启用时获得实际 home 路径；新语义 Prepared 使用当时绑定的目录事实；旧 exact Prepared 保留原始 prompt bytes。修改 homeDir 后重启，旧派发先按原任务身份恢复结果，后续尚未派发任务在同一 Codex thread 使用新目录；不会自动搬移文件。
 
 相对 `sessionDir`、`delegationStateDir`、`characterMemoryStateDir` 和 `callLogDir` 都以 `config.json` 的目录为基准；加载后使用 canonical absolute path。Character Memory 路径必须彼此唯一且不嵌套，也不能与 session、delegation 或 call log 路径嵌套；已有路径组件不能是 symlink/reparse point。
 
 `characterMemoryStateDir` 只建立路径 authority：未绑定 Character Note、或处于 maintenance mode 时不会打开、锁定或创建其 store。启用绑定的 writable session 首次 attach 才会创建或严格打开 store。Delegation state 同样不会从其它路径回退；现有 state 与 session 缺失、schema/owner/lock 不匹配时均 fail closed。
 
-Delegation supervisor 在 host 启动时就分类每个 user 的状态。仅当 `delegationStateDir` 和匹配的 `sessionDir` 都存在时才 strict-open store，并持有进程生命周期的 exclusive OS writer lock；state 存在而 session 缺失时，以 `SESSION_MISSING` 在打开 SQLite/lock 前拒绝。state 不存在则保持 `Uninitialized`，直到首次 writable session attach/provision 成功后才在 exact path 创建 baseline。即使没有打开网页，已有 delegation state 也可能已被运行中的 host 持有；备份或离线操作不能只依据页面是否打开。此规则继承自 [V6 storage/delegation 合同](../SessionJournal/current/contracts/galatea-root-config-v6.md)。
+Delegation supervisor 在 host 启动时就分类每个 Character 的状态。仅当 `delegationStateDir` 和匹配的 `sessionDir` 都存在时才 strict-open store，并持有进程生命周期的 exclusive OS writer lock；state 存在而 session 缺失时，以 `SESSION_MISSING` 在打开 SQLite/lock 前拒绝。state 不存在则保持 `Uninitialized`，直到首次 writable session attach/provision 成功后才在 exact path 创建 baseline。即使没有打开网页，已有 delegation state 也可能已被运行中的 host 持有；备份或离线操作不能只依据页面是否打开。此规则继承自 [V6 storage/delegation 合同](../SessionJournal/current/contracts/galatea-root-config-v6.md)。
 
-`callLogDir` 会记录 provider request 和工具参数，可能含故事内容和敏感数据；请将其放入受限的本地目录，并自行安排保留期。
+`runtime.callLogDir` 启用 Completion metadata 日志：记录连接/模型、请求长度和摘要（可用时）、耗时、结果计数及异常类型，不记录请求/输出全文、工具参数或异常消息。它不构成 durable dispatch 证据。旧全文日志不会自动删除；其他领域 Debug 日志仍按各自规则处理。
 
 ## `connections.json`
 
-`connections.json` 是 Completion endpoint catalog，与 user/session 身份分离。Galatea 只接受 V3：根对象必须有非空 `connections`、非空 `selectableConnectionIds` 和恰好四个 `bindings`：
+`connections.json` 是 Completion endpoint catalog，与 Character/session 身份分离。Galatea 只接受 V3：根对象必须有非空 `connections`、非空 `selectableConnectionIds` 和恰好四个 `bindings`：
 
-根 `defaultConnectionId` 已移到 `config.json` 的每个 user，不能留在 V3 catalog 中；Galatea 不读取 V1/V2 connections。
+根 `defaultConnectionId` 已移到 `config.json` 的每个 Character，不能留在 V3 catalog 中；Galatea 不读取 V1/V2 connections。
 
 ```json
 "bindings": {
@@ -111,7 +123,7 @@ Delegation supervisor 在 host 启动时就分类每个 user 的状态。仅当 
 }
 ```
 
-每个 non-null binding 必须精确指向 catalog connection；缺失、拼写大小写不符或额外 binding 会拒绝启动。`selectableConnectionIds` 是浏览器和普通 Agent 可选的 allowlist；每个 user 的 `defaultConnectionId` 也必须在其中。RecapGrid 和 helper 可以使用不在该 allowlist 中、但由 exact route/binding 指定的连接。
+每个 non-null binding 必须精确指向 catalog connection；缺失、拼写大小写不符或额外 binding 会拒绝启动。`selectableConnectionIds` 是浏览器和普通 Agent 可选的 allowlist；每个 Character 的 `defaultConnectionId` 也必须在其中。RecapGrid 和 helper 可以使用不在该 allowlist 中、但由 exact route/binding 指定的连接。
 
 四个 binding 都是显式开关：`galatea.input-normalizer` 在首次实际需要时清洗玩家输入；`galatea.outbound-mail-extractor` 从可见 Action 提取发给 Codex 的邮件；`galatea.character-note-extractor` 提取并保存 Character Note；`galatea.memo-recall` 在允许的触发点检索 Default MemoPod。值为 `null` 即禁用对应能力，非 `null` 时 client 仍按实际使用惰性创建。Memo recall 是独立 binding，可以显式复用 Character Note 的 connection ID，但不隐式复用；其非 `null` 前提是 Character Note binding 也非 `null`。
 
@@ -167,15 +179,15 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
 }
 ```
 
-全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；每个 user 的 `homeDir` 必须落在 `allowedRoots` 内；全局 route 不再接受 `cwd`。V4 删除了旧 `mode`、`localCommandNetwork`、`tools` 字段，不接受 V1–V3 配置。除可选 `codexConfig` 外，未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
+全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；每个 Character 的 `homeDir` 必须落在 `allowedRoots` 内；全局 route 不再接受 `cwd`。V4 删除了旧 `mode`、`localCommandNetwork`、`tools` 字段，不接受 V1–V3 配置。除可选 `codexConfig` 外，未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
 
 `codexConfig` 使用 Codex 原生配置名，是传给 app-server thread 配置的 JSON object。省略或设为 `{}` 都不会添加配置覆盖；显式 `false` 等值会照常传递。对象可包含嵌套对象、数组、字符串、数字和布尔值，不能包含 TOML 无法表示的 `null`，各层对象键不能重复或存在大小写冲突。具体原生字段及其合法值交给 app-server 处理，Galatea 不维护另一套 Codex 配置 schema。上例显式关闭 Codex 沙盒并设置 `approval_policy: "never"`；删除整个 `codexConfig` 就恢复由 Codex 自身决定默认值。
 
-Galatea 保留父进程的 `HOME` / `CODEX_HOME`，不会因 user 的 `homeDir` 创建另一套 Codex home。未显式配置时，新 thread 由 Codex 正常加载公共 `config.toml` 及其原生配置层级；恢复已有 thread 时也遵循 Codex 的恢复规则，可能沿用已持久化的设置，并不强制重置为公共默认值。Galatea 不再附加 `mcp_servers={}`、`features.apps=false` 启动参数，也不再替沙盒、审批、工具开关填入隐式覆盖。
+Galatea 保留父进程的 `HOME` / `CODEX_HOME`，不会因 Character 的 `homeDir` 创建另一套 Codex home。未显式配置时，新 thread 由 Codex 正常加载公共 `config.toml` 及其原生配置层级；恢复已有 thread 时也遵循 Codex 的恢复规则，可能沿用已持久化的设置，并不强制重置为公共默认值。Galatea 不再附加 `mcp_servers={}`、`features.apps=false` 启动参数，也不再替沙盒、审批、工具开关填入隐式覆盖。
 
 配置在 sidecar 启动时取得快照；修改 `delegates.json` 后需重启 Galatea 才会生效。显式配置会在创建 thread 和冷恢复已有 thread 时传入；同一 app-server 已加载的 thread 可能保留当前设置，不依赖 warm resume 热更新配置。bridge 仍是非交互客户端：如果继承的审批策略产生人工审批请求，现有客户端会拒绝该请求；无人值守且无需审批时应显式设置 `approval_policy: "never"`。
 
-sidecar/app-server 进程固定从 `/` 启动；每个创建 thread / 启动 turn 请求显式携带该 user 的 home，结果查询不依赖旧目录。共享进程不会通过 `process.chdir()` 切换用户目录。
+sidecar/app-server 进程固定从 `/` 启动；每个创建 thread / 启动 turn 请求显式携带该 Character 的 home，结果查询不依赖旧目录。共享进程不会通过 `process.chdir()` 切换用户目录。
 
 task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经过最坏 JSON escaping 和 envelope reserve 也必须装入 `maximumFrameUtf8Bytes`，inbox 还必须容纳一条最大 reply 或 delivery failure。`rpcTimeoutMs` 仅限制单次 sidecar/app-server 控制 RPC，`shutdownGraceMs` 仅限制开始关服后的 child reap；两者都不是已接受 Codex turn 的生命周期 deadline。
 
@@ -183,18 +195,17 @@ task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经�
 
 ## RecapGrid 文件与首次 scaffold
 
-`recapGrid` 指向 route manifest、一个或多个现有 Agent Control profile，以及 current profile ID。profile 文件必须已经存在；它是 missing-session structural bootstrap 所需的 admission authority。历史 profile 也要保留，供冻结的 Prepared/ToolContinuation 使用。route manifest 在首次 RecapGrid 工作时才读取；每条 route 精确拥有自己的 `connectionId`、并发和 timeout，不能用 default/wildcard route 或业务 output cap 覆盖 provider 的输出策略。
+`runtime.recapGrid` 指向 route manifest、一个或多个现有 Agent Control profile，以及 current profile ID。profile 文件必须已经存在；它是 missing-session structural bootstrap 所需的 admission authority。历史 profile 也要保留，供冻结的 Prepared/ToolContinuation 使用。route manifest 在首次 RecapGrid 工作时才读取；每条 route 精确拥有自己的 `connectionId`、并发和 timeout，不能用 default/wildcard route 或业务 output cap 覆盖 provider 的输出策略。
 
 Galatea 将 route manifest 作为普通 V2 JSON 配置读取，允许缩进、末尾换行和属性顺序变化；仍拒绝重复/未知/缺失字段、重复 route key 和越界值。内部 canonical 编码不要求人工编辑的配置文件逐字节匹配。修改后需重启，避免继续使用已缓存的路由加载结果。
 
-以下命令是根据当前 CLI 参数和公共 operator-chain 测试核对过的首次 scaffold 示例。将 `<配置目录>`、`<角色名>`、`<玩家名>` 和 `<RecapGrid连接ID>` 换成实际值；三个输出路径须不存在，CLI 以 create-new 写入：
+以下命令是根据当前 CLI 参数和公共 operator-chain 测试核对过的首次 scaffold 示例。将 `<配置目录>`、`<角色名>` 和 `<RecapGrid连接ID>` 换成实际值；三个输出路径须不存在，CLI 以 create-new 写入：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- \
   recap-grid scaffold \
-  --asset galatea-rolling-rewrite-zh-cn-v6 \
+  --asset galatea-rolling-rewrite-zh-cn-v7 \
   --character-name '<角色名>' \
-  --player-name '<玩家名>' \
   --profile-id default \
   --connection-id '<RecapGrid连接ID>' \
   --permission create \
@@ -213,8 +224,14 @@ dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- 
   --route-output '<配置目录>/recap-grid-routes.json'
 ```
 
-将 `config.json` 的 `routeManifestPath`、`agentControlProfileFiles` 和 `currentAgentControlProfileId` 对应到上述 route/profile 输出。profile 是启动必需的 bootstrap admission；existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent 仍会调用其 Completion connection。普通 `GetSessionAsync()` 不会 repair 已有 repository。对完全不存在的 new session，staging bootstrap 会一并建立 Store、该 user 的 asset、empty-Timeline full recipe 和 active recipe；整个过程仍不会读取 route、创建 Completion client 或调用 provider。因为还没有历史行，首轮 context 仍是 raw-only。
+将 `config.json` 的 `runtime.recapGrid` 内 `routeManifestPath`、`agentControlProfileFiles` 和 `currentAgentControlProfileId` 对应到上述 route/profile 输出。profile 是启动必需的 bootstrap admission；existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent 仍会调用其 Completion connection。普通 `GetSessionAsync()` 不会 repair 已有 repository。对完全不存在的 new session，staging bootstrap 会一并建立 Store、该 Character 的 asset、empty-Timeline full recipe 和 active recipe；整个过程仍不会读取 route、创建 Completion client 或调用 provider。因为还没有历史行，首轮 context 仍是 raw-only。
 
-对已有 raw-only/partial session 的完整启用，必须停服、备份、先做 strict read-only audit，再使用专用 bounded admission 走 `init`、受限 `timeline sync`、`control provision-asset`、compose/put recipe、有界 candidate build 与 `control promote`。`build` 才是 provider effect，direct `activate` 不能取代 promotion；未知结果绝不自动重试。完整、按当前 CLI 参数编写的流程见[已有 SessionJournal 的 RecapGrid 显式升级](recap-grid-existing-session-upgrade.md)。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name` 和 `--player-name`。scaffold 不会创建 provider、Timeline、Control 或 Store，Galatea 的 route manifest 读取允许上述 JSON 格式化；其他持久产物仍使用各自的 canonical 格式。
+对已有 raw-only/partial session 的完整启用，必须停服、备份、先做 strict read-only audit，再使用专用 bounded admission 走 `init`、受限 `timeline sync`、`control provision-asset`、compose/put recipe、有界 candidate build 与 `control promote`。`build` 才是 provider effect，direct `activate` 不能取代 promotion；未知结果绝不自动重试。完整、按当前 CLI 参数编写的流程见[已有 SessionJournal 的 RecapGrid 显式升级](recap-grid-existing-session-upgrade.md)。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name`。scaffold 不会创建 provider、Timeline、Control 或 Store，Galatea 的 route manifest 读取允许上述 JSON 格式化；其他持久产物仍使用各自的 canonical 格式。
 
-该 asset 包含 `world-understanding` 与 `autobiography` 两列。Host 会在 fresh admission 前验证 active recipe 是否精确匹配该 user 的两个名字；不匹配时以 `character-asset-mismatch` fail closed。CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
+该 asset 包含 `world-understanding` 与 `autobiography` 两列。Host 会在 fresh admission 前验证 active recipe 是否精确匹配该角色的新语义资产定义；不匹配时以 `character-asset-mismatch` fail closed。CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
+
+## 升级边界
+
+V9 的 users 配置不能直接由 V10 启动读取。应停服、备份，在明确的离线迁移中拆分 Character/Player 并保留原
+Character ID、状态路径与旧调用证据；配置版本升级不等于 SQLite、prompt 资产和未完成工作的迁移已完成。
+当前集成与实例迁移状态见[实施工作单](player-character-implementation-work-order.md)，本页不宣告任何真实实例已迁移。

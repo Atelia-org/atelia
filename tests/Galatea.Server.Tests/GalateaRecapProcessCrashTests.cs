@@ -22,7 +22,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
 
     [Fact]
-    public async Task NonemptyRecap_HardKill_ReplaysFrozenRequest_ThenFreshTurnAdvancesRecap() {
+    public async Task NonemptyRecap_HardKill_RecoversSemanticPlan_ThenFreshTurnAdvancesRecap() {
         await using var provider = await GalateaLabRecapResponsesServer.StartAsync();
         var seedFactory = new GalateaRecapFixture.Factory(generation: 1, expectedMainCalls: 2);
         await using var lab = GalateaRecapFixture.CreateLab("recap-process-crash", seedFactory,
@@ -43,7 +43,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
                          lab.RootDirectory, configPath)) {
             using HttpClient http = first.CreateClient();
             await LoginAsync(http);
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns",
+            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
                 new ChatStreamRequest(GalateaLabRecapResponsesServer.CrashMessage));
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             // Observation and Action seal separate rows in this target-1
@@ -78,12 +78,12 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
             using HttpClient http = recovery.CreateClient();
             await LoginAsync(http);
             CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
-                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/chat/turns/current"));
+                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
             Assert.Equal("recovery-required", current.Status);
             Assert.True(current.RestartRequired);
             Assert.Equal(EventAddressTextCodec.Format(startedHead), current.RecoveryHead);
             provider.AssertHeld();
-            using (HttpResponseMessage refused = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+            using (HttpResponseMessage refused = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
                        new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead)))) {
                 Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
                 using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
@@ -92,7 +92,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
             }
             provider.AssertHeld();
             provider.AuthorizeRecovery();
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
                 new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead), RestartUncertainCompletion: true));
             await WaitForTurnAsync(http, accepted);
             provider.AssertRecovered();
@@ -106,8 +106,12 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         Assert.Equal(frozen.SourcePreparedAddress, recovered.SourcePreparedAddress);
         Assert.Equal(frozen.RawEndInclusive, recovered.RawEndInclusive);
         Assert.Equal(frozen.CanonicalBytes, recovered.CanonicalBytes);
-        Assert.Equal(frozen.Manifest.Commitment, recovered.Manifest.Commitment);
-        Assert.True(frozen.Manifest.Plan.ExactContextInputs.SequenceEqual(recovered.Manifest.Plan.ExactContextInputs));
+        Assert.True(frozen.Manifest.Plan.SemanticContributions.SequenceEqual(recovered.Manifest.Plan.SemanticContributions));
+        IReadOnlyList<SessionRequestCommitment> attempts = GalateaRecapFixture.ReadAttemptCommitments(
+            lab.SessionDirectory, frozen.SourcePreparedAddress!.Value);
+        Assert.Equal(2, attempts.Count);
+        Assert.All(attempts, commitment => Assert.Equal(
+            SessionRequestCanonicalizer.CreateCommitment(recovered.Request), commitment));
         Assert.Equal(frozenDerived, ReadDerivedIdentity(lab.SessionDirectory, generation: 3));
         using (var engine = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
             Assert.Equal(SessionExecutionPhase.Idle, engine.InspectExecutionBoundary().Phase);
@@ -128,11 +132,11 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
             using HttpClient http = fresh.CreateClient();
             await LoginAsync(http);
             CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
-                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/chat/turns/current"));
+                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
             Assert.Equal("idle", current.Status);
             provider.AssertRecovered();
             provider.AuthorizeFresh();
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns",
+            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
                 new ChatStreamRequest(GalateaLabRecapResponsesServer.FreshMessage));
             await WaitForTurnAsync(http, accepted);
             provider.AssertComplete();
@@ -149,7 +153,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
             AssertCounts(ReadAudit(engine), observations: 4, prepared: 4, started: 5, actions: 4);
             SessionCompletedTurnProjection latest = engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[0];
             Assert.Equal(GalateaLabRecapResponsesServer.FreshAnswer, latest.TerminalAction.Message.GetFlattenedText());
-            Assert.Contains(GalateaLabRecapResponsesServer.FreshMessage, latest.ObservationContent, StringComparison.Ordinal);
+            Assert.Contains(GalateaLabRecapResponsesServer.FreshMessage, GalateaRecapFixture.ReadPlayerText(latest.ObservationContent), StringComparison.Ordinal);
             AssertNoRawMarkers(engine, expectedTurns: 4);
         }
         Assert.Equal(configDigest, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(configPath))));
@@ -182,7 +186,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         IReadOnlyList<SessionCompletedTurnProjection> turns = engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
         Assert.Equal(expectedTurns, turns.Count);
         foreach (SessionCompletedTurnProjection turn in turns) {
-            foreach (string text in new[] { turn.ObservationContent, turn.TerminalAction.Message.GetFlattenedText() }) {
+            foreach (string text in new[] { System.Text.Encoding.UTF8.GetString(turn.ObservationContent.ToUtf8Json()), turn.TerminalAction.Message.GetFlattenedText() }) {
                 Assert.DoesNotContain("GALATEA_LAB_WORLD_RECAP_V", text, StringComparison.Ordinal);
                 Assert.DoesNotContain("GALATEA_LAB_AUTOBIOGRAPHY_RECAP_V", text, StringComparison.Ordinal);
             }
@@ -211,12 +215,12 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
     private static async Task WaitForTurnAsync(HttpClient http, HttpResponseMessage accepted) {
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         var turn = Assert.IsType<StartTurnResponseDto>(await accepted.Content.ReadFromJsonAsync<StartTurnResponseDto>());
-        using HttpResponseMessage stream = await http.GetAsync($"/api/v1/chat/turns/{turn.TurnId}/events");
+        using HttpResponseMessage stream = await http.GetAsync($"/api/v1/characters/alice/chat/turns/{turn.TurnId}/events");
         Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
         using var deadline = new CancellationTokenSource(Deadline);
         while (true) {
             CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
-                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/chat/turns/current", deadline.Token));
+                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current", deadline.Token));
             if (current.Status != "running") { Assert.Equal("idle", current.Status); return; }
             await Task.Delay(TimeSpan.FromMilliseconds(10), deadline.Token);
         }

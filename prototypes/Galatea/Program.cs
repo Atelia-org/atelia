@@ -13,6 +13,16 @@ using Atelia.SessionJournal;
 const string CookieScheme = "GalateaCookie";
 const string DefaultConfigPath = ".atelia/galatea/config.json";
 
+if (GalateaConfigV9Upgrade.IsInvocation(args)) {
+    Environment.ExitCode = GalateaConfigV9Upgrade.Run(args, Console.Out, Console.Error);
+    return;
+}
+
+if (GalateaCharacterMemoryStoreUpgrade.IsInvocation(args)) {
+    Environment.ExitCode = GalateaCharacterMemoryStoreUpgrade.Run(args, Console.Out, Console.Error);
+    return;
+}
+
 if (GalateaDelegationStoreUpgrade.IsInvocation(args)) {
     Environment.ExitCode = GalateaDelegationStoreUpgrade.Run(args, Console.Out, Console.Error);
     return;
@@ -78,7 +88,15 @@ builder.Services.AddAuthentication(CookieScheme)
     .AddCookie(
     CookieScheme,
     options => {
-        options.Cookie.Name = "family_chat_auth";
+        options.Cookie.Name = "galatea_player_auth";
+        options.Events.OnValidatePrincipal = context => {
+            string? playerId = context.Principal?.FindFirstValue(GalateaClaimTypes.PlayerId);
+            var host = context.HttpContext.RequestServices.GetRequiredService<GalateaHostService>();
+            if (playerId is null || !host.TryGetPlayer(playerId, out _)) {
+                context.RejectPrincipal();
+            }
+            return Task.CompletedTask;
+        };
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Lax;
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
@@ -140,6 +158,21 @@ app.Use(async (context, next) => {
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.Use(async (context, next) => {
+    if (context.Request.RouteValues.ContainsKey("characterId")) {
+        if (!GalateaHttpV1.TryReadCharacterRouteId(context, out string characterId)
+            || !eagerHost.TryGetCharacter(characterId, out _)) {
+            await Results.NotFound(new ApiErrorDto("character-not-found", "The target character is not configured."))
+                .ExecuteAsync(context);
+            return;
+        }
+        // Resolve before Minimal API binds its arguments; no handler infers a
+        // Character from the authenticated Player or a partially decoded ID.
+        context.Request.RouteValues["characterId"] = characterId;
+        context.Response.Headers["Galatea-Character-Id"] = Uri.EscapeDataString(characterId);
+    }
+    await next(context);
+});
 app.Use(async (context, next) => {
     if (config.MaintenanceMode
         && GalateaHttpV1.IsMaintenanceWrite(context)) {
@@ -227,10 +260,10 @@ app.MapPost(
     "/login",
     async (HttpContext httpContext, GalateaHostService hostService) => {
         var form = await httpContext.Request.ReadFormAsync(httpContext.RequestAborted);
-        string userId = form["userId"].ToString();
+        string playerId = form["playerId"].ToString();
         string password = form["password"].ToString();
 
-        if (!hostService.TryGetUser(userId, out var user) || !hostService.ValidatePassword(user, password)) {
+        if (!hostService.TryGetPlayer(playerId, out var player) || !hostService.ValidatePassword(player, password)) {
             return Results.Content(
                 GalateaHtml.RenderLoginPage(invalidCredentials: true, assetVersion),
                 "text/html; charset=utf-8",
@@ -240,8 +273,8 @@ app.MapPost(
         }
 
         var claims = new[] {
-            new Claim(GalateaClaimTypes.UserId, user.UserId),
-            new Claim(ClaimTypes.Name, user.UserId),
+            new Claim(GalateaClaimTypes.PlayerId, player.PlayerId),
+            new Claim(ClaimTypes.Name, player.Name.Value),
         };
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, CookieScheme));
 
@@ -267,84 +300,80 @@ app.MapPost(
 
 app.MapGet(
     "/",
-    (ClaimsPrincipal user, GalateaHostService hostService) => {
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
-
+    (HttpContext httpContext, ClaimsPrincipal user, GalateaHostService hostService) => {
+        httpContext.Response.Headers.CacheControl = "no-store";
+        GalateaPlayerConfig player = RequirePlayer(user, hostService);
         return Results.Content(
-            GalateaHtml.RenderAppPage(
-                configUser,
-                hostService.Connections,
-                config.MaintenanceMode,
-                assetVersion
-            ),
+            GalateaHtml.RenderCharacterDirectory(player, config.Characters, assetVersion),
+            "text/html; charset=utf-8"
+        );
+    }
+).RequireAuthorization();
+
+app.MapGet(
+    "/characters/{characterId}",
+    (HttpContext httpContext, string characterId, ClaimsPrincipal user, GalateaHostService hostService) => {
+        httpContext.Response.Headers.CacheControl = "no-store";
+        GalateaPlayerConfig player = RequirePlayer(user, hostService);
+        if (!hostService.TryGetCharacter(characterId, out var character)) {
+            return Results.NotFound();
+        }
+        return Results.Content(
+            GalateaHtml.RenderAppPage(character, player, hostService.Connections,
+                config.MaintenanceMode, assetVersion),
             "text/html; charset=utf-8"
         );
     }
 ).RequireAuthorization();
 
 var api = app.MapGroup("/api/v1").RequireAuthorization();
+api.AddEndpointFilter(async (context, next) => {
+    context.HttpContext.Response.Headers.CacheControl = "no-store";
+    return await next(context);
+});
+api.MapGet("/me", (ClaimsPrincipal user, GalateaHostService hostService) => {
+    GalateaPlayerConfig player = RequirePlayer(user, hostService);
+    return Results.Ok(new GalateaMeDto(player.PlayerId, player.Name.Value, config.MaintenanceMode));
+});
+api.MapGet("/characters", () => Results.Ok(config.Characters.Select(character => new {
+    characterId = character.CharacterId,
+    name = character.CharacterName.Value
+})));
 
-api.MapGet(
-    "/me",
-    (ClaimsPrincipal user, GalateaHostService hostService) => {
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        if (!hostService.TryGetUser(userId, out var configUser)) {
-            return Results.Json(
-                new ApiErrorDto(
-                    "authentication-user-unknown",
-                    "The authenticated user is no longer configured."
-                ),
-                statusCode: StatusCodes.Status401Unauthorized
-            );
-        }
+// Authentication identifies the visitor; this route identifies the owner of
+// every read, writer lock, recovery action, and stream below.
+var characterApi = api.MapGroup("/characters/{characterId}");
 
-        return Results.Ok(new GalateaMeDto(
-            configUser.UserId,
-            config.MaintenanceMode
-        ));
-    }
-);
-
-api.MapGet(
+characterApi.MapGet(
     "/recent-turns",
-    async (ClaimsPrincipal user, GalateaHostService hostService, CancellationToken ct) => {
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        var session = await hostService.GetSessionAsync(userId, ct);
+    async (string characterId, GalateaHostService hostService, CancellationToken ct) => {
+        var session = await hostService.GetSessionAsync(characterId, ct);
         var response = await hostService.GetRecentTurnsAsync(session, ct);
         DebugUtil.Info(
             "Galatea.Api",
-            $"GET /api/v1/recent-turns user={userId}, items={response.Turns.Count}, rewindEligible={response.RewindLatestToken is not null}"
+            $"GET /api/v1/characters/{characterId}/recent-turns character={characterId}, items={response.Turns.Count}, rewindEligible={response.RewindLatestToken is not null}"
         );
         return Results.Ok(response);
     }
 );
 
-api.MapGet(
+characterApi.MapGet(
     "/recap-cadence-progress",
     async (
-        ClaimsPrincipal user,
+        string characterId,
         GalateaHostService hostService,
         CancellationToken ct
     ) => {
-        string userId = user.FindFirstValue(
-            GalateaClaimTypes.UserId
-        ) ?? throw new InvalidOperationException(
-            "Authenticated principal is missing user id."
-        );
-        UserSessionHost session = await hostService.GetSessionAsync(
-            userId,
+        CharacterSessionHost session = await hostService.GetSessionAsync(
+            characterId,
             ct
         );
         RecapCadenceProgressSnapshotDto response = await hostService
             .GetRecapCadenceProgressAsync(session, ct);
         DebugUtil.Info(
             "Galatea.Api",
-            "GET /api/v1/recap-cadence-progress "
-                + $"user={userId}, freshness={response.Freshness}, "
+            $"GET /api/v1/characters/{characterId}/recap-cadence-progress "
+                + $"character={characterId}, freshness={response.Freshness}, "
                 + $"state={response.State}, "
                 + $"head={response.ObservedRawHead ?? "<none>"}"
         );
@@ -352,29 +381,26 @@ api.MapGet(
     }
 );
 
-api.MapGet(
+characterApi.MapGet(
     "/mailbox/status",
     (
         HttpContext httpContext,
-        ClaimsPrincipal user,
+        string characterId,
         GalateaHostService hostService
     ) => {
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException(
-                "Authenticated principal is missing user id."
-            );
         httpContext.Response.Headers.CacheControl = "no-store";
         GalateaMailboxStatusDto response = hostService.ReadMailboxStatus(
-            userId
+            characterId
         );
         return Results.Ok(response);
     }
 );
 
-api.MapPost(
+characterApi.MapPost(
     "/chat/turns",
     async (
         HttpContext httpContext,
+        string characterId,
         ClaimsPrincipal user,
         GalateaHostService hostService,
         IHostApplicationLifetime applicationLifetime,
@@ -400,9 +426,7 @@ api.MapPost(
             ));
         }
 
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
+        var session = await hostService.GetSessionAsync(characterId, httpContext.RequestAborted);
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
         GalateaLiveTurn? liveTurn = null;
@@ -451,7 +475,7 @@ api.MapPost(
                 );
             }
             if (!hostService.TryGetConnection(
-                    session.User,
+                    session.Character,
                     request.ConnectionId,
                     out CompletionConnectionConfig connection
                 )) {
@@ -474,9 +498,10 @@ api.MapPost(
             liveTurn = hostService.StartTurn(
                 session,
                 effectiveMessage,
-                new GalateaTurnOptions(connection.Id)
+                new GalateaTurnOptions(connection.Id),
+                PlayerSender(user, hostService)
             );
-            DebugUtil.Info("Galatea.Api", $"POST /api/v1/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
+            DebugUtil.Info("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns character={characterId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
             IResult result = BuildAcceptedTurnResult(liveTurn);
             _ = turnRunner.Start(session, liveTurn);
             writerOwnershipTransferred = true;
@@ -534,11 +559,11 @@ api.MapPost(
     GalateaHttpV1.MaintenanceWrite
 );
 
-api.MapPost(
+characterApi.MapPost(
     "/chat/turns/resume",
     async (
         HttpContext httpContext,
-        ClaimsPrincipal user,
+        string characterId,
         GalateaHostService hostService,
         IHostApplicationLifetime applicationLifetime,
         GalateaAcceptedTurnRunner turnRunner
@@ -563,13 +588,8 @@ api.MapPost(
                 connectionError
             ));
         }
-        string userId = user.FindFirstValue(
-            GalateaClaimTypes.UserId
-        ) ?? throw new InvalidOperationException(
-            "Authenticated principal is missing user id."
-        );
         var session = await hostService.GetSessionAsync(
-            userId,
+            characterId,
             httpContext.RequestAborted
         );
         if (!session.TurnLock.Wait(0)) {
@@ -629,7 +649,7 @@ api.MapPost(
             if (recovery is SessionRuntimeRecoveryRequirements
                     .NewRequestRequired) {
                 if (!hostService.TryGetConnection(
-                        session.User,
+                        session.Character,
                         request.ConnectionId,
                         out CompletionConnectionConfig connection
                     )) {
@@ -647,7 +667,7 @@ api.MapPost(
                 // then apply Galatea's current-selection allowlist without
                 // constructing a client, and only later open Online/client.
                 connectionId = request.ConnectionId
-                    ?? session.User.DefaultConnectionId;
+                    ?? session.Character.DefaultConnectionId;
             }
             else if (recovery is SessionRuntimeRecoveryRequirements
                          .FrozenCompletionRequired frozen) {
@@ -695,13 +715,11 @@ api.MapPost(
     GalateaHttpV1.MaintenanceWrite
 );
 
-api.MapPost(
+characterApi.MapPost(
     "/mailbox/ready-turn",
-    async (HttpContext httpContext, ClaimsPrincipal user, GalateaAutomaticTurnCoordinator coordinator) => {
+    async (HttpContext httpContext, string characterId, GalateaAutomaticTurnCoordinator coordinator) => {
         _ = await GalateaHttpV1.ReadJsonBodyAsync<ReadyReplyTurnRequest>(httpContext);
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        GalateaAutomaticTurnResult result = await coordinator.TryPulseAsync(userId, httpContext.RequestAborted);
+        GalateaAutomaticTurnResult result = await coordinator.TryPulseAsync(characterId, httpContext.RequestAborted);
         return result switch {
             GalateaAutomaticTurnResult.Started started => BuildAcceptedTurnResult(started.Turn, started.Origin),
             GalateaAutomaticTurnResult.Status status => Results.Ok(new LoopPulseStatusDto(
@@ -711,7 +729,7 @@ api.MapPost(
                 status.Value.Code
             )),
             GalateaAutomaticTurnResult.Busy busy => Results.Json(
-                new TurnBusyErrorDto("turn-busy", "该账号当前正在生成，请稍后。", busy.TurnId),
+                new TurnBusyErrorDto("turn-busy", "该角色当前正在生成，请稍后。", busy.TurnId),
                 statusCode: StatusCodes.Status409Conflict
             ),
             GalateaAutomaticTurnResult.Blocked blocked => Results.Json(
@@ -723,27 +741,23 @@ api.MapPost(
     }
 ).WithMetadata(GalateaHttpV1.JsonBody, GalateaHttpV1.MaintenanceWrite);
 
-api.MapGet(
+characterApi.MapGet(
     "/agent/status",
-    (HttpContext httpContext, ClaimsPrincipal user, GalateaAutomaticTurnCoordinator coordinator) => {
+    (HttpContext httpContext, string characterId, GalateaAutomaticTurnCoordinator coordinator) => {
         httpContext.Response.Headers.CacheControl = "no-store";
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        return Results.Ok(coordinator.ReadStatus(userId));
+        return Results.Ok(coordinator.ReadStatus(characterId));
     }
 );
 
-api.MapPost(
+characterApi.MapPost(
     "/agent/retry-admission",
-    async (HttpContext httpContext, ClaimsPrincipal user, GalateaAutomaticTurnCoordinator coordinator) => {
+    async (HttpContext httpContext, string characterId, GalateaAutomaticTurnCoordinator coordinator) => {
         _ = await GalateaHttpV1.ReadJsonBodyAsync<RetryAdmissionRequest>(httpContext);
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        GalateaAutomaticTurnResult result = await coordinator.RetryAdmissionAsync(userId, httpContext.RequestAborted);
+        GalateaAutomaticTurnResult result = await coordinator.RetryAdmissionAsync(characterId, httpContext.RequestAborted);
         return result switch {
             GalateaAutomaticTurnResult.Status status => Results.Ok(status.Value),
             GalateaAutomaticTurnResult.Busy busy => Results.Json(
-                new TurnBusyErrorDto("turn-busy", "该账号正在处理其他请求，请稍后重试。", busy.TurnId),
+                new TurnBusyErrorDto("turn-busy", "该角色正在处理其他请求，请稍后重试。", busy.TurnId),
                 statusCode: StatusCodes.Status409Conflict
             ),
             GalateaAutomaticTurnResult.Blocked blocked => Results.Json(
@@ -755,10 +769,11 @@ api.MapPost(
     }
 ).WithMetadata(GalateaHttpV1.JsonBody, GalateaHttpV1.MaintenanceWrite);
 
-api.MapPost(
+characterApi.MapPost(
     "/mailbox/inbound",
     async (
         HttpContext httpContext,
+        string characterId,
         ClaimsPrincipal user,
         GalateaHostService hostService,
         IHostApplicationLifetime applicationLifetime,
@@ -792,12 +807,8 @@ api.MapPost(
             ));
         }
 
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException(
-                "Authenticated principal is missing user id."
-            );
-        UserSessionHost session = await hostService.GetSessionAsync(
-            userId,
+        CharacterSessionHost session = await hostService.GetSessionAsync(
+            characterId,
             httpContext.RequestAborted
         );
         if (!session.TurnLock.Wait(0)) {
@@ -836,7 +847,7 @@ api.MapPost(
                 );
             }
             if (!hostService.TryGetConnection(
-                    session.User,
+                    session.Character,
                     request.ConnectionId,
                     out CompletionConnectionConfig connection)) {
                 return Results.BadRequest(new ApiErrorDto(
@@ -845,7 +856,7 @@ api.MapPost(
                 ));
             }
             MailboxMessage message = MailboxMessage.CreateInbound(
-                session.User.CharacterName,
+                session.Character.CharacterName,
                 request.From,
                 request.Subject,
                 request.Body
@@ -858,7 +869,8 @@ api.MapPost(
             liveTurn = hostService.StartInboundMailTurn(
                 session,
                 message,
-                new GalateaTurnOptions(connection.Id)
+                new GalateaTurnOptions(connection.Id),
+                injectedBy: PlayerSender(user, hostService)
             );
             IResult result = Results.Json(
                 new InboundMailboxAcceptedDto(
@@ -894,11 +906,11 @@ api.MapPost(
     GalateaHttpV1.MaintenanceWrite
 );
 
-api.MapPost(
+characterApi.MapPost(
     "/chat/turns/pop-latest",
     async (
         HttpContext httpContext,
-        ClaimsPrincipal user,
+        string characterId,
         GalateaHostService hostService
     ) => {
         PopLatestTurnRequestDto request = await GalateaHttpV1
@@ -912,9 +924,7 @@ api.MapPost(
                 "rewindLatestToken格式无效。"
             ));
         }
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
+        var session = await hostService.GetSessionAsync(characterId, httpContext.RequestAborted);
 
         // Recent/cadence reads and automatic admission checks also own TurnLock.
         // Let those short operations finish instead of rejecting an idle Undo.
@@ -940,14 +950,14 @@ api.MapPost(
                     httpContext.RequestAborted
                 );
             if (prepared is null) {
-                DebugUtil.Warning("Galatea.Api", $"POST /api/v1/chat/turns/pop-latest user={userId} returned null, head={session.Engine.ReadCurrentHead()}");
+                DebugUtil.Warning("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns/pop-latest character={characterId} returned null, head={session.Engine.ReadCurrentHead()}");
                 return Results.Json(new ApiErrorDto(
                     "rewind-not-available",
                     "当前没有可取出的最近一轮，或会话边界已变化。"
                 ), statusCode: StatusCodes.Status409Conflict);
             }
 
-            DebugUtil.Info("Galatea.Api", $"POST /api/v1/chat/turns/pop-latest user={userId} succeeded, head={session.Engine.ReadCurrentHead()}");
+            DebugUtil.Info("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns/pop-latest character={characterId} succeeded, head={session.Engine.ReadCurrentHead()}");
             return Results.Bytes(
                 prepared.ReceiptUtf8Bytes,
                 "application/json"
@@ -962,33 +972,29 @@ api.MapPost(
     GalateaHttpV1.MaintenanceWrite
 );
 
-api.MapGet(
+characterApi.MapGet(
     "/chat/turns/current",
-    async (ClaimsPrincipal user, GalateaHostService hostService, CancellationToken ct) => {
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        var session = await hostService.GetSessionAsync(userId, ct);
+    async (string characterId, GalateaHostService hostService, CancellationToken ct) => {
+        var session = await hostService.GetSessionAsync(characterId, ct);
         var currentTurn = await hostService.GetCurrentTurnAsync(
             session,
             ct
         );
-        DebugUtil.Info("Galatea.Api", $"GET /api/v1/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}");
+        DebugUtil.Info("Galatea.Api", $"GET /api/v1/characters/{characterId}/chat/turns/current character={characterId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}");
         return Results.Ok(currentTurn);
     }
 );
 
-api.MapPost(
+characterApi.MapPost(
     "/chat/turns/{turnId}/stop",
-    async (HttpContext httpContext, ClaimsPrincipal user, GalateaHostService hostService, string turnId) => {
+    async (HttpContext httpContext, string characterId, GalateaHostService hostService, string turnId) => {
         if (!GalateaHttpV1.IsCanonicalTurnId(turnId)) {
             return Results.BadRequest(new ApiErrorDto(
                 "invalid-turn-id",
                 "turnId格式无效。"
             ));
         }
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
+        var session = await hostService.GetSessionAsync(characterId, httpContext.RequestAborted);
         if (!hostService.RequestStop(session, turnId)) {
             return Results.NotFound(new ApiErrorDto(
                 "turn-not-found",
@@ -996,23 +1002,21 @@ api.MapPost(
             ));
         }
 
-        DebugUtil.Warning("Galatea.Api", $"POST /api/v1/chat/turns/{turnId}/stop user={userId}");
+        DebugUtil.Warning("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns/{turnId}/stop character={characterId}");
         return Results.NoContent();
     }
 ).WithMetadata(GalateaHttpV1.MaintenanceWrite);
 
-api.MapGet(
+characterApi.MapGet(
     "/chat/turns/{turnId}/events",
-    async (HttpContext httpContext, ClaimsPrincipal user, GalateaHostService hostService, string turnId) => {
+    async (HttpContext httpContext, string characterId, GalateaHostService hostService, string turnId) => {
         if (!GalateaHttpV1.IsCanonicalTurnId(turnId)) {
             return Results.BadRequest(new ApiErrorDto(
                 "invalid-turn-id",
                 "turnId格式无效。"
             ));
         }
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
+        var session = await hostService.GetSessionAsync(characterId, httpContext.RequestAborted);
         var liveTurn = hostService.FindTurn(session, turnId);
         if (liveTurn is null) {
             return Results.NotFound(new ApiErrorDto(
@@ -1057,16 +1061,29 @@ api.MapGet(
 
 app.Run();
 
-static IResult BuildTurnBusyConflict(GalateaHostService hostService, UserSessionHost session) {
+static GalateaPlayerConfig RequirePlayer(ClaimsPrincipal principal, GalateaHostService host) {
+    string? playerId = principal.FindFirstValue(GalateaClaimTypes.PlayerId);
+    if (playerId is null || !host.TryGetPlayer(playerId, out var player)) {
+        throw new InvalidOperationException("Authenticated principal does not identify a configured Player.");
+    }
+    return player;
+}
+
+static GalateaSenderSnapshot PlayerSender(ClaimsPrincipal principal, GalateaHostService host) {
+    GalateaPlayerConfig player = RequirePlayer(principal, host);
+    return GalateaSenderSnapshot.Player(player);
+}
+
+static IResult BuildTurnBusyConflict(GalateaHostService hostService, CharacterSessionHost session) {
     var runningTurn = hostService.BuildLiveCurrentTurn(session);
     DebugUtil.Warning(
         "Galatea.Api",
-        $"Turn busy conflict: user={session.User.UserId}, runningTurn={runningTurn.TurnId ?? "<none>"}"
+        $"Turn busy conflict: character={session.Character.CharacterId}, runningTurn={runningTurn.TurnId ?? "<none>"}"
     );
     return Results.Json(
         new TurnBusyErrorDto(
             "turn-busy",
-            "该账号当前正在生成，请稍后。",
+            "该角色当前正在生成，请稍后。",
             runningTurn.TurnId
         ),
         statusCode: StatusCodes.Status409Conflict
@@ -1138,11 +1155,11 @@ static (int StatusCode, ApiErrorDto Error) MapApiException(
         StatusCodes.Status503ServiceUnavailable,
         new ApiErrorDto(unavailable.Code, unavailable.Message)
     ),
-    GalateaDelegationUserUnavailableException => (
+    GalateaDelegationCharacterUnavailableException => (
         StatusCodes.Status503ServiceUnavailable,
         new ApiErrorDto(
             "delegation-unavailable",
-            "Durable delegation is unavailable for this user."
+            "Durable delegation is unavailable for this character."
         )
     ),
     GalateaTurnException turn when turn.FailureReason is { } reason

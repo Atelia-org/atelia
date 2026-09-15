@@ -23,7 +23,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await using var host = GalateaTestHost.Create(
             completionFactory,
             normalizer,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         CompletionConnectionConfig connection = GetConnection(host);
         EventAddress failedHead = await CreateFailedBoundaryAsync(
@@ -34,7 +34,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -44,7 +44,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/mailbox/ready-turn",
+            "/api/v1/characters/alice/mailbox/ready-turn",
             new ReadyReplyTurnRequest()
         );
 
@@ -86,7 +86,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "must not be accepted",
                 ConnectionId: "test"
@@ -112,7 +112,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -144,7 +144,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         CurrentTurnDto? before = await client.GetFromJsonAsync<
             CurrentTurnDto
-        >("/api/v1/chat/turns/current");
+        >("/api/v1/characters/alice/chat/turns/current");
         Assert.NotNull(before);
         Assert.Equal("idle", before!.Status);
         Assert.Null(before.TurnId);
@@ -153,7 +153,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Null(before.RecoveryHead);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "continue after failure",
                 ConnectionId: "test"
@@ -166,7 +166,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -187,10 +187,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.NotEqual(failedHead, session.Engine.ReadCurrentHead());
         SessionCompletedTurnProjection completed =
             session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[^1];
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            completed.ObservationContent,
-            out PlayerTurnObservation observation
-        ));
+        Assert.True(completed.ObservationContent.IsStructured);
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(completed.ObservationContent);
         Assert.Equal("continue after failure", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);
     }
@@ -221,7 +219,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -234,7 +232,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "must not abandon failed turn",
-            new GalateaTurnOptions(hidden.Id)
+            new GalateaTurnOptions(hidden.Id),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             GalateaTurnException failure = await Assert.ThrowsAsync<
@@ -293,7 +292,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -315,7 +314,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         CurrentTurnDto? settled = await client.GetFromJsonAsync<
             CurrentTurnDto
-        >("/api/v1/chat/turns/current");
+        >("/api/v1/characters/alice/chat/turns/current");
         Assert.NotNull(settled);
         Assert.Equal("idle", settled!.Status);
         Assert.False(settled.RestartRequired);
@@ -364,7 +363,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -386,7 +385,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         CurrentTurnDto? current = await client.GetFromJsonAsync<
             CurrentTurnDto
-        >("/api/v1/chat/turns/current");
+        >("/api/v1/characters/alice/chat/turns/current");
         Assert.NotNull(current);
         Assert.Equal("recovery-required", current!.Status);
         Assert.True(current.RestartRequired);
@@ -413,7 +412,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(failedHead),
                 ConnectionId: null,
@@ -440,7 +439,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -469,7 +468,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -492,7 +491,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         Assert.Equal(
             GalateaUserMessageEnvelope.Wrap("already normalized"),
-            completed.ObservationContent
+            completed.ObservationContent.TextValue
         );
         Assert.Equal(
             "resumed answer",
@@ -526,7 +525,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(pendingHead),
                 hidden.Id
@@ -537,7 +536,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(0, completionFactory.CreateCallCount);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -572,7 +571,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -637,7 +636,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -697,7 +696,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -709,7 +708,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         Assert.Equal("completed", liveTurn.Status);
         Assert.False(service.TryGetConnection(
-            session.User,
+            session.Character,
             historical.Id,
             out _
         ));
@@ -741,7 +740,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(startedHead),
                 ConnectionId: null,
@@ -768,14 +767,14 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
         Assert.Equal(startedHead, session.Engine.ReadCurrentHead());
         CurrentTurnDto? current = await client
             .GetFromJsonAsync<CurrentTurnDto>(
-                "/api/v1/chat/turns/current"
+                "/api/v1/characters/alice/chat/turns/current"
             );
         Assert.NotNull(current);
         Assert.Equal("recovery-required", current!.Status);
@@ -809,7 +808,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(startedHead),
                 ConnectionId: null,
@@ -823,7 +822,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -851,7 +850,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     private static string GetSessionPath(GalateaTestHost host) =>
         host.Factory.Services
             .GetRequiredService<GalateaConfig>()
-            .Users.Single().SessionDir;
+            .Characters.Single().SessionDir;
 
     private static CompletionConnectionConfig GetConnection(
         GalateaTestHost host
@@ -888,7 +887,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                     InReplyToMessageId: null,
                     EvidenceQuote: "seeded"
                 )]
-            )
+            , GalateaDelegationTestInputs.Sender(store, "Galatea"))
         );
         GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
         GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
@@ -914,7 +913,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             mail.DispatchId,
             mail.Revision,
             snapshot.Route.Revision
-        );
+        , GalateaDelegationTestInputs.Commitment(store, mail.DispatchId));
         _ = store.RecordCompletedMail(
             started.DispatchId,
             started.Revision,
@@ -1046,7 +1045,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                 dispatch.Kind,
                 dispatch.ConnectionFingerprint
             ),
-            ContextCandidateSource: new EmptyLineageCandidateSource()
+            ContextCandidateSource: new EmptyLineageCandidateSource(),
+            InputProjector: GalateaInputProjector.Instance
         );
     }
 
@@ -1056,7 +1056,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         string? connectionId
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
+            "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(expectedHead),
                 connectionId
@@ -1073,7 +1073,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         string message
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(message, ConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);

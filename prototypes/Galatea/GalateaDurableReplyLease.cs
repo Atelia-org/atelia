@@ -103,10 +103,10 @@ internal sealed class GalateaDurableReplyLease {
     internal GalateaReplyLeaseSnapshot BindObservationBase(
         SessionJournalEngine engine,
         EventAddress exactBaseHead,
-        string canonicalRenderedObservation
+        SessionInputContent canonicalRenderedObservation
     ) {
         ArgumentNullException.ThrowIfNull(engine);
-        ArgumentException.ThrowIfNullOrWhiteSpace(
+        ArgumentNullException.ThrowIfNull(
             canonicalRenderedObservation
         );
         GalateaReplyLeaseSnapshot current = RequireCurrent(
@@ -229,17 +229,7 @@ internal sealed class GalateaDurableReplyLease {
                 StringComparison.Ordinal
             )
         );
-        return notice.Kind switch {
-            GalateaReplyNoticeKind.Reply =>
-                (PlayerTurnNotice)new PlayerTurnNotice.Reply(
-                    notice.Body
-                ),
-            GalateaReplyNoticeKind.DeliveryFailure =>
-                new PlayerTurnNotice.DeliveryFailure(notice.Body),
-            _ => throw new InvalidDataException(
-                "The durable reply notice kind is invalid."
-            )
-        };
+        return GalateaDurableNoticeContent.Project(notice);
     }).ToArray());
 }
 
@@ -295,7 +285,7 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
             if (reservedReceipt is not null) {
                 proposed = [.. proposed, reservedReceipt];
             }
-            if (!PlayerTurnObservationEnvelope
+            if (!GalateaObservationContent
                     .FitsEveryValidPlayerText(proposed)) {
                 break;
             }
@@ -378,7 +368,7 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
             var request = new SessionExpectedObservationTurnRequest(
                 head,
                 baseHead,
-                snapshot.RenderedObservation
+                snapshot.ObservationContent
                     ?? throw new InvalidDataException(
                         "A bound durable reply lease has no rendered Observation."
                     ),
@@ -539,13 +529,6 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
 
     private static PlayerTurnNotice ProjectReadyNotice(
         GalateaReplyNoticeSnapshot notice
-    ) => notice.Kind switch {
-        GalateaReplyNoticeKind.Reply =>
-            new PlayerTurnNotice.Reply(notice.Body),
-        GalateaReplyNoticeKind.DeliveryFailure =>
-            new PlayerTurnNotice.DeliveryFailure(notice.Body),
-        _ => throw new InvalidDataException(
-            "The durable reply notice kind is invalid."
-        )
-    };
+    ) => GalateaDurableNoticeContent.Project(notice);
+
 }

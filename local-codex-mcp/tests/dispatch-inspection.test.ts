@@ -1,3 +1,4 @@
+import { taskCommitment } from "../src/galatea/task-commitment.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ThreadItem } from "../schemas/v2/ThreadItem.js";
@@ -41,6 +42,59 @@ function sparseTurn(id: string, status: Turn["status"] = "inProgress"): Turn {
   return { ...turn(id, status, []), itemsView: "notLoaded" };
 }
 
+test("cold and live inspect the complete strict UTF-8 task using the same original commitment", () => {
+  const task = " \n你好😀\r\n";
+  const expected = {
+    taskSha256: "20cd4e3a5b4be5a82e833481e77d3b30315bab75d967ac1260c5ce5cdece9285",
+    taskUtf8Bytes: 14,
+  };
+  assert.deepEqual(taskCommitment(task), expected);
+  const items = [userMessage("d", task), agentMessage("final")];
+  const target = turn("t", "completed", items);
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  observations.observeStartResponse("thread", turn("t", "inProgress", items));
+  observations.observeTurnCompleted("thread", target);
+  assert.equal(observations.inspect("thread", "t", "d", expected)?.kind, "completed");
+  assert.equal(classifyTurnEvidence("thread", target, items, "d", expected, 100, "persistent").kind, "completed");
+  for (const wrong of [
+    taskCommitment(task.trim()),
+    { ...expected, taskUtf8Bytes: task.length },
+    { ...expected, taskSha256: "0".repeat(64) },
+  ]) {
+    assert.equal(observations.inspect("thread", "t", "d", wrong), undefined);
+    assert.deepEqual(classifyTurnEvidence("thread", target, items, "d", wrong, 100, "persistent"), {
+      kind: "ambiguous", threadId: "thread", source: "persistent", code: "DISPATCH_BODY_MISMATCH",
+    });
+  }
+});
+
+test("task commitment rejects unpaired surrogates and malformed remote user message shapes", () => {
+  for (const invalid of ["\ud800", "\udc00", "a\ud800b"]) {
+    assert.throws(() => taskCommitment(invalid), /unpaired/);
+    const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+    assert.throws(() => observations.beginStart("thread", "d", invalid), /unpaired/);
+    const expected = taskCommitment("\ufffd");
+    const items = [userMessage("d", invalid)];
+    observations.observeStartResponse("thread", turn("t", "inProgress", items));
+    assert.equal(observations.inspect("thread", "t", "d", expected), undefined);
+    assert.equal(classifyTurnEvidence("thread", turn("t", "inProgress", items), items, "d", expected, 100, "persistent").kind, "ambiguous");
+  }
+  const expected = taskCommitment("task");
+  const text = { type: "text", text: "task", text_elements: [] };
+  for (const content of [
+    [text, { type: "text", text: "extra", text_elements: [] }],
+    [{ ...text, text_elements: [{ start: 0, end: 1 }] }],
+    [text, { type: "image", url: "https://example.invalid/image" }],
+  ]) {
+    const item = { type: "userMessage", id: "u", clientId: "d", content } as ThreadItem;
+    const target = turn("t", "inProgress", [item]);
+    const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+    observations.observeStartResponse("thread", target);
+    assert.equal(observations.inspect("thread", "t", "d", expected), undefined);
+    assert.equal(classifyTurnEvidence("thread", target, [item], "d", expected, 100, "persistent").kind, "ambiguous");
+  }
+});
+
 test("exact turn evidence classifies all terminal outcomes and final bounds", () => {
   const cases = [
     [turn("t", "inProgress", []), "running"],
@@ -50,7 +104,7 @@ test("exact turn evidence classifies all terminal outcomes and final bounds", ()
   ] as const;
   for (const [target, kind] of cases) {
     const items = [userMessage("d", "task"), ...(target.status === "completed" ? [agentMessage("final")] : [])];
-    assert.equal(classifyTurnEvidence("thread", target, items, "d", "task", 100, "persistent").kind, kind);
+    assert.equal(classifyTurnEvidence("thread", target, items, "d", taskCommitment("task"), 100, "persistent").kind, kind);
   }
   for (const [final, code] of [[" ", "FINAL_BLANK"], ["\ud800", "FINAL_INVALID_UNICODE"], ["123456", "FINAL_TOO_LARGE"]] as const) {
     const value = classifyTurnEvidence(
@@ -58,7 +112,7 @@ test("exact turn evidence classifies all terminal outcomes and final bounds", ()
       turn("t", "completed", []),
       [userMessage("d", "task"), agentMessage(final)],
       "d",
-      "task",
+      taskCommitment("task"),
       5,
       "persistent",
     );
@@ -76,7 +130,7 @@ test("exact turn evidence fails closed on selector, body, and final ambiguity", 
     [[userMessage("d", "task"), agentMessage("one", "a1"), agentMessage("two", "a2")], "FINAL_AMBIGUOUS"],
   ];
   for (const [items, code] of cases) {
-    const value = classifyTurnEvidence("thread", target, items, "d", "task", 100, "persistent");
+    const value = classifyTurnEvidence("thread", target, items, "d", taskCommitment("task"), 100, "persistent");
     assert.equal(value.kind, "ambiguous");
     if (value.kind === "ambiguous") assert.equal(value.code, code);
   }
@@ -113,14 +167,14 @@ test("live observations retain terminal across late running and collect item/com
   const observations = new LiveTurnObservations({ maximumObservations: 2, maximumFinalUtf8Bytes: 100 });
   const running = turn("t", "inProgress", [userMessage("d", "task")]);
   observations.observeStartResponse("thread", running);
-  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "running");
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "running");
   observations.observeItem("thread", "t", agentMessage("final"));
   observations.observeTurnCompleted("thread", turn("t", "completed", [userMessage("d", "task")]));
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
   });
   observations.observeStartResponse("thread", running);
-  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "completed");
 });
 
 test("terminal and item notifications before an incomplete late start response still win", () => {
@@ -131,7 +185,7 @@ test("terminal and item notifications before an incomplete late start response s
   observations.observeTurnCompleted("thread", turn("t", "completed", []));
   observations.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task")]));
   observations.endStart(expectation);
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "early final",
   });
 });
@@ -141,7 +195,7 @@ test("a full exact terminal notification can establish before the start response
   const expectation = observations.beginStart("thread", "d", "task");
   const completed = turn("t", "completed", [userMessage("d", "task"), agentMessage("final")]);
   observations.observeTurnCompleted("thread", completed);
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
   });
   assert.equal(observations.observeStartResponse(
@@ -150,7 +204,7 @@ test("a full exact terminal notification can establish before the start response
     expectation,
   ), true);
   observations.endStart(expectation);
-  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "completed");
 });
 
 test("a trusted start response still must match its exact pending identity", () => {
@@ -162,7 +216,7 @@ test("a trusted start response still must match its exact pending identity", () 
     expectation,
   ), false);
   observations.endStart(expectation);
-  assert.equal(observations.inspect("thread", "wrong", "different", "different task"), undefined);
+  assert.equal(observations.inspect("thread", "wrong", "different", taskCommitment("different task")), undefined);
 });
 
 test("a correlated sparse start response establishes exact live identity without a user echo", () => {
@@ -170,18 +224,18 @@ test("a correlated sparse start response establishes exact live identity without
   const expectation = observations.beginStart("thread", "d", "task");
   observations.observeTurnStarted("thread", sparseTurn("unrelated"));
   observations.observeTurnStarted("thread", sparseTurn("t"));
-  assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
-  assert.equal(observations.inspect("thread", "unrelated", "d", "task"), undefined);
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task")), undefined);
+  assert.equal(observations.inspect("thread", "unrelated", "d", taskCommitment("task")), undefined);
   assert.equal(observations.observeStartResponse("thread", sparseTurn("t"), expectation), true);
   observations.endStart(expectation);
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "running", threadId: "thread", turnId: "t", source: "live",
   });
-  assert.equal(observations.inspect("thread", "t", "other", "task"), undefined);
-  assert.equal(observations.inspect("thread", "t", "d", "other task"), undefined);
+  assert.equal(observations.inspect("thread", "t", "other", taskCommitment("task")), undefined);
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("other task")), undefined);
   observations.observeItem("thread", "t", agentMessage("final"));
   observations.observeTurnCompleted("thread", sparseTurn("t", "completed"));
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
   });
 });
@@ -190,7 +244,7 @@ test("an uncorrelated sparse response cannot establish live identity", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
   assert.equal(observations.observeStartResponse("thread", sparseTurn("t")), true);
   observations.observeItem("thread", "t", userMessage("d", "task"));
-  assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task")), undefined);
 });
 
 test("sparse response association obeys observation capacity and replaces only the same thread", () => {
@@ -203,10 +257,10 @@ test("sparse response association obeys observation capacity and replaces only t
     const expectation = observations.beginStart(threadId, turnId, "task");
     assert.equal(observations.observeStartResponse(threadId, sparseTurn(turnId), expectation), true);
     observations.endStart(expectation);
-    assert.equal(observations.inspect(threadId, turnId, turnId, "task")?.kind, expectedKind);
+    assert.equal(observations.inspect(threadId, turnId, turnId, taskCommitment("task"))?.kind, expectedKind);
   }
-  assert.equal(observations.inspect("thread", "first", "first", "task"), undefined);
-  assert.equal(observations.inspect("other-thread", "other", "other", "task"), undefined);
+  assert.equal(observations.inspect("thread", "first", "first", taskCommitment("task")), undefined);
+  assert.equal(observations.inspect("other-thread", "other", "other", taskCommitment("task")), undefined);
 });
 
 test("a sparse response accepts an exact late user idempotently and preserves its item identity", () => {
@@ -216,9 +270,9 @@ test("a sparse response accepts an exact late user idempotently and preserves it
   observations.endStart(expectation);
   observations.observeItem("thread", "t", userMessage("d", "task"));
   observations.observeItem("thread", "t", userMessage("d", "task"));
-  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "running");
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "running");
   observations.observeItem("thread", "t", userMessage("d", "task", "second-user"));
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "ambiguous", threadId: "thread", source: "live", code: "LIVE_OBSERVATION_CONFLICT",
   });
 });
@@ -235,7 +289,7 @@ for (const [description, user] of [
     observations.observeItem("thread", "t", user);
     observations.observeItem("thread", "t", agentMessage("final"));
     observations.observeTurnCompleted("thread", sparseTurn("t", "completed"));
-    assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+    assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
       kind: "ambiguous", threadId: "thread", source: "live", code: "LIVE_OBSERVATION_CONFLICT",
     });
   });
@@ -249,7 +303,7 @@ for (const phase of ["final_answer", null] as const) {
     observations.endStart(expectation);
     observations.observeItem("thread", "t", agentMessage("final", "shared", phase));
     observations.observeItem("thread", "t", userMessage("d", "task", "shared"));
-    assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+    assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
       kind: "ambiguous", threadId: "thread", source: "live", code: "LIVE_OBSERVATION_CONFLICT",
     });
   });
@@ -261,7 +315,7 @@ test("a sparse response cannot reuse a turn already associated with a different 
   const expectation = observations.beginStart("thread", "new", "new task");
   assert.equal(observations.observeStartResponse("thread", sparseTurn("t"), expectation), false);
   observations.endStart(expectation);
-  assert.equal(observations.inspect("thread", "t", "new", "new task"), undefined);
+  assert.equal(observations.inspect("thread", "t", "new", taskCommitment("new task")), undefined);
 });
 
 test("an early sparse completion survives sparse response association and waits for its final", () => {
@@ -271,11 +325,11 @@ test("an early sparse completion survives sparse response association and waits 
   assert.equal(observations.observeStartResponse("thread", sparseTurn("t"), expectation), true);
   observations.endStart(expectation);
   observations.observeTurnStarted("thread", sparseTurn("t"));
-  assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
-  assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", "task"), true);
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task")), undefined);
+  assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", taskCommitment("task")), true);
   observations.observeItem("thread", "t", agentMessage("late final"));
   observations.observeTurnStarted("thread", sparseTurn("t"));
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "late final",
   });
 });
@@ -291,7 +345,7 @@ for (const [status, code] of [
     assert.equal(observations.observeStartResponse("thread", sparseTurn("t"), expectation), true);
     observations.endStart(expectation);
     observations.observeTurnStarted("thread", sparseTurn("t"));
-    assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+    assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
       kind: "failed", threadId: "thread", turnId: "t", source: "live", code,
     });
   });
@@ -309,8 +363,8 @@ test("clear discards sparse live identities and prevents pending responses from 
   observations.endStart(pending);
   observations.observeItem("thread", "accepted", userMessage("accepted", "task"));
   observations.observeTurnStarted("thread", sparseTurn("accepted"));
-  assert.equal(observations.inspect("thread", "accepted", "accepted", "task"), undefined);
-  assert.equal(observations.inspect("thread", "pending", "pending", "task"), undefined);
+  assert.equal(observations.inspect("thread", "accepted", "accepted", taskCommitment("task")), undefined);
+  assert.equal(observations.inspect("thread", "pending", "pending", taskCommitment("task")), undefined);
 });
 
 test("an unassociated incomplete terminal barrier binds to the later exact start response", () => {
@@ -320,17 +374,17 @@ test("an unassociated incomplete terminal barrier binds to the later exact start
     ...turn("t", "completed", []),
     itemsView: "summary",
   });
-  assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task")), undefined);
   assert.equal(observations.observeStartResponse(
     "thread",
     turn("t", "inProgress", [userMessage("d", "task")]),
     expectation,
   ), true);
   observations.endStart(expectation);
-  assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
-  assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", "task"), true);
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task")), undefined);
+  assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", taskCommitment("task")), true);
   observations.observeItem("thread", "t", agentMessage("late final"));
-  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "completed");
 });
 
 for (const [status, code] of [
@@ -350,7 +404,7 @@ for (const [status, code] of [
       expectation,
     ), true);
     observations.endStart(expectation);
-    const terminal = observations.inspect("thread", "t", "d", "task");
+    const terminal = observations.inspect("thread", "t", "d", taskCommitment("task"));
     assert.equal(terminal?.kind, "failed");
     if (terminal?.kind === "failed") assert.equal(terminal.code, code);
   });
@@ -373,10 +427,10 @@ test("out-of-order unassociated terminal candidates are keyed and exact response
     expectation,
   ), true);
   observations.endStart(expectation);
-  const terminal = observations.inspect("thread", "exact", "d", "task");
+  const terminal = observations.inspect("thread", "exact", "d", taskCommitment("task"));
   assert.equal(terminal?.kind, "failed");
   if (terminal?.kind === "failed") assert.equal(terminal.code, "TURN_INTERRUPTED");
-  assert.equal(observations.inspect("thread", "old", "d", "task"), undefined);
+  assert.equal(observations.inspect("thread", "old", "d", taskCommitment("task")), undefined);
 });
 
 test("pending capacity loss never bypasses start-response identity validation", () => {
@@ -395,29 +449,29 @@ test("pending capacity loss never bypasses start-response identity validation", 
     untracked,
   ), true);
   assert.equal(observations.observeStartResponse("thread", sparseTurn("right"), untracked), true);
-  assert.equal(observations.inspect("thread", "right", "d2", "task2"), undefined);
+  assert.equal(observations.inspect("thread", "right", "d2", taskCommitment("task2")), undefined);
   observations.endStart(untracked);
   observations.endStart(occupying);
 });
 
-test("live observations are bounded, clearable, digest exact UTF-16, and conflict closed", () => {
+test("live observations are bounded, clearable, digest exact UTF-8, and conflict closed", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 3 });
-  observations.observeStartResponse("thread", turn("t1", "inProgress", [userMessage("d", "\ud800")]));
+  observations.observeStartResponse("thread", turn("t1", "inProgress", [userMessage("d", "你好😀")]));
   observations.observeStartResponse("other-thread", turn("t2", "inProgress", [userMessage("d2", "task2")]));
-  assert.equal(observations.inspect("thread", "t1", "d", "\ud800")?.kind, "running");
-  assert.equal(observations.inspect("thread", "t1", "d", "\ufffd"), undefined);
-  assert.equal(observations.inspect("other-thread", "t2", "d2", "task2"), undefined);
+  assert.equal(observations.inspect("thread", "t1", "d", taskCommitment("你好😀"))?.kind, "running");
+  assert.equal(observations.inspect("thread", "t1", "d", taskCommitment("\ufffd")), undefined);
+  assert.equal(observations.inspect("other-thread", "t2", "d2", taskCommitment("task2")), undefined);
   observations.observeItem("thread", "t1", agentMessage("one", "same"));
   observations.observeItem("thread", "t1", agentMessage("two", "same"));
-  assert.equal(observations.inspect("thread", "t1", "d", "\ud800")?.kind, "ambiguous");
+  assert.equal(observations.inspect("thread", "t1", "d", taskCommitment("你好😀"))?.kind, "ambiguous");
   observations.clear();
-  assert.equal(observations.inspect("thread", "t1", "d", "\ud800"), undefined);
+  assert.equal(observations.inspect("thread", "t1", "d", taskCommitment("你好😀")), undefined);
 
   const boundedFinal = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 3 });
   boundedFinal.observeStartResponse("thread", turn("terminal", "inProgress", [userMessage("d", "task")]));
   boundedFinal.observeItem("thread", "terminal", agentMessage("oversize"));
   boundedFinal.observeTurnCompleted("thread", turn("terminal", "completed", [userMessage("d", "task")]));
-  const result = boundedFinal.inspect("thread", "terminal", "d", "task");
+  const result = boundedFinal.inspect("thread", "terminal", "d", taskCommitment("task"));
   assert.equal(result?.kind, "failed");
   if (result?.kind === "failed") assert.equal(result.code, "FINAL_TOO_LARGE");
 });
@@ -428,7 +482,7 @@ test("live final selection prefers a small explicit final over an oversize legac
   observations.observeItem("thread", "t", agentMessage("legacy text is oversize", "legacy", null));
   observations.observeItem("thread", "t", agentMessage("final", "explicit", "final_answer"));
   observations.observeTurnCompleted("thread", turn("t", "completed", [userMessage("d", "task")]));
-  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+  assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
   });
 });
@@ -440,9 +494,9 @@ test("live terminal evidence is first-wins, duplicate-idempotent, and conflictin
   observations.observeStartResponse("thread", running);
   observations.observeTurnCompleted("thread", completed);
   observations.observeTurnCompleted("thread", completed);
-  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
+  assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "completed");
   observations.observeTurnCompleted("thread", turn("t", "failed", [userMessage("d", "task")]));
-  const conflict = observations.inspect("thread", "t", "d", "task");
+  const conflict = observations.inspect("thread", "t", "d", taskCommitment("task"));
   assert.equal(conflict?.kind, "ambiguous");
   if (conflict?.kind === "ambiguous") assert.equal(conflict.code, "LIVE_OBSERVATION_CONFLICT");
 });
@@ -454,8 +508,8 @@ test("a new turn on the fixed thread replaces old terminal capacity", () => {
     userMessage("old-dispatch", "old task"), agentMessage("old final"),
   ]));
   observations.observeStartResponse("thread", turn("new", "inProgress", [userMessage("new-dispatch", "new task")]));
-  assert.equal(observations.inspect("thread", "old", "old-dispatch", "old task"), undefined);
-  assert.deepEqual(observations.inspect("thread", "new", "new-dispatch", "new task"), {
+  assert.equal(observations.inspect("thread", "old", "old-dispatch", taskCommitment("old task")), undefined);
+  assert.deepEqual(observations.inspect("thread", "new", "new-dispatch", taskCommitment("new task")), {
     kind: "running", threadId: "thread", turnId: "new", source: "live",
   });
 });
@@ -464,14 +518,14 @@ test("live semantic item identity metadata is bounded and duplicate IDs fail clo
   const duplicate = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
   duplicate.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task", "shared")]));
   duplicate.observeItem("thread", "t", agentMessage("final", "shared"));
-  assert.equal(duplicate.inspect("thread", "t", "d", "task")?.kind, "ambiguous");
+  assert.equal(duplicate.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "ambiguous");
 
   const commentary = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
   commentary.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task")]));
   for (let index = 0; index < 1_000; index += 1) {
     commentary.observeItem("thread", "t", agentMessage("ignored commentary", `commentary-${index}`, "commentary"));
   }
-  assert.equal(commentary.inspect("thread", "t", "d", "task")?.kind, "running");
+  assert.equal(commentary.inspect("thread", "t", "d", taskCommitment("task"))?.kind, "running");
 });
 
 test("late old terminal events cannot replace or corrupt the current fixed-thread turn", () => {
@@ -492,8 +546,8 @@ test("late old terminal events cannot replace or corrupt the current fixed-threa
   observations.observeItem("thread", "old", agentMessage("late old final", "old-late"));
   observations.observeTurnStarted("thread", oldRunning);
 
-  assert.equal(observations.inspect("thread", "old", "old-dispatch", "old task"), undefined);
-  assert.deepEqual(observations.inspect("thread", "new", "new-dispatch", "new task"), {
+  assert.equal(observations.inspect("thread", "old", "old-dispatch", taskCommitment("old task")), undefined);
+  assert.deepEqual(observations.inspect("thread", "new", "new-dispatch", taskCommitment("new task")), {
     kind: "completed", threadId: "thread", turnId: "new", source: "live", final: "new final",
   });
 });
@@ -506,11 +560,11 @@ for (const itemsView of ["summary", "notLoaded"] as const) {
       ...turn("t", "completed", []),
       itemsView,
     });
-    assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
-    assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", "task"), true);
+    assert.equal(observations.inspect("thread", "t", "d", taskCommitment("task")), undefined);
+    assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", taskCommitment("task")), true);
     observations.observeItem("thread", "t", agentMessage("late final"));
-    assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", "task"), false);
-    assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+    assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", taskCommitment("task")), false);
+    assert.deepEqual(observations.inspect("thread", "t", "d", taskCommitment("task")), {
       kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "late final",
     });
   });

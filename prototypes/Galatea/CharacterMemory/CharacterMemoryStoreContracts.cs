@@ -32,7 +32,7 @@ internal enum CharacterMemoryDerivedInfoState {
 }
 
 internal sealed record CharacterMemoryStoreOwner(
-    string UserId,
+    string CharacterId,
     string SessionRepositoryId
 );
 
@@ -238,12 +238,14 @@ internal enum CharacterNoteReceiptDeliveryState {
 internal sealed record CharacterNoteReceiptDeliverySnapshot(
     string SourceActionAddress,
     CharacterNoteReceiptDeliveryState State,
-    string NoticeBody,
+    string? NoticeBody,
     long CreatedRevision,
     long StateRevision,
     string? ExpectedSessionHead,
     string? RenderedObservation,
-    string? ObservationAddress
+    string? ObservationAddress,
+    CharacterNoteReceiptFacts? Facts = null,
+    Atelia.SessionJournal.SessionInputContent? BoundInput = null
 );
 
 internal enum CharacterMemoryPrepareDerivedInfoDisposition {
@@ -315,7 +317,9 @@ internal sealed record CharacterMemoryQuarantineResult(
 internal sealed record CharacterMemoryStoreTestHooks(
     Action<string>? BeforeCommit = null,
     Action<string>? AfterCommitBeforeReturn = null,
-    Action<string>? AfterValidationBeforeTransaction = null
+    Action<string>? AfterValidationBeforeTransaction = null,
+    Action<string>? BeforeUpgradeBackup = null,
+    Action<string>? AfterUpgradeBackup = null
 ) {
     internal static CharacterMemoryStoreTestHooks None { get; } = new();
 }

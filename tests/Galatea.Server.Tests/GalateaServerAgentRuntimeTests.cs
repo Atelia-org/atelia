@@ -11,19 +11,21 @@ public sealed class GalateaServerAgentRuntimeTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task HostedLoop_WithoutBrowser_UsesDefaultAndDoesNotCatchUp() {
+    public async Task HostedLoop_WithZeroPlayersAndNoBrowser_UsesDefaultAndDoesNotCatchUp() {
         var clock = new TimerClock();
         var completion = new CompletionClient();
         await using var fixture = GalateaTestHost.Create(
             completion, new Normalizer(), timeProvider: clock,
             connections: [Connection("other"), Connection("test")],
             selectableConnectionIds: ["other", "test"],
-            serverAgentUserIds: ["alice"], enableServerAgentHostedService: true
+            heartbeatCharacterIds: ["alice"], enableServerAgentHostedService: true
         );
         JsonObject config = JsonNode.Parse(File.ReadAllText(fixture.ConfigPath))!.AsObject();
-        JsonArray users = config["users"]!.AsArray();
-        JsonObject bob = users[0]!.DeepClone().AsObject();
-        bob["userId"] = "bob";
+        JsonArray characters = config["characters"]!.AsArray();
+        JsonObject bob = characters[0]!.DeepClone().AsObject();
+        bob["id"] = "bob";
+        bob["name"] = "Bob";
+        bob["heartbeatEnabled"] = false;
         bob["homeDir"] = Directory.CreateDirectory(Path.Combine(
             Path.GetDirectoryName(fixture.ConfigPath)!, "homes", "bob")).FullName;
         bob["defaultConnectionId"] = "other";
@@ -32,7 +34,8 @@ public sealed class GalateaServerAgentRuntimeTests {
         bob["sessionDir"] = bobDirectory;
         bob["delegationStateDir"] = Path.Combine(fixture.RootDirectory, "bob-delegation");
         bob["characterMemoryStateDir"] = Path.Combine(fixture.RootDirectory, "bob-memory");
-        users.Add(bob);
+        characters.Add(bob);
+        config["players"] = new JsonArray();
         File.WriteAllText(fixture.ConfigPath, config.ToJsonString());
         IServiceProvider services = fixture.Factory.Services; // No HTTP client or Player input.
         var host = services.GetRequiredService<GalateaHostService>();
@@ -76,20 +79,20 @@ public sealed class GalateaServerAgentRuntimeTests {
     [Fact]
     public async Task HostedStop_WithCancelledBudget_DrainsAttachAndDisposesResources() {
         await using var fixture = GalateaTestHost.Create(
-            new CompletionClient(), new Normalizer(), serverAgentUserIds: ["alice"]
+            new CompletionClient(), new Normalizer(), heartbeatCharacterIds: ["alice"]
         );
         IServiceProvider services = fixture.Factory.Services;
         var host = services.GetRequiredService<GalateaHostService>();
         var coordinator = services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         using var loop = new GalateaServerAgentHostedService(host, coordinator, services.GetRequiredService<IHostApplicationLifetime>());
-        var entered = new TaskCompletionSource<UserSessionHost>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource<CharacterSessionHost>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.SessionAttachedForTest = async session => {
             entered.SetResult(session);
             await release.Task;
         };
         await loop.StartAsync(CancellationToken.None);
-        UserSessionHost session = await entered.Task.WaitAsync(Deadline);
+        CharacterSessionHost session = await entered.Task.WaitAsync(Deadline);
         Task stopping = loop.StopAsync(new CancellationToken(canceled: true));
         Assert.True(host.IsStopping);
         Assert.False(stopping.IsCompleted);
@@ -104,14 +107,14 @@ public sealed class GalateaServerAgentRuntimeTests {
     public async Task Shutdown_DrainsPendingAttachAndClosesNewRegistrations() {
         var fixture = GalateaTestHost.Create(new CompletionClient(), new Normalizer());
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
-        var entered = new TaskCompletionSource<UserSessionHost>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource<CharacterSessionHost>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.SessionAttachedForTest = async session => {
             entered.TrySetResult(session);
             await release.Task;
         };
-        Task<UserSessionHost> attaching = host.GetSessionAsync("alice", CancellationToken.None);
-        UserSessionHost session = await entered.Task.WaitAsync(Deadline);
+        Task<CharacterSessionHost> attaching = host.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await entered.Task.WaitAsync(Deadline);
         Task disposal = host.DisposeAsync().AsTask();
         await UntilAsync(() => host.IsStopping);
         Assert.False(disposal.IsCompleted);
@@ -135,7 +138,7 @@ public sealed class GalateaServerAgentRuntimeTests {
             entered.SetResult();
             await release.Task;
         };
-        Task<UserSessionHost> attaching = host.GetSessionAsync("alice", CancellationToken.None);
+        Task<CharacterSessionHost> attaching = host.GetSessionAsync("alice", CancellationToken.None);
         await entered.Task.WaitAsync(Deadline);
         Task disposal = host.DisposeAsync().AsTask();
         await UntilAsync(() => host.IsStopping);
@@ -155,9 +158,9 @@ public sealed class GalateaServerAgentRuntimeTests {
         var fixture = GalateaTestHost.Create(completion, new Normalizer(), enableServerAgentHostedService: throughHostedService);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var runner = fixture.Factory.Services.GetRequiredService<GalateaAcceptedTurnRunner>();
-        UserSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
-        GalateaLiveTurn turn = host.StartTurn(session, "shutdown probe", new("test"));
+        GalateaLiveTurn turn = host.StartTurn(session, "shutdown probe", new("test"), GalateaDelegateTestConfiguration.PlayerSender);
         Task run = runner.Start(session, turn);
         await completion.Entered.Task.WaitAsync(Deadline);
         Task disposal = throughHostedService

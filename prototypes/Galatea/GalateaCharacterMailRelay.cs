@@ -100,9 +100,9 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
             try {
                 IReadOnlyList<GalateaInternalMailSourceOutbox> rows = _host
                     .DelegationSupervisor
-                    .ReadInternalMailOutboxesForTarget(target.UserId);
+                    .ReadInternalMailOutboxesForTarget(target.CharacterId);
                 GalateaInternalMailSourceOutbox? candidate = ChooseCandidate(
-                    target.UserId, rows);
+                    target.CharacterId, rows);
                 if (candidate is not null) {
                     await TryAdvanceAsync(target, candidate, cancellationToken)
                         .ConfigureAwait(false);
@@ -116,7 +116,7 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
                 GalateaExceptionClassifier.IsNonFatal(exception)) {
                 DebugUtil.Warning("Galatea.CharacterMail",
                     "Character-mail relay sweep deferred: target="
-                    + target.UserId + ", exception="
+                    + target.CharacterId + ", exception="
                     + exception.GetType().Name + ".", exception);
             }
         }
@@ -145,20 +145,20 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
         GalateaInternalMailSourceOutbox[] heads = valid
             .Where(static value => value.Outbox.State
                 == GalateaInternalMailState.Pending)
-            .GroupBy(static value => value.SourceUserId, StringComparer.Ordinal)
+            .GroupBy(static value => value.SourceCharacterId, StringComparer.Ordinal)
             .Select(static queue => queue.OrderBy(value => value.Outbox.CaptureSequence)
                 .ThenBy(value => value.Outbox.ArtifactOrdinal).First())
-            .OrderBy(static value => value.SourceUserId, StringComparer.Ordinal)
+            .OrderBy(static value => value.SourceCharacterId, StringComparer.Ordinal)
             .ToArray();
         if (heads.Length == 0) { return null; }
         if (!_lastSourceByTarget.TryGetValue(targetUserId, out string? last)) {
-            _lastSourceByTarget[targetUserId] = heads[0].SourceUserId;
+            _lastSourceByTarget[targetUserId] = heads[0].SourceCharacterId;
             return heads[0];
         }
         int index = Array.FindIndex(heads, value => string.Compare(
-            value.SourceUserId, last, StringComparison.Ordinal) > 0);
+            value.SourceCharacterId, last, StringComparison.Ordinal) > 0);
         GalateaInternalMailSourceOutbox selected = heads[index < 0 ? 0 : index];
-        _lastSourceByTarget[targetUserId] = selected.SourceUserId;
+        _lastSourceByTarget[targetUserId] = selected.SourceCharacterId;
         return selected;
     }
 
@@ -167,8 +167,8 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
         GalateaInternalMailSourceOutbox selected,
         CancellationToken cancellationToken
     ) {
-        UserSessionHost session = await _host.GetSessionAsync(
-            target.UserId, cancellationToken).ConfigureAwait(false);
+        CharacterSessionHost session = await _host.GetSessionAsync(
+            target.CharacterId, cancellationToken).ConfigureAwait(false);
         if (!session.TurnLock.Wait(0)) { return; }
 
         GalateaLiveTurn? liveTurn = null;
@@ -189,7 +189,7 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
                     .NoRuntimeRequired { Phase: SessionExecutionPhase.Idle }) {
                 return;
             }
-            if (!_host.TryGetConnection(session.User, null,
+            if (!_host.TryGetConnection(session.Character, null,
                     out CompletionConnectionConfig connection)) {
                 throw new InvalidDataException(
                     "Character-mail target default connection is unavailable.");
@@ -198,7 +198,7 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
                 session, recovery, cancellationToken).ConfigureAwait(false);
 
             GalateaInternalMailOutboxSnapshot current = selected.Store
-                .ReadInternalMailOutboxesForTarget(target.UserId)
+                .ReadInternalMailOutboxesForTarget(target.CharacterId)
                 .SingleOrDefault(value => string.Equals(value.DispatchId,
                     selected.Outbox.DispatchId, StringComparison.Ordinal))
                 ?? throw new GalateaDelegationStoreConflictException(
@@ -212,7 +212,8 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
                 message,
                 new GalateaTurnOptions(connection.Id),
                 new GalateaInternalMailDeliveryBinding(
-                    source.Store, current.DispatchId, current.Revision)
+                    source.Store, current.DispatchId, current.Revision),
+                sender: new GalateaSenderSnapshot("character", source.SourceCharacterId, current.FromCharacterName)
             );
             _ = _runner.Start(session, liveTurn);
             transferred = true;

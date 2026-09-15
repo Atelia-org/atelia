@@ -453,7 +453,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input.threadId,
           input.expectedTurnId,
           input.dispatchId,
-          input.task,
+          input,
         );
         this.assertSameGeneration(generation);
         if (live && (live.kind !== "running" || metadata.thread.status.type === "active")) {
@@ -463,7 +463,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input.threadId,
           input.expectedTurnId,
           input.dispatchId,
-          input.task,
+          input,
         );
         const persistent = await this.inspectAcceptedTurn(
           input,
@@ -477,7 +477,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input.threadId,
           input.expectedTurnId,
           input.dispatchId,
-          input.task,
+          input,
         );
         if (completedLive && (completedLive.kind !== "running" || metadata.thread.status.type === "active")) return completedLive;
         const reconciled = reconcilePendingLiveCompletion(input.threadId, persistent);
@@ -535,7 +535,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       matches[0]!,
       items.map((entry) => entry.item),
       input.dispatchId,
-      input.task,
+      input,
       input.maximumFinalUtf8Bytes,
       "persistent",
     );
@@ -561,7 +561,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     }
     if (matches.length !== 1) throw new PersistentInspectionError("DISPATCH_ID_NOT_UNIQUE");
     const match = matches[0]!;
-    if (!hasExactTaskBody(match.item, input.task)) {
+    if (!hasExactTaskBody(match.item, input)) {
       throw new PersistentInspectionError("DISPATCH_BODY_MISMATCH");
     }
     const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns, generation, deadline);
@@ -579,7 +579,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       turnMatches[0]!,
       targetItems,
       input.dispatchId,
-      input.task,
+      input,
       input.maximumFinalUtf8Bytes,
       "persistent",
     );

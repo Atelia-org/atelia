@@ -66,7 +66,7 @@ for (const [response, expectedCode] of [
   [new Response("{", { headers: { "content-type": "application/json" } }), "INVALID_JSON"],
   [new Response("{}", { headers: { "content-type": "application/json" } }), "INVALID_RESPONSE"],
 ]) {
-  await assert.rejects(production.fetchMailboxStatus(async () => response),
+  await assert.rejects(production.fetchMailboxStatus(async () => response, "/api/v1/characters/gpt"),
     (error) => production.statusReadFailureCode(error) === expectedCode);
 }
 assert.equal(production.statusReadFailureCode(new TypeError("Failed to fetch")), "STATUS_READ_FAILED");
@@ -81,10 +81,11 @@ const fetchedMailboxStatus = await production.fetchMailboxStatus(
       text: async () => JSON.stringify(exactMailboxStatus),
     };
   },
+  "/api/v1/characters/gpt",
 );
 assert.deepEqual(fetchedMailboxStatus, exactMailboxStatus);
 assert.deepEqual(mailboxFetchCalls, [[
-  "/api/v1/mailbox/status",
+  "/api/v1/characters/gpt/mailbox/status",
   { method: "GET", credentials: "same-origin", cache: "no-store" },
 ]]);
 
@@ -630,8 +631,8 @@ assert.doesNotMatch(
   /error\.code === "turn-busy" && error\.turnId/,
 );
 
-assert.match(source, /\/api\/v1\/recent-turns/);
-assert.match(source, /\/api\/v1\/recap-cadence-progress/);
+assert.match(source, /\$\{apiBase\}\/recent-turns/);
+assert.match(source, /\$\{apiBase\}\/recap-cadence-progress/);
 assert.match(source, /BigInt\(/);
 assert.match(source, /markRecapCadenceProgressStale\("active-turn"\)/);
 assert.match(

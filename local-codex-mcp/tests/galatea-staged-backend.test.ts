@@ -1,3 +1,4 @@
+import { taskCommitment } from "../src/galatea/task-commitment.js";
 import { GalateaStartFailure } from "../src/backend/galatea-staged-backend.js";
 import { OperationDeadline } from "../src/codex/operation-deadline.js";
 import assert from "node:assert/strict";
@@ -101,8 +102,7 @@ test("ensureBinding verifies new empty thread metadata without requiring a sourc
   assert.equal(requests.threadTurnsListCount, 0);
   assert.equal(requests.turnStartCount, 0);
   await assert.rejects(value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "unissued-mail", task: "not sent",
-    expectedTurnId: "unavailable-turn", maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "unissued-mail", ...taskCommitment("not sent"), expectedTurnId: "unavailable-turn", maximumFinalUtf8Bytes: 20_000,
   }), /missing source rollout/);
 });
 
@@ -142,8 +142,7 @@ test("Accepted recovers a summary completion that precedes its sparse start resp
   const task = "[EARLY][NATURAL] exact task";
   const accepted = await start(value, binding.threadId, "mail-early", task);
   const result = await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-early", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-early", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   });
   assert.equal(result.kind, "completed");
   assert.equal(result.source, "persistent");
@@ -161,7 +160,7 @@ test("live Running cannot hide a persistent terminal when terminal notifications
   const completed = await value.backend.inspectDispatch({
     threadId: binding.threadId,
     dispatchId: "mail-dropped-terminal",
-    task,
+    ...taskCommitment(task),
     expectedTurnId: accepted.turnId,
     maximumFinalUtf8Bytes: 20_000,
   });
@@ -178,7 +177,7 @@ test("incomplete live terminal maps to retryable inspection failure until final 
   const request = {
     threadId: binding.threadId,
     dispatchId: "mail-late-final",
-    task,
+    ...taskCommitment(task),
     expectedTurnId: accepted.turnId,
     maximumFinalUtf8Bytes: 20_000,
   };
@@ -200,7 +199,7 @@ test("incomplete live terminal allows later healthy persistent final recovery wi
   const request = {
     threadId: binding.threadId,
     dispatchId: "mail-persistent-final",
-    task,
+    ...taskCommitment(task),
     expectedTurnId: accepted.turnId,
     maximumFinalUtf8Bytes: 20_000,
   };
@@ -234,8 +233,7 @@ for (const dropUserSignals of [false, true]) {
     const task = "[LONG][NATURAL] sparse start response task";
     const accepted = await start(value, binding.threadId, "mail-sparse", task);
     const request = {
-      threadId: binding.threadId, dispatchId: "mail-sparse", task,
-      expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+      threadId: binding.threadId, dispatchId: "mail-sparse", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
     };
     // Ten healthy polls exceed the durable driver's eight-failure recovery
     // budget. Every poll must supply live evidence instead of a historical
@@ -264,7 +262,7 @@ for (const dropUserSignals of [false, true]) {
     assert.equal(completedCounts.threadItemsListCount, 0);
 
     for (const [changed, code] of [
-      [{ task: "a different task" }, "DISPATCH_BODY_MISMATCH"],
+      [taskCommitment("a different task"), "DISPATCH_BODY_MISMATCH"],
       [{ dispatchId: "a-different-dispatch" }, "DISPATCH_TURN_MISMATCH"],
     ] as const) {
       const mismatch = await value.backend.inspectDispatch({ ...request, ...changed });
@@ -283,8 +281,7 @@ test("early sparse completion cannot revive as Running when the correlated spars
   const task = "[EARLY][NATURAL] terminal before start response";
   const accepted = await start(value, binding.threadId, "mail-early-sparse", task);
   const request = {
-    threadId: binding.threadId, dispatchId: "mail-early-sparse", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-early-sparse", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   };
   // The early final item preceded correlation and was not retained. The
   // retained terminal barrier must block both Running and FINAL_MISSING.
@@ -321,8 +318,7 @@ test("Accepted missing from official turns is stable unavailable, not not-found"
   const accepted = await start(value, binding.threadId, "mail-hidden", task);
   await assert.rejects(value.client.request("test/crash", {}));
   const result = await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-hidden", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-hidden", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   });
   assert.deepEqual(result, {
     kind: "unavailable", threadId: binding.threadId, turnId: accepted.turnId,
@@ -340,8 +336,7 @@ test("Accepted turn with an empty filtered item projection stays retryable unava
   const accepted = await start(value, binding.threadId, "mail-items-empty", task);
   await assert.rejects(value.client.request("test/crash", {}));
   assert.deepEqual(await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-items-empty", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-items-empty", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   }), {
     kind: "unavailable", threadId: binding.threadId, turnId: accepted.turnId,
     source: "persistent", code: "ACCEPTED_TURN_NOT_VISIBLE",
@@ -352,8 +347,7 @@ test("OutcomeUnknown alone returns persistent not-found and discovers a timed-ou
   const value = await harness(t, { requestTimeoutMs: 300 });
   const binding = await bind(value);
   const missing = await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "missing", task: "never",
-    expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "missing", ...taskCommitment("never"), expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
   });
   assert.deepEqual(missing, { kind: "not-found", threadId: binding.threadId, source: "persistent" });
 
@@ -363,8 +357,7 @@ test("OutcomeUnknown alone returns persistent not-found and discovers a timed-ou
       && /timed out/.test(error.message));
   await delay(30);
   const recovered = await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-unknown", task,
-    expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-unknown", ...taskCommitment(task), expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
   });
   assert.equal(recovered.kind, "completed");
   assert.equal(recovered.source, "persistent");
@@ -378,15 +371,13 @@ test("cold restart discards sparse-response live identity even when history hydr
   const task = "[LONG] exact task";
   const accepted = await start(value, binding.threadId, "mail-restart", task);
   assert.equal((await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-restart", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-restart", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   })).source, "live");
   await assert.rejects(value.client.request("test/crash", {}));
   assert.equal((await value.backend.status(binding.threadId)).status, "running");
   for (let poll = 0; poll < 2; poll += 1) {
     assert.deepEqual(await value.backend.inspectDispatch({
-      threadId: binding.threadId, dispatchId: "mail-restart", task,
-      expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+      threadId: binding.threadId, dispatchId: "mail-restart", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
     }), {
       kind: "running", threadId: binding.threadId, turnId: accepted.turnId, source: "persistent",
     });
@@ -412,8 +403,7 @@ test("cold Accepted lookup scans all turn and item pages for a non-latest target
   await delay(30);
   await assert.rejects(value.client.request("test/crash", {}));
   const result = await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-first", task: firstTask,
-    expectedTurnId: first.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-first", ...taskCommitment(firstTask), expectedTurnId: first.turnId, maximumFinalUtf8Bytes: 20_000,
   });
   assert.equal(result.kind, "completed");
   assert.equal(result.source, "persistent");
@@ -439,8 +429,7 @@ for (const [argument, code] of [
     const accepted = await start(value, binding.threadId, "mail-malformed", task);
     await assert.rejects(value.client.request("test/crash", {}));
     const result = await value.backend.inspectDispatch({
-      threadId: binding.threadId, dispatchId: "mail-malformed", task,
-      expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+      threadId: binding.threadId, dispatchId: "mail-malformed", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
     });
     assert.equal(result.kind, "ambiguous");
     if (result.kind === "ambiguous") assert.equal(result.code, code);
@@ -463,8 +452,7 @@ test("inspection rejects a generation change between metadata and pagination", a
   });
   t.after(unsubscribe);
   await assert.rejects(value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-generation", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-generation", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   }), (error: unknown) => typeof error === "object" && error !== null
     && "code" in error && error.code === "CODEX_PROTOCOL_ERROR");
 });
@@ -476,8 +464,7 @@ test("inspection preflight rejects ownership drift before live evidence", async 
   const accepted = await start(value, binding.threadId, "mail-drift", task);
   await value.client.request("test/setThreadName", { threadId: binding.threadId, name: "not-owned" });
   const ownership = await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-drift", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-drift", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   });
   assert.deepEqual(ownership, { kind: "ambiguous", threadId: binding.threadId, source: "persistent", code: "THREAD_OWNERSHIP_MISMATCH" });
 });
@@ -512,8 +499,7 @@ for (const ignoreResumeCwd of [false, true]) {
     const metadata = await value.client.request<{ thread: { cwd: string } }>("thread/read", { threadId: binding.threadId, includeTurns: false });
     assert.equal(metadata.thread.cwd, oldCwd);
     const inspected = await value.backend.inspectDispatch({
-      threadId: binding.threadId, dispatchId: "mail-home", task,
-      expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+      threadId: binding.threadId, dispatchId: "mail-home", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
     });
     assert.equal(inspected.kind, "completed");
   });
@@ -529,8 +515,7 @@ test("live and persistent inspection survive a removed cwd outside current allow
   await value.client.request("test/setThreadCwd", { threadId: binding.threadId, cwd: outside });
   await rm(outside, { recursive: true });
   const request = {
-    threadId: binding.threadId, dispatchId: "mail-old-home", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "mail-old-home", ...taskCommitment(task), expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   };
   const live = await value.backend.inspectDispatch(request);
   assert.equal(live.kind, "completed");
@@ -585,8 +570,7 @@ test("one inspection deadline bounds metadata and the entire page chain, with no
   await value.client.request("test/setInspectionRpcDelay", { delayMs: 120 });
   const began = performance.now();
   await assert.rejects(value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "missing", task: "not sent",
-    expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
+    threadId: binding.threadId, dispatchId: "missing", ...taskCommitment("not sent"), expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
   }), /timed out/);
   assert.ok(performance.now() - began < 900);
   await delay(200); // Let the one already-issued RPC arrive late.

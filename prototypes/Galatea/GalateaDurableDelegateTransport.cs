@@ -1,4 +1,30 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Atelia.Galatea.Server;
+
+internal sealed record GalateaTaskCommitment {
+    internal GalateaTaskCommitment(string sha256, int utf8Bytes) {
+        if (sha256 is null || sha256.Length != 64 || sha256.Any(static value => value is not (>= '0' and <= '9' or >= 'a' and <= 'f'))) {
+            throw new ArgumentException("Task SHA256 must be lowercase hexadecimal.", nameof(sha256));
+        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(utf8Bytes);
+        Sha256 = sha256;
+        Utf8Bytes = utf8Bytes;
+    }
+    internal string Sha256 { get; }
+    internal int Utf8Bytes { get; }
+    internal static GalateaTaskCommitment FromTask(string task) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(task);
+        byte[] bytes = new UTF8Encoding(false, true).GetBytes(task);
+        return new(Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.Length);
+    }
+    internal static GalateaTaskCommitment FromStored(GalateaOutboundMailSnapshot mail) => mail.TaskSha256 is not null && mail.TaskUtf8Bytes is int bytes
+        ? new(mail.TaskSha256, bytes)
+        : mail.ContentFormat == "legacy-task"
+            ? FromTask(mail.Body ?? throw new InvalidDataException("Legacy task body is unavailable."))
+            : throw new InvalidDataException("A started semantic mail is missing its task commitment.");
+}
 
 internal sealed record GalateaEnsureDelegateBindingRequest(
     string BindingOperationId,
@@ -27,30 +53,30 @@ internal sealed record GalateaInspectDelegateDispatchRequest {
     private GalateaInspectDelegateDispatchRequest(
         string dispatchId,
         string threadId,
-        string task,
+        GalateaTaskCommitment task,
         string? expectedTurnId
     ) {
         DispatchId = dispatchId;
         ThreadId = threadId;
-        Task = task;
+        TaskCommitment = task;
         ExpectedTurnId = expectedTurnId;
     }
 
     internal string DispatchId { get; }
     internal string ThreadId { get; }
-    internal string Task { get; }
+    internal GalateaTaskCommitment TaskCommitment { get; }
     internal string? ExpectedTurnId { get; }
 
     internal static GalateaInspectDelegateDispatchRequest ForOutcomeUnknown(
         string dispatchId,
         string threadId,
-        string task
+        GalateaTaskCommitment task
     ) => new(dispatchId, threadId, task, expectedTurnId: null);
 
     internal static GalateaInspectDelegateDispatchRequest ForAccepted(
         string dispatchId,
         string threadId,
-        string task,
+        GalateaTaskCommitment task,
         string expectedTurnId
     ) {
         ArgumentNullException.ThrowIfNull(expectedTurnId);

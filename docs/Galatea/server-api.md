@@ -4,7 +4,9 @@
 
 ## 认证与通用约定
 
-`/api/v1` 全部要求 `family_chat_auth` cookie。未认证 API 请求返回 401 `{code:"authentication-required",error}`；浏览器页面则跳转 `/login`。登录由 `POST /login` 的 form fields `userId`、`password` 建立 HttpOnly、SameSite=Lax cookie；不要把密码写进脚本、shell history或本文档。
+`/api/v1` 全部要求 `galatea_player_auth` cookie。未认证 API 请求返回 401 `{code:"authentication-required",error}`；浏览器页面则跳转 `/login`。登录由 `POST /login` 的 form fields `playerId`、`password` 建立 HttpOnly、SameSite=Lax cookie；不要把密码写进脚本、shell history或本文档。
+
+登录票据只标识 Player；每次验证要求该 Player 仍在配置中。旧 cookie/旧 user claim 不继续认证。当前所有 Player 都是管理员，可以访问任意角色，但请求必须显式指向角色；`players: []` 时不能登录，后台角色仍可运行。
 
 最简单的人工调用方式是在已经登录的 Galatea 页面 DevTools Console 中使用 same-origin cookie：
 
@@ -14,9 +16,15 @@ const me = await fetch("/api/v1/me", {
   cache: "no-store",
 }).then(async response => ({ status: response.status, body: await response.json() }));
 console.log(me);
+const characters = await fetch("/api/v1/characters", {credentials: "same-origin"}).then(r => r.json());
+console.log(characters);
+const characterId = "alice"; // 改为上述目录中明确选择的 characterId。
+const segment = encodeURIComponent(characterId).replace(/[!'()*]/g,
+  value => `%${value.charCodeAt(0).toString(16).toUpperCase()}`);
+const apiBase = `/api/v1/characters/${segment}`;
 ```
 
-所有 `/api/v1` route 都是 versioned route；旧 `/api/*` 没有 alias、redirect 或 compatibility route。GET 观察接口不会因为“只读”而绕过认证。Maintenance mode 禁止标记为写操作的 POST，返回 503；只读 GET 保持可用，但各接口自己的 attach/read 语义仍然适用。
+所有 `/api/v1` route 都是 versioned route；旧 `/api/*` 及省略 Character 的旧 `/api/v1/chat/...` 等路由没有 alias、redirect 或 compatibility route。GET 观察接口不会因为“只读”而绕过认证。Maintenance mode 禁止标记为写操作的 POST，返回 503；只读 GET 保持可用，但各接口自己的 attach/read 语义仍然适用。
 
 带 JSON body 的 endpoint 只接受 `application/json` 与可选 UTF-8 charset，不接受 `Content-Encoding`。JSON 必须使用 exact camelCase；unknown、wrong-case、duplicate、missing required、wrong type、required null、comment 和 trailing comma 均会被拒绝。request body 上限为 1 MiB。
 
@@ -26,20 +34,29 @@ matched V1 endpoint 的 failure 只有 `turn-busy` 使用 `{code,error,turnId}`�
 
 | Method | Path | 成功响应与作用 |
 |:--|:--|:--|
-| GET | `/api/v1/me` | 200 `{userId,maintenanceMode}` |
-| GET | `/api/v1/recent-turns` | 200；latest 6 completed turns、同 head Context header、rewind token 与 RecapGrid readiness |
-| GET | `/api/v1/recap-cadence-progress` | 200；独立 Timeline/Cadence HistoryLoad telemetry |
-| GET | `/api/v1/mailbox/status` | 200；delegation store 的只读聚合状态 |
-| GET | `/api/v1/agent/status` | 200；server Agent loop 的只读状态 |
-| POST | `/api/v1/agent/retry-admission` | strict `{}`；200 Agent 状态，或 409 busy/具体未完成原因；不创建主线轮次 |
-| GET | `/api/v1/chat/turns/current` | 200；current/recovery 状态 |
-| POST | `/api/v1/chat/turns` | 202 `{turnId}`；接纳 fresh player turn |
-| POST | `/api/v1/chat/turns/resume` | 202 `{turnId}`；在 exact recovery head 恢复 |
-| POST | `/api/v1/mailbox/inbound` | 202 `{turnId,messageId}`；接纳 inbound mail turn |
-| POST | `/api/v1/mailbox/ready-turn` | strict `{}` one-shot；200 状态或 202 `{turnId,origin}` |
-| POST | `/api/v1/chat/turns/pop-latest` | 200 `{poppedUserText}`；按 rewind token 取出最近一轮 |
-| POST | `/api/v1/chat/turns/{turnId}/stop` | 204 empty |
-| GET | `/api/v1/chat/turns/{turnId}/events` | 200 `text/event-stream`；SSE V1 stream |
+| GET | `/api/v1/me` | 200 `{playerId,name,maintenanceMode}`；当前访问者 |
+| GET | `/api/v1/characters` | 200 `[{characterId,name}]`；配置中的角色目录，不 attach session |
+| GET | `/api/v1/characters/{characterId}/recent-turns` | 200；latest 6 completed turns、同 head Context header、rewind token 与 RecapGrid readiness |
+| GET | `/api/v1/characters/{characterId}/recap-cadence-progress` | 200；独立 Timeline/Cadence HistoryLoad telemetry |
+| GET | `/api/v1/characters/{characterId}/mailbox/status` | 200；delegation store 的只读聚合状态 |
+| GET | `/api/v1/characters/{characterId}/agent/status` | 200；server Agent loop 的只读状态 |
+| POST | `/api/v1/characters/{characterId}/agent/retry-admission` | strict `{}`；200 Agent 状态，或 409 busy/具体未完成原因；不创建主线轮次 |
+| GET | `/api/v1/characters/{characterId}/chat/turns/current` | 200；current/recovery 状态 |
+| POST | `/api/v1/characters/{characterId}/chat/turns` | 202 `{turnId}`；接纳 fresh player turn |
+| POST | `/api/v1/characters/{characterId}/chat/turns/resume` | 202 `{turnId}`；在 exact recovery head 恢复 |
+| POST | `/api/v1/characters/{characterId}/mailbox/inbound` | 202 `{turnId,messageId}`；接纳 inbound mail turn |
+| POST | `/api/v1/characters/{characterId}/mailbox/ready-turn` | strict `{}` one-shot；200 状态或 202 `{turnId,origin}` |
+| POST | `/api/v1/characters/{characterId}/chat/turns/pop-latest` | 200 `{poppedUserText}`；按 rewind token 取出最近一轮 |
+| POST | `/api/v1/characters/{characterId}/chat/turns/{turnId}/stop` | 204 empty |
+| GET | `/api/v1/characters/{characterId}/chat/turns/{turnId}/events` | 200 `text/event-stream`；SSE V1 stream |
+
+两个全局 GET 之外，表内其余 13 条 route 都属于 `/characters/{characterId}`。未知角色在 attach/session mutation 前返回
+404 `character-not-found`；角色 ID 作为一个 URL segment 编码，不能直接拼接原始斜杠，也不能重复解码字面 `%2F`。
+登录后的 `/` 是角色目录，`/characters/{characterId}` 是该角色页面；切换角色使用整页导航。
+
+`turnId`、rewind token 和恢复 head 必须属于同一目标角色。管理员权限允许对其他角色操作，但不能把甲角色
+的 turnId 放进乙角色的 stop/events 路径，或把甲的 token/head 当成乙的证据。网页按 `(PlayerId,CharacterId)`
+保存连接选择；切换角色不会迁移草稿。
 
 ## Turn mutation 请求
 
@@ -49,7 +66,7 @@ Fresh player turn：
 {"message":"向北走。","connectionId":"optional-connection-id"}
 ```
 
-`message` required；`connectionId` optional，省略时使用该用户 default connection。original 与 normalized message 各最多 64 KiB UTF-8，connection id 最多 128 UTF-8 bytes。202 只表示已接纳；随后订阅返回的 `turnId` 对应 SSE 才能观察 terminal。response-loss 后只能查询 current/recent reconciliation，不得自动重发 mutation。
+`message` required；`connectionId` optional，省略时使用目标 Character 的 default connection。original 与 normalized message 各最多 64 KiB UTF-8，connection id 最多 128 UTF-8 bytes。202 只表示已接纳；随后订阅返回的 `turnId` 对应 SSE 才能观察 terminal。response-loss 后只能查询 current/recent reconciliation，不得自动重发 mutation。
 
 Resume：
 
@@ -74,12 +91,12 @@ Inbound mail：
 }
 ```
 
-`from`、`body` required；`subject`、`connectionId` optional。caller 不能提交 `to`，server 固定 `To=session.User.CharacterName` 并生成 canonical 32-lowerhex `messageId`。body 最多 64 KiB UTF-8，from 最多 1 KiB，subject 最多 4 KiB；from/subject 拒绝 CR、LF、NEL、Unicode line separator 等换行。来信内容是故事数据，不取得指令权限。
+`from`、`body` required；`subject`、`connectionId` optional。caller 不能提交 `to`，server 固定 `To=session.Character.CharacterName` 并生成 canonical 32-lowerhex `messageId`。body 最多 64 KiB UTF-8，from 最多 1 KiB，subject 最多 4 KiB；from/subject 拒绝 CR、LF、NEL、Unicode line separator 等换行。来信内容是故事数据，不取得指令权限。Runtime 记录已认证 Player 的 sender/injectedBy；`from` 只是信内自称署名，即使为 `Codex` 也不冒充经过核实的 Codex 来源。
 
-Ready-turn 是已 enrollment 用户的 Dev one-shot：
+Ready-turn 是已启用 heartbeatEnabled 的 Character的 Dev one-shot：
 
 ```js
-const result = await fetch("/api/v1/mailbox/ready-turn", {
+const result = await fetch(`${apiBase}/mailbox/ready-turn`, {
   method: "POST",
   credentials: "same-origin",
   headers: { "Content-Type": "application/json" },
@@ -104,7 +121,7 @@ Stop 没有 request body。`turnId` 必须使用接纳响应或 current 返回�
 
 ## 只读状态与 browser 读取策略
 
-`GET /api/v1/chat/turns/current` 返回 exact object：
+`GET /api/v1/characters/{characterId}/chat/turns/current` 返回 exact object：
 
 ```text
 {status,turnId,connectionId,restartRequired,recoveryHead}
@@ -118,20 +135,20 @@ Stop 没有 request body。`turnId` 必须使用接纳响应或 current 返回�
 
 这些字段始终存在；`running` 尚无 turnId 时继续查询 current，不能猜测 SSE 地址。该 GET 也会先通过 `GetSessionAsync` attach session，服从其 provisioning 策略。
 
-`GET /api/v1/agent/status` 返回 exact object：
+`GET /api/v1/characters/{characterId}/agent/status` 返回 exact object：
 
 ```text
 {state,connectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code,admissionFailure}
 ```
 
-它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`；`connectionId` 显示 enrolled user 的 default connection，时间字段只作诊断，blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
+它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`；`connectionId` 显示 启用心跳的 Character 的 default connection，时间字段只作诊断，blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
 
-`POST /api/v1/agent/retry-admission`接受strict `{}`，遵守同一认证、JSON与Maintenance写操作guard；维护模式返回503。它尝试立即取得本用户`TurnLock`，只重试旧的未完成admission处理，不创建角色轮次、不领取新轮次的cutoff。旧Action尚未capture时，此操作可能调用extractor provider；已capture内容沿原有恢复流程处理。
+`POST /api/v1/characters/{characterId}/agent/retry-admission`接受strict `{}`，遵守同一认证、JSON与Maintenance写操作guard；维护模式返回503。它尝试立即取得目标角色`TurnLock`，只重试旧的未完成admission处理，不创建角色轮次、不领取新轮次的cutoff。旧Action尚未capture时，此操作可能调用extractor provider；已capture内容沿原有恢复流程处理。
 
 成功返回200及上述Agent状态；没有admission失败时只返回当前状态。200不承诺已经开始自主活动，也不清除独立的reply失败暂停。已有运行/恢复需求仍须按其入口处理，不能借此跳过runtime recovery。忙碌返回409 `{code:"turn-busy",error,turnId}`；提取、存储、会话未就绪或恢复未完成返回409 `{code,error}`，保留阻断和具体原因。它不把失败写成零Note结果，也不在失败后推进角色head。示例：
 
 ```js
-const retry = await fetch("/api/v1/agent/retry-admission", {
+const retry = await fetch(`${apiBase}/agent/retry-admission`, {
   method: "POST",
   credentials: "same-origin",
   headers: { "Content-Type": "application/json" },
@@ -140,7 +157,7 @@ const retry = await fetch("/api/v1/agent/retry-admission", {
 console.log(retry);
 ```
 
-`GET /api/v1/mailbox/status` 返回：
+`GET /api/v1/characters/{characterId}/mailbox/status` 返回：
 
 ```text
 {state,queuedCount,readyNoticeCount,attemptCount,code,nextRetryAtUnixTimeMilliseconds}
@@ -192,7 +209,7 @@ response 可携带 `authority`、bounded `metrics`、`orderedMissing`、`code`�
 
 ## Cadence telemetry
 
-`GET /api/v1/recap-cadence-progress` 返回 exact closed object：
+`GET /api/v1/characters/{characterId}/recap-cadence-progress` 返回 exact closed object：
 
 ```text
 {
@@ -204,7 +221,7 @@ response 可携带 `authority`、bounded `metrics`、`orderedMissing`、`code`�
 }
 ```
 
-整条 route 先复用 `GetSessionAsync` 取得 session。因此 `create-if-missing` 用户的 missing repository 首次 GET 会先执行既有 first-turn structural SessionJournal/Cadence/Timeline/Control bootstrap；这是 session attach policy，不属于 telemetry inspector 的纯读承诺。attach/bootstrap 后，service inspector non-blocking 获取 `TurnLock`；writer 占用时立即返回 503 `{code:"recap-cadence-progress-busy",error}`，busy 分支不读 Engine、Timeline 或 Cadence。
+整条 route 先复用 `GetSessionAsync` 取得 session。因此 `create-if-missing` Character的 missing repository 首次 GET 会先执行既有 first-turn structural SessionJournal/Cadence/Timeline/Control bootstrap；这是 session attach policy，不属于 telemetry inspector 的纯读承诺。attach/bootstrap 后，service inspector non-blocking 获取 `TurnLock`；writer 占用时立即返回 503 `{code:"recap-cadence-progress-busy",error}`，busy 分支不读 Engine、Timeline 或 Cadence。
 
 取得 gate 后，它捕获 current raw head，纯读 Cadence snapshot、selected Timeline head row 以及到 captured head 的 recent raw suffix。raw head 不存在时返回 exact `unprovisioned/raw-head-absent`。从 TurnLock gate 开始的 inspector 不创建 Completion client、Online、Manager 或 Store，不 capture Timeline、不 dispatch provider，也不写 repository/sidecar。
 
@@ -238,6 +255,6 @@ process-alive nonfatal turn 必须 exactly-one terminal。fatal transport EOF �
 
 ## Stable authority 与演进边界
 
-上述 HTTP/SSE grammar、bounds、terminal/reconciliation 语义，以及 tracked first-party browser 对它们的消费行为，已由历史 tag `session-journal-contract-r2-approved-surfaces-v1` 批准为 Stable V1。该批准不包含 deployment/provider readiness、diagnostic 逐字文本、login HTML、bootstrap、cache token、cookie 实现或 ignored operator state。
+早期 HTTP/SSE grammar、bounds、terminal/reconciliation 语义，以及当时 first-party browser 的消费行为，曾由历史 tag `session-journal-contract-r2-approved-surfaces-v1` 批准为 Stable V1。该批准不包含 deployment/provider readiness、diagnostic 逐字文本、login HTML、bootstrap、cache token、cookie 实现或 ignored operator state。
 
-该历史 tag 也不会自动认证后来新增或修改的 API，包括 cadence telemetry、mailbox status、agent status 和 ready-turn 的当前请求/响应。它们的 current closed contract 由本文、当前代码与测试共同定义；不能借旧批准声称后来 delta 也已获认证。没有真实需求前不增加 pagination、cursor、Last-Event-ID、ack 或 dual grammar；breaking change 应形成新 candidate/version。
+该历史 tag 也不会自动认证后来新增或修改的 API，包括 Character 目标路由、Player cookie、目录与 /me、cadence telemetry、mailbox status、agent status 和 ready-turn 的当前请求/响应。它们的 current closed contract 由本文、当前代码与测试共同定义；不能借旧批准声称后来 delta 也已获认证。没有真实需求前不增加 pagination、cursor、Last-Event-ID、ack 或 dual grammar；breaking change 应形成新 candidate/version。

@@ -68,6 +68,34 @@ internal sealed record RecallEntry {
 }
 
 internal sealed record PlayerTurnRecall {
+    internal static PlayerTurnRecall FromText(RecallEntry entry, string sourceVersion, string text) => new(entry, sourceVersion, text);
+    private PlayerTurnRecall(RecallEntry entry, string sourceVersion, string text) {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (entry.RecallType is not (RecallType.MemoGist or RecallType.MemoSummary)) { throw new ArgumentException("Text recall must be a gist or summary.", nameof(entry)); }
+        GalateaInputContentValidation.RequireText(sourceVersion, 256, nameof(sourceVersion), singleLine: true);
+        GalateaInputContentValidation.RequireText(text, PlayerTurnObservationEnvelope.MaximumRecallBodyUtf8Bytes, nameof(text));
+        Entry = entry;
+        PodStateIdentity = sourceVersion;
+        ContentText = text;
+    }
+    internal PlayerTurnRecall(RecallEntry entry, string podStateIdentity, string title, string exactText) {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (entry.RecallType != RecallType.MemoExactText) { throw new ArgumentException("Semantic recall requires MemoExactText.", nameof(entry)); }
+        GalateaInputContentValidation.RequireText(podStateIdentity, 256, nameof(podStateIdentity), singleLine: true);
+        GalateaInputContentValidation.RequireText(title, MemoPodLimits.MaximumMemoTitleUtf8Bytes, nameof(title));
+        GalateaInputContentValidation.RequireText(exactText, MemoPodLimits.MaximumMemoExactTextUtf8Bytes, nameof(exactText));
+        Entry = entry;
+        PodStateIdentity = podStateIdentity;
+        Title = title;
+        ExactText = exactText;
+    }
+
+    internal string? PodStateIdentity { get; }
+    internal string? SourceVersion => PodStateIdentity;
+    internal string? ContentText { get; }
+    internal string? Title { get; }
+    internal string? ExactText { get; }
+    internal bool IsLegacy => PodStateIdentity is null;
     internal PlayerTurnRecall(RecallEntry entry, string body) {
         ArgumentNullException.ThrowIfNull(entry);
         if (string.IsNullOrWhiteSpace(body)) {
@@ -95,14 +123,16 @@ internal sealed record PlayerTurnRecall {
         }
 
         Entry = entry;
-        Body = body;
+        _body = body;
     }
 
     internal RecallEntry Entry { get; }
-    internal string Body { get; }
+    private readonly string? _body;
+    internal string Body => _body ?? throw new InvalidOperationException("Semantic recall has separate title and exactText fields.");
 }
 
 internal abstract class PlayerTurnNotice {
+    private protected PlayerTurnNotice() { }
     private protected PlayerTurnNotice(
         string body,
         int maximumUtf8Bytes,
@@ -130,12 +160,32 @@ internal abstract class PlayerTurnNotice {
                 exception
             );
         }
-        Body = body;
+        _body = body;
     }
 
-    internal string Body { get; }
+    private readonly string? _body;
+    internal string Body => _body ?? throw new InvalidOperationException("Semantic notice has no rendered body.");
 
     internal sealed class Reply : PlayerTurnNotice {
+        internal bool IsLegacyDurable { get; private init; }
+        internal static Reply FromLegacyDurable(string body, string? dispatchId = null,
+            string? threadId = null, string? turnId = null, string? noticeId = null) => new(body) {
+                IsLegacyDurable = true, DispatchId = dispatchId, ThreadId = threadId, TurnId = turnId, NoticeId = noticeId
+            };
+        internal Reply(string body, GalateaSenderSnapshot sender, string dispatchId,
+            string? threadId = null, string? turnId = null, string? noticeId = null) : this(body) {
+            Sender = sender ?? throw new ArgumentNullException(nameof(sender));
+            GalateaInputContentValidation.RequireText(dispatchId, 1024, nameof(dispatchId), singleLine: true);
+            DispatchId = dispatchId;
+            ThreadId = threadId;
+            TurnId = turnId;
+            NoticeId = noticeId;
+        }
+        internal GalateaSenderSnapshot? Sender { get; }
+        internal string? DispatchId { get; private init; }
+        internal string? ThreadId { get; private init; }
+        internal string? TurnId { get; private init; }
+        internal string? NoticeId { get; private init; }
         internal Reply(string body) : base(
             body,
             PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes,
@@ -144,6 +194,35 @@ internal abstract class PlayerTurnNotice {
     }
 
     internal sealed class DeliveryFailure : PlayerTurnNotice {
+        internal bool IsLegacyDurable { get; private init; }
+        internal static DeliveryFailure FromLegacyDurable(string body, string? dispatchId = null,
+            string? threadId = null, string? turnId = null, string? noticeId = null,
+            string? stage = null, string? code = null) => new(body) {
+                IsLegacyDurable = true, DispatchId = dispatchId, ThreadId = threadId, TurnId = turnId, NoticeId = noticeId,
+                Stage = stage, Code = code
+            };
+        internal DeliveryFailure(string code, string? detail, GalateaSenderSnapshot sender, string dispatchId,
+            string? stage = null, string? threadId = null, string? turnId = null, string? noticeId = null) {
+            Sender = sender ?? throw new ArgumentNullException(nameof(sender));
+            GalateaInputContentValidation.RequireText(code, 128, nameof(code), singleLine: true);
+            GalateaInputContentValidation.RequireText(dispatchId, 1024, nameof(dispatchId), singleLine: true);
+            if (detail is not null) { GalateaInputContentValidation.RequireText(detail, PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes, nameof(detail)); }
+            Code = code;
+            Detail = detail;
+            DispatchId = dispatchId;
+            Stage = stage;
+            ThreadId = threadId;
+            TurnId = turnId;
+            NoticeId = noticeId;
+        }
+        internal GalateaSenderSnapshot? Sender { get; }
+        internal string? DispatchId { get; private init; }
+        internal string? Code { get; private init; }
+        internal string? Detail { get; }
+        internal string? Stage { get; private init; }
+        internal string? ThreadId { get; private init; }
+        internal string? TurnId { get; private init; }
+        internal string? NoticeId { get; private init; }
         internal DeliveryFailure(string body) : base(
             body,
             PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes,
@@ -152,6 +231,15 @@ internal abstract class PlayerTurnNotice {
     }
 
     internal sealed class NoteSaveReceipt : PlayerTurnNotice {
+        internal bool IsLegacyDurable { get; private init; }
+        internal static NoteSaveReceipt FromLegacyDurable(string body, string? sourceActionAddress = null) => new(body) {
+            IsLegacyDurable = true, LegacySourceActionAddress = sourceActionAddress
+        };
+        internal string? LegacySourceActionAddress { get; private init; }
+        internal NoteSaveReceipt(CharacterNoteReceiptSelection selection) {
+            Selection = selection ?? throw new ArgumentNullException(nameof(selection));
+        }
+        internal CharacterNoteReceiptSelection? Selection { get; }
         internal NoteSaveReceipt(string body) : base(
             body,
             PlayerTurnObservationEnvelope
@@ -164,7 +252,8 @@ internal abstract class PlayerTurnNotice {
 internal enum PlayerTurnObservationTriggerKind {
     PlayerAction,
     DelegateReply,
-    HeartbeatActivation
+    HeartbeatActivation,
+    InboundMail
 }
 
 internal sealed class PlayerTurnObservation {
@@ -1080,7 +1169,7 @@ internal static class PlayerTurnObservationEnvelope {
             _ = builder.Append("\n\n")
                 .Append(GetRecallHeading(recall.Entry.RecallType))
                 .Append("：\n")
-                .Append(recall.Body);
+                .Append(recall.IsLegacy ? recall.Body : recall.ContentText ?? (recall.Title + "\n\n" + recall.ExactText));
         }
         foreach (PlayerTurnNotice notice in observation.Notices) {
             string heading = notice switch {
@@ -1096,7 +1185,14 @@ internal static class PlayerTurnObservationEnvelope {
             _ = builder.Append("\n\n")
                 .Append(heading)
                 .Append("：\n")
-                .Append(notice.Body);
+                .Append(notice switch {
+                    PlayerTurnNotice.NoteSaveReceipt { Selection: { } selected } =>
+                        "已保存到默认 MemoPod。\nSource Action: " + selected.SourceActionAddress
+                        + "\n" + string.Join("\n", selected.MemoIds.Select(id => "Memo: " + id.Value))
+                        + (selected.ExactTexts.Count == 0 ? string.Empty : "\n\n" + string.Join("\n\n", selected.ExactTexts)),
+                    PlayerTurnNotice.DeliveryFailure { Sender: not null, Code: not null } failed => failed.Code + (failed.Detail is null ? string.Empty : "\n" + failed.Detail),
+                    _ => notice.Body
+                });
         }
         return builder.ToString();
     }
@@ -1321,6 +1417,29 @@ internal static class PlayerTurnObservationEnvelope {
 }
 
 internal static class PlayerTurnObservationClassifier {
+    internal static bool TryProject(SessionInputContent stored, out Projection projection) {
+        ArgumentNullException.ThrowIfNull(stored);
+        if (GalateaObservationContent.TryReadPlayerText(stored, out string text)) {
+            projection = new Projection(PlayerTurnObservationTriggerKind.PlayerAction, text, GalateaObservationContent.DisplayText(stored));
+            return true;
+        }
+        if (stored.IsStructured) {
+            if (stored.SchemaId == GalateaObservationContent.SchemaId) {
+                GalateaObservationContent.Validate(stored.JsonValue);
+                PlayerTurnObservationTriggerKind kind = stored.JsonValue.GetProperty("kind").GetString() switch {
+                    "heartbeat-activation" => PlayerTurnObservationTriggerKind.HeartbeatActivation,
+                    "delegate-reply" => PlayerTurnObservationTriggerKind.DelegateReply,
+                    "inbound-mail" => PlayerTurnObservationTriggerKind.InboundMail,
+                    _ => throw new InvalidDataException("Unsupported Observation kind.")
+                };
+                projection = new Projection(kind, null, GalateaObservationContent.DisplayText(stored));
+                return true;
+            }
+            throw new NotSupportedException("Unsupported structured Observation schema: " + stored.SchemaId);
+        }
+        return TryProject(stored.TextValue, out projection);
+    }
+
     internal sealed record Projection(
         PlayerTurnObservationTriggerKind TriggerKind,
         string? RestorablePlayerText,

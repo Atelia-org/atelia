@@ -33,7 +33,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        );
+        , GalateaDelegationTestInputs.Sender(store, "Galatea"));
 
         GalateaOutboundMailExtractionReconcileResult result =
             await reconciler.ReconcileAsync(engine);
@@ -66,7 +66,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        );
+        , GalateaDelegationTestInputs.Sender(store, "Galatea"));
 
         var captured = Assert.IsType<
             GalateaOutboundMailExtractionReconcileResult.Captured
@@ -187,7 +187,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        );
+        , GalateaDelegationTestInputs.Sender(store, "Galatea"));
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
 
@@ -237,7 +237,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         >(await new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        ).ReconcileTargetAsync(engine, target));
+        , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileTargetAsync(engine, target));
 
         Assert.Equal(action, stale.ExpectedHead);
         Assert.Equal(rewoundHead, stale.ObservedHead);
@@ -258,7 +258,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        );
+        , GalateaDelegationTestInputs.Sender(store, "Galatea"));
 
         var captured = Assert.IsType<
             GalateaOutboundMailExtractionReconcileResult.Captured
@@ -285,7 +285,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             DisabledOutboundMailExtractor.Instance
-        );
+        , GalateaDelegationTestInputs.Sender(store, "Galatea"));
 
         var captured = Assert.IsType<
             GalateaOutboundMailExtractionReconcileResult.Captured
@@ -316,7 +316,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        );
+        , GalateaDelegationTestInputs.Sender(store, "Galatea"));
 
         var captured = Assert.IsType<
             GalateaOutboundMailExtractionReconcileResult.Captured
@@ -347,7 +347,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             Encoding.UTF8.GetByteCount("send once"),
             "atelia.galatea.outbound-mail-extractor.v0",
             [Mail("Codex", "once")]
-        ));
+        , GalateaDelegationTestInputs.Sender(store, "Galatea")));
         var noCallExtractor = new RecordingExtractor(_ =>
             throw new Xunit.Sdk.XunitException(
                 "Exact durable capture must suppress re-extraction."
@@ -358,7 +358,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         >(await new GalateaOutboundMailExtractionReconciler(
             store,
             noCallExtractor
-        ).ReconcileAsync(engine));
+        , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine));
 
         Assert.Equal(action, already.SourceAction);
         Assert.Equal(1, already.ArtifactCount);
@@ -385,7 +385,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             Encoding.UTF8.GetByteCount("different Action"),
             "atelia.galatea.outbound-mail-extractor.fixture.v1",
             []
-        ));
+        , GalateaDelegationTestInputs.Sender(store, "Galatea")));
         var extractor = new RecordingExtractor(_ =>
             throw new Xunit.Sdk.XunitException(
                 "Mismatched durable capture must fail before extraction."
@@ -396,7 +396,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
                 await new GalateaOutboundMailExtractionReconciler(
                     store,
                     extractor
-                ).ReconcileAsync(engine)
+                , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine)
             );
 
         Assert.Equal(0, extractor.CallCount);
@@ -425,7 +425,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         >(await new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        ).ReconcileAsync(engine));
+        , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine));
 
         Assert.Equal(action, stale.ExpectedHead);
         Assert.Equal(rewoundHead, stale.ObservedHead);
@@ -450,7 +450,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             await new GalateaOutboundMailExtractionReconciler(
                 store,
                 extractor
-            ).ReconcileAsync(engine)
+            , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine)
         );
 
         Assert.Equal("extractor unavailable", failure.Message);
@@ -477,7 +477,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         >(await new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        ).ReconcileAsync(engine));
+        , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine));
 
         Assert.Equal(observation, none.SelectedHead);
         Assert.Null(none.LatestTerminalAction);
@@ -521,7 +521,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
                     await new GalateaOutboundMailExtractionReconciler(
                         store,
                         extractor
-                    ).ReconcileAsync(engine)
+                    , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine)
                 );
 
         Assert.Equal(
@@ -549,7 +549,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             extractor
-        );
+        , GalateaDelegationTestInputs.Sender(store, "Galatea"));
 
         Assert.IsType<
             GalateaOutboundMailExtractionReconcileResult.BaselineCovered
@@ -591,7 +591,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             Encoding.UTF8.GetByteCount("occupied"),
             "atelia.galatea.outbound-mail-extractor.fixture.v1",
             [Mail("Codex", "occupied")]
-        ));
+        , GalateaDelegationTestInputs.Sender(store, "Galatea")));
         EventAddress action = AppendAction(engine, "second mail");
         var extractor = new RecordingExtractor(_ => [
             Mail("Codex", "second")
@@ -602,7 +602,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
                 await new GalateaOutboundMailExtractionReconciler(
                     store,
                     extractor
-                ).ReconcileAsync(engine)
+                , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine)
             );
 
         Assert.Equal(

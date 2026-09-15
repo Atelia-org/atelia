@@ -24,7 +24,7 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(completion);
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) = await GetSessionAsync(host);
+        (GalateaHostService service, CharacterSessionHost session) = await GetSessionAsync(host);
         await CompleteTurnAsync(client, service, session, "owned input");
         RecentTurnsResponseDto recent = await GetRecentAsync(client);
         string token = Assert.IsType<string>(recent.RewindLatestToken);
@@ -64,7 +64,7 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(new QueueCompletionClient());
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (_, UserSessionHost session) = await GetSessionAsync(host);
+        (_, CharacterSessionHost session) = await GetSessionAsync(host);
         for (int ordinal = 1; ordinal <= 7; ordinal++) {
             _ = session.Engine.AppendObservation(
                 GalateaUserMessageEnvelope.Wrap($"user {ordinal}")
@@ -104,7 +104,7 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(completion);
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
 
         await CompleteTurnAsync(
@@ -162,7 +162,7 @@ public sealed class GalateaRecentRewindHostTests {
         );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
 
         GalateaLiveTurn liveTurn = await CompleteTurnAsync(
@@ -201,13 +201,13 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(new QueueCompletionClient());
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
         RecentTurnsResponseDto before = await GetRecentAsync(client);
         Assert.Equal("exact", before.RecapGridReadiness?.Freshness);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest("will fail", ConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -251,7 +251,7 @@ public sealed class GalateaRecentRewindHostTests {
         try {
             using (HttpClient client = host.CreateClient()) {
                 await LoginAsync(client);
-                (GalateaHostService service, UserSessionHost session) =
+                (GalateaHostService service, CharacterSessionHost session) =
                     await GetSessionAsync(host);
 
                 await CompleteTurnAsync(
@@ -344,12 +344,12 @@ public sealed class GalateaRecentRewindHostTests {
                     );
                 Assert.Contains(
                     "user one",
-                    reopenedCurrent.ObservationContent,
+                    GalateaRecapFixture.ReadPlayerText(reopenedCurrent.ObservationContent),
                     StringComparison.Ordinal
                 );
                 Assert.DoesNotContain(
                     reopened.ReadRecentCompletedTurns(10).RequireSnapshot().Turns,
-                    static turn => turn.ObservationContent.Contains(
+                    static turn => GalateaRecapFixture.ReadPlayerText(turn.ObservationContent).Contains(
                         "user two",
                         StringComparison.Ordinal
                     )
@@ -362,7 +362,7 @@ public sealed class GalateaRecentRewindHostTests {
                     ).RequireSnapshot().Turns[0];
                 Assert.Contains(
                     "user two",
-                    historicalNewest.ObservationContent,
+                    GalateaRecapFixture.ReadPlayerText(historicalNewest.ObservationContent),
                     StringComparison.Ordinal
                 );
             }
@@ -387,7 +387,7 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(completion);
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
 
         await CompleteTurnAsync(client, service, session, "user one");
@@ -451,7 +451,7 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(completion);
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
 
         await CompleteTurnAsync(
@@ -490,7 +490,7 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(completion);
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
 
         await CompleteTurnAsync(
@@ -531,7 +531,7 @@ public sealed class GalateaRecentRewindHostTests {
     [Fact]
     public async Task RefreshFailure_PreservesCachedTurnsButInvalidatesRewindToken() {
         await using var host = CreateHost(new QueueCompletionClient());
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
         _ = session.Engine.AppendObservation(
             GalateaUserMessageEnvelope.Wrap("cached user")
@@ -567,7 +567,7 @@ public sealed class GalateaRecentRewindHostTests {
     [Fact]
     public async Task PopReceiptLimit_IsCheckedBeforeRefCas() {
         await using var host = CreateHost(new QueueCompletionClient());
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
         string oversized = new(
             'x',
@@ -613,7 +613,7 @@ public sealed class GalateaRecentRewindHostTests {
     [Fact]
     public async Task PopReceipt_WorstCaseEscapingFitsLockedRelationBeforeCas() {
         await using var host = CreateHost(new QueueCompletionClient());
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
         string worstCase = new(
             '\0',
@@ -738,7 +738,7 @@ public sealed class GalateaRecentRewindHostTests {
     [Fact]
     public async Task RecentEncodedLimit_IsNotSwallowedAsStaleCache() {
         await using var host = CreateHost(new QueueCompletionClient());
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
         string largeAssistant = new('a', 750_000);
         for (int index = 0; index < GalateaHostService.RecentTurnLimit;
@@ -767,7 +767,7 @@ public sealed class GalateaRecentRewindHostTests {
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/v1/recent-turns"
+            "/api/v1/characters/alice/recent-turns"
         );
         Assert.Equal(
             HttpStatusCode.ServiceUnavailable,
@@ -790,7 +790,7 @@ public sealed class GalateaRecentRewindHostTests {
         );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
 
         GalateaLiveTurn liveTurn = await CompleteTurnAsync(
@@ -823,7 +823,7 @@ public sealed class GalateaRecentRewindHostTests {
             .GetProperty("recent").ValueKind);
 
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/v1/recent-turns"
+            "/api/v1/characters/alice/recent-turns"
         );
         Assert.Equal(
             HttpStatusCode.ServiceUnavailable,
@@ -843,7 +843,7 @@ public sealed class GalateaRecentRewindHostTests {
         await using var host = CreateHost(
             new QueueCompletionClient("unused")
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetSessionAsync(host);
         _ = session.Engine.AppendObservation(
             GalateaUserMessageEnvelope.Wrap("durable user")
@@ -868,7 +868,8 @@ public sealed class GalateaRecentRewindHostTests {
         Assert.Null(recent);
         GalateaLiveTurn turn = new(
             "already durable",
-            new GalateaTurnOptions("test")
+            new GalateaTurnOptions("test"),
+            GalateaDelegateTestConfiguration.PlayerSender
         );
         turn.PublishDone(recent);
         using GalateaTurnSubscription replay = turn.Subscribe();
@@ -898,11 +899,11 @@ public sealed class GalateaRecentRewindHostTests {
 
     private static async Task<(
         GalateaHostService Service,
-        UserSessionHost Session
+        CharacterSessionHost Session
     )> GetSessionAsync(GalateaTestHost host) {
         var service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -912,11 +913,11 @@ public sealed class GalateaRecentRewindHostTests {
     private static async Task<GalateaLiveTurn> CompleteTurnAsync(
         HttpClient client,
         GalateaHostService service,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string message
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(message, ConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -939,7 +940,7 @@ public sealed class GalateaRecentRewindHostTests {
     ) {
         RecentTurnsResponseDto? recent = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
-                "/api/v1/recent-turns"
+                "/api/v1/characters/alice/recent-turns"
             );
         return Assert.IsType<RecentTurnsResponseDto>(recent);
     }
@@ -948,7 +949,7 @@ public sealed class GalateaRecentRewindHostTests {
         HttpClient client,
         string token
     ) => await client.PostAsJsonAsync(
-        "/api/v1/chat/turns/pop-latest",
+        "/api/v1/characters/alice/chat/turns/pop-latest",
         new PopLatestTurnRequestDto(token)
     );
 

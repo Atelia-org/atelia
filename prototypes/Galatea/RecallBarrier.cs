@@ -1,4 +1,5 @@
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
@@ -70,8 +71,22 @@ internal static class GalateaRecallBarrierBuilder {
         IEnumerable<IHistoryMessage> messages
     ) {
         ArgumentNullException.ThrowIfNull(messages);
-        return BuildFromProviderVisibleObservations(messages
-            .OfType<ObservationMessage>()
-            .Select(static message => message.Content));
+        var entries = new List<RecallEntry>();
+        foreach (IHistoryMessage message in messages) {
+            if (message is SessionInputObservationMessage structured) {
+                if (structured.Content.SchemaId != GalateaObservationContent.SchemaId) {
+                    throw new NotSupportedException("Unknown structured Observation schema in RecallBarrier: " + structured.Content.SchemaId);
+                }
+                if (structured.Content.JsonValue.GetProperty("kind").GetString() != "inbound-mail") {
+                    entries.AddRange(GalateaObservationContent.ReadPlayerTurn(structured.Content).Recalls.Select(recall => recall.Entry));
+                }
+                else { GalateaObservationContent.Validate(structured.Content.JsonValue); }
+            }
+            else if (message is ObservationMessage legacy
+                && PlayerTurnObservationEnvelope.TryUnwrap(legacy.Content, out PlayerTurnObservation observation)) {
+                entries.AddRange(observation.Recalls.Select(recall => recall.Entry));
+            }
+        }
+        return new RecallBarrier(entries);
     }
 }

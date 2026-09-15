@@ -20,7 +20,7 @@ public sealed class GalateaHttpV1ContractTests {
         using HttpClient client = host.CreateClient();
 
         using (HttpResponseMessage anonymous = await client.GetAsync(
-                   "/api/v1/mailbox/status")) {
+                   "/api/v1/characters/alice/mailbox/status")) {
             await AssertApiErrorAsync(
                 anonymous,
                 HttpStatusCode.Unauthorized,
@@ -33,7 +33,7 @@ public sealed class GalateaHttpV1ContractTests {
         Assert.Equal(0, GetSessionCount(service));
 
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/v1/mailbox/status"
+            "/api/v1/characters/alice/mailbox/status"
         );
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -56,7 +56,7 @@ public sealed class GalateaHttpV1ContractTests {
         _ = await GalateaTestHost.LoginAsync(client);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -65,7 +65,7 @@ public sealed class GalateaHttpV1ContractTests {
             long revision = session.DelegationHandle!.Store
                 .ReadSnapshot().StoreRevision;
             using HttpResponseMessage response = await client.GetAsync(
-                "/api/v1/mailbox/status"
+                "/api/v1/characters/alice/mailbox/status"
             ).WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -91,8 +91,8 @@ public sealed class GalateaHttpV1ContractTests {
         EndpointDataSource dataSource = host.Factory.Services
             .GetRequiredService<EndpointDataSource>();
         foreach (string route in new[] {
-            "/api/v1/chat/turns",
-            "/api/v1/mailbox/ready-turn",
+            "/api/v1/characters/{characterId}/chat/turns",
+            "/api/v1/characters/{characterId}/mailbox/ready-turn",
         }) {
             RouteEndpoint endpoint = Assert.Single(
                 dataSource.Endpoints.OfType<RouteEndpoint>(),
@@ -193,7 +193,7 @@ public sealed class GalateaHttpV1ContractTests {
 
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            "/api/v1/chat/turns"
+            "/api/v1/characters/alice/chat/turns"
         ) {
             Content = new StringContent(
                 "{\"message\":\"one\",\"message\":\"two\"}",
@@ -250,7 +250,7 @@ public sealed class GalateaHttpV1ContractTests {
             client,
             json,
             "application/json",
-            "/api/v1/mailbox/ready-turn"
+            "/api/v1/characters/alice/mailbox/ready-turn"
         );
 
         await AssertApiErrorAsync(
@@ -276,13 +276,13 @@ public sealed class GalateaHttpV1ContractTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             provisionRawOnly: false,
             timeProvider: clock,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient client = host.CreateClient();
         _ = await GalateaTestHost.LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/mailbox/ready-turn",
+            "/api/v1/characters/alice/mailbox/ready-turn",
             new ReadyReplyTurnRequest()
         );
 
@@ -349,14 +349,14 @@ public sealed class GalateaHttpV1ContractTests {
         _ = await GalateaTestHost.LoginAsync(client);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
 
         string chatTurnId;
         using (HttpResponseMessage chat = await client.PostAsJsonAsync(
-                   "/api/v1/chat/turns",
+                   "/api/v1/characters/alice/chat/turns",
                    new ChatStreamRequest("hello", "test"))) {
             Assert.Equal(HttpStatusCode.Accepted, chat.StatusCode);
             using JsonDocument body = JsonDocument.Parse(
@@ -379,7 +379,7 @@ public sealed class GalateaHttpV1ContractTests {
 
         string inboundTurnId;
         using (HttpResponseMessage inbound = await client.PostAsJsonAsync(
-                   "/api/v1/mailbox/inbound",
+                   "/api/v1/characters/alice/mailbox/inbound",
                    new InboundMailboxRequest(
                        "outside",
                        "hello from outside",
@@ -456,7 +456,7 @@ public sealed class GalateaHttpV1ContractTests {
         _ = await GalateaTestHost.LoginAsync(client);
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            "/api/v1/chat/turns"
+            "/api/v1/characters/alice/chat/turns"
         ) {
             Content = new StringContent(
                 "{\"message\":\"hello\"}",
@@ -481,7 +481,7 @@ public sealed class GalateaHttpV1ContractTests {
         using HttpClient client = host.CreateClient();
         _ = await GalateaTestHost.LoginAsync(client);
         using HttpResponseMessage response = await client.PostAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             content: null
         );
 
@@ -504,7 +504,7 @@ public sealed class GalateaHttpV1ContractTests {
         );
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            "/api/v1/chat/turns"
+            "/api/v1/characters/alice/chat/turns"
         ) {
             Content = new UnknownLengthJsonContent(oversized)
         };
@@ -651,7 +651,7 @@ public sealed class GalateaHttpV1ContractTests {
         _ = await GalateaTestHost.LoginAsync(client);
 
         using HttpResponseMessage stop = await client.PostAsync(
-            "/api/v1/chat/turns/NOT-A-TURN/stop",
+            "/api/v1/characters/alice/chat/turns/NOT-A-TURN/stop",
             content: null
         );
         await AssertApiErrorAsync(
@@ -661,7 +661,7 @@ public sealed class GalateaHttpV1ContractTests {
         );
 
         using HttpResponseMessage events = await client.GetAsync(
-            "/api/v1/chat/turns/NOT-A-TURN/events"
+            "/api/v1/characters/alice/chat/turns/NOT-A-TURN/events"
         );
         await AssertApiErrorAsync(
             events,
@@ -673,7 +673,7 @@ public sealed class GalateaHttpV1ContractTests {
             client,
             "{\"rewindLatestToken\":\"not-an-address\"}",
             "application/json",
-            "/api/v1/chat/turns/pop-latest"
+            "/api/v1/characters/alice/chat/turns/pop-latest"
         );
         await AssertApiErrorAsync(
             pop,
@@ -689,7 +689,7 @@ public sealed class GalateaHttpV1ContractTests {
         _ = await GalateaTestHost.LoginAsync(client);
 
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/v1/chat/turns/current"
+            "/api/v1/characters/alice/chat/turns/current"
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using JsonDocument body = JsonDocument.Parse(
@@ -711,22 +711,22 @@ public sealed class GalateaHttpV1ContractTests {
     }
 
     [Fact]
-    public async Task Me_WhenAuthenticatedUserDisappearsReturnsTyped401() {
+    public async Task Me_WhenAuthenticatedPlayerDisappearsReturnsTyped401() {
         await using var host = CreateHost();
         using HttpClient client = host.CreateClient();
         _ = await GalateaTestHost.LoginAsync(client);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        var users = Assert.IsType<Dictionary<string, GalateaUserConfig>>(
+        var players = Assert.IsType<Dictionary<string, GalateaPlayerConfig>>(
             typeof(GalateaHostService)
                 .GetField(
-                    "_users",
+                    "_players",
                     System.Reflection.BindingFlags.Instance
                         | System.Reflection.BindingFlags.NonPublic
                 )!
                 .GetValue(service)
         );
-        Assert.True(users.Remove("alice"));
+        Assert.True(players.Remove("player-main"));
 
         using HttpResponseMessage response = await client.GetAsync(
             "/api/v1/me"
@@ -735,7 +735,7 @@ public sealed class GalateaHttpV1ContractTests {
         await AssertApiErrorAsync(
             response,
             HttpStatusCode.Unauthorized,
-            "authentication-user-unknown"
+            "authentication-required"
         );
     }
 
@@ -813,7 +813,7 @@ public sealed class GalateaHttpV1ContractTests {
         HttpClient client,
         string json,
         string contentType,
-        string url = "/api/v1/chat/turns"
+        string url = "/api/v1/characters/alice/chat/turns"
     ) {
         var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -831,7 +831,7 @@ public sealed class GalateaHttpV1ContractTests {
         PostUnknownLengthAsync(HttpClient client, byte[] body) {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            "/api/v1/chat/turns"
+            "/api/v1/characters/alice/chat/turns"
         ) {
             Content = new UnknownLengthJsonContent(body)
         };

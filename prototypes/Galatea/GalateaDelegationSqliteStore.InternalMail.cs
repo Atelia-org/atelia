@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using Atelia.SessionJournal;
+using System.Text.Json;
 
 namespace Atelia.Galatea.Server;
 
@@ -21,7 +23,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             IReadOnlyList<GalateaInternalMailOutboxSnapshot> result =
                 GalateaDelegationStateSnapshot.Freeze(
                     snapshot.InternalMailOutboxes
-                        .Where(value => string.Equals(value.TargetUserId,
+                        .Where(value => string.Equals(value.TargetCharacterId,
                             targetUserId, StringComparison.Ordinal))
                 );
             transaction.Commit();
@@ -33,7 +35,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string dispatchId,
         long expectedRowRevision,
         string exactBaseHead,
-        string renderedObservation
+        SessionInputContent renderedObservation
     ) => UpdateInternalMailObservation(
         "bind-internal-mail-observation", dispatchId, expectedRowRevision,
         GalateaInternalMailState.Pending, "ObservationBound",
@@ -155,7 +157,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaInternalMailState expectedState,
         string state,
         string? expectedSessionHead,
-        string? renderedObservation,
+        SessionInputContent? renderedObservation,
         string? observationAddress,
         string? quarantineCode
     ) {
@@ -165,7 +167,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
             RequireEventAddress(expectedSessionHead, nameof(expectedSessionHead));
         }
         if (renderedObservation is not null) {
-            RequireText(renderedObservation,
+            RequireNewBoundObservation(renderedObservation);
+            RequireText(EncodeBoundInput(renderedObservation),
                 GalateaDelegationStateBounds.MaximumObservationUtf8Bytes,
                 nameof(renderedObservation), allowLineBreaks: true);
         }
@@ -176,6 +179,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     ReadInternalMailOutboxRequired(connection, transaction,
                         dispatchId);
                 RequireInternalMail(current, expectedState, expectedRowRevision);
+                if (renderedObservation is not null) {
+                    GalateaOutboundMailSnapshot mail = ReadMailRequired(connection, transaction, dispatchId);
+                    ValidateInternalMailInput(renderedObservation, current, mail, _owner.CharacterId);
+                }
                 _ = IncrementStoreRevision(connection, transaction);
                 using SqliteCommand update = connection.CreateCommand();
                 update.Transaction = transaction;
@@ -183,7 +190,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     UPDATE internal_mail_outbox
                     SET state = $state,
                         expected_session_head = $head,
-                        rendered_observation = $observation,
+                        rendered_observation = NULL, bound_input = $observation,
                         observation_address = $address,
                         quarantine_code = $quarantine,
                         revision = revision + 1
@@ -193,7 +200,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     """;
                 update.Parameters.AddWithValue("$state", state);
                 update.Parameters.AddWithValue("$head", (object?)expectedSessionHead ?? DBNull.Value);
-                update.Parameters.AddWithValue("$observation", (object?)renderedObservation ?? DBNull.Value);
+                update.Parameters.AddWithValue("$observation", renderedObservation is null ? DBNull.Value : EncodeBoundInput(renderedObservation));
                 update.Parameters.AddWithValue("$address", (object?)observationAddress ?? DBNull.Value);
                 update.Parameters.AddWithValue("$quarantine", (object?)quarantineCode ?? DBNull.Value);
                 update.Parameters.AddWithValue("$dispatch", dispatchId);
@@ -203,12 +210,32 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 return current with {
                     State = ParseExact<GalateaInternalMailState>(state),
                     ExpectedSessionHead = expectedSessionHead,
-                    RenderedObservation = renderedObservation,
+                    RenderedObservation = null,
+                    BoundInput = renderedObservation,
                     ObservationAddress = observationAddress,
                     QuarantineCode = quarantineCode,
                     Revision = checked(current.Revision + 1)
                 };
             }, (snapshot, result) => snapshot.InternalMailOutboxes.Contains(result));
+        }
+    }
+
+    private static void ValidateInternalMailInput(SessionInputContent content,
+        GalateaInternalMailOutboxSnapshot outbox, GalateaOutboundMailSnapshot mail, string senderId) {
+        JsonElement value = content.JsonValue;
+        if (content.SchemaId != GalateaObservationContent.SchemaId || value.GetProperty("kind").GetString() != "inbound-mail") {
+            throw Corrupt("Internal mail bound input must be an inbound Observation.");
+        }
+        GalateaSenderSnapshot sender = GalateaInputContentValidation.ReadSender(value.GetProperty("sender"));
+        JsonElement action = value.GetProperty("action");
+        if (sender.Kind != "character" || sender.Id != senderId || sender.Name != outbox.FromCharacterName
+            || action.GetProperty("messageId").GetString() != outbox.MessageId
+            || action.GetProperty("from").GetString() != outbox.FromCharacterName
+            || action.GetProperty("to").GetString() != mail.Recipient
+            || action.GetProperty("subject").GetString() != mail.Subject
+            || action.GetProperty("body").GetString() != mail.Body
+            || action.GetProperty("injectedBy").ValueKind != JsonValueKind.Null) {
+            throw Corrupt("Internal mail bound input differs from captured mail facts.");
         }
     }
 

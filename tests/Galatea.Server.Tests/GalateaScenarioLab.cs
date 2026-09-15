@@ -45,7 +45,7 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
         TimeProvider? timeProvider = null,
         Action<string>? reportArtifact = null,
         string? characterNoteExtractorConnectionId = null,
-        IReadOnlyList<string>? serverAgentUserIds = null,
+        IReadOnlyList<string>? heartbeatCharacterIds = null,
         bool enableServerAgentHostedService = false,
         bool provisionRawOnly = true) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
@@ -63,10 +63,26 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
             normalizer, deleteFilesOnDispose: false, connections: connections,
             delegateTransport: new RejectingDelegateTransport(), timeProvider: timeProvider,
             characterNoteExtractorConnectionId: characterNoteExtractorConnectionId,
-            serverAgentUserIds: serverAgentUserIds,
+            heartbeatCharacterIds: heartbeatCharacterIds,
             enableServerAgentHostedService: enableServerAgentHostedService,
             provisionRawOnly: provisionRawOnly);
         return new GalateaScenarioLab(name, host, normalizer, reportArtifact);
+    }
+
+    /// <summary>Leaves the Journal absent so a historical writer fixture can seed genuine old records.</summary>
+    internal static GalateaScenarioLab CreateLegacy(string name,
+        ICompletionClientFactory completionClientFactory,
+        IReadOnlyList<CompletionConnectionConfig> connections) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
+        if (connections.Count != 1 || connections.Any(connection =>
+            !string.IsNullOrWhiteSpace(connection.ApiKeyEnv) || !string.IsNullOrWhiteSpace(connection.BaseAddressEnv))) {
+            throw new ArgumentException("Legacy scenario requires one explicit synthetic connection.", nameof(connections));
+        }
+        var normalizer = DisabledGalateaUserMessageNormalizer.Instance;
+        GalateaTestHost host = GalateaTestHost.CreateMissingSession(completionClientFactory, normalizer,
+            connections: connections, defaultConnectionId: connections[0].Id, deleteFilesOnDispose: false);
+        return new GalateaScenarioLab(name, host, normalizer, reportArtifact: null);
     }
 
     internal GalateaTestHost Host => !_stopped && !_disposed && !_completed

@@ -1000,7 +1000,7 @@ public sealed class PlayerTurnObservationTests {
         var mutable = new List<PlayerTurnNotice> {
             new PlayerTurnNotice.Reply("first")
         };
-        var input = new GalateaFreshInput.PlayerAction("act", mutable);
+        var input = new GalateaFreshInput.PlayerAction("act", GalateaDelegateTestConfiguration.PlayerSender, mutable);
         mutable.Add(new PlayerTurnNotice.Reply("second"));
         Assert.Single(input.Notices);
 
@@ -1202,7 +1202,7 @@ public sealed class PlayerTurnObservationTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1290,7 +1290,7 @@ public sealed class PlayerTurnObservationTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );

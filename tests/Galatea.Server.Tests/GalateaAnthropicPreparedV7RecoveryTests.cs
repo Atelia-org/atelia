@@ -26,43 +26,42 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
     [InlineData("AfterCompletionAttemptStartedCommitted", true, "old-adapter-after-output-policy")]
     public async Task LegacyPrepared_RecoversWithModelsFallback_ThenNewFormatSurvivesColdAudit(
         string failpoint, bool started, string oldAdapter) {
+        Assert.Equal(started ? "AfterCompletionAttemptStartedCommitted" : "AfterRequestPreparedCommitted", failpoint);
         var factory = new AnthropicFixtureFactory();
         var connection = new CompletionConnectionConfig("test", "anthropic", Model,
             "anthropic", "https://synthetic-anthropic.invalid/", ApiKey: "synthetic-key");
-        await using var lab = GalateaScenarioLab.Create("anthropic-v7-" + (started ? "started" : "prepared"),
+        await using var lab = GalateaScenarioLab.CreateLegacy("anthropic-v7-" + (started ? "started" : "prepared"),
             factory, connections: [connection]);
         await lab.StopAsync();
-        using (var engine = SessionJournalEngine.Open(lab.SessionDirectory)) {
-            EventAddress head = engine.ReadCurrentHead()!.Value;
-            SessionGoverningSetup setup = engine.ResolveGoverningSetup(head);
-            Assert.IsType<SessionDesiredSetupReconciliationResult.Ready>(
-                engine.ReconcileDesiredSetup(head, new SessionDesiredSetup(
-                    Model, connection.CompletionSurfaceId, setup.SystemPrompt)));
-        }
         EventAddress frozenHead;
         using (var fixtureClient = (IDisposable)factory.Create(connection)) {
-            frozenHead = await GalateaDurableRecoveryVerticalTests.CreateRecoveryBoundaryAsync(
-                lab.SessionDirectory, connection, (ICompletionClient)fixtureClient,
-                failpoint, started ? SessionExecutionPhase.AwaitingCompletion
-                    : SessionExecutionPhase.AwaitingCompletionDispatch);
+            frozenHead = LegacyPreparedV7Fixture.CreatePending(lab.SessionDirectory,
+                connection, (ICompletionClient)fixtureClient, started, oldAdapter);
         }
-        frozenHead = LegacyPreparedV7Fixture.ReplacePending(lab.SessionDirectory, frozenHead, oldAdapter);
         SessionPreparedRequestReconstruction frozen = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
         Assert.Empty(factory.Requests);
         Assert.Empty(factory.LogicalRequests);
+        Assert.Equal(2, frozen.Manifest.Plan.ExactContextInputs.Length);
+        using (var audit = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
+            var history = new List<SessionJournalAuditEvent>();
+            audit.ScanCheckedAuditEvents(history.Add);
+            Assert.Equal(1, history.Single(entry => entry.Kind == SessionEventKind.SystemPromptSetup).BodySchemaVersion);
+            Assert.Equal(1, history.Single(entry => entry.Kind == SessionEventKind.ObservationAccepted).BodySchemaVersion);
+            Assert.Equal(7, history.Single(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared).BodySchemaVersion);
+        }
 
         await lab.ReopenAsync(factory);
         using (HttpClient http = lab.Host.CreateClient()) {
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
             Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
             var service = lab.Host.Factory.Services.GetRequiredService<GalateaHostService>();
-            UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+            CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
             var required = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 session.Engine.InspectRuntimeRecoveryRequirements());
             Assert.Equal(started ? SessionDurableDispatchState.StartedOutcomeUncertain
                 : SessionDurableDispatchState.NotStarted, required.DispatchState);
             if (started) {
-                using HttpResponseMessage refused = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+                using HttpResponseMessage refused = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
                     new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
                         RestartUncertainCompletion: false));
                 Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
@@ -72,7 +71,7 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
                 Assert.Empty(factory.Requests);
                 Assert.Empty(factory.LogicalRequests);
             }
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
                 new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
                     RestartUncertainCompletion: started));
             GalateaLiveTurn recovered = await GalateaRecapFixture.WaitAsync(accepted, service, session);
@@ -95,14 +94,14 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
         Assert.Equal(frozen.CanonicalBytes, recoveredRequest.CanonicalBytes);
         Assert.Equal(frozen.Manifest.Commitment, recoveredRequest.Manifest.Commitment);
 
-        // A new Host must read the completed v7 before it can append current v8.
+        // A new Host must read the completed v7 before it can append current v9.
         await lab.ReopenAsync(factory);
         using (HttpClient http = lab.Host.CreateClient()) {
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
             Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
             var service = lab.Host.Factory.Services.GetRequiredService<GalateaHostService>();
-            UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns",
+            CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
                 new ChatStreamRequest("Fresh turn after legacy recovery.", "test"));
             AssertCompleted(await GalateaRecapFixture.WaitAsync(accepted, service, session));
         }
@@ -112,7 +111,7 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
             var events = new List<SessionJournalAuditEvent>();
             SessionJournalAuditScanResult audit = engine.ScanCheckedAuditEvents(events.Add);
             Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
-            Assert.Equal(new[] { 7, 8 }, events.Where(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared)
+            Assert.Equal(new[] { 7, 9 }, events.Where(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared)
                 .Select(entry => entry.BodySchemaVersion).ToArray());
             SessionSelectedLineageAuditSession selected = engine.BeginSelectedLineageAudit();
             while (!selected.IsCaptureComplete) { _ = selected.ReadNextPage(maxEventCount: 3); }

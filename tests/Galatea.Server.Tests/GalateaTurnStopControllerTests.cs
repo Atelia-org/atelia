@@ -341,7 +341,8 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
 
     private GalateaLiveTurn Turn() => new(
         "message",
-        new GalateaTurnOptions("test")
+        new GalateaTurnOptions("test"),
+        GalateaDelegateTestConfiguration.PlayerSender
     );
 
     private SessionJournalEngine CreateEngine() {
@@ -378,7 +379,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         pendingObservation is null
             ? SessionContextLifecycleTrigger.ObservationAccepted
             : SessionContextLifecycleTrigger.PreObservation,
-        pendingObservation
+        pendingObservation is null ? null : SessionInputContent.Text(pendingObservation)
     );
 
     private sealed class StubLifecycle(

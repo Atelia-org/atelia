@@ -9,6 +9,7 @@ using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
+using Atelia.MdJson;
 using Atelia.MemoPod;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,7 +53,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: helper.Id,
             characterNoteExtractorConnectionId: helper.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         await session.TurnLock.WaitAsync();
@@ -60,7 +61,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 "first",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             Task run = service.RunTurnAsync(
                 session,
@@ -91,7 +93,7 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             global::Atelia.MemoPod.MemoPod saved =
                 global::Atelia.MemoPod.MemoPod.Open(
-                    session.User.CharacterMemoryStateDir,
+                    session.Character.CharacterMemoryStateDir,
                     CharacterNoteDefaultPodV1.PodId
                 );
             Assert.Equal(MemoPodPhase.Frozen, saved.Phase);
@@ -106,21 +108,29 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn receiptTurn = service.StartTurn(
                 session,
                 "second",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             await service.RunTurnAsync(session, receiptTurn, CancellationToken.None);
             PlayerTurnObservation receiptInput = ReadLatestObservation(session);
-            Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
+            PlayerTurnNotice.NoteSaveReceipt receiptNotice = Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
                 Assert.Single(receiptInput.Notices)
             );
+            Assert.Equal(NoteText, Assert.Single(Assert.IsType<CharacterNoteReceiptSelection>(receiptNotice.Selection).ExactTexts));
+            SessionInputContent storedReceiptInput = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+                .RequireSnapshot().Turns).ObservationContent;
+            Assert.Equal(GalateaInputProjector.Instance.Project(storedReceiptInput),
+                Assert.IsType<CompletionRequest>(mainClient.LastRequest).PromptPrefix.SharedContextMessages
+                    .OfType<ObservationMessage>().Last().Content);
             Assert.Null(session.CharacterMemoryReconciler?.ReadPendingReceiptDelivery());
             service.FinishTurn(session, receiptTurn);
 
             GalateaLiveTurn next = service.StartTurn(
                 session,
                 "third",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(session, next, CancellationToken.None);
             Assert.Empty(ReadLatestObservation(session).Notices);
@@ -155,7 +165,7 @@ public sealed class CharacterNoteRuntimeTests {
             characterNoteExtractorConnectionId: note.Id,
             playerTurnRecallProviderFactory: (_, _) => recallProvider
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         await session.TurnLock.WaitAsync();
@@ -163,7 +173,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn first = service.StartTurn(
                 session,
                 "first",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                     session,
@@ -174,7 +185,7 @@ public sealed class CharacterNoteRuntimeTests {
             service.FinishTurn(session, first);
             Assert.Equal(NoteText, Assert.Single(
                 global::Atelia.MemoPod.MemoPod.Open(
-                    session.User.CharacterMemoryStateDir,
+                    session.Character.CharacterMemoryStateDir,
                     CharacterNoteDefaultPodV1.PodId
                 ).List()
             ).ExactText);
@@ -182,7 +193,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn second = service.StartTurn(
                 session,
                 "second",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                     session,
@@ -209,10 +221,8 @@ public sealed class CharacterNoteRuntimeTests {
                 .RequireSnapshot()
                 .Turns
                 .Single();
-            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-                latest.ObservationContent,
-                out PlayerTurnObservation observation
-            ));
+            Assert.True(latest.ObservationContent.IsStructured);
+            PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(latest.ObservationContent);
             Assert.Equal(
                 NewlySavedMemoRecallProvider.UnrelatedCandidate,
                 Assert.Single(observation.Recalls)
@@ -257,7 +267,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         var diagnostics = new List<string>();
         service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
@@ -267,7 +277,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 "diagnostics",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                     session,
@@ -371,7 +382,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         var diagnostics = new List<string>();
         service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
@@ -385,7 +396,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 "failure matrix",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             await service.RunTurnAsync(
                     session,
@@ -409,7 +421,7 @@ public sealed class CharacterNoteRuntimeTests {
                 Assert.Null(session.CharacterMemoryReconciler!
                     .ReadStatusSnapshot().ActiveCapture);
                 Assert.Empty(global::Atelia.MemoPod.MemoPod.Open(
-                    session.User.CharacterMemoryStateDir,
+                    session.Character.CharacterMemoryStateDir,
                     CharacterNoteDefaultPodV1.PodId
                 ).List());
             }
@@ -431,7 +443,7 @@ public sealed class CharacterNoteRuntimeTests {
                 Assert.Null(session.CharacterMemoryReconciler!
                     .ReadStatusSnapshot().ActiveCapture);
                 Assert.Empty(global::Atelia.MemoPod.MemoPod.Open(
-                    session.User.CharacterMemoryStateDir,
+                    session.Character.CharacterMemoryStateDir,
                     CharacterNoteDefaultPodV1.PodId
                 ).List());
             }
@@ -480,7 +492,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         service.CharacterNoteExtractionDeadlineForTest =
             TimeSpan.FromMilliseconds(100);
@@ -490,7 +502,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 "slow mail",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             Task run = service.RunTurnAsync(
                 session,
@@ -551,14 +564,15 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "mail fails after note apply",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             Task run = service.RunTurnAsync(
@@ -576,7 +590,7 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             Assert.Equal(NoteText, Assert.Single(
                 global::Atelia.MemoPod.MemoPod.Open(
-                    session.User.CharacterMemoryStateDir,
+                    session.Character.CharacterMemoryStateDir,
                     CharacterNoteDefaultPodV1.PodId
                 ).List()
             ).ExactText);
@@ -619,14 +633,15 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "double failure",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             GalateaTurnException observed = await Assert.ThrowsAsync<
@@ -685,7 +700,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         service.CharacterNoteExtractionDeadlineForTest =
             TimeSpan.FromMilliseconds(100);
@@ -694,7 +709,8 @@ public sealed class CharacterNoteRuntimeTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "deadline then mail failure",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             Task run = service.RunTurnAsync(
@@ -755,14 +771,15 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "same failure slots",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             GalateaTurnException observed = await Assert.ThrowsAsync<
@@ -813,7 +830,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         var diagnostics = new List<string>();
         service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
@@ -822,7 +839,8 @@ public sealed class CharacterNoteRuntimeTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "mail failure",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             GalateaTurnException failure = await Assert.ThrowsAsync<
@@ -888,14 +906,15 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "fatal cancellation callback",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             AggregateException observed = await Assert.ThrowsAsync<
@@ -907,6 +926,7 @@ public sealed class CharacterNoteRuntimeTests {
 
             await noteClient.Drained.Task.WaitAsync(Deadline);
             Assert.Equal(0, noteClient.ActiveCalls);
+            Assert.Equal(1, noteClient.CallbackInvocations);
             Assert.Same(expectedMail, observed.InnerExceptions[0]);
             AggregateException cancellation = Assert.IsType<
                 AggregateException>(observed.InnerExceptions[1]);
@@ -946,7 +966,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         var diagnostics = new List<string>();
         service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
@@ -955,7 +975,8 @@ public sealed class CharacterNoteRuntimeTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "fatal mail failure",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             OutOfMemoryException observed = await Assert.ThrowsAsync<
@@ -1004,7 +1025,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         var diagnostics = new List<string>();
         service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
@@ -1014,7 +1035,8 @@ public sealed class CharacterNoteRuntimeTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "cancel",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             Task run = service.RunTurnAsync(
@@ -1071,7 +1093,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         using var callerCts = new CancellationTokenSource();
@@ -1079,7 +1101,8 @@ public sealed class CharacterNoteRuntimeTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "caller cancel with fatal Note",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             Task run = service.RunTurnAsync(
@@ -1132,7 +1155,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         var diagnostics = new List<string>();
         service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
@@ -1141,7 +1164,8 @@ public sealed class CharacterNoteRuntimeTests {
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "head fence",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             Task run = service.RunTurnAsync(
@@ -1220,14 +1244,15 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
             session,
             "head authority",
-            new GalateaTurnOptions(main.Id)
+            new GalateaTurnOptions(main.Id),
+            sender: GalateaDelegateTestConfiguration.PlayerSender
         );
         try {
             Task run = service.RunTurnAsync(
@@ -1347,7 +1372,7 @@ public sealed class CharacterNoteRuntimeTests {
             );
         }
 
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
 
         Assert.Equal(0, noteClient.DispatchCount);
@@ -1356,7 +1381,7 @@ public sealed class CharacterNoteRuntimeTests {
             .ReadStatusSnapshot().ActiveCapture);
         Assert.Equal(NoteText, Assert.Single(
             global::Atelia.MemoPod.MemoPod.Open(
-                session.User.CharacterMemoryStateDir,
+                session.Character.CharacterMemoryStateDir,
                 CharacterNoteDefaultPodV1.PodId
             ).List()
         ).ExactText);
@@ -1379,7 +1404,7 @@ public sealed class CharacterNoteRuntimeTests {
     public async Task StartingAndDiscardingTurnsDoesNotConsumeDurableReceipt() {
         CompletionConnectionConfig main = Connection("test");
         await using GalateaTestHost host = CreateReceiptHost(main);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         await SaveNoteAsync(service, session, main.Id);
 
@@ -1396,7 +1421,7 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn inbound = service.StartInboundMailTurn(
                 session,
                 MailboxMessage.CreateInbound(
-                    session.User.CharacterName,
+                    session.Character.CharacterName,
                     "outside",
                     null,
                     "body"
@@ -1419,7 +1444,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn ordinary = service.StartTurn(
                 session,
                 "ordinary",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             service.FinishTurn(session, ordinary);
@@ -1435,7 +1461,7 @@ public sealed class CharacterNoteRuntimeTests {
         CompletionConnectionConfig main = Connection("test");
         var transport = new ReadyReplyTransport();
         await using GalateaTestHost host = CreateReceiptHost(main, transport);
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         await SaveNoteAsync(service, session, main.Id);
         await ProduceReadyReplyAsync(session);
@@ -1446,7 +1472,8 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaLiveTurn turn = service.StartTurn(
                 session,
                 "ordinary with reply",
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                sender: GalateaDelegateTestConfiguration.PlayerSender
             );
             GalateaFreshInput.PlayerAction input = Assert.IsType<
                 GalateaFreshInput.PlayerAction>(turn.FreshInput);
@@ -1458,8 +1485,10 @@ public sealed class CharacterNoteRuntimeTests {
             service.FinishTurn(session, turn);
             PlayerTurnObservation observation = ReadLatestObservation(session);
             Assert.Single(observation.Notices.OfType<PlayerTurnNotice.Reply>());
-            Assert.Contains(NoteText, Assert.Single(observation.Notices
-                .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
+            CharacterNoteReceiptSelection receipt = Assert.IsType<CharacterNoteReceiptSelection>(
+                Assert.Single(observation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection);
+            Assert.Equal(NoteText, Assert.Single(receipt.ExactTexts));
+            Assert.Equal("m1:00000001", Assert.Single(receipt.MemoIds).Value);
             Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
         }
         finally {
@@ -1489,7 +1518,7 @@ public sealed class CharacterNoteRuntimeTests {
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
-        (GalateaHostService service, UserSessionHost session) =
+        (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
         Assert.Equal(0, noteClient.DispatchCount);
         EventAddress observationHead = session.Engine.AppendObservation(
@@ -1521,7 +1550,7 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             Assert.Equal(NoteText, Assert.Single(
                 global::Atelia.MemoPod.MemoPod.Open(
-                    session.User.CharacterMemoryStateDir,
+                    session.Character.CharacterMemoryStateDir,
                     CharacterNoteDefaultPodV1.PodId
                 ).List()
             ).ExactText);
@@ -1532,10 +1561,10 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     private static async Task<(GalateaHostService Service,
-        UserSessionHost Session)> GetRuntimeAsync(GalateaTestHost host) {
+        CharacterSessionHost Session)> GetRuntimeAsync(GalateaTestHost host) {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1593,10 +1622,10 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     private static async Task SaveNoteAsync(
-        GalateaHostService service, UserSessionHost session, string connectionId
+        GalateaHostService service, CharacterSessionHost session, string connectionId
     ) {
         await session.TurnLock.WaitAsync();
-        GalateaLiveTurn turn = service.StartTurn(session, "save", new(connectionId));
+        GalateaLiveTurn turn = service.StartTurn(session, "save", new(connectionId), sender: GalateaDelegateTestConfiguration.PlayerSender);
         try {
             await service.RunTurnAsync(session, turn, CancellationToken.None).WaitAsync(Deadline);
         }
@@ -1607,14 +1636,14 @@ public sealed class CharacterNoteRuntimeTests {
         Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
     }
 
-    private static PlayerTurnObservation ReadLatestObservation(UserSessionHost session) {
-        string content = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+    private static PlayerTurnObservation ReadLatestObservation(CharacterSessionHost session) {
+        SessionInputContent content = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns).ObservationContent;
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(content, out PlayerTurnObservation observation));
-        return observation;
+        Assert.True(content.IsStructured);
+        return GalateaObservationContent.ReadPlayerTurn(content);
     }
 
-    private static async Task ProduceReadyReplyAsync(UserSessionHost session) {
+    private static async Task ProduceReadyReplyAsync(CharacterSessionHost session) {
         const string VisibleAction = "ready reply source";
         GalateaDelegationSqliteStore store = session.DelegationHandle!.Store;
         string sourceAction = EventAddressTextCodec.Format(
@@ -1634,7 +1663,8 @@ public sealed class CharacterNoteRuntimeTests {
                     Body: "task",
                     InReplyToMessageId: null,
                     EvidenceQuote: "evidence"
-                )]
+                )],
+                new GalateaSenderSnapshot("character", session.Character.CharacterId, session.Character.CharacterName.Value)
             )
         );
         string dispatchId = Assert.Single(captured.DispatchIds);
@@ -1660,7 +1690,10 @@ public sealed class CharacterNoteRuntimeTests {
         public Task<GalateaDelegateTurnAccepted> StartTurnAsync(
             GalateaStartDelegateTurnRequest request, CancellationToken ct
         ) {
-            Assert.Equal("task", request.Task);
+            JsonElement task = MdJsonSerializer.Read(request.Task);
+            Assert.Equal("task", task.GetProperty("body").GetString());
+            Assert.Equal("character", task.GetProperty("sender").GetProperty("kind").GetString());
+            Assert.Equal("alice", task.GetProperty("sender").GetProperty("id").GetString());
             Interlocked.Increment(ref _startCount);
             return Task.FromResult(new GalateaDelegateTurnAccepted(
                 request.DispatchId, request.ThreadId, "runtime-test-turn"));
@@ -1920,10 +1953,12 @@ public sealed class CharacterNoteRuntimeTests {
         Exception callbackFailure
     ) : ICompletionClient {
         private int _activeCalls;
+        private int _callbackInvocations;
 
         public string Name => "cancellation-callback-failure";
         public string ApiSpecId => "test-v1";
         internal int ActiveCalls => Volatile.Read(ref _activeCalls);
+        internal int CallbackInvocations => Volatile.Read(ref _callbackInvocations);
         internal TaskCompletionSource Entered { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -1939,17 +1974,20 @@ public sealed class CharacterNoteRuntimeTests {
             _ = request;
             _ = observer;
             Interlocked.Increment(ref _activeCalls);
+            var canceled = new TaskCompletionSource<CompletionResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            // One callback owns both cancellation and the injected failure.
+            // A separate Task.Delay registration could cancel first and let
+            // its continuation dispose this callback before it ever executes.
             using CancellationTokenRegistration registration =
-                cancellationToken.Register(() => throw callbackFailure);
+                cancellationToken.Register(() => {
+                    Interlocked.Increment(ref _callbackInvocations);
+                    canceled.TrySetCanceled(cancellationToken);
+                    throw callbackFailure;
+                });
             Entered.TrySetResult();
             try {
-                await Task.Delay(
-                    Timeout.InfiniteTimeSpan,
-                    cancellationToken
-                );
-                throw new Xunit.Sdk.XunitException(
-                    "Infinite delay unexpectedly completed."
-                );
+                return await canceled.Task;
             }
             finally {
                 if (Interlocked.Decrement(ref _activeCalls) == 0) {
@@ -2109,6 +2147,7 @@ public sealed class CharacterNoteRuntimeTests {
         public string Name => "queued-runtime";
         public string ApiSpecId => "test-v1";
         internal int DispatchCount => Volatile.Read(ref _dispatchCount);
+        internal CompletionRequest? LastRequest { get; private set; }
 
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -2119,6 +2158,7 @@ public sealed class CharacterNoteRuntimeTests {
             ActionMessage message;
             lock (_gate) {
                 message = _messages.Dequeue();
+                LastRequest = request;
             }
             Interlocked.Increment(ref _dispatchCount);
             foreach (ActionBlock.Text text in message.Blocks
@@ -2141,15 +2181,18 @@ public sealed class CharacterNoteRuntimeTests {
         private static readonly PlayerTurnRecall SavedCandidate = new(
             new RecallEntry(
                 RecallType.MemoExactText,
-                "character-note-test-candidate"
+                GalateaMemoRecallSourceIdCodec.Format(CharacterNoteDefaultPodV1.PodId, CandidateMemoId)
             ),
+            CharacterNoteDefaultPodV1.EmptyStateIdentity,
+            "Saved candidate title",
             NoteText
         );
-        internal static PlayerTurnRecall UnrelatedCandidate { get; } = new(
+        internal static PlayerTurnRecall UnrelatedCandidate { get; } = PlayerTurnRecall.FromText(
             new RecallEntry(
                 RecallType.MemoSummary,
                 "unrelated-test-candidate"
             ),
+            "unrelated-version-1",
             "unrelated summary"
         );
 

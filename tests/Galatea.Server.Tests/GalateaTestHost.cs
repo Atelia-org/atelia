@@ -19,19 +19,18 @@ using Microsoft.Extensions.Hosting;
 namespace Atelia.Galatea.Server.Tests;
 
 internal sealed class GalateaTestHost : IAsyncDisposable {
-    private const string TestUserId = "alice";
+    private const string TestCharacterId = "alice";
+    private const string TestPlayerId = "player-main";
     private const string TestPassword = "pw1";
-    private static string ComposeDefaultFinalizedSystemPrompt(
+    private static SessionInputContent ComposeDefaultFinalizedSystemPrompt(
         bool outboundMailEnabled,
         bool characterNoteRequestEnabled,
         string homeDir
-    ) => GalateaSystemPromptComposer.Compose(
+    ) => GalateaSystemPromptComposer.CreateContent(
+        new GalateaSenderSnapshot("character", TestCharacterId, "Galatea"),
         "test ${characterName} system prompt",
-        new GalateaCharacterName("Galatea"),
-        new GalateaPlayerName("刘世超"),
         outboundMailEnabled,
         characterNoteRequestEnabled,
-        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
         homeDir: homeDir
     );
 
@@ -84,7 +83,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 "The test config path has no parent directory."
             ),
         "delegation-state",
-        TestUserId
+        TestCharacterId
     );
 
     internal string CharacterMemoryStateDirectory => Path.Combine(
@@ -93,7 +92,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 "The test config path has no parent directory."
             ),
         "character-memory",
-        TestUserId
+        TestCharacterId
     );
 
     internal string ConfigPath { get; }
@@ -116,7 +115,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory = null,
         TimeProvider? timeProvider = null,
-        IReadOnlyList<string>? serverAgentUserIds = null,
+        IReadOnlyList<string>? heartbeatCharacterIds = null,
         bool enableServerAgentHostedService = false
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
@@ -141,7 +140,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                        ComposeDefaultFinalizedSystemPrompt(
                            outboundMailExtractorConnectionId is not null,
                            characterNoteExtractorConnectionId is not null,
-                           Path.Combine(configDirectory, "homes", TestUserId)
+                           Path.Combine(configDirectory, "homes", TestCharacterId)
                        ),
                        "openai-chat/strict"
                    ))) {
@@ -176,7 +175,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             characterNoteExtractorConnectionId:
                 characterNoteExtractorConnectionId,
             memoRecallConnectionId: memoRecallConnectionId,
-            serverAgentUserIds: serverAgentUserIds
+            heartbeatCharacterIds: heartbeatCharacterIds
         );
 
         return new GalateaTestHost(
@@ -501,7 +500,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         return client.PostAsync(
             "/login",
             new FormUrlEncodedContent(new Dictionary<string, string> {
-                ["userId"] = TestUserId,
+                ["playerId"] = TestPlayerId,
                 ["password"] = TestPassword
             })
         );
@@ -531,13 +530,13 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
         string? memoRecallConnectionId = null,
-        IReadOnlyList<string>? serverAgentUserIds = null,
+        IReadOnlyList<string>? heartbeatCharacterIds = null,
         string characterName = "Galatea",
         string playerName = "刘世超"
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
-            ?? CreateGalateaV6Profile();
+            ?? CreateGalateaV7Profile();
         File.WriteAllBytes(
             Path.Combine(
                 configurationDirectory,
@@ -545,39 +544,40 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             ),
             profile.ToCanonicalBytes()
         );
-        var users = new GalateaUsersFileConfig(
+        var users = new GalateaRootFileConfig(
             Version: GalateaStrictConfigReader.CurrentConfigVersion,
-            Users: [
-                new GalateaUserFileConfig(
-                    TestUserId,
-                    TestPassword,
+            Characters: [
+                new GalateaCharacterFileConfig(
+                    TestCharacterId,
                     characterName,
-                    playerName,
                     absoluteSessionDirectory,
                     Path.Combine(
                         configurationDirectory,
                         "delegation-state",
-                        TestUserId
+                        TestCharacterId
                     ),
                     Path.Combine(
                         configurationDirectory,
                         "character-memory",
-                        TestUserId
+                        TestCharacterId
                     ),
-                    Directory.CreateDirectory(Path.Combine(configurationDirectory, "homes", TestUserId)).FullName,
+                    Directory.CreateDirectory(Path.Combine(configurationDirectory, "homes", TestCharacterId)).FullName,
                     sessionProvisioning,
                     defaultConnectionId,
-                    CharacterContextTemplate: characterContextTemplate
+                    CharacterContextTemplate: characterContextTemplate,
+                    HeartbeatEnabled: heartbeatCharacterIds?.Contains(TestCharacterId, StringComparer.Ordinal) == true
                 )
             ],
-            CallLogDir: callLogDirectory,
-            MaintenanceMode: maintenanceMode,
-            RecapGrid: new GalateaRecapGridFileConfig(
+            Players: [new GalateaPlayerFileConfig(TestPlayerId, playerName, TestPassword)],
+            Runtime: new GalateaRuntimeFileConfig(
+              CallLogDir: callLogDirectory,
+              MaintenanceMode: maintenanceMode,
+              RecapGrid: new GalateaRecapGridFileConfig(
                 "recap-grid-routes.json",
                 [agentControlProfileFile],
                 profile.ProfileId
-            ),
-            ServerAgentUserIds: serverAgentUserIds ?? []
+              )
+            )
         );
         var jsonOptions = new JsonSerializerOptions(
             JsonSerializerDefaults.Web
@@ -758,16 +758,15 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         File.WriteAllBytes(path, bytes);
     }
 
-    internal static RecapGridAgentControlProfile CreateGalateaV6Profile(
+    internal static RecapGridAgentControlProfile CreateGalateaV7Profile(
         RecapGridControlPermission permissions =
             RecapGridControlPermission.All,
         string profileId = "test-profile"
     ) {
         if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaRecapGridAssets.RollingRewriteZhCnV7,
                 new GalateaRecapGridAssetParameters(
-                    new GalateaCharacterName("Galatea"),
-                    new GalateaPlayerName("刘世超")
+                    new GalateaCharacterName("Galatea")
                 ),
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
@@ -791,7 +790,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         );
     }
 
-    private static void ProvisionRawOnlyRecapGrid(
+    internal static void ProvisionRawOnlyRecapGrid(
         SessionJournalEngine engine
     ) {
         HistoryTimelineCreateResult timeline =

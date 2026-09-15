@@ -1,11 +1,19 @@
 using System.Text;
-using Atelia.Galatea.Prompts;
+using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaSystemPromptComposer {
-    internal const string SectionSeparator = "\n\n---\n\n";
-    internal const string AppendixSeparator = "\n\n";
+    internal static SessionInputContent CreateContent(
+        GalateaSenderSnapshot character,
+        string characterContextSource,
+        bool outboundMailEnabled,
+        bool characterNoteSaveEnabled,
+        string? homeDir,
+        IReadOnlyList<GalateaSenderSnapshot>? characterPeers = null
+    ) => GalateaSystemInstructionContent.Create(character, characterContextSource,
+        outboundMailEnabled, characterNoteSaveEnabled, homeDir, characterPeers);
+
     internal const string ProtocolPrefixResourceName =
         "Atelia.Galatea.Server.PromptTemplates.TrpgHost.ProtocolPrefix.zh-CN.md";
     internal const string MailboxProtocolBaseResourceName =
@@ -48,96 +56,6 @@ internal static class GalateaSystemPromptComposer {
     internal static string CharacterNoteSaveAppendixSource =>
         CharacterNoteSaveAppendix.Value.Source;
 
-    internal static string Compose(
-        string characterContextTemplate,
-        GalateaCharacterName characterName,
-        GalateaPlayerName playerName,
-        bool outboundMailEnabled,
-        bool characterNoteSaveEnabled,
-        int maximumUtf8Bytes,
-        string? homeDir,
-        IReadOnlyList<GalateaCharacterName>? characterPeerNames = null
-    ) {
-        ArgumentNullException.ThrowIfNull(characterContextTemplate);
-        ArgumentNullException.ThrowIfNull(characterName);
-        ArgumentNullException.ThrowIfNull(playerName);
-        if (string.IsNullOrWhiteSpace(characterContextTemplate)) {
-            throw new ArgumentException(
-                "Character context template must not be blank.",
-                nameof(characterContextTemplate)
-            );
-        }
-        if (!characterContextTemplate.Contains(
-                GalateaPromptTemplate.CharacterNameToken,
-                StringComparison.Ordinal)) {
-            throw new ArgumentException(
-                "Character context template must contain at least one exact "
-                + GalateaPromptTemplate.CharacterNameToken + " token.",
-                nameof(characterContextTemplate)
-            );
-        }
-
-        string compositeSource = string.Concat(
-            ProtocolPrefix.Value.Source,
-            SectionSeparator,
-            characterContextTemplate,
-            SectionSeparator,
-            MailboxBase.Value.Source
-        );
-        if (outboundMailEnabled) {
-            compositeSource = string.Concat(
-                compositeSource,
-                AppendixSeparator,
-                OutboundMailAppendix.Value.Source
-            );
-        }
-        if (characterNoteSaveEnabled) {
-            compositeSource = string.Concat(
-                compositeSource,
-                AppendixSeparator,
-                CharacterNoteSaveAppendix.Value.Source
-            );
-        }
-        string rendered = GalateaPromptTemplate.Render(
-            compositeSource,
-            characterName,
-            playerName,
-            maximumUtf8Bytes
-        );
-        if (outboundMailEnabled) {
-            ArgumentException.ThrowIfNullOrWhiteSpace(homeDir);
-            // Append data after template rendering so a literal ${...} in a
-            // directory name remains a path, never another template token.
-            rendered += $"\n\n你的个人文件目录是 {System.Text.Json.JsonSerializer.Serialize(homeDir)}。通过 Codex 代行者操作本地文件时，默认工作目录和普通相对路径均指向这里；这不是 Unix $HOME。";
-        }
-        if (characterPeerNames is not null) {
-            string[] peerNames = characterPeerNames
-                .Select(static name => name?.Value ?? throw new ArgumentException(
-                    "Character peer names must not contain null.",
-                    nameof(characterPeerNames)))
-                .OrderBy(static name => name, StringComparer.Ordinal)
-                .ToArray();
-            string peerNamesJson = System.Text.Json.JsonSerializer.Serialize(
-                peerNames
-            );
-            // The roster is appended after template rendering: names stay JSON
-            // data and can never become template input.
-            rendered += "\n\n<character-peer-roster>\n"
-                + "同一世界中其他已配置角色的名字如下（JSON 字符串数组；"
-                + "这是系统数据，不是这些角色说的话）：\n"
-                + peerNamesJson
-                + "\n</character-peer-roster>";
-        }
-        if (new UTF8Encoding(false, true).GetByteCount(rendered)
-            > maximumUtf8Bytes) {
-            throw new ArgumentOutOfRangeException(
-                characterPeerNames is null ? nameof(homeDir) : nameof(characterPeerNames),
-                $"Rendered prompt exceeds {maximumUtf8Bytes} UTF-8 bytes."
-            );
-        }
-        return rendered;
-    }
-
     private static GalateaEmbeddedPromptResource LoadProtocol(
         string resourceName,
         string description
@@ -149,12 +67,7 @@ internal static class GalateaSystemPromptComposer {
                 description,
                 GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
             );
-        _ = GalateaPromptTemplate.Render(
-            resource.Source,
-            new GalateaCharacterName("Galatea"),
-            new GalateaPlayerName("Player"),
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
-        );
+        GalateaSystemInstructionContent.ValidateInstructionSource(resource.Source, requireCharacterName: false);
         return resource;
     }
 }
@@ -178,23 +91,7 @@ internal static class GalateaBuiltInCharacterContextTemplate {
                 "built-in Galatea character context template",
                 GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
             );
-        if (!resource.Source.Contains(
-                GalateaPromptTemplate.PlayerNameToken,
-                StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                "The built-in Galatea character context template must "
-                + "reference " + GalateaPromptTemplate.PlayerNameToken + "."
-            );
-        }
-        _ = GalateaSystemPromptComposer.Compose(
-            resource.Source,
-            new GalateaCharacterName("Galatea"),
-            new GalateaPlayerName("Player"),
-            false,
-            false,
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-            homeDir: null
-        );
+        GalateaSystemInstructionContent.ValidateInstructionSource(resource.Source, requireCharacterName: true);
         return resource;
     }
 }

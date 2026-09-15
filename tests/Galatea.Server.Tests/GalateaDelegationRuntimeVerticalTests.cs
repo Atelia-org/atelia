@@ -7,6 +7,9 @@ using Atelia.Completion.Abstractions;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
+using Atelia.MdJson;
+using Atelia.MemoPod;
+using Atelia.Galatea.Server.CharacterMemory;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -68,13 +71,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             delegateTransport: new DurableTransport(backend),
             playerTurnRecallProviderFactory: (_, _) => recallProvider,
             timeProvider: clock,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -82,7 +85,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             .ReadCurrentHead();
 
         using (HttpResponseMessage waiting = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.OK, waiting.StatusCode);
             LoopPulseStatusDto? status = await waiting.Content
@@ -127,7 +130,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         int normalizeBeforeReady = normalizer.NormalizeCallCount;
 
         using (HttpResponseMessage unknown = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new { connectionId = "unknown" })) {
             Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
             using JsonDocument error = JsonDocument.Parse(
@@ -146,7 +149,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
@@ -174,7 +177,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         try {
             using HttpResponseMessage busy = await http.PostAsJsonAsync(
-                "/api/v1/mailbox/ready-turn",
+                "/api/v1/characters/alice/mailbox/ready-turn",
                 new ReadyReplyTurnRequest()
             );
             Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
@@ -203,23 +206,20 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection completed = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.Equal(leased.ActiveLease.RenderedObservation,
+        Assert.Equal(leased.ActiveLease.ObservationContent,
             completed.ObservationContent);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            completed.ObservationContent,
-            out PlayerTurnObservation observation
-        ));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(completed.ObservationContent);
         Assert.Equal(
             PlayerTurnObservationTriggerKind.DelegateReply,
             observation.TriggerKind
         );
         Assert.DoesNotContain(
             "player-action",
-            completed.ObservationContent,
+            completed.ObservationContent.JsonValue.GetRawText(),
             StringComparison.Ordinal
         );
         Assert.NotNull(observation.ExternalLocalTimestamp);
-        Assert.Equal("memory useful for the reply", Assert.Single(observation.Recalls).Body);
+        Assert.Equal("memory useful for the reply", Assert.Single(observation.Recalls).ExactText);
         Assert.Equal(
             new DateTimeOffset(
                 2026,
@@ -249,7 +249,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         int extractorCallsAfterCompleted = extractorClient.CallCount;
 
         using (HttpResponseMessage waiting = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.OK, waiting.StatusCode);
             LoopPulseStatusDto? status = await waiting.Content
@@ -296,13 +296,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
         GalateaLiveTurn turn = session.StartTurn(
             new GalateaFreshInput.HeartbeatActivation(
-                new GalateaCharacterName("Alice")
+                session.Character.CharacterName
             ),
             new GalateaTurnOptions(main.Id)
         );
@@ -326,20 +326,14 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns
         );
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            completed.ObservationContent,
-            out PlayerTurnObservation observation
-        ));
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(completed.ObservationContent);
         Assert.Equal(
             PlayerTurnObservationTriggerKind.HeartbeatActivation,
             observation.TriggerKind
         );
-        Assert.Equal("Alice", observation.HeartbeatCharacterName.Value);
-        Assert.Contains(
-            "此刻，Alice拥有一段由自己支配的时间",
-            completed.ObservationContent,
-            StringComparison.Ordinal
-        );
+        Assert.Equal(session.Character.CharacterName.Value, observation.HeartbeatCharacterName.Value);
+        Assert.Equal(session.Character.CharacterName.Value,
+            completed.ObservationContent.JsonValue.GetProperty("action").GetProperty("character").GetProperty("name").GetString());
         Assert.Equal(
             new DateTimeOffset(
                 2026,
@@ -380,7 +374,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -473,7 +467,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -542,13 +536,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             connections: [main],
             selectableConnectionIds: [main.Id],
             timeProvider: clock,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -569,7 +563,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         clock.Advance(TimeSpan.FromSeconds(10));
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
@@ -584,7 +578,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.True(completionStarted.Wait(Deadline));
         Assert.IsType<GalateaFreshInput.HeartbeatActivation>(turn.FreshInput);
         using (HttpResponseMessage busy = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
         }
@@ -630,7 +624,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             connections: [main],
             selectableConnectionIds: [main.Id],
             timeProvider: clock,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -691,13 +685,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             timeProvider: clock,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -736,7 +730,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 == GalateaReplyNoticeState.Ready);
         LoopPulseAcceptedTurnDto reply;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             reply = Assert.IsType<LoopPulseAcceptedTurnDto>(
@@ -784,7 +778,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -792,7 +786,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             .GetRequiredService<GalateaHostService>();
         GalateaAcceptedTurnRunner runner = host.Factory.Services
             .GetRequiredService<GalateaAcceptedTurnRunner>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
         _ = await StartAndWaitAsync(http, service, session, "send one");
         await WaitUntilAsync(() => backend.StartCallCount == 1);
@@ -830,7 +824,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         int extractorCallsBeforeRetry = extractorClient.CallCount;
 
         using (HttpResponseMessage blocked = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn", new ReadyReplyTurnRequest())) {
+                   "/api/v1/characters/alice/mailbox/ready-turn", new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
             using JsonDocument body = JsonDocument.Parse(
                 await blocked.Content.ReadAsStringAsync());
@@ -852,7 +846,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Equal("completed", manual.Status);
         Assert.False(session.AutomaticReplyFailed);
         using HttpResponseMessage resumed = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/ready-turn", new ReadyReplyTurnRequest());
+            "/api/v1/characters/alice/mailbox/ready-turn", new ReadyReplyTurnRequest());
         Assert.Equal(HttpStatusCode.Accepted, resumed.StatusCode);
         LoopPulseAcceptedTurnDto accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
             await resumed.Content.ReadFromJsonAsync<LoopPulseAcceptedTurnDto>());
@@ -896,7 +890,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             connections: [main],
             delegateTransport: new DurableTransport(backend),
             timeProvider: clock,
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         GalateaTestHost? restarted = null;
         try {
@@ -983,7 +977,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await LoginAsync(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1023,12 +1017,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection receiving = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            receiving.ObservationContent,
-            out PlayerTurnObservation composite
-        ));
+        PlayerTurnObservation composite = GalateaObservationContent.ReadPlayerTurn(receiving.ObservationContent);
         Assert.Equal("player text", composite.PlayerText);
-        Assert.Equal("memory useful for the reply", Assert.Single(composite.Recalls).Body);
+        Assert.Equal("memory useful for the reply", Assert.Single(composite.Recalls).ExactText);
         Assert.NotNull(composite.ExternalLocalTimestamp);
         Assert.Equal(
             [ReplyOne, ReplyTwo],
@@ -1043,9 +1034,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         });
 
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
-            RecentTurnsResponseDto>("/api/v1/recent-turns"))!;
+            RecentTurnsResponseDto>("/api/v1/characters/alice/recent-turns"))!;
         using HttpResponseMessage undo = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns/pop-latest",
+            "/api/v1/characters/alice/chat/turns/pop-latest",
             new { rewindLatestToken = recent.RewindLatestToken }
         );
         Assert.Equal(HttpStatusCode.OK, undo.StatusCode);
@@ -1066,10 +1057,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection afterUndo = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            afterUndo.ObservationContent,
-            out PlayerTurnObservation afterUndoComposite
-        ));
+        PlayerTurnObservation afterUndoComposite = GalateaObservationContent.ReadPlayerTurn(afterUndo.ObservationContent);
         Assert.Empty(afterUndoComposite.Notices);
         Assert.Equal(3, recallProvider.CallCount);
         Assert.NotNull(afterUndoComposite.ExternalLocalTimestamp);
@@ -1106,13 +1094,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
-            serverAgentUserIds: ["alice"]
+            heartbeatCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
+        CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
@@ -1151,10 +1139,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection manual = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            manual.ObservationContent,
-            out PlayerTurnObservation manualObservation
-        ));
+        PlayerTurnObservation manualObservation = GalateaObservationContent.ReadPlayerTurn(manual.ObservationContent);
         Assert.Equal(
             PlayerTurnObservationTriggerKind.PlayerAction,
             manualObservation.TriggerKind
@@ -1174,7 +1159,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
-                   "/api/v1/mailbox/ready-turn",
+                   "/api/v1/characters/alice/mailbox/ready-turn",
                    new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
@@ -1192,15 +1177,12 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection automatic = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-            automatic.ObservationContent,
-            out PlayerTurnObservation automaticObservation
-        ));
+        PlayerTurnObservation automaticObservation = GalateaObservationContent.ReadPlayerTurn(automatic.ObservationContent);
         Assert.Equal(
             PlayerTurnObservationTriggerKind.DelegateReply,
             automaticObservation.TriggerKind
         );
-        Assert.DoesNotContain("player-action", automatic.ObservationContent,
+        Assert.DoesNotContain("player-action", automatic.ObservationContent.JsonValue.GetRawText(),
             StringComparison.Ordinal);
         Assert.Equal(
             GalateaReplyNoticeState.Consumed,
@@ -1248,7 +1230,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 await LoginAsync(http);
                 GalateaHostService service = first.Factory.Services
                     .GetRequiredService<GalateaHostService>();
-                UserSessionHost session = await service.GetSessionAsync(
+                CharacterSessionHost session = await service.GetSessionAsync(
                     "alice",
                     CancellationToken.None
                 );
@@ -1275,7 +1257,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             await LoginAsync(restartedHttp);
             GalateaHostService restartedService = restarted.Factory.Services
                 .GetRequiredService<GalateaHostService>();
-            UserSessionHost restartedSession =
+            CharacterSessionHost restartedSession =
                 await restartedService.GetSessionAsync(
                 "alice",
                 CancellationToken.None
@@ -1297,7 +1279,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 .RequireSnapshot().Turns.Single();
             Assert.Contains(
                 "reply recovered after restart",
-                receiving.ObservationContent,
+                receiving.ObservationContent.JsonValue.GetRawText(),
                 StringComparison.Ordinal
             );
         }
@@ -1352,7 +1334,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 await LoginAsync(http);
                 GalateaHostService service = first.Factory.Services
                     .GetRequiredService<GalateaHostService>();
-                UserSessionHost session = await service.GetSessionAsync(
+                CharacterSessionHost session = await service.GetSessionAsync(
                     "alice",
                     CancellationToken.None
                 );
@@ -1378,7 +1360,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             await LoginAsync(restartedHttp);
             GalateaHostService restartedService = restarted.Factory.Services
                 .GetRequiredService<GalateaHostService>();
-            UserSessionHost restartedSession =
+            CharacterSessionHost restartedSession =
                 await restartedService.GetSessionAsync(
                     "alice",
                     CancellationToken.None
@@ -1403,14 +1385,18 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             SessionCompletedTurnProjection receiving = restartedSession.Engine
                 .ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns.Single();
-            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
-                receiving.ObservationContent,
-                out PlayerTurnObservation observation
-            ));
-            Assert.Contains(
-                ready.Body,
-                observation.Notices.Select(static notice => notice.Body)
-            );
+            PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(receiving.ObservationContent);
+            PlayerTurnNotice.DeliveryFailure interruption = Assert.IsType<PlayerTurnNotice.DeliveryFailure>(
+                Assert.Single(observation.Notices));
+            Assert.Equal("semantic-notice-v1", ready.NoticeFormat);
+            Assert.Equal(ready.Detail, interruption.Detail);
+            Assert.Equal(ready.Sender, interruption.Sender);
+            Assert.Equal(ready.Stage, interruption.Stage);
+            Assert.Equal(ready.Code, interruption.Code);
+            Assert.Equal(ready.DispatchId, interruption.DispatchId);
+            Assert.Equal(ready.ThreadId, interruption.ThreadId);
+            Assert.Equal(ready.TurnId, interruption.TurnId);
+            Assert.Equal(ready.NoticeId, interruption.NoticeId);
             Assert.Equal(
                 GalateaReplyNoticeState.Consumed,
                 restartedSession.DelegationHandle.Store.ReadSnapshot()
@@ -1448,7 +1434,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await LoginAsync(http);
 
         using HttpResponseMessage response = await http.GetAsync(
-            "/api/v1/recent-turns"
+            "/api/v1/characters/alice/recent-turns"
         );
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -1457,7 +1443,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
     private static GalateaAutonomyCadencePulseResult
         AdvanceCadenceToDue(
-        UserSessionHost session,
+        CharacterSessionHost session,
         ManualTimeProvider clock
     ) {
         GalateaAutonomyCadencePulseResult result = default;
@@ -1492,7 +1478,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         }
         clock.Advance(TimeSpan.FromSeconds(10));
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/ready-turn",
+            "/api/v1/characters/alice/mailbox/ready-turn",
             new ReadyReplyTurnRequest()
         );
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
@@ -1517,7 +1503,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         HttpClient http
     ) {
         using HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/ready-turn",
+            "/api/v1/characters/alice/mailbox/ready-turn",
             new ReadyReplyTurnRequest()
         );
         if (response.StatusCode != HttpStatusCode.OK) {
@@ -1534,11 +1520,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     private static async Task<GalateaLiveTurn> StartAndWaitAsync(
         HttpClient http,
         GalateaHostService service,
-        UserSessionHost session,
+        CharacterSessionHost session,
         string message
     ) {
         using HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns",
+            "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(message, "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -1695,9 +1681,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     private static void AssertReplyRecallVisible(CompletionRequest request) {
         string content = Assert.IsType<string>(request.PromptPrefix
             .SharedContextMessages.OfType<ObservationMessage>().Last().Content);
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(content,
-            out PlayerTurnObservation observation));
-        Assert.Equal("memory useful for the reply", Assert.Single(observation.Recalls).Body);
+        PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(
+            SessionInputContent.Structured(GalateaObservationContent.SchemaId, MdJsonSerializer.Read(content)));
+        Assert.Equal("memory useful for the reply", Assert.Single(observation.Recalls).ExactText);
     }
 
     private sealed class BoundedRecallProvider(int maximumCalls, bool emitRecallForReply = false)
@@ -1721,7 +1707,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 emitRecallForReply && request.CurrentObservation.Notices
                     .Any(static notice => notice is PlayerTurnNotice.Reply)
                     ? [new PlayerTurnRecall(new RecallEntry(RecallType.MemoExactText,
-                        "reply-memory"), "memory useful for the reply")]
+                        GalateaMemoRecallSourceIdCodec.Format(CharacterNoteDefaultPodV1.PodId, MemoId.Parse("m1:0000002a"))),
+                        "synthetic-pod-version", "Reply context", "memory useful for the reply")]
                     : []);
         }
     }
@@ -1793,6 +1780,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             GalateaInspectDelegateDispatchRequest request
         ) {
             Interlocked.Increment(ref _inspectCallCount);
+            GalateaStartDelegateTurnRequest submitted;
+            lock (_starts) { submitted = _starts.Single(start => start.DispatchId == request.DispatchId); }
+            Assert.Equal(GalateaTaskCommitment.FromTask(submitted.Task), request.TaskCommitment);
             DurableCall call = _calls[request.DispatchId];
             if (!string.Equals(
                     request.ExpectedTurnId,

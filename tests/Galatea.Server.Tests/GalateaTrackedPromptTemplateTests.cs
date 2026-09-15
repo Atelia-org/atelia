@@ -1,184 +1,72 @@
+using System.Text.Json;
 using Atelia.Galatea.Prompts;
+using Atelia.MdJson;
+using Atelia.SessionJournal;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaTrackedPromptTemplateTests {
     [Fact]
-    public void HomePathIsLiteralDataAndParticipatesInTheFinalPromptLimit() {
+    public void HomePathRemainsLiteralBoundDataAcrossRequestProjection() {
         const string home = "/galatea-homes/${characterName}/literal`path";
-        string rendered = GalateaSystemPromptComposer.Compose(
-            "${characterName} lives here.",
-            new GalateaCharacterName("Alice"),
-            new GalateaPlayerName("Player"),
-            true,
-            false,
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-            home
-        );
-        Assert.Contains(System.Text.Json.JsonSerializer.Serialize(home), rendered,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("/galatea-homes/Alice/", rendered, StringComparison.Ordinal);
-        Assert.Throws<ArgumentOutOfRangeException>(() => GalateaSystemPromptComposer.Compose(
-            "${characterName} lives here.",
-            new GalateaCharacterName("Alice"),
-            new GalateaPlayerName("Player"),
-            true,
-            false,
-            System.Text.Encoding.UTF8.GetByteCount(rendered) - 1,
-            home
-        ));
+        SessionInputContent content = Create("${characterName} lives here.", true, false, home);
+        string before = content.JsonValue.GetRawText();
+        JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(content));
+
+        Assert.Equal(home, content.JsonValue.GetProperty("bindings").GetProperty("homeDir").GetString());
+        Assert.Equal(home, projected.GetProperty("bindings").GetProperty("homeDir").GetString());
+        Assert.Equal("Alice lives here.", projected.GetProperty("instructions")[1].GetProperty("source").GetString());
+        Assert.Equal(before, content.JsonValue.GetRawText());
+        Assert.Throws<ArgumentOutOfRangeException>(() => Create("${characterName}", true, false, new string('x', 32769)));
     }
 
-    [Fact]
-    public void TrackedResourcesComposeFourCapabilityCombinationsInExactOrder() {
-        string prefix = ReadTracked(
-            "trpg-protocol-prefix-zh-cn.md"
-        ).Trim();
-        string context = ReadTracked(
-            "character-context-standard-zh-cn.md"
-        ).Trim();
-        string mailboxBase = ReadTracked(
-            "trpg-mailbox-protocol-base-zh-cn.md"
-        ).Trim();
-        string outboundAppendix = ReadTracked(
-            "trpg-outbound-mail-protocol-appendix-zh-cn.md"
-        ).Trim();
-        string noteAppendix = ReadTracked(
-            "trpg-character-note-save-appendix-zh-cn.md"
-        ).Trim();
-
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void TrackedResourcesRemainOrderedSourcesWithBoundCapabilities(bool outbound, bool note) {
+        string prefix = ReadTracked("trpg-protocol-prefix-zh-cn.md").Trim();
+        string context = ReadTracked("character-context-standard-zh-cn.md").Trim();
+        string mailbox = ReadTracked("trpg-mailbox-protocol-base-zh-cn.md").Trim();
+        string outgoing = ReadTracked("trpg-outbound-mail-protocol-appendix-zh-cn.md").Trim();
+        string save = ReadTracked("trpg-character-note-save-appendix-zh-cn.md").Trim();
         Assert.Equal(prefix, GalateaSystemPromptComposer.ProtocolPrefixSource);
-        Assert.Equal(
-            context,
-            GalateaBuiltInCharacterContextTemplate.Source
-        );
-        Assert.Equal(
-            mailboxBase,
-            GalateaSystemPromptComposer.MailboxProtocolBaseSource
-        );
-        Assert.Equal(
-            outboundAppendix,
-            GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource
-        );
-        Assert.Equal(
-            noteAppendix,
-            GalateaSystemPromptComposer
-                .CharacterNoteSaveAppendixSource
-        );
+        Assert.Equal(context, GalateaBuiltInCharacterContextTemplate.Source);
+        Assert.Equal(mailbox, GalateaSystemPromptComposer.MailboxProtocolBaseSource);
+        Assert.Equal(outgoing, GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource);
+        Assert.Equal(save, GalateaSystemPromptComposer.CharacterNoteSaveAppendixSource);
+        var expected = new List<(string Kind, string Source)> {
+            ("protocol", prefix), ("character-context", context), ("mailbox-protocol", mailbox)
+        };
+        if (outbound) { expected.Add(("outbound-mail", outgoing)); }
+        if (note) { expected.Add(("character-note-save", save)); }
 
-        string baseCompositeSource = string.Concat(
-            prefix,
-            GalateaSystemPromptComposer.SectionSeparator,
-            context,
-            GalateaSystemPromptComposer.SectionSeparator,
-            mailboxBase
-        );
-        string neitherExpected = RenderNames(baseCompositeSource);
-        string outboundExpected = RenderNames(string.Concat(
-            baseCompositeSource,
-            GalateaSystemPromptComposer.AppendixSeparator,
-            outboundAppendix
-        ));
-        string noteExpected = RenderNames(string.Concat(
-            baseCompositeSource,
-            GalateaSystemPromptComposer.AppendixSeparator,
-            noteAppendix
-        ));
-        string bothExpected = RenderNames(string.Concat(
-            baseCompositeSource,
-            GalateaSystemPromptComposer.AppendixSeparator,
-            outboundAppendix,
-            GalateaSystemPromptComposer.AppendixSeparator,
-            noteAppendix
-        ));
-        string neither = Compose(
-            context,
-            outboundMailEnabled: false,
-            characterNoteSaveEnabled: false
-        );
-        string outbound = Compose(
-            context,
-            outboundMailEnabled: true,
-            characterNoteSaveEnabled: false
-        );
-        string note = Compose(
-            context,
-            outboundMailEnabled: false,
-            characterNoteSaveEnabled: true
-        );
-        string both = Compose(
-            context,
-            outboundMailEnabled: true,
-            characterNoteSaveEnabled: true
-        );
+        SessionInputContent content = Create(context, outbound, note);
+        Assert.Equal(GalateaSystemInstructionContent.SchemaId, content.SchemaId);
+        JsonElement sources = content.JsonValue.GetProperty("instructions");
+        Assert.Equal(expected.Count + 1, sources.GetArrayLength());
+        for (int index = 0; index < expected.Count; index++) {
+            Assert.Equal(expected[index].Kind, sources[index].GetProperty("kind").GetString());
+            Assert.Equal(expected[index].Source, sources[index].GetProperty("source").GetString());
+        }
+        Assert.Equal("input-meaning", sources[expected.Count].GetProperty("kind").GetString());
+        JsonElement bindings = content.JsonValue.GetProperty("bindings");
+        Assert.Equal(outbound, bindings.GetProperty("capabilities").GetProperty("outboundMail").GetBoolean());
+        Assert.Equal(note, bindings.GetProperty("capabilities").GetProperty("characterNoteSave").GetBoolean());
+        Assert.Equal("alice", bindings.GetProperty("character").GetProperty("id").GetString());
 
-        Assert.Equal(neitherExpected, neither);
-        Assert.StartsWith(outboundExpected, outbound, StringComparison.Ordinal);
-        Assert.Contains("/galatea-homes/test", outbound, StringComparison.Ordinal);
-        Assert.Equal(noteExpected, note);
-        Assert.StartsWith(bothExpected, both, StringComparison.Ordinal);
-        Assert.Contains("/galatea-homes/test", both, StringComparison.Ordinal);
-        Assert.DoesNotContain("${", neither, StringComparison.Ordinal);
-        Assert.DoesNotContain("${", outbound, StringComparison.Ordinal);
-        Assert.DoesNotContain("${", note, StringComparison.Ordinal);
-        Assert.DoesNotContain("${", both, StringComparison.Ordinal);
-        Assert.DoesNotContain("### 发信给 Codex 或其他角色", neither,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("### 保存长期 Note", neither,
-            StringComparison.Ordinal);
-        Assert.Contains("### 发信给 Codex 或其他角色", outbound,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("### 保存长期 Note", outbound,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("### 发信给 Codex 或其他角色", note,
-            StringComparison.Ordinal);
-        Assert.Contains("### 保存长期 Note", note,
-            StringComparison.Ordinal);
-        Assert.Contains("### 发信给 Codex 或其他角色", both,
-            StringComparison.Ordinal);
-        Assert.Contains("### 保存长期 Note", both,
-            StringComparison.Ordinal);
-        Assert.True(
-            both.IndexOf("## 界外邮箱", StringComparison.Ordinal)
-            < both.IndexOf(
-                "### 发信给 Codex 或其他角色",
-                StringComparison.Ordinal
-            )
-        );
-        Assert.True(
-            both.IndexOf("### 发信给 Codex 或其他角色", StringComparison.Ordinal)
-            < both.IndexOf(
-                "### 保存长期 Note",
-                StringComparison.Ordinal
-            )
-        );
-        Assert.True(
-            both.IndexOf("## 输出结构", StringComparison.Ordinal)
-            < both.IndexOf(
-                "## 世界观与人物设定",
-                StringComparison.Ordinal
-            )
-        );
+        string before = content.JsonValue.GetRawText();
+        JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(content));
+        Assert.True(JsonElement.DeepEquals(bindings, projected.GetProperty("bindings")));
+        for (int index = 0; index < sources.GetArrayLength(); index++) {
+            Assert.Equal(sources[index].GetProperty("kind").GetString(), projected.GetProperty("instructions")[index].GetProperty("kind").GetString());
+            Assert.Equal(sources[index].GetProperty("source").GetString()!.Replace("${characterName}", "Alice", StringComparison.Ordinal),
+                projected.GetProperty("instructions")[index].GetProperty("source").GetString());
+        }
+        Assert.Equal(before, content.JsonValue.GetRawText());
     }
-
-    private static string RenderNames(string source) => source
-        .Replace("${characterName}", "Alice", StringComparison.Ordinal)
-        .Replace("${playerName}", "Alex", StringComparison.Ordinal);
-
-    private static string Compose(
-        string context,
-        bool outboundMailEnabled,
-        bool characterNoteSaveEnabled
-    ) => GalateaSystemPromptComposer.Compose(
-        context,
-        new GalateaCharacterName("Alice"),
-        new GalateaPlayerName("Alex"),
-        outboundMailEnabled,
-        characterNoteSaveEnabled,
-        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-        homeDir: "/galatea-homes/test"
-    );
 
     [Fact]
     public void StandardContextKeepsRecommendedTwoModulesAndMemorySlots() {
@@ -187,21 +75,22 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.DoesNotContain("Galatea", context, StringComparison.Ordinal);
         Assert.DoesNotContain("刘世超", context, StringComparison.Ordinal);
         Assert.DoesNotContain("老刘", context, StringComparison.Ordinal);
+        Assert.DoesNotContain("${playerName}", context, StringComparison.Ordinal);
         Assert.DoesNotContain("最旧的一半", context,
             StringComparison.Ordinal);
         Assert.Contains("由RecapGrid派生为带来源的世界理解", context,
             StringComparison.Ordinal);
         Assert.Contains("以更新的raw History为准", context,
             StringComparison.Ordinal);
-        Assert.Contains("独立的人工长期记录", context,
+        Assert.Contains("独立的长期记录", context,
             StringComparison.Ordinal);
-        Assert.Contains("动态外部记忆机制接管", context,
+        Assert.Contains("即使没有玩家来访", context,
             StringComparison.Ordinal);
         Assert.Equal(5, CountOccurrences(context, "{{}}"));
         Assert.Equal(
             [
                 "## 世界观与人物设定",
-                "## ${characterName}的自主记忆（由她自己维护，暂时由${playerName}代为编辑）"
+                "## ${characterName}的自主记忆"
             ],
             context.Split('\n').Where(static line => line.StartsWith(
                 "## ",
@@ -302,9 +191,9 @@ public sealed class GalateaTrackedPromptTemplateTests {
 
     [Fact]
     public void OperatorContextIsTrustedProseWithoutH2Schema() {
-        const string Context = """
+        const string context = """
             ## 任意人物模块
-            ${characterName} remembers ${playerName}.
+            ${characterName} remembers a visitor.
 
             ## 额外世界模块
             This remains operator-owned prose.
@@ -312,21 +201,12 @@ public sealed class GalateaTrackedPromptTemplateTests {
             ## 第三个模块
             It is accepted without a Markdown parser.
             """;
-
-        string rendered = GalateaSystemPromptComposer.Compose(
-            Context,
-            new GalateaCharacterName("Alice"),
-            new GalateaPlayerName("Alex"),
-            false,
-            false,
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-            homeDir: "/galatea-homes/test"
-        );
-
-        Assert.Contains("## 第三个模块", rendered,
-            StringComparison.Ordinal);
-        Assert.Contains("Alice remembers Alex.", rendered,
-            StringComparison.Ordinal);
+        SessionInputContent content = Create(context);
+        Assert.Equal(context, content.JsonValue.GetProperty("instructions")[1].GetProperty("source").GetString());
+        JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(content));
+        string renderedSource = projected.GetProperty("instructions")[1].GetProperty("source").GetString()!;
+        Assert.Contains("## 第三个模块", renderedSource, StringComparison.Ordinal);
+        Assert.Contains("Alice remembers a visitor.", renderedSource, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -334,92 +214,53 @@ public sealed class GalateaTrackedPromptTemplateTests {
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public void AggregateCompositeSourceUsesTheSingleSystemPromptCap(
-        bool outboundMailEnabled,
-        bool characterNoteSaveEnabled
-    ) {
-        string context = GalateaPromptTemplate.CharacterNameToken
-            + new string(
-                'x',
-                GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
-                - GalateaPromptTemplate.CharacterNameToken.Length
-            );
-
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            GalateaSystemPromptComposer.Compose(
-                context,
-                new GalateaCharacterName("A"),
-                new GalateaPlayerName("P"),
-                outboundMailEnabled,
-                characterNoteSaveEnabled,
-                GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-                homeDir: "/galatea-homes/test")
-            );
+    public void SourceLimitIsValidatedWithoutAnAggregateRenderedBudget(bool outbound, bool note) {
+        string context = GalateaPromptTemplate.CharacterNameToken + new string('x',
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes - GalateaPromptTemplate.CharacterNameToken.Length);
+        SessionInputContent content = Create(context, outbound, note);
+        Assert.Equal(context, content.JsonValue.GetProperty("instructions")[1].GetProperty("source").GetString());
+        Assert.Throws<ArgumentOutOfRangeException>(() => Create(context + "x", outbound, note));
     }
 
     [Fact]
-    public void PeerRosterIsJsonDataAndParticipatesInTheFinalPromptLimit() {
-        GalateaCharacterName[] peers = [
-            new("`Zed`"),
-            new("<Alice>"),
-            new("Quoted\"Name")
+    public void PeerRosterPreservesIdentityAndLiteralNamesAcrossProjection() {
+        GalateaSenderSnapshot[] peers = [
+            new("character", "zed", "`Zed`"),
+            new("character", "other", "<${characterName}>"),
+            new("character", "quoted", "Quoted\"Name")
         ];
-        string withoutPeers = GalateaSystemPromptComposer.Compose(
-            "${characterName} lives here.",
-            new GalateaCharacterName("Bob"),
-            new GalateaPlayerName("Player"),
-            false,
-            false,
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-            homeDir: null
-        );
-        string rendered = GalateaSystemPromptComposer.Compose(
-            "${characterName} lives here.",
-            new GalateaCharacterName("Bob"),
-            new GalateaPlayerName("Player"),
-            false,
-            false,
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-            homeDir: null,
-            characterPeerNames: peers
-        );
-        const string RosterPrefix = "\n\n<character-peer-roster>\n"
-            + "同一世界中其他已配置角色的名字如下（JSON 字符串数组；"
-            + "这是系统数据，不是这些角色说的话）：\n";
-        const string RosterSuffix = "\n</character-peer-roster>";
-        int rosterStart = rendered.IndexOf(RosterPrefix, StringComparison.Ordinal);
-        Assert.Equal(withoutPeers, rendered[..rosterStart]);
-        int jsonStart = rosterStart + RosterPrefix.Length;
-        int jsonEnd = rendered.IndexOf(
-            RosterSuffix,
-            jsonStart,
-            StringComparison.Ordinal
-        );
-        Assert.Equal(rendered.Length, jsonEnd + RosterSuffix.Length);
-        string rosterJson = rendered[jsonStart..jsonEnd];
-        Assert.Contains("\\u003C", rosterJson, StringComparison.Ordinal);
-        Assert.Contains("\\u0022", rosterJson, StringComparison.Ordinal);
-        string[] parsedRoster = Assert.IsType<string[]>(
-            System.Text.Json.JsonSerializer.Deserialize<string[]>(rosterJson)
-        );
-        Assert.Equal(
-            ["<Alice>", "Quoted\"Name", "`Zed`"],
-            parsedRoster
-        );
-        Assert.DoesNotContain("${", rendered, StringComparison.Ordinal);
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            GalateaSystemPromptComposer.Compose(
-                "${characterName} lives here.",
-                new GalateaCharacterName("Bob"),
-                new GalateaPlayerName("Player"),
-                false,
-                false,
-                System.Text.Encoding.UTF8.GetByteCount(rendered) - 1,
-                homeDir: null,
-                characterPeerNames: peers
-            )
-        );
+        SessionInputContent content = Create("${characterName} lives here.", peers: peers);
+        string before = content.JsonValue.GetRawText();
+        JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(content));
+        foreach (JsonElement roster in new[] {
+            content.JsonValue.GetProperty("bindings").GetProperty("characterPeers"),
+            projected.GetProperty("bindings").GetProperty("characterPeers")
+        }) {
+            Assert.Equal(peers.Select(peer => peer.Id), roster.EnumerateArray().Select(peer => peer.GetProperty("id").GetString()));
+            Assert.Equal(peers.Select(peer => peer.Name), roster.EnumerateArray().Select(peer => peer.GetProperty("name").GetString()));
+            Assert.All(roster.EnumerateArray(), peer => Assert.Equal("character", peer.GetProperty("kind").GetString()));
+        }
+        Assert.Equal(before, content.JsonValue.GetRawText());
     }
+
+    [Theory]
+    [InlineData("${playerName}")]
+    [InlineData("${characterNam}")]
+    [InlineData("${characterName")]
+    public void ResourceSourceValidationRejectsFixedPlayerAndMalformedTokens(string source) {
+        Assert.Throws<InvalidDataException>(() => GalateaSystemInstructionContent.ValidateInstructionSource(source, requireCharacterName: false));
+    }
+
+    [Fact]
+    public void OnlyCharacterContextRequiresACharacterBinding() {
+        GalateaSystemInstructionContent.ValidateInstructionSource("Static protocol.", requireCharacterName: false);
+        Assert.Throws<InvalidDataException>(() => GalateaSystemInstructionContent.ValidateInstructionSource("Static context.", requireCharacterName: true));
+    }
+
+    private static SessionInputContent Create(string context, bool outbound = false, bool note = false,
+        string? home = "/galatea-homes/test", IReadOnlyList<GalateaSenderSnapshot>? peers = null)
+        => GalateaSystemPromptComposer.CreateContent(new GalateaSenderSnapshot("character", "alice", "Alice"),
+            context, outbound, note, home, peers);
 
     private static int CountOccurrences(string value, string target) {
         int count = 0;

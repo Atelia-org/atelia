@@ -131,7 +131,7 @@ internal sealed record GalateaMailboxStatusAggregate(
 );
 
 internal sealed record GalateaDelegationStoreOwner(
-    string UserId,
+    string CharacterId,
     string SessionRepositoryId
 );
 
@@ -140,6 +140,10 @@ internal sealed record GalateaDelegationStoreBaseline(
     string? SelectedHead
 );
 
+/// <summary>
+/// Inbox UTF-8 capacity covers retained payload fields, independently of the
+/// bounded provenance fields. This preserves existing active reply reservations.
+/// </summary>
 internal sealed record GalateaDelegationStoreLimits(
     int MaximumQueuedMails,
     int MaximumTaskUtf8Bytes,
@@ -154,12 +158,13 @@ internal sealed record GalateaDelegationCaptureRequest(
     int VisibleActionUtf8Bytes,
     string ExtractorContractId,
     IReadOnlyList<SendMailIntent> Intents,
+    GalateaSenderSnapshot Sender,
     IReadOnlyList<GalateaInternalMailTarget?>? InternalTargets = null
 );
 
 /// <summary>Already-resolved, immutable target locator supplied by the host.</summary>
 internal sealed record GalateaInternalMailTarget(
-    string TargetUserId,
+    string TargetCharacterId,
     string TargetSessionRepositoryId,
     string FromCharacterName
 );
@@ -206,7 +211,11 @@ internal sealed record GalateaOutboundMailSnapshot(
     int RecoveryFailureCount,
     string? RecoveryLastCode,
     long? NextRetryAtUnixTimeMilliseconds,
-    long Revision
+    long Revision,
+    string ContentFormat = "legacy-task",
+    string? SenderName = null,
+    string? TaskSha256 = null,
+    int? TaskUtf8Bytes = null
 );
 
 internal sealed record GalateaInternalMailOutboxSnapshot(
@@ -214,7 +223,7 @@ internal sealed record GalateaInternalMailOutboxSnapshot(
     string SourceActionAddress,
     long CaptureSequence,
     int ArtifactOrdinal,
-    string TargetUserId,
+    string TargetCharacterId,
     string TargetSessionRepositoryId,
     string FromCharacterName,
     string MessageId,
@@ -223,8 +232,12 @@ internal sealed record GalateaInternalMailOutboxSnapshot(
     string? RenderedObservation,
     string? ObservationAddress,
     string? QuarantineCode,
-    long Revision
-);
+    long Revision,
+    Atelia.SessionJournal.SessionInputContent? BoundInput = null
+) {
+    internal Atelia.SessionJournal.SessionInputContent? ObservationContent => BoundInput
+        ?? (RenderedObservation is null ? null : Atelia.SessionJournal.SessionInputContent.Text(RenderedObservation));
+}
 
 internal sealed record GalateaRouteBindingSnapshot(
     GalateaDelegationRouteState State,
@@ -245,7 +258,12 @@ internal sealed record GalateaReplyNoticeSnapshot(
     long CompletionSequence,
     GalateaReplyNoticeState State,
     string? ConsumedActionAddress,
-    long Revision
+    long Revision,
+    string NoticeFormat = "legacy-text",
+    GalateaSenderSnapshot? Sender = null,
+    string? Detail = null,
+    string? ThreadId = null,
+    string? TurnId = null
 );
 
 internal sealed record GalateaReplyLeaseMember(
@@ -264,8 +282,12 @@ internal sealed record GalateaReplyLeaseSnapshot(
     long CompletionFrontier,
     string? ObservationAddress,
     long Revision,
-    IReadOnlyList<string> NoticeIds
-);
+    IReadOnlyList<string> NoticeIds,
+    Atelia.SessionJournal.SessionInputContent? BoundInput = null
+) {
+    internal Atelia.SessionJournal.SessionInputContent? ObservationContent => BoundInput
+        ?? (RenderedObservation is null ? null : Atelia.SessionJournal.SessionInputContent.Text(RenderedObservation));
+}
 
 internal sealed record GalateaDelegationStateSnapshot(
     GalateaDelegationStoreOwner Owner,

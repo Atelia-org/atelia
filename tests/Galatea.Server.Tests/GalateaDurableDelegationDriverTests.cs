@@ -438,7 +438,7 @@ public sealed class GalateaDurableDelegationDriverTests {
         store.Bind("thread-1");
         using var sidecar = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":5,"type":"ready"}'
+            printf '%s\n' '{"v":6,"type":"ready"}'
             count=0
             while IFS= read -r line; do
               count=$((count + 1))
@@ -447,9 +447,9 @@ public sealed class GalateaDurableDelegationDriverTests {
               dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
               thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
               if [ "$count" -eq 1 ]; then
-                printf '{"v":5,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":6,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
               else
-                printf '{"v":5,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":6,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
               fi
             done
             """
@@ -722,12 +722,12 @@ public sealed class GalateaDurableDelegationDriverTests {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task OversizeFifoHead_FailsPreflightWithoutTransport(
+    public async Task LegacyOversizeFifoHead_FailsPreflightWithoutTransport(
         bool bindFirst
     ) {
         using var fixture = new DriverStore(
             bodies: bindFirst ? ["ok"] : ["four", "ok"],
-            maximumTaskUtf8Bytes: 3
+            maximumTaskUtf8Bytes: 3, legacyTasks: true
         );
         if (bindFirst) {
             fixture.Bind("thread-1");
@@ -1393,10 +1393,11 @@ public sealed class GalateaDurableDelegationDriverTests {
         GalateaReplyNoticeSnapshot notice =
             fixture.Store.ReadSnapshot().Notices.Single();
         Assert.Equal(GalateaReplyNoticeKind.DeliveryFailure, notice.Kind);
-        Assert.Equal(
-            "外界代行者 Codex 未能处理这封信（阶段：inspect-dispatch；错误代码：CODE-X）。",
-            notice.Body
-        );
+        Assert.Equal("inspect-dispatch", notice.Stage);
+        Assert.Equal("CODE-X", notice.Code);
+        Assert.Equal(string.Empty, notice.Body);
+        Assert.Equal("runtime", notice.Sender!.Kind);
+        Assert.Equal("galatea", notice.Sender.Id);
     }
 
     private static async Task VerifyOutcomeUnknownCompletedAsync() {
@@ -1452,13 +1453,10 @@ public sealed class GalateaDurableDelegationDriverTests {
         GalateaReplyNoticeSnapshot notice =
             fixture.Store.ReadSnapshot().Notices.Single();
         Assert.Equal(expectedCode, notice.Code);
-        Assert.Equal(
-            GalateaDelegationDurableContract.CreateDeliveryFailureNotice(
-                "inspect-dispatch",
-                expectedCode
-            ),
-            notice.Body
-        );
+        Assert.Equal("inspect-dispatch", notice.Stage);
+        Assert.Equal(string.Empty, notice.Body);
+        Assert.Equal("runtime", notice.Sender!.Kind);
+        Assert.Equal("galatea", notice.Sender.Id);
     }
 
     private static async Task VerifyMalformedFailureCodeAsync(string code) {
@@ -1483,14 +1481,12 @@ public sealed class GalateaDurableDelegationDriverTests {
         GalateaReplyNoticeSnapshot notice =
             fixture.Store.ReadSnapshot().Notices.Single();
         Assert.Equal("DELEGATE_FAILURE", notice.Code);
-        Assert.Equal(
-            GalateaDelegationDurableContract.CreateDeliveryFailureNotice(
-                "inspect-dispatch",
-                "DELEGATE_FAILURE"
-            ),
-            notice.Body
-        );
-        Assert.True(notice.Body.Length < 256);
+        Assert.Equal("inspect-dispatch", notice.Stage);
+        Assert.Equal(string.Empty, notice.Body);
+        Assert.Null(notice.Detail);
+        Assert.Equal("runtime", notice.Sender!.Kind);
+        Assert.Equal("galatea", notice.Sender.Id);
+        Assert.True(Assert.IsType<string>(notice.Code).Length < 256);
     }
 
     private static async Task VerifyWrongEnsureIdentityAsync() {
@@ -1671,14 +1667,17 @@ public sealed class GalateaDurableDelegationDriverTests {
         private readonly OwnedDirectory _directory = new();
         private readonly GalateaDelegationStoreOwner _owner;
         private readonly GalateaDelegationStoreLimits _limits;
+        private readonly bool _legacyTasks;
 
         internal DriverStore(
             IReadOnlyList<string>? bodies = null,
             int maximumTaskUtf8Bytes = 100_000,
             int maximumInboxReplies = 16,
             int maximumInboxUtf8Bytes = 16 * 1024,
-            int maximumReplyUtf8Bytes = 1024
+            int maximumReplyUtf8Bytes = 1024,
+            bool legacyTasks = false
         ) {
+            _legacyTasks = legacyTasks;
             bodies ??= ["mail body"];
             _limits = new(
                 MaximumQueuedMails: 32,
@@ -1713,7 +1712,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                     InReplyToMessageId: null,
                     EvidenceQuote: "sent it"
                 )).ToArray()
-            ));
+            , GalateaDelegationTestInputs.Sender(Store, "Galatea")));
+            if (_legacyTasks) GalateaDelegationTestInputs.ImportQueuedLegacyTasks(Store);
         }
 
         internal GalateaDelegationSqliteStore Store { get; private set; }
@@ -1753,7 +1753,7 @@ public sealed class GalateaDurableDelegationDriverTests {
                 mail.DispatchId,
                 mail.Revision,
                 snapshot.Route.Revision
-            );
+            , GalateaDelegationTestInputs.Commitment(Store, mail.DispatchId));
         }
 
         internal void Reopen() {

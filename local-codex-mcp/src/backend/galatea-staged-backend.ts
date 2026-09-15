@@ -1,3 +1,4 @@
+import type { TaskCommitment } from "../galatea/task-commitment.js";
 import { BridgeError, asBridgeError } from "../errors.js";
 
 export type GalateaDispatchState = "not-dispatched" | "may-have-dispatched";
@@ -30,10 +31,9 @@ export interface GalateaStartedTurn {
   turnId: string;
 }
 
-export interface InspectGalateaDispatchInput {
+export interface InspectGalateaDispatchInput extends TaskCommitment {
   threadId: string;
   dispatchId: string;
-  task: string;
   expectedTurnId: string | null;
   maximumFinalUtf8Bytes: number;
 }

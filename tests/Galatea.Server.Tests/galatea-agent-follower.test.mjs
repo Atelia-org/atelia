@@ -106,6 +106,7 @@ test("GET follower finds running and between-poll completed turns without duplic
   let current = running;
   let busy = false;
   const follower = production.createAgentStatusFollower({
+    apiBase: "/api/v1/characters/gpt",
     fetchImpl: async (url, options) => {
       reads.push({ url, options });
       return response(url.endsWith("/status") ? waiting :
@@ -140,6 +141,7 @@ test("a failed current or recent read preserves the successful agent status", as
     const clock = timers();
     const statuses = [];
     const follower = production.createAgentStatusFollower({
+    apiBase: "/api/v1/characters/gpt",
       fetchImpl: async (url) => {
         if (url.endsWith(failedPath)) return new Response("", { status: 409 });
         return response(url.endsWith("/status") ? waiting : idle);
@@ -166,6 +168,7 @@ test("GET follower fences manual mutations and stale page lifecycle responses", 
   let revision = 0;
   let calls = 0;
   const follower = production.createAgentStatusFollower({
+    apiBase: "/api/v1/characters/gpt",
     fetchImpl: async (url) => {
       calls += 1;
       if (url.endsWith("/status")) return response(waiting);
@@ -205,6 +208,7 @@ test("status errors remain read-only and polling recovers", async () => {
     new Response("unavailable", { status: 503 }),
     new Response("unauthorized", { status: 401 })];
   const follower = production.createAgentStatusFollower({
+    apiBase: "/api/v1/characters/gpt",
     fetchImpl: async (url, options) => {
       assert.equal(options.method, "GET");
       if (failures.length > 0) return failures.shift();
@@ -230,6 +234,7 @@ test("follower waits for turn identity publication without reading stale recent"
   const attached = [];
   let current = { ...idle, status: "running" };
   const follower = production.createAgentStatusFollower({
+    apiBase: "/api/v1/characters/gpt",
     fetchImpl: async (url) => {
       assert.ok(!url.endsWith("/recent-turns"));
       return response(url.endsWith("/status") ? waiting : current);
@@ -305,7 +310,7 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
       const stream = new ReadableStream({ start(controller) { streams.push(controller); } });
       return new Response(stream);
     }
-    if (url === "/api/v1/chat/turns" || url.endsWith("/resume")) {
+    if (url === "/api/v1/characters/gpt/chat/turns" || url.endsWith("/resume")) {
       currentValue = running;
       return response({ turnId });
     }
@@ -313,7 +318,7 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
   };
   const window = {
     galateaBootstrap: {
-      userId: "gpt", maintenanceMode, defaultConnectionId: "codex",
+      playerId: "visitor", characterId: "gpt", apiBase: "/api/v1/characters/gpt", maintenanceMode, defaultConnectionId: "codex",
       connections: [{ id: "codex", modelId: "gpt" }, { id: "manual", modelId: "other" }],
       streamLimits: { maximumConnectionBytes: 1000000, maximumFrameBytes: 100000 },
     },
@@ -372,7 +377,7 @@ test("retry button settles unfinished work without submitting a turn or losing a
   await h.node("chat-form").dispatch("submit");
   const posts = h.requests.filter((x) => x.options.method === "POST");
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].url, "/api/v1/agent/retry-admission");
+  assert.equal(posts[0].url, "/api/v1/characters/gpt/agent/retry-admission");
   assert.equal(posts[0].options.body, "{}");
   pending.resolve(response(waiting));
   h.setStatus(waiting);
@@ -428,7 +433,7 @@ test("actual DOM app follows automatic SSE, preserves draft and manual connectio
   assert.match(h.node("turn-list").innerHTML, /completed between polls/);
   const submitted = h.node("chat-form").dispatch("submit");
   await flush();
-  const send = h.requests.find((x) => x.url === "/api/v1/chat/turns");
+  const send = h.requests.find((x) => x.url === "/api/v1/characters/gpt/chat/turns");
   assert.equal(JSON.parse(send.options.body).connectionId, "manual",
     "observing backend connection must not change the manual choice");
   h.finish("manual result"); await submitted;
