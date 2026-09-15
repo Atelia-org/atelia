@@ -10,7 +10,7 @@ namespace Atelia.Galatea.Server;
 
 internal static class GalateaHttpV1 {
     internal const int MaximumRequestBodyBytes = 1024 * 1024;
-    internal const int MaximumMessageUtf8Bytes = 64 * 1024;
+    internal const int MaximumMessageUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumPlayerTextUtf8Bytes;
     internal const int MaximumConnectionIdUtf8Bytes = 128;
 
     internal static readonly JsonBodyEndpointMetadata JsonBody = new();
@@ -170,21 +170,8 @@ internal static class GalateaHttpV1 {
         return false;
     }
 
-    internal static string? ValidateMessage(string? message) {
-        if (string.IsNullOrWhiteSpace(message)) {
-            return "message must not be blank.";
-        }
-        try {
-            if (GalateaBoundedJson.StrictUtf8.GetByteCount(message)
-                > MaximumMessageUtf8Bytes) {
-                return "message exceeds the 64 KiB UTF-8 limit.";
-            }
-        }
-        catch (EncoderFallbackException) {
-            return "message must contain valid Unicode.";
-        }
-        return null;
-    }
+    internal static string? ValidateMessage(string? message)
+        => Atelia.Galatea.Input.GalateaObservationRules.ValidatePlayerText(message);
 
     internal static string? ValidateConnectionId(string? connectionId) {
         if (connectionId is null) {

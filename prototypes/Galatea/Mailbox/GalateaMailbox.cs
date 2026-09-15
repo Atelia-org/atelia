@@ -13,23 +13,18 @@ using Atelia.Galatea.Prompts;
 namespace Atelia.Galatea.Server.Mailbox;
 
 internal static class GalateaMailboxBounds {
-    internal const int MaximumSenderUtf8Bytes = 1024;
-    internal const int MaximumRecipientUtf8Bytes = 1024;
-    internal const int MaximumSubjectUtf8Bytes = 4 * 1024;
-    internal const int MaximumBodyUtf8Bytes = 64 * 1024;
+    internal const int MaximumSenderUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumMailSenderUtf8Bytes;
+    internal const int MaximumRecipientUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumMailRecipientUtf8Bytes;
+    internal const int MaximumSubjectUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumMailSubjectUtf8Bytes;
+    internal const int MaximumBodyUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumMailBodyUtf8Bytes;
     internal const int MaximumEvidenceUtf8Bytes = 8 * 1024;
 }
 
 internal static class GalateaMailboxText {
     internal const int MaximumLogSummaryUtf8Bytes = 256;
 
-    internal static bool ContainsHeaderLineBreak(string value) {
-        ArgumentNullException.ThrowIfNull(value);
-        return value.EnumerateRunes().Any(static rune =>
-            rune.Value is '\r' or '\n' or '\v' or '\f'
-                or 0x0085 or 0x2028 or 0x2029
-        );
-    }
+    internal static bool ContainsHeaderLineBreak(string value)
+        => Atelia.Galatea.Input.GalateaObservationRules.ContainsHeaderLineBreak(value);
 
     internal static string SummarizeForLog(string? value) {
         if (string.IsNullOrEmpty(value)) { return "<none>"; }
@@ -59,26 +54,12 @@ internal sealed record MailboxMessage {
         string? subject,
         string body
     ) {
-        MessageId = RequireCanonicalMessageId(messageId);
-        From = RequireText(
-            from,
-            GalateaMailboxBounds.MaximumSenderUtf8Bytes,
-            nameof(from),
-            allowLineBreaks: false
-        );
-        To = new GalateaCharacterName(to).Value;
-        Subject = RequireOptionalText(
-            subject,
-            GalateaMailboxBounds.MaximumSubjectUtf8Bytes,
-            nameof(subject),
-            allowLineBreaks: false
-        );
-        Body = RequireText(
-            body,
-            GalateaMailboxBounds.MaximumBodyUtf8Bytes,
-            nameof(body),
-            allowLineBreaks: true
-        );
+        Atelia.Galatea.Input.GalateaObservationRules.ValidateMailbox(messageId, from, to, subject, body);
+        MessageId = messageId;
+        From = from;
+        To = to;
+        Subject = subject;
+        Body = body;
     }
 
     internal string MessageId { get; }
@@ -111,66 +92,6 @@ internal sealed record MailboxMessage {
         string body
     ) => new(messageId, from, to, subject, body);
 
-    private static string RequireCanonicalMessageId(string value) =>
-        GalateaHttpV1.IsCanonicalTurnId(value)
-            ? value
-            : throw new ArgumentException(
-                "Mailbox messageId must be canonical 32-lowerhex text.",
-                nameof(value)
-            );
-
-    private static string? RequireOptionalText(
-        string? value,
-        int maximumBytes,
-        string parameterName,
-        bool allowLineBreaks
-    ) => value is null
-        ? null
-        : RequireText(
-            value,
-            maximumBytes,
-            parameterName,
-            allowLineBreaks
-        );
-
-    private static string RequireText(
-        string? value,
-        int maximumBytes,
-        string parameterName,
-        bool allowLineBreaks
-    ) {
-        if (string.IsNullOrWhiteSpace(value)) {
-            throw new ArgumentException(
-                $"{parameterName} must not be blank.",
-                parameterName
-            );
-        }
-        try {
-            if (TextExtractorUtf8.GetByteCount(value) > maximumBytes) {
-                throw new ArgumentOutOfRangeException(
-                    parameterName,
-                    $"{parameterName} exceeds its UTF-8 byte limit."
-                );
-            }
-            if (!allowLineBreaks
-                && GalateaMailboxText.ContainsHeaderLineBreak(value)) {
-                throw new ArgumentException(
-                    $"{parameterName} must be single-line text.",
-                    parameterName
-                );
-            }
-            _ = System.Xml.XmlConvert.VerifyXmlChars(value);
-        }
-        catch (Exception exception) when (exception is
-            EncoderFallbackException or System.Xml.XmlException) {
-            throw new ArgumentException(
-                $"{parameterName} must be strict XML-safe Unicode text.",
-                parameterName,
-                exception
-            );
-        }
-        return value;
-    }
 }
 
 internal static class GalateaMailboxObservationEnvelope {

@@ -2,7 +2,7 @@
 
 状态：**停服预检和备份已完成；配置、数据库及 Recap 目标尚未转换，真实调用尚未执行。** 日期：2026-09-16（Asia/Singapore）。施工总入口见[实施工作单](player-character-implementation-work-order.md)。
 
-本文只记录真实实例的实际结果。`b4a44960` 的 Galatea provider-free 全套为 1152/1152；后续共享 Observation 投影与公共 CLI 的补充仍须独立验证，不能用该结果代替真实迁移或真实 provider 验收。
+本文只记录真实实例的实际结果。共享 Observation 投影补充后的 Galatea provider-free 全套为 1195/1195，CLI 全套为 162/162，独立审阅通过；这些结果不能代替真实迁移或真实 provider 验收。
 
 ## 1. 原实例与停服检查
 
@@ -44,9 +44,9 @@
 
 ## 4. 剩余迁移与验收
 
-1. 完成共享 Observation projector / 公共 CLI mixed-history build 的实现、回归与独立审阅。不能用真实旧历史恰好为 Text 跳过这个消费者。
-2. 确定管理员密码来源，使用已验证的配置转换工具 apply；随后分别 dry-run/apply Delegation V3→V5、CharacterMemory V3→V4，冷重开核对原 owner、终态及旧证明。
+1. 共享 Observation projector / 公共 CLI mixed-history build 的补充已完成、全套通过并经独立审阅。
+2. 已说明默认沿用 `cyber` 的原密码；使用已验证的配置转换工具 apply，随后分别 dry-run/apply Delegation V3→V5、CharacterMemory V3→V4，冷重开核对原 owner、终态及旧证明。
 3. 两个角色分别登记 V7 资产、构建新 recipe、取得 Fulfillment 并 promotion，保留旧资产及历史依赖。按当前每角色 2 行、每行 2 列，预计共 8 次摘要调用；实际缺口以新 candidate progress 为准。
 4. 真实 provider / Codex sidecar 验证，并验证新登录、显式目标、结构化输入和最终后台运行状态。未知外部结果仍按既有政策处理，不为得到通过结果自动重发。
 
-上述四项均尚未验收完成。旧备份只用于明确匹配的恢复步骤，不能覆盖恢复运行后产生的新事实。
+第 1 项已完成，第 2–4 项尚未验收完成。旧备份只用于明确匹配的恢复步骤，不能覆盖恢复运行后产生的新事实。

@@ -1,5 +1,6 @@
 using Atelia.Completion;
 using Atelia.EventJournal;
+using Atelia.Galatea.Input;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Control;
@@ -138,7 +139,8 @@ internal static partial class RecapGridCommands {
             await using RecapGridCompletionHost host = RecapGridCompletionHost.CreateBorrowingRegistry(
                 () => manifest,
                 registry,
-                liveTelemetry: progress);
+                liveTelemetry: progress,
+                inputProjector: GalateaObservationInputProjector.Instance);
             RecapGridBuildResult result = await manager.Handle.Manager
                 .BuildAsync(
                     request,

@@ -47,7 +47,7 @@ internal abstract record GalateaFreshInput {
 
     internal sealed record HeartbeatActivation : GalateaFreshInput {
         // Accepted periodic-activation meaning, not a measurement of wall-clock downtime.
-        internal const int ExternalIntervalMinutes = 10;
+        internal const int ExternalIntervalMinutes = Atelia.Galatea.Input.GalateaObservationLimits.ExternalIntervalMinutes;
         internal HeartbeatActivation(GalateaCharacterName characterName) {
             CharacterName = characterName
                 ?? throw new ArgumentNullException(nameof(characterName));

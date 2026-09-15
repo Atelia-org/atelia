@@ -20,8 +20,8 @@
 | P2b | Note receipt、recall、DerivedInfo | V4/store 升级 88 项通过；辅助来源和语义说明已修复、独立审阅通过，纳入最终 1152 项回归 | 内容选择冻结、精确原文/来源、稳定 proof 与旧记录 |
 | P2b-MemoPod | Open/Freeze 与 Recall 的瞬态缓存边界 | 已提交 `464b254b`；全套 284 项及独立审阅通过 | 坏 renderer 不阻止机读发布/打开，缓存失效不改变 epoch，原样重新冻结使旧在途 Recall 失效 |
 | P2c | 角色信、reply lease、Codex Start/Inspect/恢复 | SQLite V5 / sidecar V6 已接入；25 项新故障专项通过、review 已收口 | 原子 capture/claim、UTF-8 证据、exact append proof、未知不重发 |
-| P2d | RecapGrid 与公共 CLI | Recap 部分已提交 `d34f839c`；各项目全套通过，但迁移预检发现 CLI build 尚缺 Galatea structured projector，正在补齐 | 语义 context/carrier、新资产采用、历史读取与瞬态辅助请求 |
-| P3 | 跨域集成、故障与独立 review | Galatea provider-free 全套 1152/1152；CLI 新发现接缝须修复并追加验证 | 两份设计全部验收矩阵逐项有证据 |
+| P2d | RecapGrid 与公共 CLI | Recap 部分已提交 `d34f839c`；共享 Observation projector 接通 public CLI build，CLI 162/162 通过、独立审阅完成 | 语义 context/carrier、新资产采用、历史读取与瞬态辅助请求 |
+| P3 | 跨域集成、故障与独立 review | 最新 Galatea provider-free 全套 1195/1195；CLI mixed-history 专项 2/2、全套 162/162，已知 findings 关闭 | 两份设计全部验收矩阵逐项有证据 |
 | P4 | 真实盘点、备份、离线升级、资产采用与调用 | 主线程串行；只读预检已开始，配置/数据库未转换 | 原 owner/路径/dispatch 保持，strict reopen，真实调用及运行状态记录 |
 
 公共类型和 `prototypes/SessionJournal` 执行合同由一个负责人编辑；`GalateaServices.cs` 由一个 host 负责人编辑。模块 worker 不并行修改这些入口，必要改动交给负责人集成。重型 .NET build/test 统一排队；不依靠调宽生产截止时间获得通过。
@@ -110,7 +110,9 @@ Recap 的合法非空 Tail 超出现有 SessionJournal request canonicalizer 的
 - 2026-09-16 最终 Galatea provider-free 回归 **1152/1152**：`dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-build --no-restore -m:1 -nr:false --filter 'FullyQualifiedName!~LiveTests' --logger 'trx;LogFileName=galatea-complete-provider-free-final.trx' -- xUnit.MaxParallelThreads=4`。包括 14 项 GalateaLab 进程/故障场景，以及同实例零 Player 双角色的心跳→内部邮件→Codex 回信联合链。
 - 最后一个间歇性失败来自测试取消回调竞态：独立 Delay 的取消先唤醒清理，可能注销要注入的 fatal 回调。现由单回调同时取消 TCS 并抛出 fatal，保留 mail-first Aggregate、drain 与零活跃调用断言；相关类 **24/24**，独立审阅通过，生产取消逻辑未改。
 - 前轮 fixture/旧断言问题、P2c 的容量预留与 Text Bind 绕过、辅助 Action 来源范围及语义说明均已修复并纳入此次全套。独立 reviewer 已关闭这些 findings。
-- 真实迁移预检发现新的覆盖缺口：`recap-grid build` 创建 completion host 时未提供 Galatea projector，既有 CLI 测试主要使用 Text 历史。新版 structured 历史会报 `InputProjectorUnavailable`。正在抽出共享 Observation 投影并补真实公共 CLI mixed-history build 测试；不能借真实实例尚有旧 Text 历史跳过此要求。
+- 真实迁移预检发现并修复 CLI build 缺 projector：新增窄 `Galatea.Input` 共享库，Host 与公共 CLI 使用同一严格 Observation schema、来源规则和 JSON Pointer 路径；核心不引用该库，CLI 不引用 Web host。保留未知 schema 的发送拒绝及纯读边界。
+- 该接缝的实际 public MainCore 专项 **2/2**：真正的旧 Observation v1 与新版 structured Player/Heartbeat 混合，经 V7 scaffold→Timeline→recipe→build 到可控 provider，md-json 还原值与原机读记录一致；未知 schema 的各列失败均为 `InputProjectionFailed`，provider 请求为零。CLI 全套 **162/162**，TRX `galatea-v7-public-build.trx`、`galatea-shared-cli-full.trx`。
+- 共享抽取后的 Host 定向 **166/166**、全 Galatea provider-free **1195/1195**，生产与测试工程编译零警告、零错误；最终日志 `/tmp/galatea-shared-input-full-tests.log`。新增严格反例覆盖 sender、时间、receipt 全或零正文与容量、recall 来源、mail 字符/注入者和旧块限额。独立 reviewer 对最终 diff 无 must-fix。以上仍不替代真实 provider 验收。
 
 离线工具已有真实锁与文件/SQLite 故障证据：ConfigV9 专项 **23/23**、相关合并组 **91/91**；CharacterMemory store 原 74 项与新增升级 14 项共 **88/88**，命令侧 **6/6**。工具可用不代表真实配置或数据库已迁移。
 

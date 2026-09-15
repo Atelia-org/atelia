@@ -108,6 +108,16 @@ admission交给`init`，profile/route路径交给Galatea strict config。
 `(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` exact 匹配，显式 `null` 也没有 fallback。
 Family/Definition/Recipe、admission 等持久 canonical 输入继续使用各自严格 codec。
 
+`recap-grid build` 通过共享 `Galatea.Input` 的 `GalateaObservationInputProjector` 消费
+`galatea.observation.v1` 历史。Player 动作、心跳、notice/recall 的来源与正文在 Runtime 真正调用前投影，
+旧 Text 原样保留；CLI 不引用 Galatea Web host，也不复制一份领域 schema 或 JSON Pointer 列表。
+未知 domain schema 在调用前明确失败，不作为普通 JSON 字符串发送。这个接入只提供输入表示能力，
+不改变 recipe/route/权限、调用预算或已发生外部工作的恢复政策。
+
+`progress`、inspect/verify、raw audit 与机读报告不调用这个 projector，也不要求识别所有业务 schema。
+下述 `run-online-turn` 仍保留自己的 structured 输入拒绝边界；build 能解释历史 Observation 不代表它
+能为 Galatea 创建或恢复整个主线 runtime。
+
 `run-online-turn`、`llm-smoke` 等其他 CLI connections 入口保留各自 V2 合同：根有 integer `"v": 2`、
 1..256 项 `connections` 与 exact `defaultConnectionId`，可带 `selectableConnectionIds/bindings`，不接受
 caller-selected output cap。它们不会因为 build 支持 V3 而自动改读 Galatea catalog；V1 也没有兼容 reader。

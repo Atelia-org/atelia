@@ -5,8 +5,7 @@ using Atelia.MemoPod;
 namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal static class CharacterNoteDefaultPodV1 {
-    internal const string PodIdText =
-        "00000000000000000000000000000001";
+    internal const string PodIdText = Atelia.Galatea.Input.GalateaObservationLimits.DefaultNotePodId;
     internal const string Topic =
         "该角色主动提交、尚未分类的长期笔记。";
     internal const string EmptyStateIdentity =

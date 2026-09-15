@@ -11,9 +11,9 @@ using Atelia.Galatea.Prompts;
 namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal static class CharacterNoteBounds {
-    internal const int MaximumExactTextUtf8Bytes = 64 * 1024;
-    internal const int MaximumIntentCount = 16;
-    internal const int MaximumTotalExactTextUtf8Bytes = 256 * 1024;
+    internal const int MaximumExactTextUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumNoteExactTextUtf8Bytes;
+    internal const int MaximumIntentCount = Atelia.Galatea.Input.GalateaObservationLimits.MaximumNoteIntentCount;
+    internal const int MaximumTotalExactTextUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumNoteTotalExactTextUtf8Bytes;
 }
 
 [Description(

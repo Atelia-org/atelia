@@ -552,16 +552,13 @@ internal sealed class PlayerTurnObservation {
 }
 
 internal static class PlayerTurnObservationEnvelope {
-    internal const int MaximumRecallSourceIdUtf8Bytes = 512;
-    internal const int MaximumRecallBodyUtf8Bytes =
-        MemoPodLimits.MaximumMemoTitleUtf8Bytes
-        + MemoPodLimits.MaximumMemoExactTextUtf8Bytes
-        + GalateaMemoExactTextBodyRenderer.FixedLabelUtf8Bytes;
-    internal const int MaximumRecallCount = 32;
-    internal const int MaximumReplyUtf8Bytes = 256 * 1024;
-    internal const int MaximumFailureUtf8Bytes = 4 * 1024;
-    internal const int MaximumNoteSaveReceiptUtf8Bytes = 512 * 1024;
-    internal const int MaximumNoticeCount = 16;
+    internal const int MaximumRecallSourceIdUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumRecallSourceIdUtf8Bytes;
+    internal const int MaximumRecallBodyUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumRecallBodyUtf8Bytes;
+    internal const int MaximumRecallCount = Atelia.Galatea.Input.GalateaObservationLimits.MaximumRecallCount;
+    internal const int MaximumReplyUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumReplyUtf8Bytes;
+    internal const int MaximumFailureUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumFailureUtf8Bytes;
+    internal const int MaximumNoteSaveReceiptUtf8Bytes = Atelia.Galatea.Input.GalateaObservationLimits.MaximumNoteSaveReceiptUtf8Bytes;
+    internal const int MaximumNoticeCount = Atelia.Galatea.Input.GalateaObservationLimits.MaximumNoticeCount;
     internal const int MaximumRenderedUtf8Bytes = 1024 * 1024;
 
     internal const string PlayerHeading =
