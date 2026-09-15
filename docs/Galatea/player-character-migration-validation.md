@@ -1,15 +1,15 @@
 # Player / Character 与结构化输入：真实实例迁移验收
 
-状态：**停服预检和备份已完成；配置、数据库及 Recap 目标尚未转换，真实调用尚未执行。** 日期：2026-09-16（Asia/Singapore）。施工总入口见[实施工作单](player-character-implementation-work-order.md)。
+状态：**配置与数据库升级、冷重开已完成；隔离真实 Codex canary 已通过，正在构建 V7 Recap，服务尚未恢复运行。** 日期：2026-09-16（Asia/Singapore）。施工总入口见[实施工作单](player-character-implementation-work-order.md)。
 
 本文只记录真实实例的实际结果。共享 Observation 投影补充后的 Galatea provider-free 全套为 1195/1195，CLI 全套为 162/162，独立审阅通过；这些结果不能代替真实迁移或真实 provider 验收。
 
 ## 1. 原实例与停服检查
 
-- 配置：`prototypes/Galatea/.atelia/galatea/config.json`，仍为 V9，旧用户 `cyber`、`gpt`。
+- 原配置：`prototypes/Galatea/.atelia/galatea/config.json`，V9，旧用户 `cyber`、`gpt`；当前已转换为 V10。
 - 按 `/proc/*/cmdline` 的可执行文件/DLL 参数查找，没有发现 Galatea Server；`ss -ltnp 'sport = :3511'` 无监听。随后备份实际持有原文件锁，不以进程检查替代锁检查。
 - `cyber` SessionJournal：`.atelia/galatea/sessions/cyber-session-journal-recap-grid`；`gpt`：`.atelia/galatea/sessions/gpt`。角色相关目录、owner 与 dispatch 身份保持原值。
-- 两套旧密码不同；已分别运行配置转换 dry-run，两者均退出 0，原配置字节未变。新管理员拟为 `player-main`、保留原显示名；沿用哪套密码仍待用户选择，没有执行配置 apply。
+- 两套旧密码不同；两种来源的转换 dry-run 均退出 0。随后按向用户说明的默认选择沿用 `cyber` 原密码，实际新管理员为 `player-main`，保留原显示名；凭据值未输出到报告。
 
 ## 2. 备份与冷读取证据
 
@@ -42,11 +42,20 @@
 
 各域没有发现未结算工作。两个 `route_binding` 均为既有 Bound 线程绑定，继续保留；它不等于有一项未知外部请求。
 
-## 4. 剩余迁移与验收
+## 4. 已执行的升级与真实通信
+
+- `d07e4d46` 的 Release Server 与 CLI 均已编译通过，零警告、零错误。
+- 用 Release Server 执行配置 dry-run/apply：V10 根为 `v/characters/players/runtime`，一个 Player、两个 Character；逐字段确认角色名、ID、全部状态路径、home、provisioning、默认连接和 heartbeat enrollment 与旧值对应。配置/模板的专用备份位于操作目录 `config-conversion/`。
+- 每个角色分别执行 `upgrade-delegation-store`、`upgrade-character-memory-store` 的 dry-run→apply→再次只读 reopen，12 条命令全部退出 0。Delegation 当前为 V5，CharacterMemory 为 V4。
+- 四个库的 SQLite integrity 均为 `ok`。与完整备份逐表比较所有原有列，唯一允许且已单独验证的变化为 metadata 的 `schema_version`（3→5 或 3→4）；其余原列保持一致，包括 owner、body、状态与原证明。比较覆盖 cyber 的 21/22 行和 gpt 的 116/108 行，结果见 `inventory/sqlite-after-upgrade.json`。
+- 首次真实 Codex canary 在 Ready 前以 `SIDECAR_EXITED` 失败，没有发送任务；原因尚未确认。随后同配置 sidecar 初始化与直接 initialize 探测分别在 2.21/2.07 秒成功。证据保留在 `initialization-probes/`。
+- 初始化探测之后的真实 canary **1/1 通过，8 秒**：临时仓库中的 EnsureBinding→Start→重复 dispatch 拒绝→Inspect Completed 成功，临时仓库与子进程按测试合同清理。证据：`real-codex-canary-after-ready-probe.log` 与 `galatea-semantic-real-codex-after-ready-probe.trx`。第一次失败日志保留，不将原因标为已修复。
+
+## 5. 剩余迁移与验收
 
 1. 共享 Observation projector / 公共 CLI mixed-history build 的补充已完成、全套通过并经独立审阅。
-2. 已说明默认沿用 `cyber` 的原密码；使用已验证的配置转换工具 apply，随后分别 dry-run/apply Delegation V3→V5、CharacterMemory V3→V4，冷重开核对原 owner、终态及旧证明。
+2. 配置和两类数据库已升级并验证，见第 4 节。
 3. 两个角色分别登记 V7 资产、构建新 recipe、取得 Fulfillment 并 promotion，保留旧资产及历史依赖。按当前每角色 2 行、每行 2 列，预计共 8 次摘要调用；实际缺口以新 candidate progress 为准。
 4. 真实 provider / Codex sidecar 验证，并验证新登录、显式目标、结构化输入和最终后台运行状态。未知外部结果仍按既有政策处理，不为得到通过结果自动重发。
 
-第 1 项已完成，第 2–4 项尚未验收完成。旧备份只用于明确匹配的恢复步骤，不能覆盖恢复运行后产生的新事实。
+第 1–2 项已完成；第 3 项正在执行，第 4 项尚需真实实例的主线与最终运行验证。旧备份只用于明确匹配的恢复步骤，不能覆盖恢复运行后产生的新事实。

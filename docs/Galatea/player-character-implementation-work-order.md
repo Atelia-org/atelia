@@ -22,7 +22,7 @@
 | P2c | 角色信、reply lease、Codex Start/Inspect/恢复 | SQLite V5 / sidecar V6 已接入；25 项新故障专项通过、review 已收口 | 原子 capture/claim、UTF-8 证据、exact append proof、未知不重发 |
 | P2d | RecapGrid 与公共 CLI | Recap 部分已提交 `d34f839c`；共享 Observation projector 接通 public CLI build，CLI 162/162 通过、独立审阅完成 | 语义 context/carrier、新资产采用、历史读取与瞬态辅助请求 |
 | P3 | 跨域集成、故障与独立 review | 最新 Galatea provider-free 全套 1195/1195；CLI mixed-history 专项 2/2、全套 162/162，已知 findings 关闭 | 两份设计全部验收矩阵逐项有证据 |
-| P4 | 真实盘点、备份、离线升级、资产采用与调用 | 主线程串行；只读预检已开始，配置/数据库未转换 | 原 owner/路径/dispatch 保持，strict reopen，真实调用及运行状态记录 |
+| P4 | 真实盘点、备份、离线升级、资产采用与调用 | 主线程串行；配置 V10、Delegation V5、Memory V4 已转换并冷验；隔离真实 Codex 1/1，V7 Recap 构建中 | 原 owner/路径/dispatch 保持，strict reopen，真实调用及运行状态记录 |
 
 公共类型和 `prototypes/SessionJournal` 执行合同由一个负责人编辑；`GalateaServices.cs` 由一个 host 负责人编辑。模块 worker 不并行修改这些入口，必要改动交给负责人集成。重型 .NET build/test 统一排队；不依靠调宽生产截止时间获得通过。
 
@@ -96,7 +96,7 @@ Recap 的合法非空 Tail 超出现有 SessionJournal request canonicalizer 的
 
 `GalateaCharacterConfig` 不含密码或固定 PlayerName；`GalateaPlayerConfig` 只含 PlayerId/Name/Password；会话 host 改为 `CharacterSessionHost.Character`。`GalateaHtml` 已从共享 Services 抽出，以便 API/UI 与 config/后台分别独占写入。API 的全部 13 个角色操作后缀迁到显式 Character 路由，登录 cookie/claim 换成新的 Player 身份。
 
-已只读盘点原位置的真实配置：V9、两个角色、一个共同玩家显示名但两套不同密码。管理员拟使用 `player-main` 和原显示名，沿用哪套密码已向用户询问；不记录密码，不影响代码继续施工。真实配置、模板和数据库尚未转换。
+原位置配置已从 V9 转换为 V10：两个 Character、一个 `player-main` 管理员，保留原显示名并按已说明的默认选择沿用 `cyber` 原密码。配置、模板及数据库的实际转换与验证见迁移验收记录，不记录凭据值。
 
 2026-09-16 已提交 Galatea 身份与语义通信主包 `b4a44960`。真实停服预检、锁定备份及冷读取结果见[真实实例迁移验收](player-character-migration-validation.md)；后续升级与真实调用仍未完成。
 
