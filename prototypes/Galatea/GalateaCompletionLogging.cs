@@ -1,5 +1,6 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
@@ -57,7 +58,7 @@ internal sealed class OwnedLoggingCompletionClientFactory(
 internal sealed class OwnedLoggingCompletionClient
     : ICompletionClient, IDisposable, IAsyncDisposable {
     private readonly ICompletionClient _owned;
-    private readonly LoggingCompletionClient _logging;
+    private readonly CompletionMetadataLoggingClient _logging;
     private int _disposed;
 
     internal OwnedLoggingCompletionClient(
@@ -66,11 +67,11 @@ internal sealed class OwnedLoggingCompletionClient
         string callLogDirectory
     ) {
         _owned = owned ?? throw new ArgumentNullException(nameof(owned));
-        _logging = new LoggingCompletionClient(
+        _logging = new CompletionMetadataLoggingClient(
             owned,
-            connection,
+            connection.Id,
             Path.Combine(callLogDirectory, "completion"),
-            new CompletionCallLogContext(Command: "galatea/completion-v9")
+            "galatea/completion"
         );
     }
 

@@ -2153,7 +2153,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             using JsonDocument log = JsonDocument.Parse(
                 File.ReadAllBytes(callLog));
             Assert.Equal(
-                "atelia.completion.call-log.v10",
+                "atelia.completion.metadata-log.v1",
                 log.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -2168,6 +2168,13 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             );
             Assert.True(log.RootElement.TryGetProperty("request", out _));
             Assert.True(log.RootElement.TryGetProperty("response", out _));
+            JsonElement requestMetadata = log.RootElement.GetProperty("request");
+            Assert.False(requestMetadata.TryGetProperty("systemPrompt", out _));
+            Assert.False(requestMetadata.TryGetProperty("context", out _));
+            Assert.NotEmpty(requestMetadata.GetProperty("content").GetProperty("sha256").GetString()!);
+            JsonElement responseMetadata = log.RootElement.GetProperty("response");
+            Assert.False(responseMetadata.TryGetProperty("message", out _));
+            Assert.NotEmpty(responseMetadata.GetProperty("content").GetProperty("sha256").GetString()!);
         }
 
         using (SessionJournalEngine selected =

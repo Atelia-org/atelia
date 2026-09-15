@@ -247,11 +247,11 @@ internal static class Program {
         CompletionConnectionConfig connection =
             registry.Resolve(requestedConnectionId);
         ICompletionClient client = registry.GetClient(connection.Id);
-        var loggingClient = new LoggingCompletionClient(
+        var loggingClient = new CompletionMetadataLoggingClient(
             client,
-            connection,
+            connection.Id,
             callLogDir,
-            new CompletionCallLogContext(Command: "llm-smoke")
+            "llm-smoke"
         );
         var request = new CompletionRequest(
             connection.ModelId,

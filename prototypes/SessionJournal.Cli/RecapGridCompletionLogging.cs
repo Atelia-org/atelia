@@ -41,7 +41,7 @@ internal sealed class RecapGridLoggingCompletionClientFactory(
 internal sealed class OwnedRecapGridLoggingCompletionClient
     : ICompletionClient, IDisposable, IAsyncDisposable {
     private readonly ICompletionClient _owned;
-    private readonly LoggingCompletionClient _logging;
+    private readonly CompletionMetadataLoggingClient _logging;
     private int _disposed;
 
     internal OwnedRecapGridLoggingCompletionClient(
@@ -50,11 +50,11 @@ internal sealed class OwnedRecapGridLoggingCompletionClient
         string callLogDirectory
     ) {
         _owned = owned ?? throw new ArgumentNullException(nameof(owned));
-        _logging = new LoggingCompletionClient(
+        _logging = new CompletionMetadataLoggingClient(
             owned,
-            connection,
+            connection.Id,
             callLogDirectory,
-            new CompletionCallLogContext(Command: "recap-grid/build")
+            "recap-grid/build"
         );
     }
 
