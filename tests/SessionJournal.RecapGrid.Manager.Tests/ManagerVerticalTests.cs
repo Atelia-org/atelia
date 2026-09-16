@@ -315,22 +315,42 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 rawOpens++;
                 return next();
             });
-        using (fixture.Journal)
-        using (RecapGridManagerHandle manager = OpenManager(fixture, hooks)) {
-            var executor = new RecordingExecutor();
-            RecapGridBuildResult.Fulfilled result = Assert.IsType<
-                RecapGridBuildResult.Fulfilled
-            >(await manager.Manager.BuildAsync(
-                CandidateRequest(fixture.Recipe.Digest),
-                executor
-            ));
+        using (fixture.Journal) {
+            using (RecapGridManagerHandle manager = OpenManager(fixture, hooks)) {
+                var executor = new RecordingExecutor();
+                RecapGridBuildResult.Fulfilled result = Assert.IsType<
+                    RecapGridBuildResult.Fulfilled
+                >(await manager.Manager.BuildAsync(
+                    CandidateRequest(fixture.Recipe.Digest),
+                    executor
+                ));
 
-            Assert.Empty(executor.Batches);
-            Assert.Equal(0, rawOpens);
-            Assert.Equal(0, captures);
-            Assert.Equal(0, result.Metrics.NewCalls);
-            Assert.Equal(fixture.Rows.Count,
-                result.Metrics.RowViewsCommitted);
+                Assert.Empty(executor.Batches);
+                Assert.Equal(0, rawOpens);
+                Assert.Equal(0, captures);
+                Assert.Equal(0, result.Metrics.NewCalls);
+                Assert.Equal(fixture.Rows.Count,
+                    result.Metrics.RowViewsCommitted);
+                using RecapGridStoreReaderHandle reader = OpenStoreReader(fixture);
+                foreach (HistoryTimelineSelectedRow row in fixture.Rows) {
+                    Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+                        reader.Reader.ReadRowWork(new RowWorkKey(
+                            fixture.TimelineHead.RefId,
+                            fixture.TimelineHead.TimelineId,
+                            fixture.Recipe.Digest,
+                            row.Descriptor.RowId)));
+                }
+            }
+            using (RecapGridManagerHandle reopened = OpenManager(fixture)) {
+                var executor = new RecordingExecutor();
+                RecapGridBuildResult.Fulfilled resumed = Assert.IsType<
+                    RecapGridBuildResult.Fulfilled
+                >(await reopened.Manager.BuildAsync(
+                    CandidateRequest(fixture.Recipe.Digest), executor));
+                Assert.Empty(executor.Batches);
+                Assert.Equal(0, resumed.Metrics.NewCalls);
+                Assert.Equal(0, resumed.Metrics.RowViewsCommitted);
+            }
         }
     }
 
@@ -1008,6 +1028,50 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     second.Recipe.Digest);
                 Assert.Equal(first.Spec.HistoryRowId,
                     second.Spec.HistoryRowId);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task LiveActivePermitsBootstrapDetachedFromSelectedPathButExplicitRejectsIt() {
+        Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        HistoryTimelineSelectedRow bootstrap = fixture.Rows[^1];
+        using (fixture.Journal) {
+            using (RecapGridManagerHandle initial = OpenManager(fixture)) {
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await initial.Manager.BuildAsync(
+                        CandidateRequest(fixture.Recipe.Digest),
+                        new RecordingExecutor()));
+            }
+            EventAddress oldRawHead = fixture.Journal.ReadCurrentHead()!.Value;
+            _ = Assert.IsType<
+                SessionTurnRetractionResult.Moved
+            >(fixture.Journal.RewindLatestCompletedTurn(oldRawHead));
+            TimelineHeadRef rewound;
+            using (HistoryTimelineHandle timeline = Assert.IsType<
+                       HistoryTimelineOpenResult.Opened
+                   >(HistoryTimelineFactory.Open(
+                       fixture.Journal.ReadView,
+                       _estimator
+                   )).Handle) {
+                rewound = Assert.IsType<
+                    HistoryTimelineReconcileResult.Reconciled
+                >(timeline.Coordinator.ReconcileSelectedPath(
+                    fixture.TimelineHead,
+                    fixture.Journal.ReadView
+                )).Head;
+            }
+            Assert.NotEqual(bootstrap.Descriptor.RowId, rewound.HeadRowId);
+            Fixture rewoundFixture = fixture with { TimelineHead = rewound };
+            using (RecapGridManagerHandle live = OpenManager(rewoundFixture)) {
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await live.Manager.BuildAsync(Request(), new RecordingExecutor()));
+            }
+            using (RecapGridManagerHandle explicitCandidate = OpenManager(rewoundFixture)) {
+                Assert.IsType<RecapGridBuildResult.ThroughRowNotSelected>(
+                    await explicitCandidate.Manager.BuildAsync(
+                        CandidateRequest(fixture.Recipe.Digest),
+                        new RecordingExecutor()));
             }
         }
     }

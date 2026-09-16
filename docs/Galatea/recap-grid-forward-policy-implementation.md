@@ -39,6 +39,10 @@
 - 对 V4 partial，CLI 只读收集 Control/selected Timeline 的唯一
   `RowWork` 证明；Store 逐项验证 root/target/exact prior/reuse source 后才
   回填 `WorkId`。无法唯一证明 scope 或 prior 的 partial 仍明确拒绝。
+- WP1 补强：live maintenance 的 bootstrap 只验证 Control 内部证据；explicit
+  candidate 仍要求 bootstrap 位于当前 selected path。新 cell/row publication
+  必须有已持久化的 RowWork，zero-column row 也会在发布前选择 work；纯 progress
+  不创建 work。缺 cell 的 definition 校验以 RowWork 的实际 producer spec 为准。
 
 已运行的聚焦证据：
 

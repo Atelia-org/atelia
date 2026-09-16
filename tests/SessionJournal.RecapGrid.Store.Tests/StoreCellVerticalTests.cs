@@ -14,6 +14,67 @@ public sealed class StoreCellVerticalTests : IDisposable {
     );
 
     [Fact]
+    public void NewCellsAndRowsRequirePersistedRowWork() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        RowBuildSpec noWork = StoreFixture.Spec(withWork: false);
+        Assert.Equal("RowWorkRequired", Assert.IsType<RecapGridCellPutResult.Rejected>(
+            handle.Writer.PutCell(noWork, StoreFixture.Draft(noWork))).Code);
+        Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Missing>(
+            handle.Reader.TryReadCell(((RowBuildAssignment.Evaluate)noWork.OrderedAssignments[0]).Slot));
+
+        RowBuildSpec noWorkZero = StoreFixture.Spec(StoreFixture.Recipe(columns: 0), withWork: false);
+        Assert.Equal("RowWorkRequired", Assert.IsType<RecapGridRowViewPutResult.Rejected>(
+            handle.Writer.PutRowView(noWorkZero, [])).Code);
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            handle.Reader.ReadViewAt(noWorkZero.Coordinate.AssignmentKey));
+
+        RowBuildSpec selected = StoreFixture.Spec();
+        StoreFixture.PutWork(handle, selected);
+        RecapCellArtifact cell = StoreFixture.Put(handle, selected);
+        Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(selected, [cell]));
+
+        RowBuildSpec selectedZero = StoreFixture.Spec(StoreFixture.Recipe(columns: 0));
+        StoreFixture.PutWork(handle, selectedZero);
+        Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(selectedZero, []));
+    }
+
+    [Fact]
+    public void FindMissingUsesPersistedWorkProducerDefinition() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        var p0 = StoreFixture.Definition;
+        var p1 = new MaintainerDefinitionDigest(new string('b', 64));
+        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
+            StoreFixture.Timeline,
+            new HistoryRowId(new string('c', 64)),
+            BuildTarget.Create([new BuildTargetColumn(StoreFixture.Column, p0)]));
+        var key = new RowWorkKey(new RefId(1), StoreFixture.Timeline,
+            recipe.Digest, new HistoryRowId(new string('c', 64)));
+        BuildTarget producer = BuildTarget.Create([
+            new BuildTargetColumn(StoreFixture.Column, p1)
+        ]);
+        var work = new RowWork(key, producer, null, null,
+            [new RowWorkAssignment(StoreFixture.Column, null)]);
+        var slot = new CellSlot(recipe.Digest, key.HistoryRowId,
+            work.WorkId, StoreFixture.Column);
+        RowBuildSpec spec = RowBuildSpec.CreateFull(recipe,
+            new RowViewCoordinate(key.RefId, key.TimelineId, key.HistoryRowId,
+                recipe.Digest, producer.Digest, null, null, true),
+            [new RowBuildAssignment.Evaluate(slot)], work);
+        Assert.IsType<RecapGridRowWorkPutResult.Inserted>(
+            handle.Writer.PutRowWork(work));
+        Assert.Equal("CellSpecMismatch", Assert.IsType<RecapGridCellPutResult.Rejected>(
+            handle.Writer.PutCell(spec, RecapCellDraft.Create(slot, p0,
+                RecapCellOutcome.Updated, "P0", RecapGridLimits.MaximumContentUtf8Bytes))).Code);
+        Assert.IsType<RecapGridCellPutResult.Inserted>(handle.Writer.PutCell(spec,
+            RecapCellDraft.Create(slot, p1, RecapCellOutcome.Updated, "P1",
+                RecapGridLimits.MaximumContentUtf8Bytes)));
+        Assert.IsType<RecapGridMissingResult.Complete>(
+            handle.Reader.FindMissingAssignments(spec));
+    }
+
+    [Fact]
     public void CreateOpenAndNativePragmasAreExact() {
         Directory.CreateDirectory(_root);
         RecapGridStoreCreateResult.Created created = Assert.IsType<
@@ -253,10 +314,10 @@ public sealed class StoreCellVerticalTests : IDisposable {
             full.Recipe.Target, [StoreFixture.Column]);
         var coordinate = new RowViewCoordinate(full.RefId, full.TimelineId, full.HistoryRowId,
             overlay.Digest, overlay.Target.Digest, null, null, bootstrapCompleted: true);
-        RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(overlay, coordinate, [
+        RowBuildSpec spec = StoreFixture.WithWork(RowBuildSpec.CreateOverlayBootstrap(overlay, coordinate, [
             new RowBuildAssignment.Evaluate(new CellSlot(overlay.Digest, full.HistoryRowId, StoreFixture.Column)),
             new RowBuildAssignment.Reuse(baseTwo.LogicalColumnId, baseTwo)
-        ]);
+        ]));
         Assert.Single(Assert.IsType<RecapGridMissingResult.Missing>(handle.Reader.FindMissingAssignments(spec)).OrderedSlots);
         RecapCellArtifact overlayOne = StoreFixture.Put(handle, spec, "overlay one");
         RecapRowView view = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(spec, [overlayOne, baseTwo])).Winner;
@@ -272,10 +333,10 @@ public sealed class StoreCellVerticalTests : IDisposable {
         RowBuildSpec full = StoreFixture.Spec();
         GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(full.Recipe, new HistoryRowId(new string('d', 64)),
             full.Recipe.Target, [StoreFixture.Column]);
-        RowBuildSpec partial = RowBuildSpec.CreateOverlayBootstrap(overlay,
+        RowBuildSpec partial = StoreFixture.WithWork(RowBuildSpec.CreateOverlayBootstrap(overlay,
             new RowViewCoordinate(full.RefId, full.TimelineId, full.HistoryRowId,
                 overlay.Digest, overlay.Target.Digest, null, null, bootstrapCompleted: false),
-            [new RowBuildAssignment.Evaluate(new CellSlot(overlay.Digest, full.HistoryRowId, StoreFixture.Column))]);
+            [new RowBuildAssignment.Evaluate(new CellSlot(overlay.Digest, full.HistoryRowId, StoreFixture.Column))]));
         FulfilledViewKey key = StoreFixture.Fulfilled(partial);
         RowResultId rowId;
         using (RecapGridStoreHandle handle = Open()) {
@@ -299,8 +360,10 @@ public sealed class StoreCellVerticalTests : IDisposable {
         Create();
         using RecapGridStoreHandle handle = Open();
         RowBuildSpec first = StoreFixture.Spec(StoreFixture.Recipe(columns: 0));
+        StoreFixture.PutWork(handle, first);
         RecapRowView previous = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(first, [])).Winner;
         RowBuildSpec next = StoreFixture.Spec(first.Recipe, new HistoryRowId(new string('d', 64)), previous);
+        StoreFixture.PutWork(handle, next);
         RecapRowView current = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(next, [])).Winner;
         Assert.NotEqual(previous.Id, current.Id);
         Assert.Equal(previous.Id, current.PreviousRowResultId);

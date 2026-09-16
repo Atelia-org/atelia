@@ -48,8 +48,12 @@ internal static class Program {
                 ) as RecapGridStoreOpenResult.Opened)?.Handle
                 ?? throw new InvalidDataException(
                     "Store crash fixture could not be opened."
-                );
+            );
             (RowBuildSpec spec, RecapCellDraft draft, FulfilledViewKey fulfilled) = Values();
+            if (handle.Writer.PutRowWork(spec.Work!) is not (
+                RecapGridRowWorkPutResult.Inserted or RecapGridRowWorkPutResult.AlreadyPresent)) {
+                throw new InvalidDataException("RowWork could not be persisted.");
+            }
             switch (operation) {
                 case "cell":
                     _ = handle.Writer.PutCell(spec, draft);
@@ -111,10 +115,13 @@ internal static class Program {
         var rowId = new HistoryRowId(new string('c', 64));
         GridBuildRecipe recipe = GridBuildRecipe.CreateFull(timeline, rowId,
             BuildTarget.Create([new BuildTargetColumn(column, definition)]));
-        var slot = new CellSlot(recipe.Digest, rowId, column);
+        var key = new RowWorkKey(new RefId(1), timeline, recipe.Digest, rowId);
+        var work = new RowWork(key, recipe.Target, null, null,
+            [new RowWorkAssignment(column, null)]);
+        var slot = new CellSlot(recipe.Digest, rowId, work.WorkId, column);
         RowBuildSpec spec = RowBuildSpec.CreateFull(recipe, new RowViewCoordinate(
             new RefId(1), timeline, rowId, recipe.Digest,
-            recipe.Target.Digest, null, null, bootstrapCompleted: true), [new RowBuildAssignment.Evaluate(slot)]);
+            recipe.Target.Digest, null, null, bootstrapCompleted: true), [new RowBuildAssignment.Evaluate(slot)], work);
         var head = new TimelineHeadRef(timeline, new RefId(1), null, new string('d', 64), null,
             0, HistoryTimelineSelectedPath.EmptyDigest, generation: 1);
         return (spec, RecapCellDraft.Create(slot, definition, RecapCellOutcome.Updated,

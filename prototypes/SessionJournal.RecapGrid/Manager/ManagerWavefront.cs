@@ -230,6 +230,13 @@ public sealed partial class RecapGridManager {
         if (workError is not null) {
             return RowError(workError);
         }
+        if (spec.Work is null && work!.Length == 0 && !workSelectionAllowed) {
+            return await BuildRecipeRowAsync(
+                frozen, plan, selected, openContent,
+                isOverlayBootstrap, previousRow, baseRow, executor,
+                state, cancellationToken, workSelectionAllowed: true
+            ).ConfigureAwait(false);
+        }
         FrozenRecapCellWork[] orderedWork = work!;
         var settled = new Dictionary<CellSlot,
             RecapCellArtifact>();

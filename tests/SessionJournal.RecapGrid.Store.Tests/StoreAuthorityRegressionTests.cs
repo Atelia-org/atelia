@@ -280,10 +280,11 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
         RecapRowView predecessor = Assert.IsType<RecapGridRowViewPutResult.Inserted>(
             handle.Writer.PutRowView(predecessorSpec, [predecessorCell])).Winner;
         RowBuildSpec conflicting = StoreFixture.Spec(previous: predecessor);
-        var invalid = Assert.IsType<RecapGridRowViewPutResult.Invalid>(handle.Writer.PutRowView(conflicting, [cell]));
-        Assert.Equal("RowViewAssignmentConflict", invalid.Code);
-        Assert.Equal(invalid.Code, Assert.IsType<RecapGridCellPutResult.Invalid>(
-            handle.Writer.PutCell(spec, StoreFixture.Draft(spec))).Code);
+        StoreFixture.PutWork(handle, conflicting);
+        Assert.IsType<RecapGridRowViewPutResult.PrerequisiteMissing>(
+            handle.Writer.PutRowView(conflicting, [cell]));
+        Assert.IsType<RecapGridCellPutResult.AlreadyFilled>(
+            handle.Writer.PutCell(spec, StoreFixture.Draft(spec)));
         using RecapGridStoreHandle reopened = Open();
         Assert.Equal(stored.Id, Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
             reopened.Reader.ReadViewAt(spec.Coordinate.AssignmentKey)).Value.Id);

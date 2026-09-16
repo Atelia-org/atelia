@@ -257,6 +257,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             ? new(AfterCellNativeCommitReturn: Throw, AfterRowViewNativeCommitReturn: Throw, AfterFulfilledNativeCommitReturn: Throw)
             : new(AfterCellCommit: Throw, AfterRowViewCommit: Throw, AfterFulfilledCommit: Throw);
         using RecapGridStoreHandle handle = OpenWithHooks(hooks);
+        StoreFixture.PutWork(handle, spec);
         var cellResult = Assert.IsType<RecapGridCellPutResult.CommitIndeterminate>(
             handle.Writer.PutCell(spec, StoreFixture.Draft(spec)));
         RecapCellArtifact cell = Assert.IsType<RecapCellArtifact>(cellResult.Observed);
@@ -284,6 +285,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         using RecapGridStoreHandle two = OpenWithHooks(new StorePersistenceTestHooks(BeforeCellBegin: () => {
             if (Interlocked.Exchange(ref firstTwo, 1) == 0) barrier.SignalAndWait();
         }));
+        StoreFixture.PutWork(one, spec);
         RecapGridCellPutResult[] results = await Task.WhenAll(
             Task.Run(() => one.Writer.PutCell(spec, StoreFixture.Draft(spec, "one"))),
             Task.Run(() => two.Writer.PutCell(spec, StoreFixture.Draft(spec, "two"))));
@@ -421,7 +423,13 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             for (int index = 1; index <= 257; index++) {
                 RowBuildSpec spec = varyingThroughRow
                     ? StoreFixture.Spec(row: new HistoryRowId(index.ToString("x64")))
-                    : StoreFixture.Spec(refId: new RefId((ulong)index));
+                    : StoreFixture.Spec(
+                        recipe: GridBuildRecipe.CreateFull(
+                            StoreFixture.Timeline,
+                            new HistoryRowId(index.ToString("x64")),
+                            StoreFixture.Recipe().Target),
+                        refId: new RefId((ulong)index));
+                StoreFixture.PutWork(handle, spec);
                 RecapGridCellPutResult put = handle.Writer.PutCell(spec, StoreFixture.Draft(spec));
                 RecapCellArtifact cell = put switch {
                     RecapGridCellPutResult.Inserted inserted => inserted.Winner,
@@ -453,7 +461,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             Assert.True(cursors.Add(cursor.Value));
             cursor = RecapGridStoreExportCursor.Parse(cursor.Value);
         } while (true);
-        Assert.Equal(varyingThroughRow ? 7 : 5, pages);
+        Assert.Equal(7, pages);
         Assert.Equal(expected.Count, seen.Count);
     }
 
@@ -468,9 +476,12 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         StoreFixture.Spec(row: new HistoryRowId(new string(row, 64))), content);
     private static RecapCellArtifact Cell(int row, string content) => StoreFixture.Proposed(
         StoreFixture.Spec(row: new HistoryRowId(row.ToString("x64"))), content);
-    private static RecapGridCellPutResult Put(RecapGridStoreHandle handle, RecapCellArtifact cell) => handle.Writer.PutCell(
-        StoreFixture.Spec(row: cell.Slot.HistoryRowId), RecapCellDraft.Create(cell.Slot, cell.DefinitionDigest,
+    private static RecapGridCellPutResult Put(RecapGridStoreHandle handle, RecapCellArtifact cell) {
+        RowBuildSpec spec = StoreFixture.Spec(row: cell.Slot.HistoryRowId);
+        StoreFixture.PutWork(handle, spec);
+        return handle.Writer.PutCell(spec, RecapCellDraft.Create(cell.Slot, cell.DefinitionDigest,
             cell.Outcome, cell.Content, RecapGridLimits.MaximumContentUtf8Bytes));
+    }
     private void InsertCellsRaw(IReadOnlyList<RecapCellArtifact> cells) {
         using SqliteConnection connection = OpenRaw();
         connection.Open();

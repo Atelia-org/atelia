@@ -144,7 +144,8 @@ public sealed partial class RecapGridManager {
                     )
                 );
             }
-            if (requested.Recipe.BootstrapThroughRowId is not null) {
+            if (request.Selection is RecapGridBuildSelection.ExplicitCandidate
+                && requested.Recipe.BootstrapThroughRowId is not null) {
                 return Error(Invalid(
                     "EmptyTimelineBootstrapMismatch",
                     "A recipe on an empty Timeline must have an empty bootstrap."
@@ -189,7 +190,9 @@ public sealed partial class RecapGridManager {
             timelineHead,
             request.Selection is RecapGridBuildSelection.LiveActive
                 ? request.LiveProducerTarget
-                : null
+                : null,
+            requireBootstrapOnSelectedPath: request.Selection
+                is RecapGridBuildSelection.ExplicitCandidate
         );
         if (closureError is not null) {
             return Error(closureError);
@@ -264,7 +267,8 @@ public sealed partial class RecapGridManager {
             RegisteredGridRecipe requested,
             RecapGridControlSnapshot control,
             TimelineHeadRef timelineHead,
-            BuildTarget? liveProducerTarget
+            BuildTarget? liveProducerTarget,
+            bool requireBootstrapOnSelectedPath
         ) {
         Dictionary<GridBuildRecipeDigest, RegisteredGridRecipe> recipes;
         Dictionary<MaintainerDefinitionDigest,
@@ -331,6 +335,15 @@ public sealed partial class RecapGridManager {
         for (int index = 0; index < candidateToBase.Count; index++) {
             RegisteredGridRecipe child = candidateToBase[index];
             if (child.Recipe.BootstrapThroughRowId is { } bootstrap) {
+                if (child.Bootstrap.RowId != bootstrap) {
+                    return (null, Invalid(
+                        "RecipeBootstrapInvalid",
+                        "A recipe bootstrap has inconsistent Control evidence."
+                    ));
+                }
+                if (!requireBootstrapOnSelectedPath) {
+                    continue;
+                }
                 (HistoryTimelineSelectedRow? selected,
                     RecapGridBuildResult? selectedError) = ReadSelectedRow(
                         timelineHead,
@@ -338,12 +351,6 @@ public sealed partial class RecapGridManager {
                     );
                 if (selectedError is not null) {
                     return (null, selectedError);
-                }
-                if (child.Bootstrap.RowId != bootstrap) {
-                    return (null, Invalid(
-                        "RecipeBootstrapNotSelected",
-                        "A frozen recipe bootstrap is not on the selected path."
-                    ));
                 }
                 if (selected!.Descriptor.RowId != child.Bootstrap.RowId) {
                     return (null, Invalid(

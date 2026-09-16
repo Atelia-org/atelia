@@ -18,7 +18,8 @@ internal static class StoreFixture {
         GridBuildRecipe? recipe = null,
         HistoryRowId? row = null,
         RecapRowView? previous = null,
-        RefId? refId = null
+        RefId? refId = null,
+        bool withWork = true
     ) {
         recipe ??= Recipe();
         HistoryRowId actualRow = row ?? new HistoryRowId(new string('c', 64));
@@ -28,7 +29,8 @@ internal static class StoreFixture {
             previous?.HistoryRowId, previous?.Id, bootstrapCompleted: true);
         RowBuildAssignment[] assignments = recipe.Target.OrderedColumns.Select(column =>
             (RowBuildAssignment)new RowBuildAssignment.Evaluate(new CellSlot(recipe.Digest, actualRow, column.LogicalColumnId))).ToArray();
-        return RowBuildSpec.CreateFull(recipe, coordinate, assignments);
+        RowBuildSpec spec = RowBuildSpec.CreateFull(recipe, coordinate, assignments);
+        return withWork ? WithWork(spec) : spec;
     }
 
     internal static RecapCellDraft Draft(RowBuildSpec spec, string content = "answer", int column = 0) {
@@ -41,8 +43,42 @@ internal static class StoreFixture {
         new CellId(Guid.NewGuid().ToString("N")), ((RowBuildAssignment.Evaluate)spec.OrderedAssignments[column]).Slot,
         Definition, RecapCellOutcome.Updated, content);
 
-    internal static RecapCellArtifact Put(RecapGridStoreHandle handle, RowBuildSpec spec, string content = "answer", int column = 0) =>
-        Assert.IsType<RecapGridCellPutResult.Inserted>(handle.Writer.PutCell(spec, Draft(spec, content, column))).Winner;
+    internal static RecapCellArtifact Put(RecapGridStoreHandle handle, RowBuildSpec spec, string content = "answer", int column = 0) {
+        PutWork(handle, spec);
+        return Assert.IsType<RecapGridCellPutResult.Inserted>(handle.Writer.PutCell(spec, Draft(spec, content, column))).Winner;
+    }
+
+    internal static void PutWork(RecapGridStoreHandle handle, RowBuildSpec spec) {
+        Assert.NotNull(spec.Work);
+        Assert.IsAssignableFrom<RecapGridRowWorkPutResult>(handle.Writer.PutRowWork(spec.Work!));
+    }
+
+    internal static RowBuildSpec WithWork(RowBuildSpec spec) {
+        BuildTarget target = spec.Recipe.Target;
+        var work = new RowWork(
+            new RowWorkKey(spec.RefId, spec.TimelineId, spec.RecipeDigest, spec.HistoryRowId),
+            target,
+            spec.PreviousHistoryRowId,
+            spec.PreviousRowResultId,
+            spec.OrderedAssignments.Select(static assignment => assignment switch {
+                RowBuildAssignment.Evaluate evaluate => new RowWorkAssignment(evaluate.LogicalColumnId, null),
+                RowBuildAssignment.Reuse reuse => new RowWorkAssignment(reuse.LogicalColumnId, reuse.Cell.Id),
+                _ => throw new InvalidOperationException("Unsupported assignment.")
+            }));
+        RowBuildAssignment[] assignments = spec.OrderedAssignments.Select(assignment => assignment switch {
+            RowBuildAssignment.Evaluate evaluate => new RowBuildAssignment.Evaluate(
+                new CellSlot(spec.RecipeDigest, spec.HistoryRowId, work.WorkId, evaluate.LogicalColumnId)),
+            _ => assignment
+        }).ToArray();
+        return spec.Recipe.Kind switch {
+            GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(spec.Recipe, spec.Coordinate, assignments, work),
+            GridBuildRecipeKind.Overlay when !spec.BootstrapCompleted
+                || spec.Recipe.BootstrapThroughRowId == spec.HistoryRowId
+                => RowBuildSpec.CreateOverlayBootstrap(spec.Recipe, spec.Coordinate, assignments, work),
+            GridBuildRecipeKind.Overlay => RowBuildSpec.CreateNormal(spec.Recipe, spec.Coordinate, assignments, work),
+            _ => throw new InvalidOperationException("Unsupported recipe kind.")
+        };
+    }
 
     internal static FulfilledViewKey Fulfilled(RowBuildSpec spec, long generation = 1) {
         var head = new TimelineHeadRef(Timeline, spec.Coordinate.RefId, null, new string('d', 64), null,

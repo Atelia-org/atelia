@@ -278,7 +278,8 @@ internal sealed class SqliteRecapGridStore {
         ArgumentNullException.ThrowIfNull(spec);
         using SqliteConnection connection = OpenVerifiedConnection();
         var missing = new List<CellSlot>();
-        foreach (RowBuildAssignment assignment in spec.OrderedAssignments) {
+        for (int index = 0; index < spec.OrderedAssignments.Count; index++) {
+            RowBuildAssignment assignment = spec.OrderedAssignments[index];
             switch (assignment) {
                 case RowBuildAssignment.Evaluate evaluate:
                     RecapCellArtifact? winner = ReadCellBySlotCore(
@@ -289,8 +290,7 @@ internal sealed class SqliteRecapGridStore {
                     if (winner is null) {
                         missing.Add(evaluate.Slot);
                     }
-                    else if (winner.DefinitionDigest != spec.Recipe.Target.OrderedColumns
-                        .Single(value => value.LogicalColumnId == evaluate.LogicalColumnId).DefinitionDigest) {
+                    else if (winner.DefinitionDigest != spec.DefinitionAt(index)) {
                         throw new InvalidDataException("A Cell winner has the wrong definition for its slot.");
                     }
                     break;
@@ -901,7 +901,8 @@ internal sealed class SqliteRecapGridStore {
     ) {
         error = null;
         if (spec.Work is null) {
-            return true;
+            error = "RowWorkRequired";
+            return false;
         }
         RowWork? stored = ReadRowWorkCore(connection, transaction, spec.Work.Key);
         if (stored is null) {
