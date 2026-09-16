@@ -220,7 +220,7 @@ public sealed class GalateaCharacterMailDeliveryTests {
             fixture.Target = new CharacterSessionHost(
                 fixture.Bob, bobEngine,
                 new RecentTurnsResponseDto([], null, ContextHeaderDto.Empty),
-                GalateaRecapGridTargetExpectation.ForCharacter(
+                GalateaRecapGridDefaultPolicy.ForCharacter(
                     fixture.Bob.CharacterName),
                 null,
                 fixture._targetHandle,

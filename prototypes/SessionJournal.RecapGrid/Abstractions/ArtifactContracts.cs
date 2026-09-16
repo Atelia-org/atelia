@@ -153,7 +153,8 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         RowBuildAssignment[] orderedAssignments,
-        MaintainerDefinitionDigest[] orderedDefinitionDigests
+        MaintainerDefinitionDigest[] orderedDefinitionDigests,
+        RowWork? work
     ) {
         Recipe = recipe;
         Coordinate = coordinate;
@@ -161,10 +162,13 @@ public sealed class RowBuildSpec {
         _orderedDefinitionDigests = Array.AsReadOnly(
             orderedDefinitionDigests
         );
+        Work = work;
     }
 
     public GridBuildRecipe Recipe { get; }
     public RowViewCoordinate Coordinate { get; }
+    /// <summary>V5 durable selection backing this spec, when it is a new work-addressed row.</summary>
+    public RowWork? Work { get; }
     public RefId RefId => Coordinate.RefId;
     public TimelineId TimelineId => Coordinate.TimelineId;
     public HistoryRowId HistoryRowId => Coordinate.HistoryRowId;
@@ -180,7 +184,8 @@ public sealed class RowBuildSpec {
     public static RowBuildSpec CreateFull(
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
-        IEnumerable<RowBuildAssignment> orderedAssignments
+        IEnumerable<RowBuildAssignment> orderedAssignments,
+        RowWork? work = null
     ) {
         if (recipe?.Kind != GridBuildRecipeKind.Full) {
             throw new ArgumentException(
@@ -207,14 +212,16 @@ public sealed class RowBuildSpec {
         return CreateCore(
             recipe,
             coordinate,
-            assignments
+            assignments,
+            work
         );
     }
 
     public static RowBuildSpec CreateOverlayBootstrap(
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
-        IEnumerable<RowBuildAssignment> orderedAssignments
+        IEnumerable<RowBuildAssignment> orderedAssignments,
+        RowWork? work = null
     ) {
         if (recipe?.Kind != GridBuildRecipeKind.Overlay) {
             throw new ArgumentException(
@@ -252,14 +259,16 @@ public sealed class RowBuildSpec {
         return CreateCore(
             recipe,
             coordinate,
-            assignments
+            assignments,
+            work
         );
     }
 
     public static RowBuildSpec CreateNormal(
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
-        IEnumerable<RowBuildAssignment> orderedAssignments
+        IEnumerable<RowBuildAssignment> orderedAssignments,
+        RowWork? work = null
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
         if (!coordinate.BootstrapCompleted) {
@@ -281,26 +290,29 @@ public sealed class RowBuildSpec {
         return CreateCore(
             recipe,
             coordinate,
-            assignments
+            assignments,
+            work
         );
     }
 
     private static RowBuildSpec CreateCore(
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
-        RowBuildAssignment[] assignments
+        RowBuildAssignment[] assignments,
+        RowWork? work
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
         ArgumentNullException.ThrowIfNull(coordinate);
+        BuildTarget actualTarget = work?.ProducerTarget ?? recipe.Target;
         if (coordinate.TimelineId != recipe.TimelineId
             || coordinate.RecipeDigest != recipe.Digest
-            || coordinate.TargetDigest != recipe.Target.Digest) {
+            || coordinate.TargetDigest != actualTarget.Digest) {
             throw new ArgumentException(
                 "The row coordinate must bind the exact recipe and target.",
                 nameof(coordinate)
             );
         }
-        BuildTargetColumn[] target = recipe.Target.OrderedColumns.ToArray();
+        BuildTargetColumn[] target = actualTarget.OrderedColumns.ToArray();
         if (assignments.Length != target.Length
             || assignments.Any(static value => value is null)
             || !assignments.Select(static value => value.LogicalColumnId)
@@ -330,11 +342,36 @@ public sealed class RowBuildSpec {
                     );
             }
         }
+        if (work is not null) {
+            if (work.Key.RefId != coordinate.RefId
+                || work.Key.TimelineId != coordinate.TimelineId
+                || work.Key.RootRecipeDigest != coordinate.RecipeDigest
+                || work.Key.HistoryRowId != coordinate.HistoryRowId
+                || work.ProducerTarget.Digest != coordinate.TargetDigest
+                || work.PreviousHistoryRowId != coordinate.PreviousHistoryRowId
+                || work.PreviousRowResultId != coordinate.PreviousRowResultId
+                || work.OrderedAssignments.Count != assignments.Length) {
+                throw new ArgumentException("The RowWork differs from the exact row coordinate.", nameof(work));
+            }
+            for (int index = 0; index < assignments.Length; index++) {
+                RowWorkAssignment frozen = work.OrderedAssignments[index];
+                bool exact = assignments[index] switch {
+                    RowBuildAssignment.Evaluate evaluate => frozen.IsEvaluate
+                        && evaluate.Slot.WorkId == work.WorkId,
+                    RowBuildAssignment.Reuse reuse => frozen.ReusedCellId == reuse.Cell.Id,
+                    _ => false
+                };
+                if (!exact || frozen.LogicalColumnId != assignments[index].LogicalColumnId) {
+                    throw new ArgumentException("Assignments differ from the durable RowWork.", nameof(work));
+                }
+            }
+        }
         return new RowBuildSpec(
             recipe,
             coordinate,
             assignments,
-            target.Select(static column => column.DefinitionDigest).ToArray()
+            target.Select(static column => column.DefinitionDigest).ToArray(),
+            work
         );
     }
 

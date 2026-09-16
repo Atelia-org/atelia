@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 11;
+    internal const int CurrentConfigVersion = 12;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumCharacterCount = 256;
@@ -244,13 +244,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("11"u8)) {
+            || !reader.ValueSpan.SequenceEqual("12"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 11; "
+        "Galatea config requires exact integer version 'v': 12; "
         + "migrate the config before retrying."
     );
 
@@ -399,11 +399,12 @@ internal static class GalateaStrictConfigReader {
         while (ReadProperty(ref reader, seen, "recapGrid", out string property)) {
             RequireReadValue(ref reader, property);
             switch (property) {
-                case "routeManifestPath":
-                case "currentAgentControlProfileId":
-                    RequireToken(reader.TokenType, JsonTokenType.String, property);
+                case "maintenance":
+                    RequireToken(reader.TokenType, JsonTokenType.StartObject,
+                        property);
+                    ValidateRecapGridMaintenanceObject(ref reader);
                     break;
-                case "agentControlProfileFiles":
+                case "historicalAgentControlProfileFiles":
                     ValidateStringArrayOrNull(
                         ref reader,
                         256,
@@ -413,6 +414,63 @@ internal static class GalateaStrictConfigReader {
                     break;
                 default:
                     throw Unknown("recapGrid", property);
+            }
+        }
+        foreach (string field in new[] {
+                     "maintenance", "historicalAgentControlProfileFiles"
+                 }) {
+            if (!seen.Contains(field)) {
+                throw new InvalidDataException(
+                    "recapGrid requires '" + field + "'."
+                );
+            }
+        }
+    }
+
+    private static void ValidateRecapGridMaintenanceObject(
+        ref Utf8JsonReader reader
+    ) {
+        var seen = NewPropertySet();
+        while (ReadProperty(ref reader, seen, "recapGrid.maintenance",
+                   out string property)) {
+            RequireReadValue(ref reader, property);
+            switch (property) {
+                case "connectionId":
+                    RequireToken(reader.TokenType, JsonTokenType.String,
+                        property);
+                    break;
+                case "maximumConcurrency":
+                    if (reader.TokenType != JsonTokenType.Number
+                        || !reader.TryGetInt32(out int concurrency)
+                        || concurrency is < 1 or > 1_024) {
+                        throw new InvalidDataException(
+                            "recapGrid.maintenance.maximumConcurrency must "
+                            + "be an integer from 1 to 1024."
+                        );
+                    }
+                    break;
+                case "dispatchTimeoutMilliseconds":
+                    if (reader.TokenType != JsonTokenType.Number
+                        || !reader.TryGetInt64(out long milliseconds)
+                        || milliseconds is < 1 or > 86_400_000) {
+                        throw new InvalidDataException(
+                            "recapGrid.maintenance.dispatchTimeoutMilliseconds "
+                            + "must be an integer from 1 to 86400000."
+                        );
+                    }
+                    break;
+                default:
+                    throw Unknown("recapGrid.maintenance", property);
+            }
+        }
+        foreach (string field in new[] {
+                     "connectionId", "maximumConcurrency",
+                     "dispatchTimeoutMilliseconds"
+                 }) {
+            if (!seen.Contains(field)) {
+                throw new InvalidDataException(
+                    "recapGrid.maintenance requires '" + field + "'."
+                );
             }
         }
     }

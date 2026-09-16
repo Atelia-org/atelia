@@ -13,8 +13,23 @@ public sealed record CellSlot {
         HistoryRowId = historyRowId;
         LogicalColumnId = logicalColumnId;
     }
+    /// <summary>
+    /// V5 work-addressed slot. The legacy root/history coordinate is retained
+    /// only for diagnostics and old-object decoding; durable lookup is by
+    /// WorkId plus logical column.
+    /// </summary>
+    public CellSlot(
+        GridBuildRecipeDigest recipeDigest,
+        HistoryRowId historyRowId,
+        RowWorkId workId,
+        LogicalColumnId logicalColumnId
+    ) : this(recipeDigest, historyRowId, logicalColumnId) {
+        RecapGridSyntax.RequireTypedValue(workId.Value, 64, nameof(workId));
+        WorkId = workId;
+    }
     public GridBuildRecipeDigest RecipeDigest { get; }
     public HistoryRowId HistoryRowId { get; }
+    public RowWorkId? WorkId { get; }
     public LogicalColumnId LogicalColumnId { get; }
 }
 

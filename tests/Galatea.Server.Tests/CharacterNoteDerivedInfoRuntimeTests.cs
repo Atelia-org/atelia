@@ -854,7 +854,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 Engine,
                 new RecentTurnsResponseDto([], null,
                     ContextHeaderDto.Empty),
-                GalateaRecapGridTargetExpectation.ForCharacter(
+                GalateaRecapGridDefaultPolicy.ForCharacter(
                     user.CharacterName
                 ),
                 Reconciler,

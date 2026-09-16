@@ -104,12 +104,25 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             Assert.DoesNotContain("autobiography-r1", rendered,
                 StringComparison.Ordinal);
         });
-        const string expectedPrior =
-            "{\"schema\":\"atelia.recap.prior.v1\",\"columns\":["
-            + "{\"logicalColumnId\":\"world-understanding\","
-            + "\"content\":\"world-r1\"},"
-            + "{\"logicalColumnId\":\"autobiography\","
-            + "\"content\":\"autobiography-r1\"}]}";
+        string expectedPrior = JsonSerializer.Serialize(new {
+            schema = "atelia.recap.prior.v1",
+            columns = new[] {
+                new {
+                    logicalColumnId = "world-understanding",
+                    semanticHeading = "galatea.world-understanding Galatea积累的世界理解：",
+                    carrier = "Observation",
+                    blockKey = "galatea.world-understanding",
+                    content = "world-r1"
+                },
+                new {
+                    logicalColumnId = "autobiography",
+                    semanticHeading = "galatea.first-person-autobiography Galatea积累的第一人称自传：",
+                    carrier = "Action",
+                    blockKey = "galatea.first-person-autobiography",
+                    content = "autobiography-r1"
+                }
+            }
+        });
         Assert.All(secondRow, value => Assert.Equal(
             expectedPrior,
             value.Prior
@@ -240,7 +253,20 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         RecapGridMissingAssignmentProgress missing = Assert.Single(
             frontier.OrderedMissing
         );
-        var missingSlot = new CellSlot(missing.RecipeDigest, missing.RowId, missing.LogicalColumnId);
+        RowWork frozenWork;
+        using (RecapGridStoreReaderHandle store = Assert.IsType<
+                   RecapGridStoreReaderOpenResult.Opened>(
+                   RecapGridStoreFactory.OpenReader(fixture.Path)).Handle) {
+            frozenWork = Assert.IsType<
+                RecapGridStoreReadResult<RowWork>.Found>(
+                store.Reader.ReadRowWork(new RowWorkKey(
+                    fixture.RefId,
+                    partialTimeline.TimelineId,
+                    missing.RecipeDigest,
+                    missing.RowId))).Value;
+        }
+        var missingSlot = new CellSlot(missing.RecipeDigest, missing.RowId,
+            frozenWork.WorkId, missing.LogicalColumnId);
         Assert.Equal(fixture.Autobiography.LogicalColumnId,
             missing.LogicalColumnId);
         RecapCompletionTelemetryEvent[] modelAEvents = completionA

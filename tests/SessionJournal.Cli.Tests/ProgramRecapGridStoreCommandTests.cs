@@ -109,6 +109,7 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
     [InlineData("inspect")]
     [InlineData("export")]
     [InlineData("verify")]
+    [InlineData("upgrade-store-v5")]
     public void AbsentStoreCommandsUseTheSharedExactEnvelope(string command) {
         Directory.CreateDirectory(_root);
 

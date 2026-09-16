@@ -604,7 +604,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(initial, ReadControlHead(refId.ToHexString()));
 
         string admitted = WriteAdmission(
-            ["create", "register-family", "register-definition"],
+            ["create", "register-family", "register-definition",
+                "register-recipe", "activate"],
             bundle!.Families.Select(static value => value.Digest.Value)
                 .ToArray(),
             bundle.Definitions.Select(static value =>
@@ -766,7 +767,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             WriteAdmission(["create"])
         ));
         string admitted = WriteAdmission(
-            ["create", "register-family", "register-definition"],
+            ["create", "register-family", "register-definition", "register-recipe", "activate"],
             bundle!.Families.Select(static value => value.Digest.Value)
                 .ToArray(),
             bundle.Definitions.Select(static value =>
@@ -801,6 +802,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             File.ReadAllBytes(output)
         );
         Assert.Equal(GridBuildRecipeKind.Full, recipe.Kind);
+        Assert.Equal(2, recipe.SchemaVersion);
+        Assert.Null(recipe.OriginRootRecipeDigest);
         Assert.Null(recipe.BootstrapThroughRowId);
         Assert.Equal(
             bundle.Definitions.Select(static value => value.Digest),
@@ -819,6 +822,29 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--max-rows", "16"
         ));
+        string activeBaseOutput = _root + "-active-base-full-recipe.json";
+        _externalPaths.Add(activeBaseOutput);
+        Assert.Equal(0, Run([
+            "control", "compose-full-recipe", "--input", _root,
+            "--output", activeBaseOutput,
+            .. bundle.Definitions.SelectMany(static definition =>
+                new[] { "--definition", definition.Digest.Value! })
+        ]));
+        GridBuildRecipe activeBase = GridBuildRecipe.DecodeCanonical(
+            File.ReadAllBytes(activeBaseOutput));
+        Assert.Null(activeBase.OriginRootRecipeDigest);
+        Assert.Equal(0, Run(
+            "control", "put-recipe", "--input", _root,
+            "--confirm-ref", refId.ToHexString(), "--admission", admitted,
+            "--recipe", activeBaseOutput
+        ));
+        Assert.Equal(0, Run(DirectActivationArgs(
+            refId.ToHexString(),
+            admitted,
+            ReadControlHead(refId.ToHexString()),
+            ReadTimelineHead(refId.ToHexString()),
+            activeBase.Digest
+        )));
         string nonemptyOutput = _root + "-nonempty-full-recipe.json";
         _externalPaths.Add(nonemptyOutput);
         string[] nonemptyArguments = [
@@ -833,6 +859,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         GridBuildRecipe nonemptyRecipe = GridBuildRecipe.DecodeCanonical(
             File.ReadAllBytes(nonemptyOutput)
         );
+        Assert.Equal(2, nonemptyRecipe.SchemaVersion);
+        Assert.Equal(activeBase.Digest, nonemptyRecipe.OriginRootRecipeDigest);
         using HistoryTimelineReaderHandle timeline = Assert.IsType<
             HistoryTimelineReaderOpenResult.Opened
         >(HistoryTimelineMaintenance.OpenReader(_root, refId)).Handle;

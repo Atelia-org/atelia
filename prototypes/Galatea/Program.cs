@@ -23,6 +23,15 @@ if (GalateaDelegationStoreUpgrade.IsInvocation(args)) {
     return;
 }
 
+if (GalateaRecapGridConfigUpgrade.IsInvocation(args)) {
+    Environment.ExitCode = GalateaRecapGridConfigUpgrade.Run(
+        args,
+        Console.Out,
+        Console.Error
+    );
+    return;
+}
+
 if (GalateaDelegationOperatorRecovery.IsOperatorInvocation(args)) {
     Environment.ExitCode = GalateaDelegationOperatorRecovery.Run(
         args,
@@ -479,7 +488,6 @@ characterApi.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
-            hostService.RequireFreshTurnTargetAligned(session);
             string effectiveMessage = await hostService
                 .NormalizeUserMessageAtAdmissionAsync(
                     request.Message,

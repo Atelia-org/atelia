@@ -479,6 +479,40 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         );
     }
 
+    /// <summary>
+    /// Creates a host backed by one exact-route factory. The factory is asked
+    /// only for a route key that a frozen RecapGrid work actually requires;
+    /// returning <c>null</c> keeps the usual exact-route-absent failure. This
+    /// is deliberately a host-local binding point, not a mutable route
+    /// registry or a persisted policy service.
+    /// </summary>
+    public static RecapGridCompletionHost CreateBorrowingRegistry(
+        Func<RecapCompletionRouteKey, RecapGridRouteManifestEntry?>
+            exactRouteFactory,
+        CompletionConnectionRegistry registry,
+        RecapGridAgentControlProfileRegistry? agentControl = null,
+        RecapCompletionRuntimeOptions? runtimeOptions = null,
+        int maximumTelemetryEvents = 1_024,
+        IRecapCompletionTelemetry? liveTelemetry = null,
+        ISessionInputProjector? inputProjector = null,
+        Func<string, ICompletionClient, TimeSpan,
+            IRecapCompletionAttemptDeadlineInvoker>?
+            maintenanceInvokerFactory = null
+    ) {
+        ArgumentNullException.ThrowIfNull(exactRouteFactory);
+        return CreateWithRegistry(
+            exactRouteFactory,
+            registry,
+            agentControl,
+            runtimeOptions,
+            maximumTelemetryEvents,
+            ownsRegistry: false,
+            liveTelemetry: liveTelemetry,
+            inputProjector: inputProjector,
+            maintenanceInvokerFactory: maintenanceInvokerFactory
+        );
+    }
+
     private static RecapGridCompletionHost CreateCore(
         Func<RecapGridRouteManifest> routeManifestLoader,
         CompletionConnectionsFileConfig connections,
@@ -532,6 +566,42 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             maintenanceInvokerFactory);
         var runtime = new RecapCompletionRuntime(
             resolver, runtimeOptions, new LiveRecapCompletionTelemetry(telemetry, liveTelemetry), inputProjector);
+        return new RecapGridCompletionHost(
+            registry,
+            resolver,
+            runtime,
+            telemetry,
+            agentControl,
+            ownsRegistry
+        );
+    }
+
+    private static RecapGridCompletionHost CreateWithRegistry(
+        Func<RecapCompletionRouteKey, RecapGridRouteManifestEntry?>
+            exactRouteFactory,
+        CompletionConnectionRegistry registry,
+        RecapGridAgentControlProfileRegistry? agentControl,
+        RecapCompletionRuntimeOptions? runtimeOptions,
+        int maximumTelemetryEvents,
+        bool ownsRegistry,
+        IRecapCompletionTelemetry? liveTelemetry = null,
+        ISessionInputProjector? inputProjector = null,
+        Func<string, ICompletionClient, TimeSpan,
+            IRecapCompletionAttemptDeadlineInvoker>?
+            maintenanceInvokerFactory = null
+    ) {
+        ArgumentNullException.ThrowIfNull(exactRouteFactory);
+        ArgumentNullException.ThrowIfNull(registry);
+        var telemetry = new BoundedRecapCompletionTelemetry(
+            maximumTelemetryEvents);
+        var resolver = new DeferredSharedRegistryRouteResolver(
+            exactRouteFactory,
+            registry,
+            maintenanceInvokerFactory);
+        var runtime = new RecapCompletionRuntime(
+            resolver, runtimeOptions,
+            new LiveRecapCompletionTelemetry(telemetry, liveTelemetry),
+            inputProjector);
         return new RecapGridCompletionHost(
             registry,
             resolver,
@@ -663,8 +733,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
 
     private sealed class DeferredSharedRegistryRouteResolver
         : IRecapCompletionRouteResolver {
-        private readonly Lazy<IReadOnlyDictionary<RecapCompletionRouteKey,
-            RecapGridRouteManifestEntry>> _routes;
+        private readonly Func<RecapCompletionRouteKey,
+            RecapGridRouteManifestEntry?> _exactRouteFactory;
         private readonly CompletionConnectionRegistry _registry;
         private readonly Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>? _maintenanceInvokerFactory;
 
@@ -675,10 +745,28 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         ) {
             _registry = registry;
             _maintenanceInvokerFactory = maintenanceInvokerFactory;
-            _routes = new Lazy<IReadOnlyDictionary<
+            var routes = new Lazy<IReadOnlyDictionary<
                 RecapCompletionRouteKey, RecapGridRouteManifestEntry>>(
                 () => loader().Routes.ToDictionary(static route => route.Key),
                 LazyThreadSafetyMode.ExecutionAndPublication);
+            _exactRouteFactory = key => routes.Value.TryGetValue(
+                key,
+                out RecapGridRouteManifestEntry? route)
+                ? route
+                : null;
+        }
+
+        internal DeferredSharedRegistryRouteResolver(
+            Func<RecapCompletionRouteKey, RecapGridRouteManifestEntry?>
+                exactRouteFactory,
+            CompletionConnectionRegistry registry,
+            Func<string, ICompletionClient, TimeSpan,
+                IRecapCompletionAttemptDeadlineInvoker>?
+                maintenanceInvokerFactory
+        ) {
+            _registry = registry;
+            _maintenanceInvokerFactory = maintenanceInvokerFactory;
+            _exactRouteFactory = exactRouteFactory;
         }
 
         public RecapCompletionRouteResolution Resolve(
@@ -749,16 +837,15 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         ) {
             route = null;
             connection = null;
-            IReadOnlyDictionary<RecapCompletionRouteKey,
-                RecapGridRouteManifestEntry> routes;
             try {
-                routes = _routes.Value;
+                route = _exactRouteFactory(key);
             }
             catch (Exception exception) when (IsNonFatal(exception)) {
                 return new RecapGridConfiguredRouteInspectionResult.Invalid(
-                    "RouteManifestLoadFailed", RecapGridHostingDiagnostics.DescribeException(exception));
+                    "RouteConfigurationFailed",
+                    RecapGridHostingDiagnostics.DescribeException(exception));
             }
-            if (!routes.TryGetValue(key, out route)) {
+            if (route is null) {
                 return new RecapGridConfiguredRouteInspectionResult
                     .ExactRouteAbsent();
             }

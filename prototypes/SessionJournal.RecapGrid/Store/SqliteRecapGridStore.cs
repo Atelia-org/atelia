@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace Atelia.SessionJournal.RecapGrid.Store;
 
 internal sealed class SqliteRecapGridStore {
-    internal const int SchemaVersion = 4;
+    internal const int SchemaVersion = 5;
     internal const int ApplicationId = 0x41544752;
     private const long SqliteNativeMaximumPageCountRequest = 4_294_967_294L;
 
@@ -338,6 +338,43 @@ internal sealed class SqliteRecapGridStore {
         return ReadRowViewAtCore(connection, transaction: null, key);
     }
 
+    internal RowWork? ReadRowWork(RowWorkKey key) {
+        ArgumentNullException.ThrowIfNull(key);
+        using SqliteConnection connection = OpenVerifiedConnection();
+        return ReadRowWorkCore(connection, transaction: null, key);
+    }
+
+    internal RecapGridRowWorkPutResult PutRowWork(RowWork proposed) {
+        ArgumentNullException.ThrowIfNull(proposed);
+        if (_readOnly) {
+            return new RecapGridRowWorkPutResult.Invalid("StoreReadOnly", "The Store is read-only.");
+        }
+        if (TryInvalid(out string code, out string detail)) {
+            return new RecapGridRowWorkPutResult.Invalid(code, detail);
+        }
+        try {
+            using SqliteConnection connection = OpenVerifiedConnection();
+            using WriteTransaction transaction = BeginWriteTransaction(connection);
+            RowWork? existing = ReadRowWorkCore(connection, transaction, proposed.Key);
+            if (existing is not null) {
+                transaction.Rollback();
+                return existing.ToCanonicalBytes().SequenceEqual(proposed.ToCanonicalBytes())
+                    ? new RecapGridRowWorkPutResult.AlreadyPresent(existing)
+                    : new RecapGridRowWorkPutResult.SelectionConflict(existing);
+            }
+            InsertRowWork(connection, transaction, proposed);
+            transaction.Commit();
+            return new RecapGridRowWorkPutResult.Inserted(proposed);
+        }
+        catch (SqliteException exception) when (IsBusy(exception)) {
+            return new RecapGridRowWorkPutResult.Busy();
+        }
+        catch (Exception exception) when (IsStoreFailure(exception)) {
+            (code, detail) = LatchInvalid(exception);
+            return new RecapGridRowWorkPutResult.Invalid(code, detail);
+        }
+    }
+
     internal RecapGridFulfilledView? ReadFulfilled(FulfilledViewKey key) {
         ArgumentNullException.ThrowIfNull(key);
         using SqliteConnection connection = OpenVerifiedConnection();
@@ -371,6 +408,10 @@ internal sealed class SqliteRecapGridStore {
                 if (!DraftMatchesSpec(spec, proposed)) {
                     transaction.Rollback();
                     return new RecapGridCellPutResult.Rejected("CellSpecMismatch");
+                }
+                if (!TryValidateStoredWork(connection, transaction, spec, out string? workError)) {
+                    transaction.Rollback();
+                    return new RecapGridCellPutResult.Rejected(workError!);
                 }
                 if (!TryValidatePredecessor(connection, transaction, spec, out _, out string? previousError)) {
                     transaction.Rollback();
@@ -478,6 +519,10 @@ internal sealed class SqliteRecapGridStore {
                     return new RecapGridRowViewPutResult
                         .PrerequisiteMissing("SelectedCellUnavailable");
                 }
+                if (!TryValidateStoredWork(connection, transaction, spec, out string? workError)) {
+                    transaction.Rollback();
+                    return new RecapGridRowViewPutResult.Rejected(workError!);
+                }
                 RecapRowView proposed;
                 try {
                     if (!selected.SequenceEqual(selectedCells)) {
@@ -516,7 +561,7 @@ internal sealed class SqliteRecapGridStore {
                 }
                 StoreCounts counts = ReadCounts(connection, transaction);
                 long memberCount = proposed.OrderedCells.Count;
-                InsertRowView(connection, transaction, proposed);
+                InsertRowView(connection, transaction, proposed, spec.Work?.WorkId);
                 InsertRowViewMembers(connection, transaction, proposed);
                 WriteCounts(
                     connection,
@@ -848,6 +893,28 @@ internal sealed class SqliteRecapGridStore {
         return false;
     }
 
+    private static bool TryValidateStoredWork(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RowBuildSpec spec,
+        out string? error
+    ) {
+        error = null;
+        if (spec.Work is null) {
+            return true;
+        }
+        RowWork? stored = ReadRowWorkCore(connection, transaction, spec.Work.Key);
+        if (stored is null) {
+            error = "RowWorkUnavailable";
+            return false;
+        }
+        if (!stored.ToCanonicalBytes().SequenceEqual(spec.Work.ToCanonicalBytes())) {
+            error = "RowWorkMismatch";
+            return false;
+        }
+        return true;
+    }
+
     private static bool TryValidatePredecessor(SqliteConnection connection, SqliteTransaction? transaction,
         RowBuildSpec spec, out RecapRowView? predecessor, out string? error) {
         predecessor = null;
@@ -856,20 +923,20 @@ internal sealed class SqliteRecapGridStore {
         predecessor = ReadRowViewAtCore(connection, transaction,
             new RowViewAssignmentKey(spec.RefId, spec.TimelineId, spec.RecipeDigest, spec.PreviousHistoryRowId!.Value));
         if (predecessor is null) { error = "PreviousAssignmentUnavailable"; return false; }
-        if (predecessor.Id != previous || predecessor.TargetDigest != spec.TargetDigest) {
+        if (predecessor.Id != previous) {
             error = "PreviousAssignmentMismatch";
             return false;
         }
         return true;
     }
 
-    private static void InsertRowView(SqliteConnection connection, SqliteTransaction? transaction, RecapRowView view) {
+    private static void InsertRowView(SqliteConnection connection, SqliteTransaction? transaction, RecapRowView view, RowWorkId? workId) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO row_view(row_result_id,ref_id,timeline_id,history_row_id,
-                recipe_digest,target_digest,previous_history_row_id,previous_row_result_id,bootstrap_completed)
-            VALUES($id,$ref,$timeline,$row,$recipe,$target,$previousRow,$previous,$bootstrap);
+                recipe_digest,target_digest,work_id,previous_history_row_id,previous_row_result_id,bootstrap_completed)
+            VALUES($id,$ref,$timeline,$row,$recipe,$target,$work,$previousRow,$previous,$bootstrap);
             """;
         command.Parameters.AddWithValue("$id", view.Id.Value);
         command.Parameters.AddWithValue("$ref", view.RefId.ToHexString());
@@ -877,6 +944,7 @@ internal sealed class SqliteRecapGridStore {
         command.Parameters.AddWithValue("$row", view.HistoryRowId.Value);
         command.Parameters.AddWithValue("$recipe", view.RecipeDigest.Value);
         command.Parameters.AddWithValue("$target", view.TargetDigest.Value);
+        command.Parameters.AddWithValue("$work", (object?)workId?.Value ?? DBNull.Value);
         command.Parameters.AddWithValue("$previousRow", (object?)view.PreviousHistoryRowId?.Value ?? DBNull.Value);
         command.Parameters.AddWithValue("$previous", (object?)view.PreviousRowResultId?.Value ?? DBNull.Value);
         command.Parameters.AddWithValue("$bootstrap", view.BootstrapCompleted ? 1 : 0);
@@ -931,6 +999,81 @@ internal sealed class SqliteRecapGridStore {
             throw new InvalidDataException("A row assignment differs from its stored coordinate.");
         }
         return view;
+    }
+
+    private static RowWork? ReadRowWorkCore(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RowWorkKey key
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT canonical FROM row_work
+            WHERE ref_id=$ref AND timeline_id=$timeline
+                AND root_recipe_digest=$root AND history_row_id=$row;
+            """;
+        command.Parameters.AddWithValue("$ref", key.RefId.ToHexString());
+        command.Parameters.AddWithValue("$timeline", key.TimelineId.Value);
+        command.Parameters.AddWithValue("$root", key.RootRecipeDigest.Value);
+        command.Parameters.AddWithValue("$row", key.HistoryRowId.Value);
+        if (command.ExecuteScalar() is not byte[] canonical) {
+            return null;
+        }
+        RowWork work = RowWork.DecodeCanonical(canonical);
+        if (work.Key != key) {
+            throw new InvalidDataException("A RowWork key differs from its stored canonical identity.");
+        }
+        return work;
+    }
+
+    private static void InsertRowWork(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RowWork work
+    ) {
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO row_work(work_id,ref_id,timeline_id,root_recipe_digest,
+                    history_row_id,previous_history_row_id,previous_row_result_id,
+                    producer_target,canonical)
+                VALUES($id,$ref,$timeline,$root,$row,$previousRow,$previousResult,
+                    $target,$canonical);
+                """;
+            command.Parameters.AddWithValue("$id", work.WorkId.Value);
+            command.Parameters.AddWithValue("$ref", work.Key.RefId.ToHexString());
+            command.Parameters.AddWithValue("$timeline", work.Key.TimelineId.Value);
+            command.Parameters.AddWithValue("$root", work.Key.RootRecipeDigest.Value);
+            command.Parameters.AddWithValue("$row", work.Key.HistoryRowId.Value);
+            command.Parameters.AddWithValue("$previousRow", (object?)work.PreviousHistoryRowId?.Value ?? DBNull.Value);
+            command.Parameters.AddWithValue("$previousResult", (object?)work.PreviousRowResultId?.Value ?? DBNull.Value);
+            command.Parameters.AddWithValue("$target", work.ProducerTarget.ToCanonicalBytes());
+            command.Parameters.AddWithValue("$canonical", work.ToCanonicalBytes());
+            command.ExecuteNonQuery();
+        }
+        using SqliteCommand member = connection.CreateCommand();
+        member.Transaction = transaction;
+        member.CommandText = """
+            INSERT INTO row_work_member(work_id,column_ordinal,logical_column_id,
+                definition_digest,reused_cell_id)
+            VALUES($work,$ordinal,$column,$definition,$reused);
+            """;
+        var workId = member.Parameters.Add("$work", SqliteType.Text);
+        var ordinal = member.Parameters.Add("$ordinal", SqliteType.Integer);
+        var column = member.Parameters.Add("$column", SqliteType.Text);
+        var definition = member.Parameters.Add("$definition", SqliteType.Text);
+        var reused = member.Parameters.Add("$reused", SqliteType.Text);
+        for (int index = 0; index < work.OrderedAssignments.Count; index++) {
+            RowWorkAssignment assignment = work.OrderedAssignments[index];
+            BuildTargetColumn target = work.ProducerTarget.OrderedColumns[index];
+            workId.Value = work.WorkId.Value;
+            ordinal.Value = index;
+            column.Value = assignment.LogicalColumnId.Value;
+            definition.Value = target.DefinitionDigest.Value;
+            reused.Value = (object?)assignment.ReusedCellId?.Value ?? DBNull.Value;
+            member.ExecuteNonQuery();
+        }
     }
 
     private static RecapRowView? ReadRowViewCore(SqliteConnection connection, SqliteTransaction? transaction, RowResultId id)
@@ -1039,8 +1182,8 @@ internal sealed class SqliteRecapGridStore {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO cell_artifact(cell_id,recipe_digest,history_row_id,logical_column_id,definition_digest,outcome,content)
-            VALUES($id,$recipe,$row,$column,$definition,$outcome,$content);
+            INSERT INTO cell_artifact(cell_id,recipe_digest,history_row_id,work_id,logical_column_id,definition_digest,outcome,content)
+            VALUES($id,$recipe,$row,$work,$column,$definition,$outcome,$content);
             """;
         command.Parameters.AddWithValue("$id", cell.Id.Value);
         BindSlot(command, cell.Slot);
@@ -1053,13 +1196,16 @@ internal sealed class SqliteRecapGridStore {
     private static void BindSlot(SqliteCommand command, CellSlot slot) {
         command.Parameters.AddWithValue("$recipe", slot.RecipeDigest.Value);
         command.Parameters.AddWithValue("$row", slot.HistoryRowId.Value);
+        command.Parameters.AddWithValue("$work", (object?)slot.WorkId?.Value ?? DBNull.Value);
         command.Parameters.AddWithValue("$column", slot.LogicalColumnId.Value);
     }
 
     private static RecapCellArtifact? ReadCellBySlotCore(SqliteConnection connection, SqliteTransaction? transaction, CellSlot slot) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = CellSelect + " WHERE recipe_digest=$recipe AND history_row_id=$row AND logical_column_id=$column;";
+        command.CommandText = slot.WorkId is { }
+            ? CellSelect + " WHERE work_id=$work AND logical_column_id=$column;"
+            : CellSelect + " WHERE recipe_digest=$recipe AND history_row_id=$row AND logical_column_id=$column;";
         BindSlot(command, slot);
         return ReadCellValue(command);
     }
@@ -1072,19 +1218,19 @@ internal sealed class SqliteRecapGridStore {
         return ReadCellValue(command);
     }
 
-    private const string CellSelect = "SELECT cell_id,recipe_digest,history_row_id,logical_column_id,definition_digest,outcome,length(CAST(content AS BLOB)),CAST(content AS BLOB) FROM cell_artifact";
+    private const string CellSelect = "SELECT cell_id,recipe_digest,history_row_id,work_id,logical_column_id,definition_digest,outcome,length(CAST(content AS BLOB)),CAST(content AS BLOB) FROM cell_artifact";
     private static RecapCellArtifact? ReadCellValue(SqliteCommand command)
         => DecodeStoredValue(() => ReadCellFields(command));
 
     private static RecapCellArtifact? ReadCellFields(SqliteCommand command) {
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()) { return null; }
-        long length = reader.GetInt64(6);
+        long length = reader.GetInt64(7);
         if (length is < 0 or > RecapGridLimits.MaximumContentUtf8Bytes) {
             throw new InvalidDataException("A cell content exceeds its UTF-8 byte bound.");
         }
         string content;
-        try { content = new System.Text.UTF8Encoding(false, true).GetString(reader.GetFieldValue<byte[]>(7)); }
+        try { content = new System.Text.UTF8Encoding(false, true).GetString(reader.GetFieldValue<byte[]>(8)); }
         catch (System.Text.DecoderFallbackException exception) {
             throw new InvalidDataException("Cell content is not valid UTF-8.", exception);
         }
@@ -1092,8 +1238,10 @@ internal sealed class SqliteRecapGridStore {
             throw new InvalidDataException("Cell content is not valid UTF-8.");
         }
         return new RecapCellArtifact(new(reader.GetString(0)),
-            new CellSlot(new(reader.GetString(1)), new(reader.GetString(2)), new(reader.GetString(3))),
-            new(reader.GetString(4)), (RecapCellOutcome)reader.GetInt32(5), content);
+            reader.IsDBNull(3)
+                ? new CellSlot(new(reader.GetString(1)), new(reader.GetString(2)), new(reader.GetString(4)))
+                : new CellSlot(new(reader.GetString(1)), new(reader.GetString(2)), new RowWorkId(reader.GetString(3)), new(reader.GetString(4))),
+            new(reader.GetString(5)), (RecapCellOutcome)reader.GetInt32(6), content);
     }
 
     private SqliteConnection OpenVerifiedConnection() {
@@ -1530,10 +1678,10 @@ internal sealed class SqliteRecapGridStore {
     private static string ReadSchemaSql() {
         Assembly assembly = typeof(SqliteRecapGridStore).Assembly;
         using Stream stream = assembly.GetManifestResourceStream(
-            "Atelia.SessionJournal.RecapGrid.Store.SchemaV4.sql"
+            "Atelia.SessionJournal.RecapGrid.Store.SchemaV5.sql"
         )
             ?? throw new InvalidOperationException(
-                "The RecapGrid Store V4 schema resource is missing."
+                "The RecapGrid Store V5 schema resource is missing."
             );
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
@@ -1794,7 +1942,6 @@ internal sealed class SqliteRecapGridStore {
                         "A RowView predecessor assignment is missing."
                     );
                     if (predecessor.Id != previous
-                        || predecessor.TargetDigest != view.TargetDigest
                         || predecessor.BootstrapCompleted
                             && !view.BootstrapCompleted) {
                         throw new InvalidDataException(

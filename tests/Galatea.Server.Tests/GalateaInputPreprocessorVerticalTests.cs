@@ -187,7 +187,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     }
 
     [Fact]
-    public async Task TargetMismatchFailsBeforeAdmissionNormalizerOrMutation() {
+    public async Task DefaultPolicyMismatchStillAdmitsAndRunsTheTurn() {
         var completion = new ScriptedCompletionClient("must not dispatch");
         var normalizer = new ReturningNormalizer("must not normalize");
         await using var host = GalateaTestHost.Create(
@@ -207,14 +207,6 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             "alice",
             CancellationToken.None
         );
-        EventAddress? rawHead = session.Engine.ReadCurrentHead();
-        int setupCount = session.Engine.ReadCurrentLineageHeaders()
-            .HeadToRoot.Count(static entry =>
-                entry.Kind == SessionEventKind.SystemPromptSetup
-            );
-        GalateaDelegationStateSnapshot delegation = session
-            .DelegationHandle!.Store.ReadSnapshot();
-
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
@@ -223,25 +215,17 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             )
         );
 
-        Assert.Equal(
-            HttpStatusCode.InternalServerError,
-            response.StatusCode
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto started = Assert.IsType<StartTurnResponseDto>(
+            await response.Content.ReadFromJsonAsync<StartTurnResponseDto>()
         );
-        Assert.Equal(0, normalizer.NormalizeCallCount);
-        Assert.Equal(0, completion.DispatchCallCount);
-        Assert.Null(session.GetCurrentTurn());
-        Assert.Equal(rawHead, session.Engine.ReadCurrentHead());
-        Assert.Equal(
-            setupCount,
-            session.Engine.ReadCurrentLineageHeaders().HeadToRoot.Count(
-                static entry =>
-                    entry.Kind == SessionEventKind.SystemPromptSetup
-            )
-        );
-        GalateaDelegationStateSnapshot after = session
-            .DelegationHandle.Store.ReadSnapshot();
-        Assert.Equal(delegation.StoreRevision, after.StoreRevision);
-        Assert.Equal(delegation.ActiveLease, after.ActiveLease);
+        await RequireRunTask(RequireTurn(
+            service,
+            session,
+            started.TurnId
+        )).WaitAsync(CompletionDeadline);
+        Assert.Equal(1, normalizer.NormalizeCallCount);
+        Assert.Equal(1, completion.DispatchCallCount);
     }
 
     [Fact]

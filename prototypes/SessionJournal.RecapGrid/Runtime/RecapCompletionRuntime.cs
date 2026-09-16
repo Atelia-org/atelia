@@ -27,6 +27,9 @@ public sealed partial class RecapCompletionRuntime
         _options = options ?? new RecapCompletionRuntimeOptions();
         _telemetry = telemetry;
         _inputProjector = inputProjector;
+        _globalLane = _options.MaximumGlobalConcurrency is { } maximum
+            ? new RuntimeLane(maximum)
+            : null;
         _lifetime = new RuntimeLifetime(DisposeOwnedInvokersAsync);
     }
 

@@ -49,7 +49,12 @@ public sealed partial class RecapGridManager {
         RegisteredGridRecipe Registered,
         IReadOnlyDictionary<LogicalColumnId,
             MaintainerDefinitionRevision> Definitions,
-        IReadOnlyDictionary<LogicalColumnId, FamilyDefinition> Families
+        IReadOnlyDictionary<LogicalColumnId, FamilyDefinition> Families,
+        BuildTarget ProducerTarget,
+        IReadOnlyDictionary<MaintainerDefinitionDigest,
+            MaintainerDefinitionRevision> RegisteredDefinitions,
+        IReadOnlyDictionary<FamilyDefinitionDigest,
+            FamilyDefinition> RegisteredFamilies
     ) {
         internal GridBuildRecipe Recipe => Registered.Recipe;
     }
@@ -181,7 +186,10 @@ public sealed partial class RecapGridManager {
             RecapGridBuildResult? closureError) = FreezeRecipeClosure(
             requested,
             control,
-            timelineHead
+            timelineHead,
+            request.Selection is RecapGridBuildSelection.LiveActive
+                ? request.LiveProducerTarget
+                : null
         );
         if (closureError is not null) {
             return Error(closureError);
@@ -255,7 +263,8 @@ public sealed partial class RecapGridManager {
         FreezeRecipeClosure(
             RegisteredGridRecipe requested,
             RecapGridControlSnapshot control,
-            TimelineHeadRef timelineHead
+            TimelineHeadRef timelineHead,
+            BuildTarget? liveProducerTarget
         ) {
         Dictionary<GridBuildRecipeDigest, RegisteredGridRecipe> recipes;
         Dictionary<MaintainerDefinitionDigest,
@@ -356,12 +365,16 @@ public sealed partial class RecapGridManager {
         var plans = new List<FrozenRecipePlan>(candidateToBase.Count);
         foreach (RegisteredGridRecipe registered in candidateToBase) {
             GridBuildRecipe recipe = registered.Recipe;
+            BuildTarget producerTarget = recipe.Digest == requested.Recipe.Digest
+                && liveProducerTarget is not null
+                ? liveProducerTarget
+                : recipe.Target;
             var recipeDefinitions = new Dictionary<LogicalColumnId,
                 MaintainerDefinitionRevision>();
             var recipeFamilies = new Dictionary<LogicalColumnId,
                 FamilyDefinition>();
             foreach (BuildTargetColumn column in
-                     recipe.Target.OrderedColumns) {
+                     producerTarget.OrderedColumns) {
                 if (!definitions.TryGetValue(
                         column.DefinitionDigest,
                         out MaintainerDefinitionRevision? definition)
@@ -380,7 +393,10 @@ public sealed partial class RecapGridManager {
             plans.Add(new FrozenRecipePlan(
                 registered,
                 recipeDefinitions,
-                recipeFamilies
+                recipeFamilies,
+                producerTarget,
+                definitions,
+                families
             ));
         }
         return (plans.AsReadOnly(), null);

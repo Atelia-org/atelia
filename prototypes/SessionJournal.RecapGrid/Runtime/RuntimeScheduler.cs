@@ -27,6 +27,7 @@ public sealed partial class RecapCompletionRuntime {
     private readonly object _laneGate = new();
     private readonly Dictionary<RecapCompletionRoute, RuntimeLane> _lanes =
         new(ReferenceEqualityComparer.Instance);
+    private readonly RuntimeLane? _globalLane;
 
     private async ValueTask<RecapCellBatchExecutionResult> RunPreparedAsync(
         IReadOnlyList<PreparedRecapWork> prepared,
@@ -318,6 +319,9 @@ public sealed partial class RecapCompletionRuntime {
     }
 
     private RuntimeLane GetLane(RecapCompletionRoute route) {
+        if (_globalLane is not null) {
+            return _globalLane;
+        }
         lock (_laneGate) {
             if (_lanes.TryGetValue(route, out RuntimeLane? lane)) {
                 return lane;

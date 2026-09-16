@@ -8,7 +8,9 @@ namespace Atelia.SessionJournal.RecapGrid.Runtime;
 
 internal static class RuntimeRenderer {
     internal static IHistoryMessage RenderPrior(
-        IReadOnlyList<RecapCellArtifact> orderedCells
+        IReadOnlyList<RecapCellArtifact> orderedCells,
+        IReadOnlyDictionary<MaintainerDefinitionDigest,
+            MaintainerDefinitionRevision> definitions
     ) {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer)) {
@@ -25,6 +27,16 @@ internal static class RuntimeRenderer {
                     "logicalColumnId",
                     cell.LogicalColumnId.Value
                 );
+                if (definitions.TryGetValue(
+                        cell.DefinitionDigest,
+                        out MaintainerDefinitionRevision? definition)) {
+                    writer.WriteString(
+                        "semanticHeading",
+                        definition.Target.SemanticHeading
+                    );
+                    writer.WriteString("carrier", definition.Target.Carrier.ToString());
+                    writer.WriteString("blockKey", definition.Target.BlockKey);
+                }
                 writer.WriteString("content", cell.Content);
                 writer.WriteEndObject();
             }

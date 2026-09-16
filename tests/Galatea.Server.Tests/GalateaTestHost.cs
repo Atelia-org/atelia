@@ -111,6 +111,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
         string? memoRecallConnectionId = null,
+        string? recapMaintenanceConnectionId = null,
         IGalateaDurableDelegateTransport? delegateTransport = null,
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory = null,
@@ -175,6 +176,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             characterNoteExtractorConnectionId:
                 characterNoteExtractorConnectionId,
             memoRecallConnectionId: memoRecallConnectionId,
+            recapMaintenanceConnectionId: recapMaintenanceConnectionId,
             autonomyCharacterIds: autonomyCharacterIds
         );
 
@@ -530,6 +532,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
         string? memoRecallConnectionId = null,
+        string? recapMaintenanceConnectionId = null,
         IReadOnlyList<string>? autonomyCharacterIds = null,
         string characterName = "Galatea",
         string playerName = "刘世超"
@@ -575,9 +578,12 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
               CallLogDir: callLogDirectory,
               MaintenanceMode: maintenanceMode,
               RecapGrid: new GalateaRecapGridFileConfig(
-                "recap-grid-routes.json",
-                [agentControlProfileFile],
-                profile.ProfileId
+                new GalateaRecapGridMaintenanceFileConfig(
+                    recapMaintenanceConnectionId ?? defaultConnectionId,
+                    MaximumConcurrency: 1,
+                    DispatchTimeoutMilliseconds: 900_000
+                ),
+                [agentControlProfileFile]
               )
             )
         );

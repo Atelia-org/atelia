@@ -23,24 +23,27 @@ public sealed partial class GalateaRecapGridCompositionTests {
             (family, _, recipe) = ProvisionActiveEmptyRecipe(provisioner);
         }
         var connection = Connection();
-        string routesPath = Path.Combine(path, "retry-routes.json");
-        File.WriteAllBytes(routesPath, RecapGridRouteManifest.Create([new(
-            new(family.Digest, RecapRewriterProtocolV3.RuntimeProtocolId, null), connection.Id, 1,
-            TimeSpan.FromMilliseconds(30))]).ToCanonicalBytes());
         var profile = AgentProfile();
         var config = Config(path, connection) with {
-            RecapGrid = new(routesPath, new RecapGridAgentControlProfileRegistry([profile]), profile.ProfileId)
+            RecapGrid = new(
+                new GalateaRecapGridMaintenanceConfig(
+                    connection.Id,
+                    1,
+                    TimeSpan.FromMilliseconds(30)
+                ),
+                new RecapGridAgentControlProfileRegistry([profile])
+            )
         };
         var clock = new GalateaLabClock();
         var provider = new RetryMaintenanceClient();
         await using var owner = new GalateaCompletionOwner(config, provider, clock);
         await using var service = new GalateaHostService(config, DisabledGalateaUserMessageNormalizer.Instance,
-            owner.RecapGrid, TargetExpectations(GalateaRecapGridTargetExpectation.ForTarget(recipe.Target)), clock);
+            owner.RecapGrid, DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(recipe.Target)), clock);
         var session = await service.GetSessionAsync("alice", default);
         await RunFreshAsync(service, session, connection.Id, "first clue");
         Assert.Equal(1, provider.MainCalls);
         Assert.Empty(provider.RecapRequests);
-        var expected = GalateaRecapGridTargetExpectation.ForTarget(recipe.Target);
+        var expected = GalateaRecapGridDefaultPolicy.ForTarget(recipe.Target);
         using var stop = new CancellationTokenSource();
         Task<GalateaRecapGridTurn> pending = owner.RecapGrid.OpenFreshAsync(session.Engine, connection.Id,
             "second clue", expected, stop.Token).AsTask();

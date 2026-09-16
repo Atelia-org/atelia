@@ -295,7 +295,8 @@ internal static partial class RecapGridCommands {
                 GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
                     available.Head.TimelineId,
                     available.Head.HeadRowId,
-                    BuildTarget.Create(targetColumns)
+                    BuildTarget.Create(targetColumns),
+                    current.Snapshot.ActiveRecipe?.Recipe.Digest
                 );
                 WriteExternalCreateNew(output, recipe.ToCanonicalBytes());
                 return Print(

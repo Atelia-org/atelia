@@ -257,10 +257,7 @@ public sealed partial class RecapGridManager {
             || view.TimelineId != descriptor.TimelineId
             || view.HistoryRowId != descriptor.RowId
             || view.RecipeDigest != plan.Recipe.Digest
-            || view.TargetDigest != plan.Recipe.Target.Digest
-            || view.PreviousHistoryRowId != descriptor.PreviousRowId
-            || view.OrderedCells.Count
-                != plan.Recipe.Target.OrderedColumns.Count) {
+            || view.PreviousHistoryRowId != descriptor.PreviousRowId) {
             return (null, Invalid(
                 "AssignedViewScopeMismatch",
                 "The exact assignment view differs from frozen Timeline or recipe authority."
@@ -269,15 +266,6 @@ public sealed partial class RecapGridManager {
         var cells = new RecapCellArtifact[view.OrderedCells.Count];
         for (int index = 0; index < cells.Length; index++) {
             RecapRowViewCell manifest = view.OrderedCells[index];
-            BuildTargetColumn target = plan.Recipe.Target
-                .OrderedColumns[index];
-            if (manifest.LogicalColumnId != target.LogicalColumnId
-                || manifest.DefinitionDigest != target.DefinitionDigest) {
-                return (null, Invalid(
-                    "AssignedViewMemberMismatch",
-                    "The assignment manifest differs from the frozen target."
-                ));
-            }
             RecapGridStoreReadResult<RecapCellArtifact> read =
                 _store.Reader.ReadCell(manifest.CellId);
             if (read is not RecapGridStoreReadResult<RecapCellArtifact>

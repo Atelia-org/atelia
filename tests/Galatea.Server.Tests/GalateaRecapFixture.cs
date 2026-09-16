@@ -47,7 +47,8 @@ internal static class GalateaRecapFixture {
         Assert.Equal(RecapConnectionId, recapConnection.Id);
         GalateaScenarioLab lab = GalateaScenarioLab.Create(name, factory,
             connections: [mainConnection, recapConnection], reportArtifact: reportArtifact,
-            provisionRawOnly: false);
+            provisionRawOnly: false,
+            recapMaintenanceConnectionId: recapConnection.Id);
         try {
             // No Host/DI access until all production-readable configuration exists.
             Repository fixture;

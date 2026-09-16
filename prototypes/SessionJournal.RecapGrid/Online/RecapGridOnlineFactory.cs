@@ -11,6 +11,26 @@ public static class RecapGridOnlineFactory {
         IRecapCellBatchExecutor executor,
         RecapGridOnlineLimits? limits = null,
         params IHistoryUnitLoadEstimator[] estimators
+    ) => OpenCore(owner, executor, liveProducerTarget: null, limits, estimators);
+
+    /// <summary>Opens live maintenance with the host's current default producer.</summary>
+    public static RecapGridOnlineOpenResult Open(
+        SessionJournalEngine owner,
+        IRecapCellBatchExecutor executor,
+        BuildTarget liveProducerTarget,
+        RecapGridOnlineLimits? limits = null,
+        params IHistoryUnitLoadEstimator[] estimators
+    ) {
+        ArgumentNullException.ThrowIfNull(liveProducerTarget);
+        return OpenCore(owner, executor, liveProducerTarget, limits, estimators);
+    }
+
+    private static RecapGridOnlineOpenResult OpenCore(
+        SessionJournalEngine owner,
+        IRecapCellBatchExecutor executor,
+        BuildTarget? liveProducerTarget,
+        RecapGridOnlineLimits? limits,
+        IHistoryUnitLoadEstimator[] estimators
     ) {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(executor);
@@ -72,7 +92,8 @@ public static class RecapGridOnlineFactory {
                     getter,
                     executor,
                     limits,
-                    estimators.ToArray()
+                    estimators.ToArray(),
+                    liveProducerTarget
                 )
             );
         }

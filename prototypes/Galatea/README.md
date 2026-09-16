@@ -131,7 +131,7 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 | 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 先核对当前异常与已绑定的 connection/client/API、原生载荷；旧 adapter 标签已不再作为执行身份。未完成轮次只按实际恢复状态显式处理。不要修改 Origin、清空历史或反复重试；详见[模型切换排障与升级边界](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |
 | 主回复已有内容但轮次未结束 | 邮件/笔记后处理可能仍在执行；检查对应日志 |
 | 邮箱持续 backoff 或 `accepted-history-unavailable` | 检查 delegation 日志；已提交任务会保守查询结果，不会自动重发 |
-| Recap 显示 `character-asset-mismatch` | 配置名字与 active asset 是否匹配，角色语义资产变更须显式采用，Player 名称不再绑定角色 asset |
+| Recap maintenance blocked | 检查 maintenance connection 与实际 work route；既有 Recap 仍按其持久 producer 读取，默认 asset 变化不构成读取或恢复门禁 |
 
 启用 `runtime.callLogDir` 后的新 Completion 日志只记摘要、长度、计数、耗时及异常类型，不保存请求/输出全文。Character Note 等领域 Debug 日志和已有旧全文日志仍可能含故事内容，不要提交到 Git。迁移状态前先停服并备份。持续无法查询到 Codex 已完成结果时，按[专门恢复 runbook](../../docs/Galatea/codex-delegation-operator-recovery.md)核实证据。
 

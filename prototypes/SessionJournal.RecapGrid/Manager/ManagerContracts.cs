@@ -66,7 +66,8 @@ public sealed record RecapGridBuildRequest {
     public RecapGridBuildRequest(
         RecapGridBuildSelection selection,
         HistoryRowId? throughRowId,
-        RecapGridBuildBudget budget
+        RecapGridBuildBudget budget,
+        BuildTarget? liveProducerTarget = null
     ) {
         Selection = selection
             ?? throw new ArgumentNullException(nameof(selection));
@@ -78,11 +79,20 @@ public sealed record RecapGridBuildRequest {
         }
         ThroughRowId = throughRowId;
         Budget = budget ?? throw new ArgumentNullException(nameof(budget));
+        if (liveProducerTarget is not null
+            && selection is not RecapGridBuildSelection.LiveActive) {
+            throw new ArgumentException(
+                "An explicit candidate chooses its producer through its candidate recipe.",
+                nameof(liveProducerTarget)
+            );
+        }
+        LiveProducerTarget = liveProducerTarget;
     }
 
     public RecapGridBuildSelection Selection { get; }
     public HistoryRowId? ThroughRowId { get; }
     public RecapGridBuildBudget Budget { get; }
+    public BuildTarget? LiveProducerTarget { get; }
 }
 
 public sealed class FrozenRecapCellWork {
@@ -115,7 +125,9 @@ public sealed class FrozenRowBatch {
         RowBuildSpec spec,
         RecapRowView? previousView,
         IReadOnlyList<RecapCellArtifact> previousCells,
-        IReadOnlyList<FrozenRecapCellWork> orderedMissingWork
+        IReadOnlyList<FrozenRecapCellWork> orderedMissingWork,
+        IReadOnlyDictionary<MaintainerDefinitionDigest,
+            MaintainerDefinitionRevision>? previousDefinitions = null
     ) {
         TimelineHead = timelineHead;
         ControlHead = controlHead;
@@ -126,6 +138,9 @@ public sealed class FrozenRowBatch {
         PreviousView = previousView;
         PreviousCells = previousCells;
         OrderedMissingWork = orderedMissingWork;
+        PreviousDefinitions = previousDefinitions
+            ?? new Dictionary<MaintainerDefinitionDigest,
+                MaintainerDefinitionRevision>();
     }
 
     public TimelineHeadRef TimelineHead { get; }
@@ -137,6 +152,8 @@ public sealed class FrozenRowBatch {
     public RecapRowView? PreviousView { get; }
     public IReadOnlyList<RecapCellArtifact> PreviousCells { get; }
     public IReadOnlyList<FrozenRecapCellWork> OrderedMissingWork { get; }
+    public IReadOnlyDictionary<MaintainerDefinitionDigest,
+        MaintainerDefinitionRevision> PreviousDefinitions { get; }
 }
 
 /// <summary>

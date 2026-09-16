@@ -162,7 +162,8 @@ public sealed partial class RecapGridManager {
         BuiltRow? baseRow,
         IRecapCellBatchExecutor executor,
         BuildState state,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool workSelectionAllowed = false
     ) {
         HistorySegmentDescriptor descriptor = selected.Descriptor;
         (DerivedRowPlan? derived,
@@ -172,7 +173,8 @@ public sealed partial class RecapGridManager {
                 selected,
                 isOverlayBootstrap,
                 previousRow,
-                baseRow
+                baseRow,
+                allowNewWorkSelection: workSelectionAllowed
             );
         if (deriveError is not null) {
             return RowError(deriveError);
@@ -241,6 +243,16 @@ public sealed partial class RecapGridManager {
                     )
                 );
             }
+            if (!workSelectionAllowed) {
+                // A zero-call/budget-only pass must remain read-only. Once a
+                // call is admissible, re-enter solely to durably select the
+                // RowWork before any provider or raw-history activity.
+                return await BuildRecipeRowAsync(
+                    frozen, plan, selected, openContent,
+                    isOverlayBootstrap, previousRow, baseRow, executor,
+                    state, cancellationToken, workSelectionAllowed: true
+                ).ConfigureAwait(false);
+            }
             if (state.HasElapsed()) {
                 return RowError(
                     new RecapGridBuildResult.BudgetExceeded(
@@ -280,7 +292,10 @@ public sealed partial class RecapGridManager {
                 spec,
                 previousRow?.View,
                 previousCells,
-                Array.AsReadOnly(orderedWork)
+                Array.AsReadOnly(orderedWork),
+                frozen.ControlSnapshot.Definitions.ToDictionary(
+                    static definition => definition.Digest
+                )
             );
             RecapCellBatchExecutionResult execution;
             try {

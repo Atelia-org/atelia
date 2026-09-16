@@ -19,7 +19,7 @@ public sealed class StoreCellVerticalTests : IDisposable {
         RecapGridStoreCreateResult.Created created = Assert.IsType<
             RecapGridStoreCreateResult.Created
         >(RecapGridStoreFactory.Create(_root));
-        Assert.Equal(4, created.Identity.SchemaVersion);
+        Assert.Equal(5, created.Identity.SchemaVersion);
         Assert.IsType<RecapGridStoreCreateResult.AlreadyExists>(
             RecapGridStoreFactory.Create(_root)
         );
@@ -63,6 +63,51 @@ public sealed class StoreCellVerticalTests : IDisposable {
             StoreCountMath.Increment(long.MaxValue));
         Assert.Throws<OverflowException>(() =>
             StoreCountMath.Add(long.MaxValue, 1));
+    }
+
+    [Fact]
+    public void RowWorkSelectionIsFirstWinnerAndSurvivesReaderReopen() {
+        Create();
+        GridBuildRecipe root = StoreFixture.Recipe();
+        var key = new RowWorkKey(
+            new RefId(1), StoreFixture.Timeline, root.Digest,
+            new HistoryRowId(new string('c', 64))
+        );
+        var selected = new RowWork(
+            key,
+            root.Target,
+            previousHistoryRowId: null,
+            previousRowResultId: null,
+            root.Target.OrderedColumns.Select(static column =>
+                new RowWorkAssignment(column.LogicalColumnId, null))
+        );
+        using (RecapGridStoreHandle handle = Open()) {
+            Assert.IsType<RecapGridRowWorkPutResult.Inserted>(
+                handle.Writer.PutRowWork(selected));
+            Assert.IsType<RecapGridRowWorkPutResult.AlreadyPresent>(
+                handle.Writer.PutRowWork(selected));
+            RowWork conflicting = new(
+                key,
+                BuildTarget.Create([
+                    new BuildTargetColumn(
+                        StoreFixture.Column,
+                        new MaintainerDefinitionDigest(new string('b', 64))
+                    )
+                ]),
+                null,
+                null,
+                [new RowWorkAssignment(StoreFixture.Column, null)]
+            );
+            Assert.IsType<RecapGridRowWorkPutResult.SelectionConflict>(
+                handle.Writer.PutRowWork(conflicting));
+        }
+        using RecapGridStoreReaderHandle reopened = Assert.IsType<
+            RecapGridStoreReaderOpenResult.Opened>(
+            RecapGridStoreFactory.OpenReader(_root)).Handle;
+        RowWork actual = Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+            reopened.Reader.ReadRowWork(key)).Value;
+        Assert.Equal(selected.WorkId, actual.WorkId);
+        Assert.Equal(selected.ToCanonicalBytes(), actual.ToCanonicalBytes());
     }
 
     [Fact]

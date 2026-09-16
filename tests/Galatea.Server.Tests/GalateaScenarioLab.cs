@@ -45,6 +45,7 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
         TimeProvider? timeProvider = null,
         Action<string>? reportArtifact = null,
         string? characterNoteExtractorConnectionId = null,
+        string? recapMaintenanceConnectionId = null,
         IReadOnlyList<string>? autonomyCharacterIds = null,
         bool enableServerAgentHostedService = false,
         bool provisionRawOnly = true) {
@@ -63,6 +64,7 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
             normalizer, deleteFilesOnDispose: false, connections: connections,
             delegateTransport: new RejectingDelegateTransport(), timeProvider: timeProvider,
             characterNoteExtractorConnectionId: characterNoteExtractorConnectionId,
+            recapMaintenanceConnectionId: recapMaintenanceConnectionId,
             autonomyCharacterIds: autonomyCharacterIds,
             enableServerAgentHostedService: enableServerAgentHostedService,
             provisionRawOnly: provisionRawOnly);

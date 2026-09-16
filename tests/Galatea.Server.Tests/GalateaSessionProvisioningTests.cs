@@ -179,11 +179,11 @@ public sealed class GalateaSessionProvisioningTests {
             "alice",
             CancellationToken.None
         );
-        GalateaRecapGridTargetExpectation expected =
-            GalateaRecapGridTargetExpectation.ForCharacter(
+        GalateaRecapGridDefaultPolicy expected =
+            GalateaRecapGridDefaultPolicy.ForCharacter(
                 new GalateaCharacterName(CharacterName)
             );
-        Assert.Equal(expected.TargetDigest, session.TargetExpectation.TargetDigest);
+        Assert.Equal(expected.TargetDigest, session.DefaultPolicy.TargetDigest);
 
         using RecapGridControlReaderHandle control = Assert.IsType<
             RecapGridControlReaderOpenResult.Opened
@@ -768,7 +768,7 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
-    public async Task MissingCreateIfMissing_WithoutControlCreatePermissionWritesNothing() {
+    public async Task MissingCreateIfMissing_HistoricalProfileCannotRestrictCodeOwnedBootstrap() {
         var factory = new CountingCompletionClientFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
             factory,
@@ -778,16 +778,12 @@ public sealed class GalateaSessionProvisioningTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
-        GalateaSessionUnavailableException failure =
-            await Assert.ThrowsAsync<GalateaSessionUnavailableException>(
-                () => service.GetSessionAsync(
-                    "alice",
-                    CancellationToken.None
-                )
-            );
+        CharacterSessionHost session = await service.GetSessionAsync(
+            "alice", CancellationToken.None);
 
-        Assert.Equal("session-unprovisioned", failure.Code);
-        Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.Same(session, await service.GetSessionAsync(
+            "alice", CancellationToken.None));
+        Assert.True(Directory.Exists(host.SessionDirectory));
         Assert.Empty(Directory.EnumerateDirectories(
             host.RootDirectory,
             ".galatea-session-*.staging",
@@ -798,77 +794,6 @@ public sealed class GalateaSessionProvisioningTests {
             Path.GetDirectoryName(host.ConfigPath)!,
             "recap-grid-routes.json"
         )));
-    }
-
-    [Theory]
-    [MemberData(nameof(MissingBootstrapPermissions))]
-    public async Task MissingCreateIfMissing_WithoutEachRequiredBootstrapPermissionWritesNothing(
-        RecapGridControlPermission missingPermission
-    ) {
-        RecapGridControlPermission permissions =
-            GalateaSessionRepositoryProvisioner.RequiredBootstrapPermissions
-            & ~missingPermission;
-        await using var host = GalateaTestHost.CreateMissingSession(
-            new CountingCompletionClientFactory(),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            agentControlProfile: GalateaTestHost.CreateGalateaV7Profile(
-                permissions,
-                $"missing-{(int)missingPermission}"
-            )
-        );
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-
-        GalateaSessionUnavailableException failure =
-            await Assert.ThrowsAsync<GalateaSessionUnavailableException>(
-                () => service.GetSessionAsync("alice", CancellationToken.None)
-            );
-
-        Assert.Equal("session-unprovisioned", failure.Code);
-        Assert.False(Directory.Exists(host.SessionDirectory));
-        Assert.Empty(Directory.EnumerateDirectories(
-            host.RootDirectory,
-            ".galatea-session-*.staging",
-            SearchOption.TopDirectoryOnly
-        ));
-    }
-
-    [Fact]
-    public async Task MissingCreateIfMissing_AssetAllowlistFailureCleansCandidate() {
-        var profile = RecapGridAgentControlProfile.Create(
-            "asset-denied",
-            new RecapGridControlAdmission(
-                RecapGridControlPermission.All,
-                Array.Empty<FamilyDefinitionDigest>(),
-                Array.Empty<string>(),
-                Array.Empty<ContextHeaderCarrier>(),
-                ["test."],
-                maximumBootstrapRows: 64,
-                maximumProjectedCalls: 1_024
-            )
-        );
-        var factory = new CountingCompletionClientFactory();
-        await using var host = GalateaTestHost.CreateMissingSession(
-            factory,
-            DisabledGalateaUserMessageNormalizer.Instance,
-            agentControlProfile: profile
-        );
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-
-        InvalidOperationException failure =
-            await Assert.ThrowsAsync<InvalidOperationException>(
-                () => service.GetSessionAsync("alice", CancellationToken.None)
-            );
-
-        Assert.Contains("Family registration returned Unauthorized", failure.Message);
-        Assert.False(Directory.Exists(host.SessionDirectory));
-        Assert.Empty(Directory.EnumerateDirectories(
-            host.RootDirectory,
-            ".galatea-session-*.staging",
-            SearchOption.TopDirectoryOnly
-        ));
-        Assert.Equal(0, factory.CreateCallCount);
     }
 
     [Fact]
@@ -892,7 +817,6 @@ public sealed class GalateaSessionProvisioningTests {
                 Assert.Single(config.Characters).DefaultConnectionId
             ),
             factory,
-            config.RecapGrid!.AgentControlProfiles,
             inputProjector: GalateaInputProjector.Instance
         );
         var composition = new GalateaRecapGridComposition(
@@ -975,7 +899,6 @@ public sealed class GalateaSessionProvisioningTests {
             },
             new CompletionConnectionsFileConfig(config.Connections, "test"),
             factory,
-            config.RecapGrid!.AgentControlProfiles,
             inputProjector: GalateaInputProjector.Instance
         );
         var composition = new GalateaRecapGridComposition(
@@ -1027,10 +950,6 @@ public sealed class GalateaSessionProvisioningTests {
             characterContextTemplate: "current ${characterName} prompt"
         );
         GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
-        Assert.True(config.RecapGrid!.AgentControlProfiles.TryGet(
-            config.RecapGrid.CurrentAgentControlProfileId,
-            out RecapGridAgentControlProfile profile
-        ));
         Atelia.EventJournal.EventAddress originalHead;
         using (SessionJournalEngine created =
                GalateaSessionRepositoryProvisioner.CreateAndPublish(
@@ -1040,7 +959,8 @@ public sealed class GalateaSessionProvisioningTests {
                        "old prompt",
                        "openai-chat/strict"
                    ),
-                   profile.Admission,
+                   GalateaSessionRepositoryProvisioner
+                       .CreateBootstrapAdmission(),
                    new GalateaRecapGridAssetParameters(
                        new GalateaCharacterName("Galatea")
                    )

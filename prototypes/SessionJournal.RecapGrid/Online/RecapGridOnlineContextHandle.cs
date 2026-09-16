@@ -20,6 +20,7 @@ public sealed class RecapGridOnlineContextHandle :
     private readonly IRecapCellBatchExecutor _executor;
     private readonly RecapGridOnlineLimits _limits;
     private readonly IHistoryUnitLoadEstimator[] _estimators;
+    private readonly BuildTarget? _liveProducerTarget;
     private readonly object _managerGate = new();
     private readonly OnlineLifetime _lifetime;
     private RecapGridManagerHandle? _manager;
@@ -37,7 +38,8 @@ public sealed class RecapGridOnlineContextHandle :
         RecapGridContextHandle getter,
         IRecapCellBatchExecutor executor,
         RecapGridOnlineLimits limits,
-        IHistoryUnitLoadEstimator[] estimators
+        IHistoryUnitLoadEstimator[] estimators,
+        BuildTarget? liveProducerTarget = null
     ) {
         _owner = owner;
         _selectedRef = selectedRef;
@@ -47,6 +49,7 @@ public sealed class RecapGridOnlineContextHandle :
         _executor = executor;
         _limits = limits;
         _estimators = estimators;
+        _liveProducerTarget = liveProducerTarget;
         _lifetime = new OnlineLifetime(DisposeOwnedAsync);
     }
 
@@ -868,7 +871,8 @@ public sealed class RecapGridOnlineContextHandle :
         var buildRequest = new RecapGridBuildRequest(
             new RecapGridBuildSelection.LiveActive(),
             throughRowId: null,
-            OnlineBuildBudget(budget));
+            OnlineBuildBudget(budget),
+            _liveProducerTarget);
         RecapGridBuildProgressResult progress = manager
             .InspectBuildProgress(buildRequest, cancellationToken);
         switch (progress) {

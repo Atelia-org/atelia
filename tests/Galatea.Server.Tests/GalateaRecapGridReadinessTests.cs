@@ -7,8 +7,8 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRecapGridReadinessTests : IDisposable {
-    private static GalateaRecapGridTargetExpectation TargetExpectation =>
-        GalateaRecapGridTargetExpectation.ForCharacter(
+    private static GalateaRecapGridDefaultPolicy DefaultPolicy =>
+        GalateaRecapGridDefaultPolicy.ForCharacter(
             new GalateaCharacterName("Galatea")
         );
     private readonly string _root = Path.Combine(
@@ -31,7 +31,7 @@ public sealed class GalateaRecapGridReadinessTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 engine.ReadView,
                 head,
-                TargetExpectation,
+                DefaultPolicy,
                 CancellationToken.None
             );
 
@@ -63,7 +63,7 @@ public sealed class GalateaRecapGridReadinessTests : IDisposable {
                 GalateaRecapGridReadiness.Inspect(
                     engine.ReadView,
                     head,
-                    TargetExpectation,
+                    DefaultPolicy,
                     CancellationToken.None
                 );
             Assert.Equal("stale", result.Freshness);

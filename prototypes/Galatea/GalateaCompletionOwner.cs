@@ -3,6 +3,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
 using Atelia.SessionJournal.RecapGrid.Hosting;
+using Atelia.SessionJournal.RecapGrid.Runtime;
 
 namespace Atelia.Galatea.Server;
 
@@ -75,11 +76,18 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         try {
             recapGridHost = RecapGridCompletionHost
                 .CreateBorrowingRegistry(
-                    () => GalateaConfigLoader.LoadRouteManifest(
-                        recapGrid.RouteManifestPath
+                    key => new RecapGridRouteManifestEntry(
+                        key,
+                        recapGrid.Maintenance.ConnectionId,
+                        recapGrid.Maintenance.MaximumConcurrency,
+                        recapGrid.Maintenance.DispatchTimeout
                     ),
                     _registry,
-                    recapGrid.AgentControlProfiles,
+                    recapGrid.HistoricalAgentControlProfiles,
+                    runtimeOptions: new RecapCompletionRuntimeOptions(
+                        maximumGlobalConcurrency:
+                            recapGrid.Maintenance.MaximumConcurrency
+                    ),
                     inputProjector: GalateaInputProjector.Instance,
                     maintenanceInvokerFactory: (connectionId, inner, attemptTimeout) =>
                         new GalateaRecapCompletionRetryInvoker(connectionId, inner, attemptTimeout, _timeProvider)

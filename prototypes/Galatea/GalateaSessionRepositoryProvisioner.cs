@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using Atelia.Galatea.RecapGrid;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -24,6 +25,30 @@ internal static class GalateaSessionRepositoryProvisioner {
         | RecapGridControlPermission.RegisterDefinition
         | RecapGridControlPermission.RegisterRecipe
         | RecapGridControlPermission.Activate;
+
+    /// <summary>
+    /// Fresh-session bootstrap has one code-owned authority: the current
+    /// Galatea bundle. Historical Agent Control profiles are intentionally not
+    /// consulted here; they remain recovery-only exact bytes.
+    /// </summary>
+    internal static RecapGridControlAdmission CreateBootstrapAdmission() {
+        RecapGridControlRegistrationBundle bundle = CreateInitialBundle(
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName("bootstrap")
+            )
+        );
+        return new RecapGridControlAdmission(
+            RequiredBootstrapPermissions,
+            bundle.Families.Select(static value => value.Digest),
+            bundle.Definitions.Select(static value =>
+                value.Capability.CapabilityFingerprint).Distinct(),
+            bundle.Definitions.Select(static value => value.Target.Carrier)
+                .Distinct(),
+            ["world-understanding", "autobiography"],
+            maximumBootstrapRows: 64,
+            maximumProjectedCalls: 1_024
+        );
+    }
 
     internal static SessionJournalEngine CreateAndPublish(
         string finalPath,

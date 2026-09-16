@@ -59,13 +59,9 @@ internal sealed class GalateaRecapGridComposition
         SessionJournalEngine engine,
         string connectionId,
         SessionInputContent? pendingObservation,
-        GalateaRecapGridTargetExpectation targetExpectation,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         CancellationToken cancellationToken
     ) {
-        GalateaRecapGridTargetInspector.RequireCurrent(
-            engine.ReadView,
-            targetExpectation
-        );
         RecapGridAgentConnectionLookupResult lookup =
             _completion.InspectAgentExact(connectionId);
         if (lookup is not RecapGridAgentConnectionLookupResult.Found found) {
@@ -85,6 +81,7 @@ internal sealed class GalateaRecapGridComposition
         RecapGridOnlineOpenResult opened = RecapGridOnlineFactory.Open(
             engine,
             _completion.Executor,
+            defaultPolicy.Target,
             _limits,
             _estimators);
         if (opened is not RecapGridOnlineOpenResult.Opened available) {
@@ -167,7 +164,7 @@ internal sealed class GalateaRecapGridComposition
         string connectionId,
         Func<string, bool> isCurrentConnectionSelectable,
         SessionRuntimeRecoveryRequirements.ToolContinuationRequired frozen,
-        GalateaRecapGridTargetExpectation targetExpectation,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         CancellationToken cancellationToken,
         CancellationToken generationStopToken = default
     ) {
@@ -216,13 +213,10 @@ internal sealed class GalateaRecapGridComposition
                 "recap-grid-connection-absent"
             );
         }
-        GalateaRecapGridTargetInspector.RequireCurrent(
-            engine.ReadView,
-            targetExpectation
-        );
         RecapGridOnlineOpenResult onlineOpened = RecapGridOnlineFactory.Open(
             engine,
             _completion.Executor,
+            defaultPolicy.Target,
             _limits,
             _estimators
         );

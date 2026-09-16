@@ -204,6 +204,7 @@ public sealed partial class RecapGridContextHandle {
             selection,
             cells,
             reader,
+            definitions,
             cancellationToken
         );
         RecapGridStoreReadResult<RecapRowView> health = reader.ReadView(
@@ -250,6 +251,8 @@ public sealed partial class RecapGridContextHandle {
         RecapGridContextSelection selection,
         IReadOnlyList<RecapCellArtifact> selectedCells,
         RecapGridStoreReader reader,
+        IReadOnlyDictionary<MaintainerDefinitionDigest,
+            MaintainerDefinitionRevision> definitions,
         CancellationToken cancellationToken
     ) {
         var tracker = new ProvenanceBudgetTracker(
@@ -280,6 +283,7 @@ public sealed partial class RecapGridContextHandle {
             current,
             reader,
             tracker,
+            definitions,
             cancellationToken,
             out ProvenanceRow? predecessor
         );
@@ -297,6 +301,7 @@ public sealed partial class RecapGridContextHandle {
                 current,
                 reader,
                 tracker,
+                definitions,
                 cancellationToken,
                 out predecessor
             );
@@ -317,6 +322,8 @@ public sealed partial class RecapGridContextHandle {
         ProvenanceRow current,
         RecapGridStoreReader reader,
         ProvenanceBudgetTracker tracker,
+        IReadOnlyDictionary<MaintainerDefinitionDigest,
+            MaintainerDefinitionRevision> definitions,
         CancellationToken cancellationToken,
         out ProvenanceRow? predecessor
     ) {
@@ -354,9 +361,11 @@ public sealed partial class RecapGridContextHandle {
             return RecapGridProvenanceStatus.Incomplete;
         }
         if (ValidateView(
+                reader,
                 previous.Value,
                 selectedPredecessor.Row.Descriptor,
-                selection.Recipe
+                selection.Recipe,
+                definitions
             ) is not null) {
             return RecapGridProvenanceStatus.Incomplete;
         }

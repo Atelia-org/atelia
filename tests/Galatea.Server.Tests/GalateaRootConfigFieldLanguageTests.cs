@@ -136,11 +136,11 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     private const string MinimalV11 = """
-        {"v":11,"characters":[{"id":"alice","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"create-if-missing","defaultConnectionId":"test","characterContextTemplate":"inline ${characterName}","autonomyIntervalMinutes":0}],"players":[{"id":"player-main","name":"刘世超","password":"pw"}],"runtime":{"recapGrid":{"routeManifestPath":"routes.json","agentControlProfileFiles":["profile.json"],"currentAgentControlProfileId":"test-profile"}}}
+        {"v":12,"characters":[{"id":"alice","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"create-if-missing","defaultConnectionId":"test","characterContextTemplate":"inline ${characterName}","autonomyIntervalMinutes":0}],"players":[{"id":"player-main","name":"刘世超","password":"pw"}],"runtime":{"recapGrid":{"maintenance":{"connectionId":"test","maximumConcurrency":1,"dispatchTimeoutMilliseconds":900000},"historicalAgentControlProfileFiles":["profile.json"]}}}
         """;
 
     private const string ReorderedEscapedFullV11 = """
-        {"runtime":{"maintenanceMode":true,"recapGrid":{"currentAgentControlProfileId":"test-profile","agentControlProfileFiles":["profile.json"],"\u0072outeManifestPath":"routes.json"},"callLogDir":"call-logs","listenUrls":["opaque-listener","opaque-listener"]},"players":[{"password":"pw","name":"刘世超","id":"player-main"}],"\u0063haracters":[{"characterContextTemplateFile":null,"characterContextTemplate":"inline ${characterName}","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"existing-only","defaultConnectionId":"test","autonomyIntervalMinutes":10,"\u0069d":"alice"}],"\u0076":11}
+        {"runtime":{"maintenanceMode":true,"recapGrid":{"historicalAgentControlProfileFiles":["profile.json"],"maintenance":{"dispatchTimeoutMilliseconds":900000,"maximumConcurrency":1,"connectionId":"test"}},"callLogDir":"call-logs","listenUrls":["opaque-listener","opaque-listener"]},"players":[{"password":"pw","name":"刘世超","id":"player-main"}],"\u0063haracters":[{"characterContextTemplateFile":null,"characterContextTemplate":"inline ${characterName}","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"existing-only","defaultConnectionId":"test","autonomyIntervalMinutes":10,"\u0069d":"alice"}],"\u0076":12}
         """;
 
     [Fact]
@@ -176,14 +176,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             Path.Combine(fixture.Root, "call-logs"),
             config.CallLogDir
         );
-        Assert.Equal(
-            Path.Combine(fixture.Root, "routes.json"),
-            config.RecapGrid!.RouteManifestPath
-        );
-        Assert.Equal(
-            "test-profile",
-            config.RecapGrid.CurrentAgentControlProfileId
-        );
+        Assert.Equal("test", config.RecapGrid!.Maintenance.ConnectionId);
+        Assert.Equal(1, config.RecapGrid.Maintenance.MaximumConcurrency);
     }
 
     [Fact]
@@ -204,9 +198,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             ("user", "characterMemoryStateDir"),
             ("user", "homeDir"),
             ("user", "defaultConnectionId"),
-            ("recap", "routeManifestPath"),
-            ("recap", "agentControlProfileFiles"),
-            ("recap", "currentAgentControlProfileId")
+            ("recap", "maintenance"),
+            ("recap", "historicalAgentControlProfileFiles")
         ];
 
         foreach ((string scope, string field) in required) {
@@ -217,7 +210,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                     RequiredMutation.Remove
                 ))
             );
-            if (scope != "recap" && !(scope == "runtime" && field == "recapGrid")) {
+            if (!(scope == "runtime" && field == "recapGrid")) {
                 Assert.IsType<InvalidDataException>(missing);
             }
             else {
@@ -571,20 +564,16 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void ProfileFileCountAndResolvedIdentityAreExact() {
         using var fixture = new RootConfigFixture();
         JsonObject one = ParseRoot(MinimalV11);
-        Assert.Equal(
-            "test-profile",
-            fixture.Load(one.ToJsonString()).RecapGrid!
-                .CurrentAgentControlProfileId
-        );
+        Assert.Equal(["test-profile"], fixture.Load(one.ToJsonString())
+            .RecapGrid!.HistoricalAgentControlProfiles!.ProfileIds);
 
         JsonObject zero = ParseRoot(MinimalV11);
-        RecapObject(zero)["agentControlProfileFiles"] = new JsonArray();
-        Assert.Throws<InvalidOperationException>(() => fixture.Load(
-            zero.ToJsonString()
-        ));
+        RecapObject(zero)["historicalAgentControlProfileFiles"] = new JsonArray();
+        Assert.Null(fixture.Load(zero.ToJsonString()).RecapGrid!
+            .HistoricalAgentControlProfiles);
 
         JsonObject missingPath = ParseRoot(MinimalV11);
-        RecapObject(missingPath)["agentControlProfileFiles"] =
+        RecapObject(missingPath)["historicalAgentControlProfileFiles"] =
             new JsonArray("missing-profile.json");
         Assert.Throws<FileNotFoundException>(() => fixture.Load(
             missingPath.ToJsonString()
@@ -602,26 +591,22 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         }
         JsonObject maximumRoot = ParseRoot(MinimalV11);
         JsonObject maximumRecap = RecapObject(maximumRoot);
-        maximumRecap["agentControlProfileFiles"] = StringArray(paths);
-        maximumRecap["currentAgentControlProfileId"] = "profile-000";
+        maximumRecap["historicalAgentControlProfileFiles"] = StringArray(paths);
         GalateaConfig maximum = fixture.Load(maximumRoot.ToJsonString());
-        Assert.Equal(
-            "profile-000",
-            maximum.RecapGrid!.CurrentAgentControlProfileId
-        );
+        Assert.Equal(256, maximum.RecapGrid!.HistoricalAgentControlProfiles!
+            .ProfileIds.Count);
 
         JsonObject overRoot = ParseRoot(MinimalV11);
         JsonObject overRecap = RecapObject(overRoot);
-        overRecap["agentControlProfileFiles"] = StringArray(
+        overRecap["historicalAgentControlProfileFiles"] = StringArray(
             paths.Append("profiles/not-read-257.json")
         );
-        overRecap["currentAgentControlProfileId"] = "profile-000";
         Assert.Throws<InvalidDataException>(() => fixture.Load(
             overRoot.ToJsonString()
         ));
 
         JsonObject duplicateRoot = ParseRoot(MinimalV11);
-        RecapObject(duplicateRoot)["agentControlProfileFiles"] =
+        RecapObject(duplicateRoot)["historicalAgentControlProfileFiles"] =
             new JsonArray("profile.json", "./profile.json");
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             duplicateRoot.ToJsonString()
@@ -644,12 +629,10 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         );
         JsonObject duplicateProfileRoot = ParseRoot(MinimalV11);
         JsonObject duplicateProfileRecap = RecapObject(duplicateProfileRoot);
-        duplicateProfileRecap["agentControlProfileFiles"] = new JsonArray(
+        duplicateProfileRecap["historicalAgentControlProfileFiles"] = new JsonArray(
             "registry/duplicate-profile-a.json",
             "registry/duplicate-profile-b.json"
         );
-        duplicateProfileRecap["currentAgentControlProfileId"] =
-            "duplicate-profile";
         Assert.Throws<ArgumentException>(() => fixture.Load(
             duplicateProfileRoot.ToJsonString()
         ));
@@ -666,11 +649,10 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         );
         JsonObject duplicateRuntimeRoot = ParseRoot(MinimalV11);
         JsonObject duplicateRuntimeRecap = RecapObject(duplicateRuntimeRoot);
-        duplicateRuntimeRecap["agentControlProfileFiles"] = new JsonArray(
+        duplicateRuntimeRecap["historicalAgentControlProfileFiles"] = new JsonArray(
             "registry/duplicate-runtime-a.json",
             "registry/duplicate-runtime-b.json"
         );
-        duplicateRuntimeRecap["currentAgentControlProfileId"] = "runtime-a";
         Assert.Throws<ArgumentException>(() => fixture.Load(
             duplicateRuntimeRoot.ToJsonString()
         ));
@@ -821,44 +803,32 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     [Fact]
-    public void RecapPathsAndCurrentProfileIdLockBlankAndExactMatch() {
+    public void RecapMaintenanceAndHistoricalProfilesLockExactShape() {
         using var fixture = new RootConfigFixture();
 
         GalateaConfig exact = fixture.Load(MinimalV11);
-        Assert.Equal(
-            Path.Combine(fixture.Root, "routes.json"),
-            exact.RecapGrid!.RouteManifestPath
-        );
-        Assert.Equal(
-            "test-profile",
-            exact.RecapGrid.CurrentAgentControlProfileId
-        );
+        Assert.Equal("test", exact.RecapGrid!.Maintenance.ConnectionId);
+        Assert.Equal(1, exact.RecapGrid.Maintenance.MaximumConcurrency);
+        Assert.Equal(TimeSpan.FromMilliseconds(900_000),
+            exact.RecapGrid.Maintenance.DispatchTimeout);
 
-        JsonObject blankRoute = ParseRoot(MinimalV11);
-        RecapObject(blankRoute)["routeManifestPath"] = "  ";
+        JsonObject blankConnection = ParseRoot(MinimalV11);
+        RecapObject(blankConnection)["maintenance"]!["connectionId"] = "  ";
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
-            blankRoute.ToJsonString()
+            blankConnection.ToJsonString()
         ));
 
         JsonObject blankProfile = ParseRoot(MinimalV11);
-        RecapObject(blankProfile)["agentControlProfileFiles"] =
+        RecapObject(blankProfile)["historicalAgentControlProfileFiles"] =
             new JsonArray(" ");
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             blankProfile.ToJsonString()
         ));
 
-        JsonObject blankCurrent = ParseRoot(MinimalV11);
-        RecapObject(blankCurrent)["currentAgentControlProfileId"] = " ";
-        Assert.Throws<InvalidOperationException>(() => fixture.Load(
-            blankCurrent.ToJsonString()
-        ));
-
-        JsonObject wrongCase = ParseRoot(MinimalV11);
-        RecapObject(wrongCase)["currentAgentControlProfileId"] =
-            "Test-Profile";
-        Assert.Throws<InvalidOperationException>(() => fixture.Load(
-            wrongCase.ToJsonString()
-        ));
+        JsonObject badConcurrency = ParseRoot(MinimalV11);
+        RecapObject(badConcurrency)["maintenance"]!["maximumConcurrency"] = 0;
+        Assert.Throws<InvalidDataException>(() => fixture.Load(
+            badConcurrency.ToJsonString()));
     }
 
     [Fact]
@@ -918,8 +888,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         );
 
         string comment = MinimalV11.Replace(
-            "\"v\":11,",
-            "\"v\":11/*comment*/,",
+            "\"v\":12,",
+            "\"v\":12/*comment*/,",
             StringComparison.Ordinal
         );
         Assert.Throws<InvalidDataException>(() =>

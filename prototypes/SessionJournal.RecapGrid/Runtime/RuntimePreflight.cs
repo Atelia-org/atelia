@@ -286,7 +286,10 @@ public sealed partial class RecapCompletionRuntime {
     ) {
         var prior = new Dictionary<LogicalColumnId, RecapCellArtifact>();
         priorByColumn = prior;
-        priorMessage = RuntimeRenderer.RenderPrior(Array.Empty<RecapCellArtifact>());
+        priorMessage = RuntimeRenderer.RenderPrior(
+            Array.Empty<RecapCellArtifact>(),
+            batch.PreviousDefinitions
+        );
         if (batch.Spec.PreviousHistoryRowId is null) {
             if (batch.Spec.PreviousRowResultId is not null
                 || batch.PreviousView is not null || batch.PreviousCells.Count != 0) {
@@ -305,8 +308,7 @@ public sealed partial class RecapCompletionRuntime {
             || previous.HistoryRowId != batch.Spec.PreviousHistoryRowId
             || previous.RefId != batch.Spec.RefId
             || previous.TimelineId != batch.Spec.TimelineId
-            || previous.RecipeDigest != batch.Spec.RecipeDigest
-            || previous.TargetDigest != batch.Spec.TargetDigest) {
+            || previous.RecipeDigest != batch.Spec.RecipeDigest) {
             return new RuntimePreflightResult.Rejected(
                 "PriorSourceMismatch", "The previous row differs from the independently frozen source.");
         }
@@ -322,7 +324,10 @@ public sealed partial class RecapCompletionRuntime {
                     "PriorViewMismatch", "Previous cells do not exactly materialize the previous view.");
             }
         }
-        priorMessage = RuntimeRenderer.RenderPrior(batch.PreviousCells);
+        priorMessage = RuntimeRenderer.RenderPrior(
+            batch.PreviousCells,
+            batch.PreviousDefinitions
+        );
         return null;
     }
 

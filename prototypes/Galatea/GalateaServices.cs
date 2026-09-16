@@ -53,7 +53,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly bool _characterNoteBindingEnabled;
     private readonly bool _allowMissingCharacterNoteDerivedInfoEnricher;
     private readonly IReadOnlyDictionary<string,
-        GalateaRecapGridTargetExpectation> _targetExpectations;
+        GalateaRecapGridDefaultPolicy> _defaultPolicies;
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
@@ -174,7 +174,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _characterNoteBindingEnabled =
             components.CharacterNoteBindingEnabled;
         _allowMissingCharacterNoteDerivedInfoEnricher = false;
-        _targetExpectations = components.TargetExpectations;
+        _defaultPolicies = components.DefaultPolicies;
         _maintenanceMode = components.MaintenanceMode;
         _characters = components.Characters;
         GalateaConfigValidation.RequireValidPlayers(config.Players);
@@ -189,8 +189,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaConfig config,
         IGalateaUserMessageNormalizer userMessageNormalizer,
         GalateaRecapGridComposition recapGrid,
-        IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>?
-            targetExpectations = null,
+        IReadOnlyDictionary<string, GalateaRecapGridDefaultPolicy>?
+            defaultPolicies = null,
         TimeProvider? timeProvider = null,
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory = null,
@@ -264,8 +264,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ?? new Dictionary<string, ICharacterNoteDerivedInfoEnricher>(
                 StringComparer.Ordinal
             );
-        _targetExpectations = targetExpectations
-            ?? CreateTargetExpectations(_characters);
+        _defaultPolicies = defaultPolicies
+            ?? CreateDefaultPolicies(_characters);
         IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
             normalized.Connections.ToDictionary(
                 static value => value.Id,
@@ -361,8 +361,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         owner.CharacterNoteExtractorConnection,
                         owner.GetCharacterNoteExtractorClient
                     );
-            IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
-                targetExpectations = CreateTargetExpectations(characters);
+            IReadOnlyDictionary<string, GalateaRecapGridDefaultPolicy>
+                defaultPolicies = CreateDefaultPolicies(characters);
             IReadOnlyDictionary<string, CompletionConnectionConfig>
                 fullCatalog = owner.Connections.ToDictionary(
                     static value => value.Id,
@@ -404,7 +404,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 characterNoteExtractors,
                 characterNoteDerivedInfoEnrichers,
                 owner.CharacterNoteExtractorConnection is not null,
-                targetExpectations,
+                defaultPolicies,
                 delegationSupervisor,
                 recallFactory,
                 sessionBootstrapAdmission,
@@ -472,8 +472,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IReadOnlyDictionary<string, ICharacterNoteDerivedInfoEnricher>
             CharacterNoteDerivedInfoEnrichers,
         bool CharacterNoteBindingEnabled,
-        IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
-            TargetExpectations,
+        IReadOnlyDictionary<string, GalateaRecapGridDefaultPolicy>
+            DefaultPolicies,
         GalateaDelegationSupervisor DelegationSupervisor,
         GalateaPlayerTurnRecallProviderFactory?
             PlayerTurnRecallProviderFactory,
@@ -556,13 +556,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     internal static IReadOnlyDictionary<string,
-        GalateaRecapGridTargetExpectation> CreateTargetExpectations(
+        GalateaRecapGridDefaultPolicy> CreateDefaultPolicies(
         IReadOnlyDictionary<string, GalateaCharacterConfig> characters
     ) {
         ArgumentNullException.ThrowIfNull(characters);
         return characters.ToDictionary(
             static pair => pair.Key,
-            static pair => GalateaRecapGridTargetExpectation.ForCharacter(
+            static pair => GalateaRecapGridDefaultPolicy.ForCharacter(
                 pair.Value.CharacterName
             ),
             StringComparer.Ordinal
@@ -1033,7 +1033,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ? GalateaRecapGridReadiness.InspectRecentContext(
                     host.Engine.ReadView,
                     capturedHead,
-                    host.TargetExpectation,
+                    host.DefaultPolicy,
                     projection.DerivedContextNthPrevious
                         ?? throw new InvalidDataException(
                             "Recent projection has no governing derived-context ordinal."
@@ -1581,19 +1581,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         cancellationToken
     );
 
-    /// <summary>
-    /// Pure-read preflight used before admission normalization. It prevents a
-    /// mismatched current Recap target from spending a normalization call but
-    /// never abandons or otherwise reconciles a failed durable turn.
-    /// </summary>
-    internal void RequireFreshTurnTargetAligned(CharacterSessionHost host) {
-        ArgumentNullException.ThrowIfNull(host);
-        GalateaRecapGridTargetInspector.RequireCurrent(
-            host.Engine.ReadView,
-            host.TargetExpectation
-        );
-    }
-
     internal GalateaLiveTurn StartTurn(
         CharacterSessionHost host,
         string userMessage,
@@ -1808,10 +1795,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     "stale-session-head"
                 );
         }
-        GalateaRecapGridTargetInspector.RequireCurrent(
-            host.Engine.ReadView,
-            host.TargetExpectation
-        );
     }
 
     internal GalateaLiveTurn StartInboundMailTurn(
@@ -2938,10 +2921,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CancellationToken cancellationToken
     ) {
         GalateaRecapGridComposition recapGrid = _recapGrid;
-        GalateaRecapGridTargetInspector.RequireCurrent(
-            host.Engine.ReadView,
-            host.TargetExpectation
-        );
         CompletionConnectionConfig inspected =
             recapGrid.InspectConnectionExact(liveTurn.Options.ConnectionId);
         SessionDesiredSetupReconciliationResult reconciled =
@@ -2988,7 +2967,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 host.Engine,
                 liveTurn.Options.ConnectionId,
                 prompted,
-                host.TargetExpectation,
+                host.DefaultPolicy,
                 cancellationToken).ConfigureAwait(false);
         RecapGridOnlineContextHandle online = turn.Online
             ?? throw new InvalidDataException(
@@ -3444,7 +3423,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     host.Engine,
                     liveTurn.Options.ConnectionId,
                     pendingObservation: null,
-                    targetExpectation: host.TargetExpectation,
+                    defaultPolicy: host.DefaultPolicy,
                     cancellationToken).ConfigureAwait(false);
                 RecapGridOnlineContextHandle online = turn.Online
                     ?? throw new InvalidDataException(
@@ -3495,7 +3474,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     liveTurn.Options.ConnectionId,
                     id => _connectionCatalog.ContainsKey(id),
                     toolContinuation,
-                    host.TargetExpectation,
+                    host.DefaultPolicy,
                     cancellationToken,
                     liveTurn.StopController.UserStopToken
                 ).ConfigureAwait(false);
@@ -3701,10 +3680,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
             RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine)
                 .Response;
-            GalateaRecapGridTargetExpectation targetExpectation =
-                _targetExpectations.TryGetValue(
+            GalateaRecapGridDefaultPolicy defaultPolicy =
+                _defaultPolicies.TryGetValue(
                     character.CharacterId,
-                    out GalateaRecapGridTargetExpectation? configuredTarget
+                    out GalateaRecapGridDefaultPolicy? configuredTarget
                 )
                     ? configuredTarget
                     : throw new InvalidDataException(
@@ -3773,7 +3752,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 character,
                 engine,
                 recent,
-                targetExpectation,
+                defaultPolicy,
                 characterMemory,
                 delegationHandle,
                 outboundMailExtractor,
@@ -3863,16 +3842,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private static RecapGridControlAdmission
         ResolveSessionBootstrapAdmission(
         GalateaRecapGridRuntimeConfig recapGrid
-    ) {
-        if (!recapGrid.AgentControlProfiles.TryGet(
-                recapGrid.CurrentAgentControlProfileId,
-                out RecapGridAgentControlProfile? profile)) {
-            throw new InvalidOperationException(
-                "The current Agent Control profile is unavailable."
-            );
-        }
-        return profile.Admission;
-    }
+    ) => GalateaSessionRepositoryProvisioner.CreateBootstrapAdmission();
 
     private static void ValidateRecoveryConnection(
         SessionJournalEngine engine,
@@ -4151,7 +4121,7 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
         GalateaCharacterConfig character,
         SessionJournalEngine engine,
         RecentTurnsResponseDto recentTurns,
-        GalateaRecapGridTargetExpectation targetExpectation,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         CharacterNoteDefaultPodReconciler? characterMemoryReconciler,
         GalateaDelegationSessionHandle? delegationHandle,
         IOutboundMailExtractor outboundMailExtractor,
@@ -4166,7 +4136,7 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(character);
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(recentTurns);
-        ArgumentNullException.ThrowIfNull(targetExpectation);
+        ArgumentNullException.ThrowIfNull(defaultPolicy);
         ArgumentNullException.ThrowIfNull(outboundMailExtractor);
         ArgumentNullException.ThrowIfNull(characterNoteExtractor);
         ArgumentNullException.ThrowIfNull(playerTurnRecallProvider);
@@ -4174,7 +4144,7 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
         _agentStatus = new("starting", character.DefaultConnectionId, null, null, null);
         Engine = engine;
         _recentTurns = recentTurns;
-        TargetExpectation = targetExpectation;
+        DefaultPolicy = defaultPolicy;
         CharacterMemoryReconciler = characterMemoryReconciler;
         DelegationHandle = delegationHandle;
         CharacterNoteExtractor = characterNoteExtractor;
@@ -4215,7 +4185,7 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
 
     public SessionJournalEngine Engine { get; }
 
-    internal GalateaRecapGridTargetExpectation TargetExpectation { get; }
+    internal GalateaRecapGridDefaultPolicy DefaultPolicy { get; }
 
     internal ICharacterNoteExtractor CharacterNoteExtractor { get; }
 
@@ -4638,20 +4608,24 @@ internal static class GalateaConfigLoader {
                 "Galatea config must contain an exact recapGrid object."
             );
         }
-        string routeManifestPath = ResolveRequiredFilePath(
-            configured.RouteManifestPath,
-            configDirectory,
-            "recapGrid.routeManifestPath",
-            requireExistingFile: false
-        );
-        IReadOnlyList<string>? profileFiles =
-            configured.AgentControlProfileFiles;
-        if (profileFiles is null
-            || profileFiles.Count is < 1
-                or > MaximumAgentControlProfileCount) {
+        GalateaRecapGridMaintenanceFileConfig maintenance = configured
+            .Maintenance ?? throw new InvalidOperationException(
+                "recapGrid.maintenance must be an exact object."
+            );
+        if (string.IsNullOrWhiteSpace(maintenance.ConnectionId)
+            || maintenance.MaximumConcurrency is < 1 or > 1_024
+            || maintenance.DispatchTimeoutMilliseconds is < 1 or > 86_400_000) {
             throw new InvalidOperationException(
-                "recapGrid.agentControlProfileFiles must contain between "
-                + "1 and 256 exact profile paths."
+                "recapGrid.maintenance is invalid."
+            );
+        }
+        IReadOnlyList<string>? profileFiles =
+            configured.HistoricalAgentControlProfileFiles;
+        if (profileFiles is null
+            || profileFiles.Count > MaximumAgentControlProfileCount) {
+            throw new InvalidOperationException(
+                "recapGrid.historicalAgentControlProfileFiles must contain "
+                + "at most 256 exact profile paths."
             );
         }
         var resolvedProfiles = new HashSet<string>(
@@ -4666,12 +4640,12 @@ internal static class GalateaConfigLoader {
             string path = ResolveRequiredFilePath(
                 profileFiles[index],
                 configDirectory,
-                $"recapGrid.agentControlProfileFiles[{index}]",
+                $"recapGrid.historicalAgentControlProfileFiles[{index}]",
                 requireExistingFile: true
             );
             if (!resolvedProfiles.Add(path)) {
                 throw new InvalidOperationException(
-                    "recapGrid.agentControlProfileFiles contains a "
+                    "recapGrid.historicalAgentControlProfileFiles contains a "
                     + "duplicate canonical path."
                 );
             }
@@ -4683,21 +4657,17 @@ internal static class GalateaConfigLoader {
                 )
             ));
         }
-        var registry = new RecapGridAgentControlProfileRegistry(profiles);
-        if (string.IsNullOrWhiteSpace(
-                configured.CurrentAgentControlProfileId)
-            || !registry.TryGet(
-                configured.CurrentAgentControlProfileId,
-                out _)) {
-            throw new InvalidOperationException(
-                "recapGrid.currentAgentControlProfileId must exactly name "
-                + "one configured profile."
-            );
-        }
         return new GalateaRecapGridRuntimeConfig(
-            routeManifestPath,
-            registry,
-            configured.CurrentAgentControlProfileId
+            new GalateaRecapGridMaintenanceConfig(
+                maintenance.ConnectionId,
+                maintenance.MaximumConcurrency,
+                TimeSpan.FromMilliseconds(
+                    maintenance.DispatchTimeoutMilliseconds
+                )
+            ),
+            profiles.Count == 0
+                ? null
+                : new RecapGridAgentControlProfileRegistry(profiles)
         );
     }
 
@@ -5168,11 +5138,12 @@ internal static class GalateaConfigTemplateFactory {
             Runtime: new GalateaRuntimeFileConfig(
               ListenUrls: ["http://0.0.0.0:3510"],
               RecapGrid: new GalateaRecapGridFileConfig(
-                RouteManifestPath: "recap-grid-routes.json",
-                AgentControlProfileFiles: [
-                    "recap-grid-agent-control-profile.json"
-                ],
-                CurrentAgentControlProfileId: "default"
+                Maintenance: new GalateaRecapGridMaintenanceFileConfig(
+                    ConnectionId: DefaultConnectionId,
+                    MaximumConcurrency: 1,
+                    DispatchTimeoutMilliseconds: 900_000
+                ),
+                HistoricalAgentControlProfileFiles: []
               )
             )
         );

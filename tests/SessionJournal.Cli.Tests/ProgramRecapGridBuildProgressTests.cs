@@ -115,7 +115,15 @@ public sealed partial class ProgramRecapGridCommandTests {
         JsonElement result = report.RootElement.GetProperty("detail").GetProperty("result");
         Assert.Equal("ExactRouteAbsent", result.GetProperty("Code").GetString());
         Assert.Equal("No exact recap completion route is configured.", result.GetProperty("Detail").GetString());
-        AssertDomainsEqual(before, SnapshotDomains());
+        // Route resolution happens after the first durable RowWork selection.
+        // No provider is constructed, and raw/timeline/control authority stays
+        // unchanged; the V5 grid records the frozen retryable work.
+        DomainSnapshot after = SnapshotDomains();
+        AssertSnapshotEqual(before.Raw, after.Raw);
+        AssertSnapshotEqual(before.Timeline, after.Timeline);
+        AssertSnapshotEqual(before.Control, after.Control);
+        Assert.NotEqual(before.Grid.Values.SelectMany(static value => value),
+            after.Grid.Values.SelectMany(static value => value));
     }
 
     private BuildProgressFixture PrepareBuildProgressFixture() {

@@ -15,7 +15,8 @@ public sealed partial class RecapGridManager {
         HistoryTimelineSelectedRow selected,
         bool isOverlayBootstrap,
         BuiltRow? previousRow,
-        BuiltRow? baseRow
+        BuiltRow? baseRow,
+        bool allowNewWorkSelection = false
     ) {
         HistorySegmentDescriptor descriptor = selected.Descriptor;
         if ((descriptor.PreviousRowId is null) != (previousRow is null)) {
@@ -31,9 +32,7 @@ public sealed partial class RecapGridManager {
                     != descriptor.PreviousRowId
                 || previousRow.View.RefId != descriptor.RefId
                 || previousRow.View.TimelineId != descriptor.TimelineId
-                || previousRow.View.RecipeDigest != plan.Recipe.Digest
-                || previousRow.View.TargetDigest
-                    != plan.Recipe.Target.Digest) {
+                || previousRow.View.RecipeDigest != plan.Recipe.Digest) {
                 return (null, Invalid(
                     "PreviousCandidateViewMismatch",
                     "The predecessor assignment differs from the exact selected predecessor."
@@ -43,13 +42,14 @@ public sealed partial class RecapGridManager {
             previousRowResultId = previousRow.View.Id;
         }
 
-        RowBuildAssignment[] assignments;
+        RowBuildAssignment[] provisionalAssignments;
         try {
-            assignments = DeriveAssignments(
+            provisionalAssignments = DeriveAssignments(
                 plan,
                 descriptor,
                 isOverlayBootstrap,
-                baseRow
+                baseRow,
+                work: null
             );
         }
         catch (Exception exception) when (IsContractFailure(exception)) {
@@ -58,13 +58,36 @@ public sealed partial class RecapGridManager {
                 exception.Message
             ));
         }
+        (RowWork? work, RecapGridBuildResult? workError) = SelectRowWork(
+            plan,
+            descriptor,
+            previousRowResultId,
+            provisionalAssignments,
+            allowNewWorkSelection
+        );
+        if (workError is not null) {
+            return (null, workError);
+        }
+        RowBuildAssignment[] assignments;
+        try {
+            assignments = DeriveAssignments(
+                plan,
+                descriptor,
+                isOverlayBootstrap,
+                baseRow,
+                work
+            );
+        }
+        catch (Exception exception) when (IsContractFailure(exception)) {
+            return (null, Invalid("RowWorkAssignmentDerivationInvalid", exception.Message));
+        }
         try {
             var coordinate = new RowViewCoordinate(
                 descriptor.RefId,
                 descriptor.TimelineId,
                 descriptor.RowId,
                 plan.Recipe.Digest,
-                plan.Recipe.Target.Digest,
+                (work?.ProducerTarget ?? plan.ProducerTarget).Digest,
                 descriptor.PreviousRowId,
                 previousRowResultId,
                 !isOverlayBootstrap
@@ -75,20 +98,23 @@ public sealed partial class RecapGridManager {
                 GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
                     plan.Recipe,
                     coordinate,
-                    assignments
+                    assignments,
+                    work
                 ),
                 GridBuildRecipeKind.Overlay
                     when isOverlayBootstrap
                     => RowBuildSpec.CreateOverlayBootstrap(
                         plan.Recipe,
-                        coordinate,
-                    assignments
+                    coordinate,
+                    assignments,
+                    work
                     ),
                 GridBuildRecipeKind.Overlay
                     => RowBuildSpec.CreateNormal(
                         plan.Recipe,
-                        coordinate,
-                    assignments
+                    coordinate,
+                    assignments,
+                    work
                     ),
                 _ => throw new InvalidOperationException(
                     "The recipe kind is unsupported."
@@ -111,7 +137,8 @@ public sealed partial class RecapGridManager {
         FrozenRecipePlan plan,
         HistorySegmentDescriptor descriptor,
         bool isOverlayBootstrap,
-        BuiltRow? baseRow
+        BuiltRow? baseRow,
+        RowWork? work
     ) {
         HashSet<LogicalColumnId> recomputed = plan.Recipe
             .RecomputedColumns.ToHashSet();
@@ -129,16 +156,19 @@ public sealed partial class RecapGridManager {
                 static cell => cell.LogicalColumnId
             );
         }
+        BuildTarget producerTarget = work?.ProducerTarget ?? plan.ProducerTarget;
         var assignments = new RowBuildAssignment[
-            plan.Recipe.Target.OrderedColumns.Count
+            producerTarget.OrderedColumns.Count
         ];
         for (int index = 0; index < assignments.Length; index++) {
             BuildTargetColumn target =
-                plan.Recipe.Target.OrderedColumns[index];
+                producerTarget.OrderedColumns[index];
             if (!overlayBootstrap
                 || recomputed.Contains(target.LogicalColumnId)) {
                 assignments[index] = new RowBuildAssignment.Evaluate(
-                    new CellSlot(plan.Recipe.Digest, descriptor.RowId, target.LogicalColumnId)
+                    work is null
+                        ? new CellSlot(plan.Recipe.Digest, descriptor.RowId, target.LogicalColumnId)
+                        : new CellSlot(plan.Recipe.Digest, descriptor.RowId, work.WorkId, target.LogicalColumnId)
                 );
                 continue;
             }
@@ -159,6 +189,61 @@ public sealed partial class RecapGridManager {
         }
         return assignments;
     }
+
+    private (RowWork? Work, RecapGridBuildResult? Error) SelectRowWork(
+        FrozenRecipePlan plan,
+        HistorySegmentDescriptor descriptor,
+        RowResultId? previousRowResultId,
+        IReadOnlyList<RowBuildAssignment> assignments,
+        bool allowNewWorkSelection
+    ) {
+        var key = new RowWorkKey(
+            descriptor.RefId,
+            descriptor.TimelineId,
+            plan.Recipe.Digest,
+            descriptor.RowId
+        );
+        RecapGridStoreReadResult<RowWork> read = _store.Reader.ReadRowWork(key);
+        if (read is RecapGridStoreReadResult<RowWork>.Found found) {
+            return (found.Value, null);
+        }
+        if (read is not RecapGridStoreReadResult<RowWork>.Missing) {
+            return (null, MapRowWorkRead(read));
+        }
+        if (!allowNewWorkSelection) {
+            return (null, null);
+        }
+        var selected = new RowWork(
+            key,
+            plan.ProducerTarget,
+            descriptor.PreviousRowId,
+            previousRowResultId,
+            assignments.Select(static assignment => assignment switch {
+                RowBuildAssignment.Evaluate evaluate => new RowWorkAssignment(evaluate.LogicalColumnId, null),
+                RowBuildAssignment.Reuse reuse => new RowWorkAssignment(reuse.LogicalColumnId, reuse.Cell.Id),
+                _ => throw new InvalidOperationException("Unsupported RowWork assignment.")
+            })
+        );
+        RecapGridRowWorkPutResult put = _store.Writer.PutRowWork(selected);
+        return put switch {
+            RecapGridRowWorkPutResult.Inserted inserted => (inserted.Winner, null),
+            RecapGridRowWorkPutResult.AlreadyPresent present => (present.Winner, null),
+            RecapGridRowWorkPutResult.SelectionConflict conflict => (conflict.Winner, null),
+            RecapGridRowWorkPutResult.Busy => (null, Unavailable(RecapGridBuildDependency.Store, "StoreBusy")),
+            RecapGridRowWorkPutResult.Disposed => (null, Unavailable(RecapGridBuildDependency.Store, "StoreDisposed")),
+            RecapGridRowWorkPutResult.Invalid invalid => (null, Unavailable(RecapGridBuildDependency.Store, invalid.Code, invalid.Detail)),
+            _ => (null, Invalid("RowWorkPutOutcomeInvalid", "The Store returned an unknown RowWork outcome."))
+        };
+    }
+
+    private static RecapGridBuildResult MapRowWorkRead(
+        RecapGridStoreReadResult<RowWork> read
+    ) => read switch {
+        RecapGridStoreReadResult<RowWork>.Busy => Unavailable(RecapGridBuildDependency.Store, "StoreBusy"),
+        RecapGridStoreReadResult<RowWork>.Disposed => Unavailable(RecapGridBuildDependency.Store, "StoreDisposed"),
+        RecapGridStoreReadResult<RowWork>.Invalid invalid => Unavailable(RecapGridBuildDependency.Store, invalid.Code, invalid.Detail),
+        _ => Invalid("RowWorkReadOutcomeInvalid", "The Store returned an unknown RowWork read outcome.")
+    };
 
     private (FrozenRecapCellWork[]?, RecapGridBuildResult?)
         CreateMissingWork(
@@ -198,11 +283,25 @@ public sealed partial class RecapGridManager {
                 ));
             }
             previousPosition = position;
+            MaintainerDefinitionDigest definitionDigest =
+                spec.DefinitionAt(position);
+            if (!plan.RegisteredDefinitions.TryGetValue(
+                    definitionDigest,
+                    out MaintainerDefinitionRevision? definition)
+                || definition.LogicalColumnId != assignment.LogicalColumnId
+                || !plan.RegisteredFamilies.TryGetValue(
+                    definition.FamilyDigest,
+                    out FamilyDefinition? family)) {
+                return (null, Invalid(
+                    "RowWorkDefinitionUnavailable",
+                    "The persisted producer definition or family is unavailable."
+                ));
+            }
             work.Add(new FrozenRecapCellWork(
                 position,
                 key,
-                plan.Definitions[assignment.LogicalColumnId],
-                plan.Families[assignment.LogicalColumnId]
+                definition,
+                family
             ));
         }
         return (work.ToArray(), null);

@@ -8,6 +8,51 @@ namespace Atelia.SessionJournal.RecapGrid.Runtime.Tests;
 
 public sealed class RuntimeRenderingAndSchedulingTests {
     [Fact]
+    public async Task GlobalLaneCapsDistinctExactRoutesWithoutChangingTheirKeys() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch(
+            columnCount: 2,
+            distinctFamilies: true,
+            distinctSemanticModels: true
+        );
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker(async (request, cancellationToken) => {
+            firstStarted.TrySetResult();
+            await release.Task.WaitAsync(cancellationToken);
+            return RuntimeTestFixture.Updated(request, invoker!);
+        });
+        RecapCompletionRoute[] routes = [
+            RuntimeTestFixture.Route(batch, invoker, maximumConcurrency: 8,
+                workIndex: 0),
+            RuntimeTestFixture.Route(batch, invoker, maximumConcurrency: 8,
+                workIndex: 1)
+        ];
+        using var runtime = new RecapCompletionRuntime(
+            new ScriptedResolver(key => {
+                RecapCompletionRoute route = routes.Single(value =>
+                    value.Key == key);
+                return new RecapCompletionRouteResolution.Bound(route);
+            }),
+            new RecapCompletionRuntimeOptions(
+                maximumGlobalConcurrency: 1));
+
+        Task<RecapCellBatchExecutionResult> execution = runtime
+            .ExecuteAsync(batch, default).AsTask();
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(30);
+
+        Assert.Equal(1, invoker.CallCount);
+        Assert.Equal(1, invoker.MaximumActive);
+        release.TrySetResult();
+        _ = await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, invoker.CallCount);
+        Assert.Equal(1, invoker.MaximumActive);
+    }
+
+    [Fact]
     public async Task Renderer_ExposesOnlyPriorWhitelistAndVisibleHistory() {
         var descriptor = new CompletionDescriptor(
             "history-provider",

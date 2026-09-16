@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using Atelia.SessionJournal.HistoryTimeline;
 
 namespace Atelia.SessionJournal.RecapGrid;
@@ -142,17 +143,21 @@ public sealed class GridBuildRecipe {
         HistoryRowId? bootstrapThroughRowId,
         BuildTarget target,
         GridBuildRecipeDigest? baseRecipeDigest,
+        GridBuildRecipeDigest? originRootRecipeDigest,
         LogicalColumnId[] recomputedColumns,
         GridBuildRecipeDigest digest,
-        byte[] canonicalBytes
+        byte[] canonicalBytes,
+        int schemaVersion
     ) {
         TimelineId = timelineId;
         BootstrapThroughRowId = bootstrapThroughRowId;
         Target = target;
         BaseRecipeDigest = baseRecipeDigest;
+        OriginRootRecipeDigest = originRootRecipeDigest;
         _recomputedColumns = Array.AsReadOnly(recomputedColumns);
         Digest = digest;
         _canonicalBytes = canonicalBytes;
+        SchemaVersion = schemaVersion;
     }
 
     public GridBuildRecipeKind Kind => BaseRecipeDigest is null
@@ -162,6 +167,13 @@ public sealed class GridBuildRecipe {
     public HistoryRowId? BootstrapThroughRowId { get; }
     public BuildTarget Target { get; }
     public GridBuildRecipeDigest? BaseRecipeDigest { get; }
+    /// <summary>
+    /// The adopted root observed when an explicit Full V2 rebuild was started.
+    /// It is candidate identity evidence, never a live adoption pointer or a
+    /// predecessor edge.
+    /// </summary>
+    public GridBuildRecipeDigest? OriginRootRecipeDigest { get; }
+    public int SchemaVersion { get; }
     public IReadOnlyList<LogicalColumnId> RecomputedColumns =>
         _recomputedColumns;
     public GridBuildRecipeDigest Digest { get; }
@@ -177,8 +189,32 @@ public sealed class GridBuildRecipe {
             bootstrapThroughRowId,
             target,
             null,
+            null,
             target.OrderedColumns.Select(static column =>
                 column.LogicalColumnId).ToArray()
+        );
+    }
+
+    /// <summary>
+    /// Creates an explicit Full V2 candidate. Normal maintenance must keep
+    /// using the adopted root and therefore must not call this factory.
+    /// </summary>
+    public static GridBuildRecipe CreateFull(
+        TimelineId timelineId,
+        HistoryRowId? bootstrapThroughRowId,
+        BuildTarget target,
+        GridBuildRecipeDigest? originRootRecipeDigest
+    ) {
+        ArgumentNullException.ThrowIfNull(target);
+        return CreateCore(
+            timelineId,
+            bootstrapThroughRowId,
+            target,
+            null,
+            originRootRecipeDigest,
+            target.OrderedColumns.Select(static column =>
+                column.LogicalColumnId).ToArray(),
+            useV2: true
         );
     }
 
@@ -232,6 +268,7 @@ public sealed class GridBuildRecipe {
             bootstrapThroughRowId,
             target,
             baseRecipe.Digest,
+            null,
             recomputed
         );
     }
@@ -256,21 +293,78 @@ public sealed class GridBuildRecipe {
     private static GridBuildRecipe DecodeCanonicalCore(
         ReadOnlySpan<byte> bytes
     ) {
-        GridBuildRecipeDto dto = RecapGridCanonical.DecodeExact<GridBuildRecipeDto>(
-            bytes,
-            RecapGridLimits.MaximumRecipeCanonicalUtf8Bytes,
-            nameof(bytes)
-        );
-        if (dto.SchemaVersion != 1
-            || dto.Target is null
-            || dto.RecomputedColumns is null) {
+        int schemaVersion;
+        try {
+            using JsonDocument document = JsonDocument.Parse(bytes.ToArray());
+            schemaVersion = document.RootElement.GetProperty("schemaVersion")
+                .GetInt32();
+        }
+        catch (Exception exception) when (exception is JsonException
+            or InvalidOperationException or KeyNotFoundException) {
+            throw new InvalidDataException("The recipe schema is invalid.", exception);
+        }
+        if (schemaVersion == 1) {
+            GridBuildRecipeDto dto = RecapGridCanonical.DecodeExact<GridBuildRecipeDto>(
+                bytes,
+                RecapGridLimits.MaximumRecipeCanonicalUtf8Bytes,
+                nameof(bytes)
+            );
+            return DecodeCore(
+                dto.SchemaVersion,
+                dto.Digest,
+                dto.TimelineId,
+                dto.BootstrapThroughRowId,
+                dto.Target,
+                dto.BaseRecipeDigest,
+                originRootRecipeDigest: null,
+                dto.RecomputedColumns
+            );
+        }
+        if (schemaVersion == 2) {
+            GridBuildRecipeV2Dto dto = RecapGridCanonical.DecodeExact<GridBuildRecipeV2Dto>(
+                bytes,
+                RecapGridLimits.MaximumRecipeCanonicalUtf8Bytes,
+                nameof(bytes)
+            );
+            return DecodeCore(
+                dto.SchemaVersion,
+                dto.Digest,
+                dto.TimelineId,
+                dto.BootstrapThroughRowId,
+                dto.Target,
+                dto.BaseRecipeDigest,
+                dto.OriginRootRecipeDigest,
+                dto.RecomputedColumns
+            );
+        }
+        throw new InvalidDataException("The recipe schema is invalid.");
+    }
+
+    private static GridBuildRecipe DecodeCore(
+        int schemaVersion,
+        string digest,
+        string timelineId,
+        string? bootstrapThroughRowId,
+        byte[] targetBytes,
+        string? baseRecipeDigest,
+        string? originRootRecipeDigest,
+        string[] recomputedColumns
+    ) {
+        if (targetBytes is null || recomputedColumns is null) {
             throw new InvalidDataException("The recipe schema is invalid.");
         }
-        BuildTarget target = BuildTarget.DecodeCanonical(dto.Target);
-        GridBuildRecipeDigest? baseDigest = dto.BaseRecipeDigest is null
+        BuildTarget target = BuildTarget.DecodeCanonical(targetBytes);
+        GridBuildRecipeDigest? baseDigest = baseRecipeDigest is null
             ? null
-            : new GridBuildRecipeDigest(dto.BaseRecipeDigest);
-        LogicalColumnId[] recomputed = dto.RecomputedColumns
+            : new GridBuildRecipeDigest(baseRecipeDigest);
+        GridBuildRecipeDigest? originDigest = originRootRecipeDigest is null
+            ? null
+            : new GridBuildRecipeDigest(originRootRecipeDigest);
+        if (schemaVersion == 1 && originDigest is not null
+            || schemaVersion == 2 && baseDigest is not null) {
+            throw new InvalidDataException("The recipe schema is invalid.");
+        }
+        LogicalColumnId[] recomputed = recomputedColumns
             .Select(static value => new LogicalColumnId(value))
             .ToArray();
         if (baseDigest is not null && recomputed.Length == 0) {
@@ -284,22 +378,24 @@ public sealed class GridBuildRecipe {
                 static column => column.LogicalColumnId))) {
             throw new ArgumentException(
                 "A full recipe must recompute every target column in order.",
-                nameof(bytes)
+                nameof(digest)
             );
         }
         GridBuildRecipe value = CreateCore(
-            new TimelineId(dto.TimelineId),
-            dto.BootstrapThroughRowId is null
+            new TimelineId(timelineId),
+            bootstrapThroughRowId is null
                 ? null
-                : new HistoryRowId(dto.BootstrapThroughRowId),
+                : new HistoryRowId(bootstrapThroughRowId),
             target,
             baseDigest,
-            recomputed
+            originDigest,
+            recomputed,
+            useV2: schemaVersion == 2
         );
-        if (!string.Equals(value.Digest.Value, dto.Digest, StringComparison.Ordinal)) {
+        if (!string.Equals(value.Digest.Value, digest, StringComparison.Ordinal)) {
             throw new ArgumentException(
                 "The recipe digest does not match its body.",
-                nameof(bytes)
+                nameof(digest)
             );
         }
         return value;
@@ -332,7 +428,9 @@ public sealed class GridBuildRecipe {
         HistoryRowId? bootstrapThroughRowId,
         BuildTarget target,
         GridBuildRecipeDigest? baseRecipeDigest,
-        LogicalColumnId[] recomputedColumns
+        GridBuildRecipeDigest? originRootRecipeDigest,
+        LogicalColumnId[] recomputedColumns,
+        bool useV2 = false
     ) {
         RecapGridSyntax.RequireTypedValue(
             timelineId.Value,
@@ -346,27 +444,33 @@ public sealed class GridBuildRecipe {
                 nameof(bootstrapThroughRowId)
             );
         }
-        GridBuildRecipeBodyDto body = new(
-            1,
-            timelineId.Value,
-            bootstrapThroughRowId?.Value,
-            target.ToCanonicalBytes(),
-            baseRecipeDigest?.Value,
-            recomputedColumns.Select(static value => value.Value).ToArray()
-        );
+        if ((originRootRecipeDigest is not null || useV2)
+            && baseRecipeDigest is not null) {
+            throw new ArgumentException("Only Full V2 recipes may have an origin root.", nameof(originRootRecipeDigest));
+        }
+        int schemaVersion = useV2 ? 2 : 1;
+        byte[] bodyBytes = schemaVersion == 1
+            ? RecapGridCanonical.Encode(new GridBuildRecipeBodyDto(
+                1, timelineId.Value, bootstrapThroughRowId?.Value,
+                target.ToCanonicalBytes(), baseRecipeDigest?.Value,
+                recomputedColumns.Select(static value => value.Value).ToArray()))
+            : RecapGridCanonical.Encode(new GridBuildRecipeV2BodyDto(
+                2, timelineId.Value, bootstrapThroughRowId?.Value,
+                target.ToCanonicalBytes(), null, originRootRecipeDigest?.Value,
+                recomputedColumns.Select(static value => value.Value).ToArray()));
         GridBuildRecipeDigest digest = new(RecapGridHash.Compute(
-            "atelia.recap-grid.build-recipe.v1",
-            RecapGridCanonical.Encode(body)
+            schemaVersion == 1 ? "atelia.recap-grid.build-recipe.v1" : "atelia.recap-grid.build-recipe.v2",
+            bodyBytes
         ));
-        byte[] canonical = RecapGridCanonical.Encode(new GridBuildRecipeDto(
-            1,
-            digest.Value,
-            body.TimelineId,
-            body.BootstrapThroughRowId,
-            body.Target,
-            body.BaseRecipeDigest,
-            body.RecomputedColumns
-        ));
+        byte[] canonical = schemaVersion == 1
+            ? RecapGridCanonical.Encode(new GridBuildRecipeDto(
+                1, digest.Value, timelineId.Value, bootstrapThroughRowId?.Value,
+                target.ToCanonicalBytes(), baseRecipeDigest?.Value,
+                recomputedColumns.Select(static value => value.Value).ToArray()))
+            : RecapGridCanonical.Encode(new GridBuildRecipeV2Dto(
+                2, digest.Value, timelineId.Value, bootstrapThroughRowId?.Value,
+                target.ToCanonicalBytes(), null, originRootRecipeDigest?.Value,
+                recomputedColumns.Select(static value => value.Value).ToArray()));
         if (canonical.Length > RecapGridLimits.MaximumRecipeCanonicalUtf8Bytes) {
             throw new ArgumentOutOfRangeException(nameof(target));
         }
@@ -375,9 +479,11 @@ public sealed class GridBuildRecipe {
             bootstrapThroughRowId,
             target,
             baseRecipeDigest,
+            originRootRecipeDigest,
             recomputedColumns,
             digest,
-            canonical
+            canonical,
+            schemaVersion
         );
     }
 
@@ -440,5 +546,26 @@ internal sealed record GridBuildRecipeDto(
     string? BootstrapThroughRowId,
     byte[] Target,
     string? BaseRecipeDigest,
+    string[] RecomputedColumns
+);
+
+internal sealed record GridBuildRecipeV2BodyDto(
+    int SchemaVersion,
+    string TimelineId,
+    string? BootstrapThroughRowId,
+    byte[] Target,
+    string? BaseRecipeDigest,
+    string? OriginRootRecipeDigest,
+    string[] RecomputedColumns
+);
+
+internal sealed record GridBuildRecipeV2Dto(
+    int SchemaVersion,
+    string Digest,
+    string TimelineId,
+    string? BootstrapThroughRowId,
+    byte[] Target,
+    string? BaseRecipeDigest,
+    string? OriginRootRecipeDigest,
     string[] RecomputedColumns
 );

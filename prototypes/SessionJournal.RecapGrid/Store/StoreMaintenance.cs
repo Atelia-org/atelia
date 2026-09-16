@@ -1,6 +1,6 @@
 namespace Atelia.SessionJournal.RecapGrid.Store;
 
-public static class RecapGridStoreMaintenance {
+public static partial class RecapGridStoreMaintenance {
     public static RecapGridStoreExportResult Export(
         string repositoryPath,
         RecapGridStoreExportCursor? after = null,

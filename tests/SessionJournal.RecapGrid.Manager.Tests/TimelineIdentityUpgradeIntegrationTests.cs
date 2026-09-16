@@ -114,7 +114,7 @@ public sealed partial class ManagerVerticalTests {
             RecapGridStorePhysicalWitness witness = Assert.IsType<RecapGridStorePrepareResetResult.Prepared>(
                 RecapGridStoreMaintenance.PrepareReset(path)).Witness;
             var reset = Assert.IsType<RecapGridStoreResetResult.Reset>(RecapGridStoreMaintenance.Reset(path, witness));
-            Assert.Equal(4, reset.Identity.SchemaVersion);
+            Assert.Equal(5, reset.Identity.SchemaVersion);
             var empty = Assert.IsType<RecapGridStoreInspectResult.Available>(RecapGridStoreMaintenance.Inspect(path)).Info;
             Assert.Equal(0, empty.CellCount);
             Assert.Equal(0, empty.RowViewCount);

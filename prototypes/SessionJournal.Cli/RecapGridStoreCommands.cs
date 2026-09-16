@@ -7,7 +7,7 @@ internal static class RecapGridStoreCommands {
     internal static int Run(string[] args) {
         if (args.Length == 0) {
             throw new ArgumentException(
-                "recap-grid requires inspect, export, verify, or reset."
+                "recap-grid requires inspect, export, verify, reset, or upgrade-store-v5."
             );
         }
         string subcommand = args[0];
@@ -17,6 +17,7 @@ internal static class RecapGridStoreCommands {
             "export" => Export(options),
             "verify" => Verify(options),
             "reset" => Reset(options),
+            "upgrade-store-v5" => UpgradeStoreV5(options),
             _ => throw new ArgumentException(
                 $"Unknown recap-grid subcommand '{subcommand}'."
             )
@@ -179,6 +180,53 @@ internal static class RecapGridStoreCommands {
                 page.Incomplete
             }
         );
+    }
+
+    private static int UpgradeStoreV5(CliOptions options) {
+        options.EnsureOnly("input", "apply");
+        if (options.GetAll("apply").Count > 1) {
+            throw new ArgumentException(
+                "Option --apply must be specified at most once."
+            );
+        }
+        string repository = options.RequireSingle("input");
+        RecapGridStoreUpgradeResult result =
+            RecapGridStoreMaintenance.UpgradeV4(
+                repository,
+                apply: options.HasFlag("apply"),
+                () => RecapGridV4PartialWorkProofResolver.Resolve(repository)
+            );
+        return result switch {
+            RecapGridStoreUpgradeResult.DryRunReady ready => Print(
+                "upgrade-store-v5", "dry-run-ready",
+                new { ready.RowViewCount, ready.CellCount }),
+            RecapGridStoreUpgradeResult.Upgraded upgraded => Print(
+                "upgrade-store-v5", "upgraded",
+                new {
+                    upgraded.BackupPath,
+                    upgraded.RowViewCount,
+                    upgraded.CellCount
+                }),
+            RecapGridStoreUpgradeResult.AlreadyCurrent => Print(
+                "upgrade-store-v5", "already-current"),
+            RecapGridStoreUpgradeResult.Absent => Print(
+                "upgrade-store-v5", "absent"),
+            RecapGridStoreUpgradeResult.Busy => Print(
+                "upgrade-store-v5", "busy", exitCode: 2),
+            RecapGridStoreUpgradeResult.OfflineCleanupRequired value => Print(
+                "upgrade-store-v5", "offline-cleanup-required",
+                new { value.Slot }, 2),
+            RecapGridStoreUpgradeResult.UnsupportedSchema value => Print(
+                "upgrade-store-v5", "unsupported-schema",
+                new { value.SchemaVersion }, 2),
+            RecapGridStoreUpgradeResult.PlatformUnsupported => Print(
+                "upgrade-store-v5", "platform-unsupported", exitCode: 2),
+            RecapGridStoreUpgradeResult.Invalid value => Print(
+                "upgrade-store-v5", "invalid",
+                new { value.Code, value.Detail }, 2),
+            _ => throw new InvalidOperationException(
+                "Unknown RecapGrid Store upgrade result.")
+        };
     }
 
     private static int Reset(CliOptions options) {

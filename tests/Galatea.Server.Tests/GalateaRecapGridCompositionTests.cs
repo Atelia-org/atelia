@@ -34,8 +34,8 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         "current Galatea prompt";
     private readonly List<string> _paths = [];
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
-    private static GalateaRecapGridTargetExpectation DefaultExpectation =>
-        GalateaRecapGridTargetExpectation.ForCharacter(
+    private static GalateaRecapGridDefaultPolicy DefaultExpectation =>
+        GalateaRecapGridDefaultPolicy.ForCharacter(
             new GalateaCharacterName("Galatea")
         );
 
@@ -159,388 +159,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
     }
 
     [Fact]
-    public void TargetInspectorLocksGoldenAndStructuralAlignment() {
-        string path = NewPath();
-        using SessionJournalEngine writer = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions(
-                "model-a",
-                "test system prompt",
-                "openai-chat/strict"
-            )
-        );
-        GalateaRecapGridTargetExpectation expected =
-            GalateaRecapGridTargetExpectation.ForCharacter(
-                new GalateaCharacterName("Galatea")
-            );
-        GalateaRecapGridTargetAlignment.Unprovisioned timelineAbsent =
-            Assert.IsType<GalateaRecapGridTargetAlignment.Unprovisioned>(
-                GalateaRecapGridTargetInspector.Inspect(
-                    writer.ReadView,
-                    expected
-                )
-            );
-        Assert.Equal("timeline", timelineAbsent.Component);
-        ProvisionTimeline(writer);
-        GalateaRecapGridTargetAlignment.Unprovisioned controlAbsent =
-            Assert.IsType<GalateaRecapGridTargetAlignment.Unprovisioned>(
-                GalateaRecapGridTargetInspector.Inspect(
-                    writer.ReadView,
-                    expected
-                )
-            );
-        Assert.Equal("control", controlAbsent.Component);
-        ProvisionCadenceAndControl(writer);
-        Assert.IsType<GalateaRecapGridTargetAlignment.NoActive>(
-            GalateaRecapGridTargetInspector.Inspect(
-                writer.ReadView,
-                expected
-            )
-        );
-
-        RecapGridControlRegistrationBundle galatea = GalateaBundle("Galatea");
-        RecapGridControlRegistrationBundle renamed = GalateaBundle("阿特丽娅");
-        BuildTarget aligned = BundleTarget(galatea);
-        BuildTarget wrongName = BundleTarget(renamed);
-        BuildTarget mixed = BuildTarget.Create([
-            new BuildTargetColumn(
-                galatea.Definitions[0].LogicalColumnId,
-                galatea.Definitions[0].Digest
-            ),
-            new BuildTargetColumn(
-                renamed.Definitions[1].LogicalColumnId,
-                renamed.Definitions[1].Digest
-            )
-        ]);
-        BuildTarget reversed = BuildTarget.Create(
-            galatea.Definitions.Reverse().Select(static definition =>
-                new BuildTargetColumn(
-                    definition.LogicalColumnId,
-                    definition.Digest
-                )
-            )
-        );
-        BuildTarget countMismatch = BuildTarget.Create([
-            new BuildTargetColumn(
-                galatea.Definitions[0].LogicalColumnId,
-                galatea.Definitions[0].Digest
-            )
-        ]);
-        RegisteredTargetSet registered = RegisterTargets(
-            writer,
-            [.. galatea.Families, .. renamed.Families],
-            [.. galatea.Definitions, .. renamed.Definitions],
-            aligned,
-            wrongName,
-            mixed,
-            reversed,
-            countMismatch
-        );
-        _ = ActivateTarget(writer, registered, recipeIndex: 0);
-        GalateaRecapGridTargetAlignment.Aligned exact = Assert.IsType<
-            GalateaRecapGridTargetAlignment.Aligned
-        >(GalateaRecapGridTargetInspector.Inspect(
-            writer.ReadView,
-            expected
-        ));
-        Assert.Equal(aligned.Digest, exact.TargetDigest);
-
-        for (int index = 1; index < registered.Recipes.Count; index++) {
-            _ = ActivateTarget(writer, registered, index);
-            Assert.IsType<GalateaRecapGridTargetAlignment.Mismatch>(
-                GalateaRecapGridTargetInspector.Inspect(
-                    writer.ReadView,
-                    expected
-                )
-            );
-        }
-        EventAddress rawHead = writer.ReadCurrentHead()!.Value;
-        GalateaRecentContextInspection readSide =
-            GalateaRecapGridReadiness.InspectRecentContext(
-                writer.ReadView,
-                rawHead,
-                expected,
-                contextNthPrevious: 0,
-                CancellationToken.None
-            );
-        Assert.Equal("exact", readSide.Readiness.Freshness);
-        Assert.Equal("invalid", readSide.Readiness.State);
-        Assert.Equal("character-asset-mismatch", readSide.Readiness.Code);
-        Assert.Equal(ContextHeaderDto.Empty, readSide.ContextHeader);
-
-        string controlState = Path.Combine(
-            path,
-            "control",
-            "recap-grid",
-            "v1",
-            "refs",
-            writer.BranchRefId.ToHexString(),
-            "timelines",
-            registered.Timeline.TimelineId.Value!,
-            "control.json"
-        );
-        string validState = File.ReadAllText(controlState);
-        string unsupportedState = validState.Replace(
-            "\"schemaVersion\":4",
-            "\"schemaVersion\":999",
-            StringComparison.Ordinal
-        );
-        Assert.NotEqual(validState, unsupportedState);
-        File.WriteAllText(controlState, unsupportedState);
-        Assert.IsType<GalateaRecapGridTargetAlignment.UnsupportedSchema>(
-            GalateaRecapGridTargetInspector.Inspect(
-                writer.ReadView,
-                expected
-            )
-        );
-        File.WriteAllText(controlState, "{broken");
-        Assert.IsType<GalateaRecapGridTargetAlignment.Invalid>(
-            GalateaRecapGridTargetInspector.Inspect(
-                writer.ReadView,
-                expected
-            )
-        );
-    }
-
-    [Fact]
-    public async Task FreshAdmissionMismatchIsZeroEffect() {
-        string path = NewPath();
-        using (SessionJournalEngine provisioner = SessionJournalEngine.Create(
-                   path,
-                   new SessionCreateOptions(
-                       "model-a",
-                       "test system prompt",
-                       "openai-chat/strict"
-                   ))) {
-            ProvisionTimelineAndControl(provisioner);
-            _ = ProvisionActiveEmptyRecipe(provisioner);
-        }
-        CompletionConnectionConfig connection = Connection();
-        var provider = new TrackingFactory("must not dispatch");
-        int routeLoads = 0;
-        var composition = new GalateaRecapGridComposition(
-            RecapGridCompletionHost.Create(
-                () => {
-                    Interlocked.Increment(ref routeLoads);
-                    throw new InvalidOperationException(
-                        "Mismatch must fail before current routes."
-                    );
-                },
-                Connections(connection),
-                provider,
-            inputProjector: GalateaInputProjector.Instance
-            ),
-            RecapGridOnlineLimits.Production,
-            _estimator
-        );
-        await using var service = new GalateaHostService(
-            Config(path, connection),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            composition
-        );
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        RecentTurnsResponseDto recent = await service.GetRecentTurnsAsync(
-            session,
-            CancellationToken.None
-        );
-        Assert.Equal("invalid", recent.RecapGridReadiness?.State);
-        Assert.Equal(
-            "character-asset-mismatch",
-            recent.RecapGridReadiness?.Code
-        );
-        Assert.Equal(ContextHeaderDto.Empty, recent.ContextHeader);
-        EventAddress? rawHead = session.Engine.ReadCurrentHead();
-        int setupCount = CountSystemPromptSetups(session.Engine);
-        IReadOnlyDictionary<string, string> domain = SnapshotDomainFiles(path);
-        GalateaDelegationStateSnapshot delegation = session
-            .DelegationHandle!.Store.ReadSnapshot();
-        SessionRuntimeRecoveryRequirements admitted = session.Engine
-            .InspectRuntimeRecoveryRequirements();
-
-        GalateaTurnException failure = await Assert.ThrowsAsync<
-            GalateaTurnException
-        >(() => service.PrepareFreshTurnAdmissionAsync(
-            session,
-            admitted,
-            CancellationToken.None
-        ).AsTask());
-
-        Assert.Equal("character-asset-mismatch", failure.FailureReason);
-        GalateaTurnException openFailure = await Assert.ThrowsAsync<
-            GalateaTurnException
-        >(() => composition.OpenFreshAsync(
-            session.Engine,
-            connection.Id,
-            pendingObservation: "must not enter Online",
-            session.TargetExpectation,
-            CancellationToken.None
-        ).AsTask());
-        Assert.Equal(
-            "character-asset-mismatch",
-            openFailure.FailureReason
-        );
-        Assert.Equal(rawHead, session.Engine.ReadCurrentHead());
-        Assert.Equal(setupCount, CountSystemPromptSetups(session.Engine));
-        Assert.Equal(domain, SnapshotDomainFiles(path));
-        GalateaDelegationStateSnapshot after = session
-            .DelegationHandle.Store.ReadSnapshot();
-        Assert.Equal(delegation.StoreRevision, after.StoreRevision);
-        Assert.Equal(delegation.ActiveLease, after.ActiveLease);
-        Assert.Equal(0, routeLoads);
-        Assert.Equal(0, provider.CreateCallCount);
-        Assert.Equal(0, provider.Client.DispatchCallCount);
-    }
-
-    [Fact]
-    public async Task FreshSendRechecksAlignmentBeforeSetupWrite() {
-        string path = NewPath();
-        RegisteredTargetSet registered;
-        using (SessionJournalEngine provisioner = SessionJournalEngine.Create(
-                   path,
-                   new SessionCreateOptions(
-                       "model-a",
-                       "old system prompt",
-                       "openai-chat/strict"
-                   ))) {
-            ProvisionTimelineAndControl(provisioner);
-            RecapGridControlRegistrationBundle aligned =
-                GalateaBundle("Galatea");
-            RecapGridControlRegistrationBundle wrong =
-                GalateaBundle("阿特丽娅");
-            registered = RegisterTargets(
-                provisioner,
-                [.. aligned.Families, .. wrong.Families],
-                [.. aligned.Definitions, .. wrong.Definitions],
-                BundleTarget(aligned),
-                BundleTarget(wrong)
-            );
-            _ = ActivateTarget(provisioner, registered, recipeIndex: 0);
-        }
-        CompletionConnectionConfig connection = Connection();
-        var provider = new TrackingFactory("must not dispatch");
-        var composition = new GalateaRecapGridComposition(
-            RecapGridCompletionHost.Create(
-                static () => throw new InvalidOperationException(
-                    "Mismatch must fail before current routes."
-                ),
-                Connections(connection),
-                provider,
-            inputProjector: GalateaInputProjector.Instance
-            ),
-            RecapGridOnlineLimits.Production,
-            _estimator
-        );
-        await using var service = new GalateaHostService(
-            Config(path, connection, CurrentFinalizedSystemPrompt),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            composition
-        );
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        SessionRuntimeRecoveryRequirements admitted = session.Engine
-            .InspectRuntimeRecoveryRequirements();
-        await service.PrepareFreshTurnAdmissionAsync(
-            session,
-            admitted,
-            CancellationToken.None
-        );
-        GalateaLiveTurn turn = service.StartTurn(
-            session,
-            "accepted before target drift",
-            new GalateaTurnOptions(connection.Id),
-            GalateaDelegateTestConfiguration.PlayerSender
-        );
-        EventAddress? rawHead = session.Engine.ReadCurrentHead();
-        int setupCount = CountSystemPromptSetups(session.Engine);
-        _ = ActivateTarget(session.Engine, registered, recipeIndex: 1);
-
-        GalateaTurnException failure = await Assert.ThrowsAsync<
-            GalateaTurnException
-        >(() => service.RunTurnAsync(
-            session,
-            turn,
-            CancellationToken.None
-        ));
-
-        Assert.Equal("character-asset-mismatch", failure.FailureReason);
-        Assert.Equal(rawHead, session.Engine.ReadCurrentHead());
-        Assert.Equal(setupCount, CountSystemPromptSetups(session.Engine));
-        Assert.Equal(0, provider.CreateCallCount);
-        Assert.Equal(0, provider.Client.DispatchCallCount);
-    }
-
-    [Fact]
-    public async Task NewRequestMismatchDoesNotCreateCurrentProvider() {
-        string path = NewPath();
-        EventAddress observationHead;
-        using (SessionJournalEngine provisioner = SessionJournalEngine.Create(
-                   path,
-                   new SessionCreateOptions(
-                       "model-a",
-                       "test system prompt",
-                       "openai-chat/strict"
-                   ))) {
-            ProvisionTimelineAndControl(provisioner);
-            _ = ProvisionActiveEmptyRecipe(provisioner);
-            observationHead = provisioner.AppendObservation(
-                GalateaHostService.WrapUserMessageForEngine(
-                    "accepted observation",
-                    DateTimeOffset.UnixEpoch
-                )
-            );
-        }
-        CompletionConnectionConfig connection = Connection();
-        var provider = new TrackingFactory("must not dispatch");
-        var composition = new GalateaRecapGridComposition(
-            RecapGridCompletionHost.Create(
-                static () => throw new InvalidOperationException(
-                    "Mismatch must fail before current routes."
-                ),
-                Connections(connection),
-                provider,
-            inputProjector: GalateaInputProjector.Instance
-            ),
-            RecapGridOnlineLimits.Production,
-            _estimator
-        );
-        await using var service = new GalateaHostService(
-            Config(path, connection),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            composition
-        );
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        GalateaLiveTurn turn = service.StartRecovery(
-            session,
-            new GalateaTurnOptions(
-                connection.Id,
-                GalateaTurnMode.Resume,
-                ExpectedHead: observationHead
-            )
-        );
-
-        GalateaTurnException failure = await Assert.ThrowsAsync<
-            GalateaTurnException
-        >(() => service.RunTurnAsync(
-            session,
-            turn,
-            CancellationToken.None
-        ));
-
-        Assert.Equal("character-asset-mismatch", failure.FailureReason);
-        Assert.Equal(observationHead, session.Engine.ReadCurrentHead());
-        Assert.Equal(0, provider.CreateCallCount);
-        Assert.Equal(0, provider.Client.DispatchCallCount);
-    }
-
-    [Fact]
     public async Task ActualServiceBuildsMissingGridWorkThroughExactRoute() {
         string path = NewPath();
         FamilyDefinition family;
@@ -583,8 +201,8 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             Config(path, connection),
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate,
-            TargetExpectations(
-                GalateaRecapGridTargetExpectation.ForTarget(recipe.Target)
+            DefaultPolicies(
+                GalateaRecapGridDefaultPolicy.ForTarget(recipe.Target)
             ));
         CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
@@ -610,7 +228,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 session.Engine.ReadView,
                 rawHead,
-                session.TargetExpectation,
+                session.DefaultPolicy,
                 CancellationToken.None
             );
         Assert.Equal("exact", ready.Freshness);
@@ -626,7 +244,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                 session.Engine,
                 connection.Id,
                 pendingObservation: "settle current raw tail",
-                targetExpectation: session.TargetExpectation,
+                defaultPolicy: session.DefaultPolicy,
                 CancellationToken.None)) { }
         int providerCallsBeforeFulfilledProbe =
             candidateFactory.Client.DispatchCallCount;
@@ -635,7 +253,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                 session.Engine,
                 connection.Id,
                 pendingObservation: "provider-free fulfilled probe",
-                targetExpectation: session.TargetExpectation,
+                defaultPolicy: session.DefaultPolicy,
                 CancellationToken.None)) {
             RecapGridOnlineMaintenanceEvidence probeEvidence =
                 Assert.IsType<RecapGridOnlineMaintenanceEvidence>(
@@ -667,7 +285,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 session.Engine.ReadView,
                 rawHead,
-                session.TargetExpectation,
+                session.DefaultPolicy,
                 CancellationToken.None);
         Assert.Equal("exact", bootstrap.Freshness);
         Assert.Equal("reserve-bootstrap-raw-only", bootstrap.State);
@@ -700,7 +318,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 session.Engine.ReadView,
                 rawHead,
-                session.TargetExpectation,
+                session.DefaultPolicy,
                 CancellationToken.None
             );
         Assert.Equal("exact", fulfillmentMissing.Freshness);
@@ -726,7 +344,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 session.Engine.ReadView,
                 rawHead,
-                session.TargetExpectation,
+                session.DefaultPolicy,
                 CancellationToken.None
             );
         Assert.Equal("exact", frontier.Freshness);
@@ -842,8 +460,8 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                          Config(galateaPath, connection),
                          DisabledGalateaUserMessageNormalizer.Instance,
                          candidate,
-                         TargetExpectations(
-                             GalateaRecapGridTargetExpectation.ForTarget(
+                         DefaultPolicies(
+                             GalateaRecapGridDefaultPolicy.ForTarget(
                                  targetRecipe.Target
                              )
                          ))) {
@@ -1440,69 +1058,12 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                 session.Engine,
                 connection.Id,
                 pendingObservation: null,
-                targetExpectation: session.TargetExpectation,
+                defaultPolicy: session.DefaultPolicy,
                 CancellationToken.None
             );
         Assert.Equal(1, factory.CreateCallCount);
         Assert.Equal(0, factory.Client.DispatchCallCount);
         Assert.NotNull(reopened.MaintenanceEvidence);
-    }
-
-    [Fact]
-    public async Task ToolContinuationSettlesBeforeTargetMismatchAndDoesNotCreateCurrentClient() {
-        string path = NewPath();
-        CompletionConnectionConfig connection = Connection();
-        RecapGridAgentControlProfile profile = AgentProfile();
-        EventAddress actionHead = await
-            CreateAgentControlRecoveryBoundaryAsync(
-                path,
-                connection,
-                profile,
-                SessionJournalFailpoint.AfterActionCommitted,
-                SessionExecutionPhase.AwaitingToolExecution
-            );
-        using (SessionJournalEngine targetProvisioner =
-               SessionJournalEngine.Open(path)) {
-            _ = ProvisionActiveEmptyRecipe(targetProvisioner);
-        }
-
-        var factory = new TrackingFactory("must not dispatch");
-        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
-            static () => throw new InvalidOperationException(
-                "Mismatch must fail before recap route loading."),
-            Connections(connection),
-            factory,
-            new RecapGridAgentControlProfileRegistry([profile]),
-            inputProjector: GalateaInputProjector.Instance);
-        var candidate = new GalateaRecapGridComposition(
-            completion,
-            RecapGridOnlineLimits.Production,
-            _estimator);
-        await using var service = new GalateaHostService(
-            Config(path, connection),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            candidate);
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice", CancellationToken.None);
-        GalateaLiveTurn turn = service.StartRecovery(
-            session,
-            new GalateaTurnOptions(
-                connection.Id,
-                GalateaTurnMode.Resume,
-                ExpectedHead: actionHead));
-
-        GalateaTurnException failure = await Assert.ThrowsAsync<
-            GalateaTurnException>(() => service.RunTurnAsync(
-                session, turn, CancellationToken.None));
-        Assert.Equal("character-asset-mismatch", failure.FailureReason);
-        Assert.Equal(0, factory.CreateCallCount);
-        Assert.Equal(0, factory.Client.DispatchCallCount);
-        Assert.Equal(
-            SessionExecutionPhase.AwaitingAgentAction,
-            session.Engine.InspectExecutionBoundary().Phase);
-        Assert.Equal(
-            SessionEventKind.ToolResultObserved,
-            session.Engine.InspectExecutionBoundary().HeadKind);
     }
 
     [Fact]
@@ -1534,7 +1095,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                     engine,
                     connection.Id,
                     pendingObservation: "pending",
-                    targetExpectation: DefaultExpectation,
+                    defaultPolicy: DefaultExpectation,
                     cancelled.Token).AsTask());
             Assert.Equal(0, factory.CreateCallCount);
 
@@ -1543,7 +1104,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                     engine,
                     connection.Id,
                     pendingObservation: "pending",
-                    targetExpectation: DefaultExpectation,
+                    defaultPolicy: DefaultExpectation,
                     CancellationToken.None);
             Assert.Equal(1, factory.CreateCallCount);
             Assert.Equal(0, factory.Client.DispatchCallCount);
@@ -2528,9 +2089,9 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         connection.Id));
 
     private static IReadOnlyDictionary<string,
-        GalateaRecapGridTargetExpectation> TargetExpectations(
-        GalateaRecapGridTargetExpectation expectation
-    ) => new Dictionary<string, GalateaRecapGridTargetExpectation>(
+        GalateaRecapGridDefaultPolicy> DefaultPolicies(
+        GalateaRecapGridDefaultPolicy expectation
+    ) => new Dictionary<string, GalateaRecapGridDefaultPolicy>(
         StringComparer.Ordinal
     ) {
         ["alice"] = expectation

@@ -171,16 +171,27 @@ internal sealed record GalateaCharacterRecipient(
 );
 
 public sealed record GalateaRecapGridRuntimeConfig(
-    string RouteManifestPath,
-    RecapGridAgentControlProfileRegistry AgentControlProfiles,
-    string CurrentAgentControlProfileId
+    GalateaRecapGridMaintenanceConfig Maintenance,
+    RecapGridAgentControlProfileRegistry? HistoricalAgentControlProfiles
+);
+
+public sealed record GalateaRecapGridMaintenanceConfig(
+    string ConnectionId,
+    int MaximumConcurrency,
+    TimeSpan DispatchTimeout
 );
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record GalateaRecapGridFileConfig(
-    string RouteManifestPath,
-    IReadOnlyList<string> AgentControlProfileFiles,
-    string CurrentAgentControlProfileId
+    GalateaRecapGridMaintenanceFileConfig Maintenance,
+    IReadOnlyList<string> HistoricalAgentControlProfileFiles
+);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed record GalateaRecapGridMaintenanceFileConfig(
+    string ConnectionId,
+    int MaximumConcurrency,
+    long DispatchTimeoutMilliseconds
 );
 
 /// <summary>

@@ -727,7 +727,9 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 )],
                 [],
                 new GalateaRuntimeFileConfig(RecapGrid: new GalateaRecapGridFileConfig(
-                    "routes.json", ["profile.json"], profile.ProfileId))
+                    new GalateaRecapGridMaintenanceFileConfig(
+                        "test", 1, 900_000),
+                    ["profile.json"]))
             );
             string configPath = Path.Combine(_root, "config.json");
             File.WriteAllText(

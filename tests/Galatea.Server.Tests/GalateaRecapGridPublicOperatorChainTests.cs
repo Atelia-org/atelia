@@ -190,7 +190,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 session.Engine.ReadView,
                 rawHead,
-                session.TargetExpectation,
+                session.DefaultPolicy,
                 CancellationToken.None
             );
         Assert.Equal("exact", readiness.Freshness);
@@ -226,9 +226,9 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                     Players: GalateaDelegateTestConfiguration.Players.Select(player =>
                         new GalateaPlayerFileConfig(player.PlayerId, player.Name.Value, player.Password)).ToArray(),
                     Runtime: new GalateaRuntimeFileConfig(RecapGrid: new GalateaRecapGridFileConfig(
-                        Path.GetRelativePath(_root, routes),
-                        [Path.GetRelativePath(_root, profile)],
-                        ProfileId
+                        new GalateaRecapGridMaintenanceFileConfig(
+                            AgentConnectionId, 1, 900_000),
+                        [Path.GetRelativePath(_root, profile)]
                     ))
                 ),
                 GalateaJson.Options

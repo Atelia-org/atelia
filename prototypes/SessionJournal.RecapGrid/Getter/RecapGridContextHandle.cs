@@ -278,19 +278,20 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 )
                 : MapStoreRead(currentViewRead);
         }
+        var definitions = control.Definitions.ToDictionary(
+            static value => value.Digest
+        );
         RecapRowView currentView = currentViewFound.Value;
         RecapGridContextResolveResult? currentFailure = ValidateView(
+            reader,
             currentView,
             currentRow.Descriptor,
-            recipe
+            recipe,
+            definitions
         );
         if (currentFailure is not null) {
             return currentFailure;
         }
-
-        var definitions = control.Definitions.ToDictionary(
-            static value => value.Digest
-        );
         RecapGridContextResolveResult? currentCellsFailure =
             ValidateViewCells(
                 reader,
@@ -428,9 +429,11 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                     : MapStoreRead(previousViewRead);
             }
             RecapGridContextResolveResult? previousFailure = ValidateView(
+                reader,
                 previousFound.Value,
                 previousSelected.Row.Descriptor,
-                recipe
+                recipe,
+                definitions
             );
             if (previousFailure is not null) {
                 return previousFailure;
@@ -538,33 +541,89 @@ public sealed partial class RecapGridContextHandle : IDisposable,
     }
 
     private static RecapGridContextResolveResult? ValidateView(
+        RecapGridStoreReader reader,
         RecapRowView view,
         HistorySegmentDescriptor descriptor,
-        GridBuildRecipe recipe
+        GridBuildRecipe recipe,
+        IReadOnlyDictionary<MaintainerDefinitionDigest,
+            MaintainerDefinitionRevision> definitions
     ) {
         if (view.TimelineId != descriptor.TimelineId
             || view.HistoryRowId != descriptor.RowId
             || view.RecipeDigest != recipe.Digest
-            || view.TargetDigest != recipe.Target.Digest
             || (view.PreviousRowResultId is null)
-                != (descriptor.PreviousRowId is null)
-            || view.OrderedCells.Count
-                != recipe.Target.OrderedColumns.Count) {
+                != (descriptor.PreviousRowId is null)) {
             return Invalid(
                 RecapGridContextComponent.Store,
                 "RowViewAuthorityMismatch",
                 "The RowView differs from its Timeline row or active recipe."
             );
         }
+        var key = new RowWorkKey(
+            descriptor.RefId,
+            descriptor.TimelineId,
+            recipe.Digest,
+            descriptor.RowId
+        );
+        RecapGridStoreReadResult<RowWork> workRead = reader.ReadRowWork(key);
+        BuildTarget target;
+        IReadOnlyList<RowWorkAssignment>? assignments = null;
+        switch (workRead) {
+            case RecapGridStoreReadResult<RowWork>.Found found:
+                RowWork work = found.Value;
+                if (work.PreviousHistoryRowId != descriptor.PreviousRowId
+                    || work.PreviousRowResultId != view.PreviousRowResultId
+                    || work.ProducerTarget.Digest != view.TargetDigest) {
+                    return Invalid(RecapGridContextComponent.Store,
+                        "RowWorkAuthorityMismatch",
+                        "The persisted RowWork differs from the RowView.");
+                }
+                target = work.ProducerTarget;
+                assignments = work.OrderedAssignments;
+                break;
+            case RecapGridStoreReadResult<RowWork>.Missing:
+                // V4 facts have no persisted pre-dispatch work. Their stored
+                // recipe target remains their actual producer evidence.
+                if (view.TargetDigest != recipe.Target.Digest) {
+                    return Invalid(RecapGridContextComponent.Store,
+                        "LegacyRowViewTargetMismatch",
+                        "A legacy RowView must match its stored recipe target.");
+                }
+                target = recipe.Target;
+                break;
+            case RecapGridStoreReadResult<RowWork>.Busy:
+                return new RecapGridContextResolveResult.Busy(
+                    RecapGridContextComponent.Store);
+            case RecapGridStoreReadResult<RowWork>.Disposed:
+                return new RecapGridContextResolveResult.Disposed(
+                    RecapGridContextComponent.Store);
+            case RecapGridStoreReadResult<RowWork>.Invalid invalid:
+                return Invalid(RecapGridContextComponent.Store,
+                    invalid.Code, invalid.Detail);
+            default:
+                return Invalid(RecapGridContextComponent.Store,
+                    "RowWorkReadOutcomeInvalid",
+                    "The Store returned an unknown RowWork outcome.");
+        }
+        if (view.OrderedCells.Count != target.OrderedColumns.Count) {
+            return Invalid(RecapGridContextComponent.Store,
+                "RowViewMembershipMismatch",
+                "The RowView does not exactly cover its actual producer target.");
+        }
         for (int index = 0; index < view.OrderedCells.Count; index++) {
             RecapRowViewCell member = view.OrderedCells[index];
-            BuildTargetColumn target = recipe.Target.OrderedColumns[index];
-            if (member.LogicalColumnId != target.LogicalColumnId
-                || member.DefinitionDigest != target.DefinitionDigest) {
+            BuildTargetColumn targetColumn = target.OrderedColumns[index];
+            if (member.LogicalColumnId != targetColumn.LogicalColumnId
+                || member.DefinitionDigest != targetColumn.DefinitionDigest
+                || !definitions.TryGetValue(targetColumn.DefinitionDigest,
+                    out MaintainerDefinitionRevision? definition)
+                || definition.LogicalColumnId != targetColumn.LogicalColumnId
+                || assignments is { } frozen
+                    && frozen[index].LogicalColumnId != targetColumn.LogicalColumnId) {
                 return Invalid(
                     RecapGridContextComponent.Store,
                     "RowViewMembershipMismatch",
-                    "The RowView does not exactly cover the active target."
+                    "The RowView does not exactly cover its actual producer target."
                 );
             }
         }
@@ -704,7 +763,13 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                             : MapStoreRead(read);
                     }
                     RecapGridContextResolveResult? viewFailure =
-                        ValidateView(found.Value, row.Descriptor, recipe);
+                        ValidateView(
+                            reader,
+                            found.Value,
+                            row.Descriptor,
+                            recipe,
+                            definitions
+                        );
                     if (viewFailure is not null) {
                         return viewFailure;
                     }

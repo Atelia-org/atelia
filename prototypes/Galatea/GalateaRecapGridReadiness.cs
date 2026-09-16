@@ -29,12 +29,12 @@ internal static class GalateaRecapGridReadiness {
     internal static RecapGridReadinessSnapshotDto Inspect(
         SessionJournalReadView selectedRef,
         EventAddress capturedRawHead,
-        GalateaRecapGridTargetExpectation targetExpectation,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         CancellationToken cancellationToken
     ) => InspectCore(
         selectedRef,
         capturedRawHead,
-        targetExpectation,
+        defaultPolicy,
         includeContextHeader: false,
         contextNthPrevious: 0,
         cancellationToken
@@ -43,13 +43,13 @@ internal static class GalateaRecapGridReadiness {
     internal static GalateaRecentContextInspection InspectRecentContext(
         SessionJournalReadView selectedRef,
         EventAddress capturedRawHead,
-        GalateaRecapGridTargetExpectation targetExpectation,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         int contextNthPrevious,
         CancellationToken cancellationToken
     ) => InspectCore(
         selectedRef,
         capturedRawHead,
-        targetExpectation,
+        defaultPolicy,
         includeContextHeader: true,
         contextNthPrevious,
         cancellationToken
@@ -58,29 +58,14 @@ internal static class GalateaRecapGridReadiness {
     private static GalateaRecentContextInspection InspectCore(
         SessionJournalReadView selectedRef,
         EventAddress capturedRawHead,
-        GalateaRecapGridTargetExpectation targetExpectation,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         bool includeContextHeader,
         int contextNthPrevious,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(selectedRef);
-        ArgumentNullException.ThrowIfNull(targetExpectation);
+        ArgumentNullException.ThrowIfNull(defaultPolicy);
         cancellationToken.ThrowIfCancellationRequested();
-        GalateaRecentContextInspection? targetFailure =
-            MapTargetAlignmentFailure(
-                GalateaRecapGridTargetInspector.Inspect(
-                    selectedRef,
-                    targetExpectation
-                ),
-                capturedRawHead
-            );
-        if (targetFailure is not null) {
-            return RequireRawHead(
-                selectedRef,
-                capturedRawHead,
-                targetFailure
-            );
-        }
         RecapGridContextOpenResult opened =
             RecapGridContextFactory.Open(
                 selectedRef,
@@ -112,7 +97,7 @@ internal static class GalateaRecapGridReadiness {
                     getter,
                     selected.Selection,
                     capturedRawHead,
-                    targetExpectation,
+                    defaultPolicy,
                     includeContextHeader,
                     contextNthPrevious,
                     cancellationToken
@@ -182,15 +167,11 @@ internal static class GalateaRecapGridReadiness {
         RecapGridContextHandle getter,
         RecapGridContextSelection selection,
         EventAddress capturedRawHead,
-        GalateaRecapGridTargetExpectation targetExpectation,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         bool includeContextHeader,
         int contextNthPrevious,
         CancellationToken cancellationToken
     ) {
-        if (selection.Recipe.Target.Digest
-                != targetExpectation.TargetDigest) {
-            return WithoutContext(CharacterAssetMismatch(capturedRawHead));
-        }
         var ready = new RecapGridReadinessSnapshotDto(
             ExactFreshness,
             "ready",
@@ -216,12 +197,6 @@ internal static class GalateaRecapGridReadiness {
                 ));
             }
             contextSelection = selected.Selection;
-            if (contextSelection.Recipe.Target.Digest
-                    != targetExpectation.TargetDigest) {
-                return WithoutContext(CharacterAssetMismatch(
-                    capturedRawHead
-                ));
-            }
         }
 
         RecapGridContextMaterializeResult materialized = getter.Materialize(
@@ -345,54 +320,6 @@ internal static class GalateaRecapGridReadiness {
     private static GalateaRecentContextInspection WithoutContext(
         RecapGridReadinessSnapshotDto readiness
     ) => new(readiness, ContextHeaderDto.Empty);
-
-    private static GalateaRecentContextInspection?
-        MapTargetAlignmentFailure(
-        GalateaRecapGridTargetAlignment alignment,
-        EventAddress capturedRawHead
-    ) => alignment switch {
-        GalateaRecapGridTargetAlignment.Aligned
-            or GalateaRecapGridTargetAlignment.Unprovisioned
-            or GalateaRecapGridTargetAlignment.NoActive => null,
-        GalateaRecapGridTargetAlignment.Mismatch => WithoutContext(
-            CharacterAssetMismatch(capturedRawHead)
-        ),
-        GalateaRecapGridTargetAlignment.Busy value => WithoutContext(Exact(
-            "busy",
-            capturedRawHead,
-            code: $"{value.Component}-target-inspection-busy"
-        )),
-        GalateaRecapGridTargetAlignment.UnsupportedSchema value
-            => WithoutContext(Exact(
-                "invalid",
-                capturedRawHead,
-                code: $"{value.Component}-schema-{value.SchemaVersion}"
-            )),
-        GalateaRecapGridTargetAlignment.Disposed => WithoutContext(Exact(
-            "unavailable",
-            capturedRawHead,
-            code: "control-target-inspection-disposed"
-        )),
-        GalateaRecapGridTargetAlignment.Invalid value => WithoutContext(Exact(
-            "invalid",
-            capturedRawHead,
-            code: $"{value.Component}:{value.Code}",
-            detail: value.Detail
-        )),
-        _ => WithoutContext(Exact(
-            "invalid",
-            capturedRawHead,
-            code: "target-inspection-outcome-unknown"
-        ))
-    };
-
-    private static RecapGridReadinessSnapshotDto CharacterAssetMismatch(
-        EventAddress capturedRawHead
-    ) => Exact(
-        "invalid",
-        capturedRawHead,
-        code: "character-asset-mismatch"
-    );
 
     private static RecapGridReadinessSnapshotDto ReserveBootstrap(
         EventAddress capturedRawHead,

@@ -397,6 +397,49 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task Public65537TimelineBuildsThroughHeadAndColdReopensWithoutProviderCalls() {
+        const int rowCount = 65_537;
+        Fixture fixture = CreateFullFixture(
+            turns: (rowCount - 1) / 2,
+            zeroColumns: true);
+        Assert.Equal(rowCount, fixture.Rows.Count);
+        var executor = new RecordingExecutor();
+
+        using (fixture.Journal) {
+            var request = new RecapGridBuildRequest(
+                new RecapGridBuildSelection.ExplicitCandidate(
+                    fixture.Recipe.Digest),
+                fixture.Rows[^1].Descriptor.RowId,
+                new RecapGridBuildBudget(
+                    maximumRecipeRowSteps: rowCount,
+                    maximumNewCalls: 0,
+                    maximumElapsed: TimeSpan.FromMinutes(10)));
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                RecapGridBuildResult.Fulfilled result = Assert.IsType<
+                    RecapGridBuildResult.Fulfilled>(
+                    await manager.Manager.BuildAsync(request, executor));
+                Assert.Equal(rowCount, result.Metrics.RecipeRowSteps);
+                Assert.Equal(0, result.Metrics.NewCalls);
+            }
+            using RecapGridManagerHandle reopened = OpenManager(fixture);
+            var cachedRequest = new RecapGridBuildRequest(
+                request.Selection,
+                request.ThroughRowId,
+                new RecapGridBuildBudget(
+                    maximumRecipeRowSteps: 0,
+                    maximumNewCalls: 0,
+                    maximumElapsed: TimeSpan.FromMinutes(1)));
+            RecapGridBuildResult.Fulfilled cached = Assert.IsType<
+                RecapGridBuildResult.Fulfilled>(
+                await reopened.Manager.BuildAsync(
+                    cachedRequest, executor));
+            Assert.Equal(0, cached.Metrics.RecipeRowSteps);
+            Assert.Equal(0, cached.Metrics.NewCalls);
+            Assert.Empty(executor.Batches);
+        }
+    }
+
+    [Fact]
     public async Task ExistingCellsExposeViewFrontierAndPublishWithoutRaw() {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
         var request = new RecapGridBuildRequest(

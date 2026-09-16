@@ -79,6 +79,163 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
     }
 
     [Fact]
+    public void V4FullStoreUpgradeIsProviderFreeBytePreservingInDryRunAndPreservesIdsOnApply() {
+        CreateV4FullStore(out RowBuildSpec spec, out RecapCellArtifact cell,
+            out RecapRowView row);
+        string path = new StorePaths(_root).DatabasePath;
+        byte[] before = File.ReadAllBytes(path);
+
+        RecapGridStoreUpgradeResult dryRun =
+            RecapGridStoreMaintenance.UpgradeV4(_root, apply: false);
+        Assert.IsType<RecapGridStoreUpgradeResult.DryRunReady>(dryRun);
+        Assert.Equal(before, File.ReadAllBytes(path));
+
+        RecapGridStoreUpgradeResult appliedResult =
+            RecapGridStoreMaintenance.UpgradeV4(_root, apply: true);
+        Assert.True(appliedResult is RecapGridStoreUpgradeResult.Upgraded,
+            appliedResult.ToString());
+        RecapGridStoreUpgradeResult.Upgraded applied =
+            (RecapGridStoreUpgradeResult.Upgraded)appliedResult;
+        Assert.True(File.Exists(applied.BackupPath));
+        Assert.Equal(before, File.ReadAllBytes(applied.BackupPath));
+
+        using RecapGridStoreReaderHandle reader = Assert.IsType<
+            RecapGridStoreReaderOpenResult.Opened>(
+            RecapGridStoreFactory.OpenReader(_root)).Handle;
+        var key = new RowWorkKey(spec.Coordinate.RefId,
+            spec.Coordinate.TimelineId, spec.Recipe.Digest,
+            spec.HistoryRowId);
+        RowWork work = Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+            reader.Reader.ReadRowWork(key)).Value;
+        Assert.Equal(spec.Recipe.Target.Digest, work.ProducerTarget.Digest);
+        Assert.Equal(cell.Id, Assert.IsType<
+            RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+            reader.Reader.ReadCell(cell.Id)).Value.Id);
+        Assert.Equal(row.Id, Assert.IsType<
+            RecapGridStoreReadResult<RecapRowView>.Found>(
+            reader.Reader.ReadView(row.Id)).Value.Id);
+        reader.Dispose();
+        Assert.IsType<RecapGridStoreUpgradeResult.AlreadyCurrent>(
+            RecapGridStoreMaintenance.UpgradeV4(_root, apply: false));
+    }
+
+    [Fact]
+    public void V4OrphanPartialIsDiagnosedAndNeverWritesDuringDryRun() {
+        CreateV4FullStore(out RowBuildSpec spec, out _, out _);
+        string path = new StorePaths(_root).DatabasePath;
+        Execute($"""
+            INSERT INTO cell_artifact(cell_id,recipe_digest,history_row_id,
+                logical_column_id,definition_digest,outcome,content)
+            VALUES('{new string('f', 32)}','{spec.Recipe.Digest.Value}',
+                '{spec.HistoryRowId.Value}','case.orphan',
+                '{StoreFixture.Definition.Value}',0,'orphan');
+            UPDATE store_metadata SET cell_count=2;
+            """);
+        byte[] before = File.ReadAllBytes(path);
+
+        RecapGridStoreUpgradeResult.Invalid rejected = Assert.IsType<
+            RecapGridStoreUpgradeResult.Invalid>(
+            RecapGridStoreMaintenance.UpgradeV4(_root, apply: false));
+
+        Assert.Equal("GridStoreInvalid", rejected.Code);
+        Assert.Contains("orphan partial cell", rejected.Detail,
+            StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void V4PartialWithExactExternalWorkProofPreservesCellAndFreezesWork() {
+        CreateV4FullStore(out RowBuildSpec previous, out _, out RecapRowView row);
+        HistoryRowId partialHistory = new(new string('e', 64));
+        var partialCell = new RecapCellArtifact(
+            new CellId(new string('f', 32)),
+            new CellSlot(previous.Recipe.Digest, partialHistory,
+                StoreFixture.Column),
+            StoreFixture.Definition,
+            RecapCellOutcome.Updated,
+            "partial v4 content");
+        Execute($"""
+            INSERT INTO cell_artifact(cell_id,recipe_digest,history_row_id,
+                logical_column_id,definition_digest,outcome,content)
+            VALUES('{partialCell.Id.Value}','{partialCell.Slot.RecipeDigest.Value}',
+                '{partialHistory.Value}','{StoreFixture.Column.Value}',
+                '{StoreFixture.Definition.Value}',0,'{partialCell.Content}');
+            UPDATE store_metadata SET cell_count=2;
+            """);
+        var proof = new RowWork(new RowWorkKey(
+                previous.Coordinate.RefId,
+                previous.Coordinate.TimelineId,
+                previous.Recipe.Digest,
+                partialHistory),
+            previous.Recipe.Target,
+            previous.HistoryRowId,
+            row.Id,
+            [new RowWorkAssignment(StoreFixture.Column, reusedCellId: null)]);
+
+        Assert.IsType<RecapGridStoreUpgradeResult.Upgraded>(
+            RecapGridStoreMaintenance.UpgradeV4(
+                _root,
+                apply: true,
+                () => [proof]));
+        using RecapGridStoreReaderHandle reader = Assert.IsType<
+            RecapGridStoreReaderOpenResult.Opened>(
+            RecapGridStoreFactory.OpenReader(_root)).Handle;
+        RowWork restored = Assert.IsType<
+            RecapGridStoreReadResult<RowWork>.Found>(
+            reader.Reader.ReadRowWork(proof.Key)).Value;
+        Assert.Equal(proof.WorkId, restored.WorkId);
+        Assert.Equal(proof.ToCanonicalBytes(), restored.ToCanonicalBytes());
+        RecapCellArtifact preserved = Assert.IsType<
+            RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+            reader.Reader.ReadCell(partialCell.Id)).Value;
+        Assert.Equal(partialCell.Content, preserved.Content);
+        Assert.Equal(restored.WorkId, preserved.Slot.WorkId);
+    }
+
+    [Fact]
+    public void V4OverlaySharedCellKeepsOriginalProducerAndCreatesReuseWork() {
+        CreateV4FullStore(out _, out RecapCellArtifact sourceCell, out _);
+        RowBuildSpec overlay = StoreFixture.Spec(
+            recipe: StoreFixture.Recipe(bootstrap: 'd'));
+        var overlayRow = new RecapRowView(
+            new RowResultId(Guid.NewGuid().ToString("N")),
+            overlay.Coordinate,
+            [new RecapRowViewCell(StoreFixture.Column,
+                StoreFixture.Definition, sourceCell.Id)]);
+        Execute($"""
+            INSERT INTO row_view(row_result_id,ref_id,timeline_id,history_row_id,
+                recipe_digest,target_digest,previous_history_row_id,
+                previous_row_result_id,bootstrap_completed)
+            VALUES('{overlayRow.Id.Value}','{overlayRow.RefId.ToHexString()}',
+                '{overlayRow.TimelineId.Value}','{overlayRow.HistoryRowId.Value}',
+                '{overlayRow.RecipeDigest.Value}','{overlayRow.TargetDigest.Value}',
+                NULL,NULL,1);
+            INSERT INTO row_view_member(row_result_id,column_ordinal,
+                logical_column_id,definition_digest,cell_id)
+            VALUES('{overlayRow.Id.Value}',0,'{StoreFixture.Column.Value}',
+                '{StoreFixture.Definition.Value}','{sourceCell.Id.Value}');
+            UPDATE store_metadata SET row_view_count=2,row_view_member_count=2;
+            """);
+
+        Assert.IsType<RecapGridStoreUpgradeResult.Upgraded>(
+            RecapGridStoreMaintenance.UpgradeV4(_root, apply: true));
+        using RecapGridStoreReaderHandle reader = Assert.IsType<
+            RecapGridStoreReaderOpenResult.Opened>(
+            RecapGridStoreFactory.OpenReader(_root)).Handle;
+        RowWork overlayWork = Assert.IsType<
+            RecapGridStoreReadResult<RowWork>.Found>(reader.Reader.ReadRowWork(
+                new RowWorkKey(overlay.Coordinate.RefId,
+                    overlay.Coordinate.TimelineId, overlay.Recipe.Digest,
+                    overlay.HistoryRowId))).Value;
+        Assert.Equal(sourceCell.Id,
+            Assert.Single(overlayWork.OrderedAssignments).ReusedCellId);
+        RecapCellArtifact preserved = Assert.IsType<
+            RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+            reader.Reader.ReadCell(sourceCell.Id)).Value;
+        Assert.NotEqual(overlayWork.WorkId, preserved.Slot.WorkId);
+    }
+
+    [Fact]
     public void SchemaUsesSingleSqlAuthorityAndEnforcesSlotAndForeignKeys() {
         Create();
         using RecapGridStoreHandle handle = Open();
@@ -178,7 +335,7 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
         Assert.Equal(oldSchema, Assert.IsType<RecapGridStoreReaderOpenResult.UnsupportedSchema>(RecapGridStoreFactory.OpenReader(_root)).SchemaVersion);
         Assert.Equal(before, File.ReadAllBytes(paths.DatabasePath));
         var witness = Assert.IsType<RecapGridStorePrepareResetResult.Prepared>(RecapGridStoreMaintenance.PrepareReset(_root)).Witness;
-        Assert.Equal(4, Assert.IsType<RecapGridStoreResetResult.Reset>(RecapGridStoreMaintenance.Reset(_root, witness)).Identity.SchemaVersion);
+        Assert.Equal(5, Assert.IsType<RecapGridStoreResetResult.Reset>(RecapGridStoreMaintenance.Reset(_root, witness)).Identity.SchemaVersion);
         Assert.IsType<RecapGridStoreVerifyResult.Healthy>(RecapGridStoreMaintenance.Verify(_root));
         using RecapGridStoreHandle handle = Open();
         StoreFixture.Put(handle, StoreFixture.Spec());
@@ -266,6 +423,82 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
     private void Create() {
         Directory.CreateDirectory(_root);
         Assert.IsType<RecapGridStoreCreateResult.Created>(RecapGridStoreFactory.Create(_root));
+    }
+
+    private void CreateV4FullStore(out RowBuildSpec spec,
+        out RecapCellArtifact cell, out RecapRowView row) {
+        Create();
+        string path = new StorePaths(_root).DatabasePath;
+        File.Delete(path);
+        spec = StoreFixture.Spec();
+        cell = StoreFixture.Proposed(spec, "v4 content");
+        row = new RecapRowView(new RowResultId(Guid.NewGuid().ToString("N")),
+            spec.Coordinate, [new RecapRowViewCell(
+                StoreFixture.Column, StoreFixture.Definition, cell.Id)]);
+        using SqliteConnection connection = new(
+            $"Data Source={path};Mode=ReadWriteCreate;Pooling=False");
+        connection.Open();
+        using (SqliteCommand schema = connection.CreateCommand()) {
+            schema.CommandText = ReadV4Schema()
+                + $"PRAGMA application_id = {SqliteRecapGridStore.ApplicationId};"
+                + "PRAGMA user_version = 4;";
+            schema.ExecuteNonQuery();
+        }
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        ExecuteV4("""
+            INSERT INTO store_metadata(singleton,schema_version,store_instance_id,
+                cell_count,row_view_count,row_view_member_count,fulfilled_view_count)
+            VALUES(1,4,'00112233445566778899aabbccddeeff',1,1,1,0);
+            """);
+        ExecuteV4("""
+            INSERT INTO cell_artifact(cell_id,recipe_digest,history_row_id,
+                logical_column_id,definition_digest,outcome,content)
+            VALUES($id,$recipe,$history,$column,$definition,0,$content);
+            """, ("$id", cell.Id.Value),
+            ("$recipe", cell.Slot.RecipeDigest.Value),
+            ("$history", cell.Slot.HistoryRowId.Value),
+            ("$column", cell.Slot.LogicalColumnId.Value),
+            ("$definition", cell.DefinitionDigest.Value),
+            ("$content", cell.Content));
+        ExecuteV4("""
+            INSERT INTO row_view(row_result_id,ref_id,timeline_id,history_row_id,
+                recipe_digest,target_digest,previous_history_row_id,
+                previous_row_result_id,bootstrap_completed)
+            VALUES($id,$ref,$timeline,$history,$recipe,$target,NULL,NULL,1);
+            """, ("$id", row.Id.Value),
+            ("$ref", row.RefId.ToHexString()),
+            ("$timeline", row.TimelineId.Value),
+            ("$history", row.HistoryRowId.Value),
+            ("$recipe", row.RecipeDigest.Value),
+            ("$target", row.TargetDigest.Value));
+        ExecuteV4("""
+            INSERT INTO row_view_member(row_result_id,column_ordinal,
+                logical_column_id,definition_digest,cell_id)
+            VALUES($row,0,$column,$definition,$cell);
+            """, ("$row", row.Id.Value),
+            ("$column", StoreFixture.Column.Value),
+            ("$definition", StoreFixture.Definition.Value),
+            ("$cell", cell.Id.Value));
+        transaction.Commit();
+
+        void ExecuteV4(string sql, params (string Name, object Value)[] values) {
+            using SqliteCommand command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            foreach ((string name, object value) in values) {
+                command.Parameters.AddWithValue(name, value);
+            }
+            _ = command.ExecuteNonQuery();
+        }
+    }
+
+    private static string ReadV4Schema() {
+        using Stream stream = typeof(SqliteRecapGridStore).Assembly
+            .GetManifestResourceStream(
+                "Atelia.SessionJournal.RecapGrid.Store.SchemaV4.sql")
+            ?? throw new InvalidOperationException("V4 Store schema is absent.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
     private RecapGridStoreHandle Open() => Assert.IsType<RecapGridStoreOpenResult.Opened>(RecapGridStoreFactory.Open(_root)).Handle;
     private SqliteConnection OpenRaw() => new($"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False;Foreign Keys=False");

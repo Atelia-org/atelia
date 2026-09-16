@@ -71,6 +71,88 @@ public sealed partial class GetterVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task PersistedRowWorkProducerOverridesCurrentRootTargetForReadAndMaterialization() {
+        using Fixture fixture = await CreateControlFixture(
+            turns: 1, activate: true, createStore: true);
+        MaintainerDefinitionRevision alternate = MaintainerDefinitionRevision.Create(
+            fixture.Definition.LogicalColumnId,
+            fixture.Family.Digest,
+            new ContextHeaderBlockTarget(
+                ContextHeaderCarrier.System,
+                "culprit",
+                "Old producer heading"
+            ),
+            fixture.Definition.Capability,
+            fixture.Definition.DeclarativeSpec,
+            fixture.Definition.MaxContentUtf8Bytes
+        );
+        using (RecapGridControlHandle control = Assert.IsType<
+            RecapGridControlOpenResult.Opened>(RecapGridControlFactory.Open(
+                fixture.Path, fixture.Journal.BranchRefId, fixture.Admission)).Handle) {
+            ControlHeadRef head = Assert.IsType<
+                RecapGridControlSnapshotResult.Available>(
+                control.Reader.ReadSnapshot()).Snapshot.Head;
+            _ = Assert.IsType<RecapGridControlPutResult.Stored>(
+                control.Coordinator.PutMaintainerDefinition(head, alternate));
+        }
+        HistorySegmentDescriptor descriptor = Assert.Single(fixture.Rows).Descriptor;
+        BuildTarget producer = BuildTarget.Create([
+            new BuildTargetColumn(alternate.LogicalColumnId, alternate.Digest)
+        ]);
+        var key = new RowWorkKey(
+            fixture.Journal.BranchRefId,
+            descriptor.TimelineId,
+            fixture.Recipe.Digest,
+            descriptor.RowId
+        );
+        var work = new RowWork(
+            key, producer, null, null,
+            [new RowWorkAssignment(alternate.LogicalColumnId, null)]
+        );
+        var slot = new CellSlot(
+            fixture.Recipe.Digest, descriptor.RowId,
+            work.WorkId, alternate.LogicalColumnId);
+        RowBuildSpec spec = RowBuildSpec.CreateFull(
+            fixture.Recipe,
+            new RowViewCoordinate(
+                fixture.Journal.BranchRefId, descriptor.TimelineId,
+                descriptor.RowId, fixture.Recipe.Digest, producer.Digest,
+                null, null, bootstrapCompleted: true),
+            [new RowBuildAssignment.Evaluate(slot)],
+            work
+        );
+        using (RecapGridStoreHandle store = Assert.IsType<
+            RecapGridStoreOpenResult.Opened>(
+            RecapGridStoreFactory.Open(fixture.Path)).Handle) {
+            Assert.IsType<RecapGridRowWorkPutResult.Inserted>(
+                store.Writer.PutRowWork(work));
+            RecapCellArtifact cell = Assert.IsType<
+                RecapGridCellPutResult.Inserted>(store.Writer.PutCell(
+                    spec,
+                    RecapCellDraft.Create(slot, alternate.Digest,
+                        RecapCellOutcome.Updated, "old-producer-content",
+                        alternate.MaxContentUtf8Bytes))).Winner;
+            RecapRowView row = Assert.IsType<
+                RecapGridRowViewPutResult.Inserted>(
+                store.Writer.PutRowView(spec, [cell])).Winner;
+            FulfilledViewKey fulfilled = FulfilledViewKey.Create(
+                fixture.Journal.BranchRefId, fixture.TimelineHead,
+                descriptor.RowId, fixture.Recipe);
+            Assert.IsType<RecapGridFulfilledPutResult.Inserted>(
+                store.Writer.PutFulfilled(fulfilled, row.Id));
+        }
+        using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
+        RecapGridContextSelection selection = Assert.IsType<
+            RecapGridContextResolveResult.Selected>(getter.Resolve(
+                fixture.Journal.ReadCurrentHead()!.Value, 0)).Selection;
+        SessionContextContribution contribution = Assert.Single(Assert.IsType<
+            RecapGridContextMaterializeResult.Available>(
+            getter.Materialize(selection)).Candidate.Contributions);
+        Assert.Equal("old-producer-content", contribution.ExactText);
+        Assert.Equal(alternate.Target, contribution.Target);
+    }
+
+    [Fact]
     public async Task NthPreviousFollowsExactViewAndTimelinePredecessors() {
         using Fixture fixture = await CreateBuiltFixture(turns: 3);
         Assert.True(fixture.Rows.Count >= 3);

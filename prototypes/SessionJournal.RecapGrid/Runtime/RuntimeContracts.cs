@@ -253,7 +253,8 @@ public sealed record RecapCompletionRuntimeOptions {
 
     public RecapCompletionRuntimeOptions(
         CompletionInvocationOptions? invocationOptions = null,
-        long maximumInputUtf8Bytes = DefaultMaximumInputUtf8Bytes
+        long maximumInputUtf8Bytes = DefaultMaximumInputUtf8Bytes,
+        int? maximumGlobalConcurrency = null
     ) {
         InvocationOptions = invocationOptions
             ?? CompletionInvocationOptions.Default;
@@ -261,7 +262,13 @@ public sealed record RecapCompletionRuntimeOptions {
         if (maximumInputUtf8Bytes <= 0) {
             throw new ArgumentOutOfRangeException(nameof(maximumInputUtf8Bytes));
         }
+        if (maximumGlobalConcurrency is < 1 or > 1_024) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumGlobalConcurrency)
+            );
+        }
         MaximumInputUtf8Bytes = maximumInputUtf8Bytes;
+        MaximumGlobalConcurrency = maximumGlobalConcurrency;
     }
 
     public CompletionInvocationOptions InvocationOptions { get; }
@@ -273,6 +280,14 @@ public sealed record RecapCompletionRuntimeOptions {
     /// load, recipe identity or a durable request commitment.
     /// </summary>
     public long MaximumInputUtf8Bytes { get; }
+
+    /// <summary>
+    /// Optional host-wide lane limit. When supplied, all exact routes owned by
+    /// this runtime share one fair lane instead of each route obtaining an
+    /// independent concurrency budget. This remains operational policy and is
+    /// never part of a recipe, work, or persisted request identity.
+    /// </summary>
+    public int? MaximumGlobalConcurrency { get; }
 }
 
 public enum RecapCompletionWorkRole {

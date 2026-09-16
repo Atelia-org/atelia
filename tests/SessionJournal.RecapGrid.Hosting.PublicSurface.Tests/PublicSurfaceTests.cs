@@ -180,7 +180,7 @@ public sealed class PublicSurfaceTests {
                 .ToArray())
             .ToArray();
 
-        Assert.Equal(2, signatures.Length);
+        Assert.Equal(3, signatures.Length);
         Assert.Contains(signatures, static signature => signature.SequenceEqual([
             typeof(Func<RecapGridRouteManifest>),
             typeof(CompletionConnectionRegistry),
@@ -189,6 +189,18 @@ public sealed class PublicSurfaceTests {
             typeof(IRecapCompletionTelemetry),
             typeof(ISessionInputProjector),
             typeof(Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>)
+        ]));
+        Assert.Contains(signatures, static signature => signature.SequenceEqual([
+            typeof(Func<RecapCompletionRouteKey,
+                RecapGridRouteManifestEntry>),
+            typeof(CompletionConnectionRegistry),
+            typeof(RecapGridAgentControlProfileRegistry),
+            typeof(RecapCompletionRuntimeOptions),
+            typeof(int),
+            typeof(IRecapCompletionTelemetry),
+            typeof(ISessionInputProjector),
+            typeof(Func<string, ICompletionClient, TimeSpan,
+                IRecapCompletionAttemptDeadlineInvoker>)
         ]));
         Assert.Contains(signatures, static signature => signature.SequenceEqual([
             typeof(Func<RecapGridRouteManifest>),

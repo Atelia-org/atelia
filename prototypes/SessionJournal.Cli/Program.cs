@@ -325,6 +325,9 @@ internal static class Program {
             + "--confirm-length <bytes> --confirm-sha256 <sha256>"
         );
         Console.WriteLine(
+            "  recap-grid upgrade-store-v5 --input <stopped-repo-copy> [--apply]"
+        );
+        Console.WriteLine(
             "  recap-grid <scaffold|init|timeline|control|cadence|build|progress|materialize> ..."
         );
         Console.WriteLine(

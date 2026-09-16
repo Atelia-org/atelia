@@ -70,6 +70,28 @@ public sealed record RecapGridStoreInfo(
     IReadOnlyList<string> CompileOptions
 );
 
+public abstract record RecapGridStoreUpgradeResult {
+    private RecapGridStoreUpgradeResult() { }
+
+    public sealed record DryRunReady(long RowViewCount, long CellCount)
+        : RecapGridStoreUpgradeResult;
+    public sealed record Upgraded(
+        string BackupPath,
+        long RowViewCount,
+        long CellCount
+    ) : RecapGridStoreUpgradeResult;
+    public sealed record AlreadyCurrent : RecapGridStoreUpgradeResult;
+    public sealed record Absent : RecapGridStoreUpgradeResult;
+    public sealed record Busy : RecapGridStoreUpgradeResult;
+    public sealed record OfflineCleanupRequired(string Slot)
+        : RecapGridStoreUpgradeResult;
+    public sealed record UnsupportedSchema(int SchemaVersion)
+        : RecapGridStoreUpgradeResult;
+    public sealed record PlatformUnsupported : RecapGridStoreUpgradeResult;
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridStoreUpgradeResult;
+}
+
 public sealed record RecapGridStoreExportCursor {
     private const byte WireVersion = 2;
     private const byte CellKind = 1;
@@ -417,6 +439,16 @@ public abstract record RecapGridStoreReadResult<T> where T : class {
     public sealed record Disposed : RecapGridStoreReadResult<T>;
     public sealed record Invalid(string Code, string Detail)
         : RecapGridStoreReadResult<T>;
+}
+
+internal abstract record RecapGridRowWorkPutResult {
+    private RecapGridRowWorkPutResult() { }
+    public sealed record Inserted(RowWork Winner) : RecapGridRowWorkPutResult;
+    public sealed record AlreadyPresent(RowWork Winner) : RecapGridRowWorkPutResult;
+    public sealed record SelectionConflict(RowWork Winner) : RecapGridRowWorkPutResult;
+    public sealed record Busy : RecapGridRowWorkPutResult;
+    public sealed record Disposed : RecapGridRowWorkPutResult;
+    public sealed record Invalid(string Code, string Detail) : RecapGridRowWorkPutResult;
 }
 
 internal sealed record RecapGridFulfilledView(RowResultId RowResultId);
