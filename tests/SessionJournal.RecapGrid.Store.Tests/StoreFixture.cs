@@ -50,7 +50,9 @@ internal static class StoreFixture {
 
     internal static void PutWork(RecapGridStoreHandle handle, RowBuildSpec spec) {
         Assert.NotNull(spec.Work);
-        Assert.IsAssignableFrom<RecapGridRowWorkPutResult>(handle.Writer.PutRowWork(spec.Work!));
+        RecapGridRowWorkPutResult result = handle.Writer.PutRowWork(spec.Work!);
+        Assert.True(result is RecapGridRowWorkPutResult.Inserted
+            or RecapGridRowWorkPutResult.AlreadyPresent, result.ToString());
     }
 
     internal static RowBuildSpec WithWork(RowBuildSpec spec) {

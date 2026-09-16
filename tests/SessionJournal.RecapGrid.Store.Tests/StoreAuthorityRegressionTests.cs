@@ -269,7 +269,7 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
     }
 
     [Fact]
-    public void SameAssignmentWithDifferentCoordinateIsConflictAndLatchesInvalid() {
+    public void ConflictingRowWorkCannotPublishOrFillNewCell() {
         Create();
         using RecapGridStoreHandle handle = Open();
         RowBuildSpec spec = StoreFixture.Spec();
@@ -280,9 +280,13 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
         RecapRowView predecessor = Assert.IsType<RecapGridRowViewPutResult.Inserted>(
             handle.Writer.PutRowView(predecessorSpec, [predecessorCell])).Winner;
         RowBuildSpec conflicting = StoreFixture.Spec(previous: predecessor);
-        StoreFixture.PutWork(handle, conflicting);
-        Assert.IsType<RecapGridRowViewPutResult.PrerequisiteMissing>(
-            handle.Writer.PutRowView(conflicting, [cell]));
+        Assert.IsType<RecapGridRowWorkPutResult.SelectionConflict>(
+            handle.Writer.PutRowWork(conflicting.Work!));
+        Assert.Equal("RowWorkMismatch", Assert.IsType<RecapGridCellPutResult.Rejected>(
+            handle.Writer.PutCell(conflicting, StoreFixture.Draft(conflicting))).Code);
+        Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Missing>(
+            handle.Reader.TryReadCell(
+                ((RowBuildAssignment.Evaluate)conflicting.OrderedAssignments[0]).Slot));
         Assert.IsType<RecapGridCellPutResult.AlreadyFilled>(
             handle.Writer.PutCell(spec, StoreFixture.Draft(spec)));
         using RecapGridStoreHandle reopened = Open();
