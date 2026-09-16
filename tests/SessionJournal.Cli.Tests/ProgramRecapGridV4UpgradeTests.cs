@@ -94,7 +94,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         (int code, JsonElement result) = RunGridCaptured(
             "upgrade-store-v5", "--input", _root, "--apply");
 
-        Assert.Equal(0, code);
+        Assert.True(code == 0, result.GetRawText());
         Assert.Equal("upgraded", result.GetProperty("status").GetString());
         Assert.Equal(abandoned.Locator, Assert.IsType<HistoryTimelineInspectResult.Available>(
             HistoryTimelineMaintenance.Inspect(_root, fixture.RefId)).Locator);
@@ -102,6 +102,73 @@ public sealed partial class ProgramRecapGridCommandTests {
         AssertSnapshotEqual(control, SnapshotDirectory(Path.Combine(
             _root, "control", "recap-grid")));
         AssertUpgradedPartial(fixture);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpgradeStoreV5RecoversOverlayBootstrapAndPostBootstrapWork(bool afterBootstrap) {
+        V4PartialFixture baseFixture = CreateV4PartialFixture(activate: false);
+        HistoryRowId bootstrap = baseFixture.PriorHistory;
+        HistoryRowId partial = afterBootstrap ? baseFixture.PartialHistory : bootstrap;
+        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(baseFixture.Recipe, bootstrap,
+            baseFixture.Recipe.Target, [baseFixture.Recipe.Target.OrderedColumns[0].LogicalColumnId]);
+        string overlayPath = ExternalPath("v4-overlay.json");
+        File.WriteAllBytes(overlayPath, overlay.ToCanonicalBytes());
+        Assert.Equal(0, Run("control", "put-recipe", "--input", _root,
+            "--confirm-ref", baseFixture.RefId.ToHexString(), "--admission",
+            Path.Combine(_root, "admission.json"), "--recipe", overlayPath));
+        CreateV4OverlayStore(baseFixture, overlay, bootstrap, partial, afterBootstrap,
+            out CellId reusedSource, out CellId overlayPartial, out RowResultId? bootstrapView);
+
+        (int code, JsonElement result) = RunGridCaptured("upgrade-store-v5", "--input", _root, "--apply");
+        Assert.True(code == 0, result.GetRawText());
+        Assert.Equal("upgraded", result.GetProperty("status").GetString());
+        using RecapGridStoreReaderHandle reader = Assert.IsType<RecapGridStoreReaderOpenResult.Opened>(RecapGridStoreFactory.OpenReader(_root)).Handle;
+        RowWork work = Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(reader.Reader.ReadRowWork(
+            new RowWorkKey(baseFixture.RefId, baseFixture.TimelineId, overlay.Digest, partial))).Value;
+        if (!afterBootstrap) {
+            Assert.Equal(reusedSource, work.OrderedAssignments[1].ReusedCellId);
+            Assert.Null(work.PreviousRowResultId);
+        } else {
+            Assert.All(work.OrderedAssignments, x => Assert.True(x.IsEvaluate));
+            Assert.Equal(bootstrap, work.PreviousHistoryRowId);
+            Assert.Equal(bootstrapView, work.PreviousRowResultId);
+        }
+        Assert.Equal("overlay partial", Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(reader.Reader.ReadCell(overlayPartial)).Value.Content);
+    }
+
+    private HistoryTimelineSelectedRow[] ReadSelectedFor(RefId refId) {
+        TimelineHeadRef head = ReadTimelineHead(refId.ToHexString());
+        using HistoryTimelineReaderHandle reader = Assert.IsType<HistoryTimelineReaderOpenResult.Opened>(HistoryTimelineMaintenance.OpenReader(_root, refId)).Handle;
+        return ReadSelected(reader.Reader, head).ToArray();
+    }
+
+    private void CreateV4OverlayStore(V4PartialFixture basis, GridBuildRecipe overlay,
+        HistoryRowId bootstrap, HistoryRowId partial, bool afterBootstrap,
+        out CellId reusedSource, out CellId overlayPartial, out RowResultId? bootstrapView) {
+        string database = Path.Combine(_root, "derived", "recap-grid", "v1", "grid.sqlite");
+        File.Delete(database); CellId baseEvaluated = new(Guid.NewGuid().ToString("N"));
+        reusedSource = new CellId(Guid.NewGuid().ToString("N"));
+        overlayPartial = new CellId(Guid.NewGuid().ToString("N"));
+        bootstrapView = afterBootstrap ? new RowResultId(Guid.NewGuid().ToString("N")) : null;
+        using var connection = new SqliteConnection($"Data Source={database};Mode=ReadWriteCreate;Pooling=False"); connection.Open();
+        using (SqliteCommand schema = connection.CreateCommand()) { schema.CommandText = ReadV4SchemaForCliTest() + $"PRAGMA application_id={RecapGridApplicationId};PRAGMA user_version=4;"; schema.ExecuteNonQuery(); }
+        using SqliteTransaction tx = connection.BeginTransaction();
+        string baseRow = Guid.NewGuid().ToString("N");
+        CellId lastCell = default;
+        int cells = afterBootstrap ? 4 : 3, rows = afterBootstrap ? 2 : 1, members = afterBootstrap ? 4 : 2;
+        Q("INSERT INTO store_metadata VALUES(1,4,'00112233445566778899aabbccddeeff',$c,$r,$m,0);", ("$c",cells),("$r",rows),("$m",members));
+        Row(baseRow, basis.Recipe, bootstrap, null, null);
+        Cell(baseEvaluated, basis.Recipe, bootstrap, 0, "base source");
+        Cell(reusedSource, basis.Recipe, bootstrap, 1, "base other");
+        Member(baseRow, 0, baseEvaluated); Member(baseRow, 1, lastCell);
+        if (afterBootstrap) { Row(bootstrapView!.Value.Value, overlay, bootstrap, null, null); Cell(overlayPartial, overlay, bootstrap, 0, "overlay bootstrap"); Member(bootstrapView.Value.Value, 0, overlayPartial); Member(bootstrapView.Value.Value, 1, reusedSource); overlayPartial = new CellId(Guid.NewGuid().ToString("N")); }
+        Cell(overlayPartial, overlay, partial, 0, "overlay partial"); tx.Commit();
+        void Q(string s, params (string,object)[] v) { using SqliteCommand c=connection.CreateCommand();c.Transaction=tx;c.CommandText=s;foreach(var p in v)c.Parameters.AddWithValue(p.Item1,p.Item2);c.ExecuteNonQuery(); }
+        void Row(string id, GridBuildRecipe r, HistoryRowId h, HistoryRowId? ph, RowResultId? pr) => Q("INSERT INTO row_view VALUES($id,$ref,$ti,$h,$rd,$td,$ph,$pr,1);",("$id",id),("$ref",basis.RefId.ToHexString()),("$ti",basis.TimelineId.Value),("$h",h.Value),("$rd",r.Digest.Value),("$td",r.Target.Digest.Value),("$ph",(object?)ph?.Value??DBNull.Value),("$pr",(object?)pr?.Value??DBNull.Value));
+        void Cell(CellId id, GridBuildRecipe r, HistoryRowId h, int i, string text) { var col=r.Target.OrderedColumns[i]; lastCell=id; Q("INSERT INTO cell_artifact VALUES($id,$r,$h,$l,$d,0,$x);",("$id",id.Value),("$r",r.Digest.Value),("$h",h.Value),("$l",col.LogicalColumnId.Value),("$d",col.DefinitionDigest.Value),("$x",text)); }
+        void Member(string row,int i,CellId id) { var col=basis.Recipe.Target.OrderedColumns[i]; Q("INSERT INTO row_view_member VALUES($r,$i,$l,$d,$c);",("$r",row),("$i",i),("$l",col.LogicalColumnId.Value),("$d",col.DefinitionDigest.Value),("$c",id.Value)); }
     }
 
     private V4PartialFixture CreateV4PartialFixture(bool activate) {
