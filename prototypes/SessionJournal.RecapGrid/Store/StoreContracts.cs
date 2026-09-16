@@ -77,8 +77,14 @@ public abstract record RecapGridStoreUpgradeResult {
         : RecapGridStoreUpgradeResult;
     public sealed record Upgraded(
         string BackupPath,
-        long RowViewCount,
-        long CellCount
+        RecapGridStoreUpgradeEvidence Backup,
+        RecapGridStoreUpgradeEvidence Active
+    ) : RecapGridStoreUpgradeResult;
+    public sealed record CommitIndeterminate(
+        string BackupPath,
+        RecapGridStoreUpgradeEvidence Backup,
+        RecapGridStoreUpgradeObservation ObservedActive,
+        string NextAction
     ) : RecapGridStoreUpgradeResult;
     public sealed record AlreadyCurrent : RecapGridStoreUpgradeResult;
     public sealed record Absent : RecapGridStoreUpgradeResult;
@@ -91,6 +97,26 @@ public abstract record RecapGridStoreUpgradeResult {
     public sealed record Invalid(string Code, string Detail)
         : RecapGridStoreUpgradeResult;
 }
+
+/// <summary>Identity, logical counters, and exact bytes observed during upgrade.</summary>
+public sealed record RecapGridStoreUpgradeEvidence(
+    RecapGridStoreIdentity Identity,
+    long CellCount,
+    long RowViewCount,
+    long RowViewMemberCount,
+    long FulfilledViewCount,
+    RecapGridStorePhysicalWitness Witness
+);
+
+/// <summary>
+/// Best-effort post-replace observation. Null fields mean the observation
+/// itself could not be read; they never authorize a replay or a restore.
+/// </summary>
+public sealed record RecapGridStoreUpgradeObservation(
+    int? SchemaVersion,
+    RecapGridStoreIdentity? Identity,
+    RecapGridStorePhysicalWitness? Witness
+);
 
 /// <summary>
 /// A caller-owned, read-only proof pass could not establish the immutable

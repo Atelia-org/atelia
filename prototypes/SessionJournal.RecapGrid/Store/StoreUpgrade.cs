@@ -13,7 +13,8 @@ public static partial class RecapGridStoreMaintenance {
     public static RecapGridStoreUpgradeResult UpgradeV4(
         string repositoryPath,
         bool apply
-    ) => UpgradeV4(repositoryPath, apply, static () => []);
+    ) => UpgradeV4Core(repositoryPath, apply, static () => [],
+        StoreUpgradeTestHooks.None);
 
     /// <summary>
     /// Upgrades a stopped V4 Store using partial-work proofs gathered by a
@@ -24,8 +25,25 @@ public static partial class RecapGridStoreMaintenance {
         string repositoryPath,
         bool apply,
         Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs
+    ) => UpgradeV4Core(repositoryPath, apply, resolvePartialWorkProofs,
+        StoreUpgradeTestHooks.None);
+
+    internal static RecapGridStoreUpgradeResult UpgradeV4ForTest(
+        string repositoryPath,
+        bool apply,
+        Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs,
+        StoreUpgradeTestHooks hooks
+    ) => UpgradeV4Core(repositoryPath, apply, resolvePartialWorkProofs,
+        hooks);
+
+    private static RecapGridStoreUpgradeResult UpgradeV4Core(
+        string repositoryPath,
+        bool apply,
+        Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs,
+        StoreUpgradeTestHooks hooks
     ) {
         ArgumentNullException.ThrowIfNull(resolvePartialWorkProofs);
+        ArgumentNullException.ThrowIfNull(hooks);
         try {
             var paths = new StorePaths(repositoryPath);
             if (!StoreDurableFiles.RegularFileExists(paths, paths.DatabasePath)) {
@@ -59,9 +77,12 @@ public static partial class RecapGridStoreMaintenance {
                 $".grid.upgrade-v5.{Guid.NewGuid():N}.sqlite");
             paths.RequireSafe(temporary);
             string? backup = null;
+            RecapGridStoreUpgradeEvidence? backupEvidence = null;
             bool published = false;
             try {
                 BuildV5Replacement(temporary, snapshot);
+                _ = VerifyV5(paths, temporary);
+                hooks.AfterTempVerified?.Invoke();
                 if (!apply) {
                     return new RecapGridStoreUpgradeResult.DryRunReady(
                         snapshot.RowViews.Count, snapshot.Cells.Count);
@@ -72,13 +93,29 @@ public static partial class RecapGridStoreMaintenance {
                     + "-" + Guid.NewGuid().ToString("N") + ".sqlite";
                 paths.RequireSafe(backup);
                 File.Copy(paths.DatabasePath, backup, overwrite: false);
+                StoreDurableFiles.FlushFile(paths, backup);
+                StoreDurableFiles.FlushDirectory(paths.RootPath);
+                backupEvidence = VerifyV4(
+                    paths, backup, partialWorkProofs);
+                hooks.AfterBackupDurable?.Invoke();
                 File.Move(temporary, paths.DatabasePath, overwrite: true);
                 published = true;
+                hooks.AfterReplaceBeforeDirectoryFsync?.Invoke();
                 StoreDurableFiles.FlushDirectory(paths.RootPath);
-                _ = new SqliteRecapGridStore(paths,
-                    StoreStorageLimits.Production).VerifyFully();
+                hooks.AfterDirectoryFsyncBeforeVerify?.Invoke();
+                RecapGridStoreUpgradeEvidence activeEvidence = VerifyV5(
+                    paths, paths.DatabasePath);
+                hooks.AfterVerify?.Invoke();
                 return new RecapGridStoreUpgradeResult.Upgraded(backup,
-                    snapshot.RowViews.Count, snapshot.Cells.Count);
+                    backupEvidence, activeEvidence);
+            }
+            catch (Exception exception) when (published && !IsFatal(exception)) {
+                // The replacement may have reached stable storage even when a
+                // later fsync, verifier, or caller interruption failed.  Do
+                // not collapse that state into an ordinary validation error.
+                return new RecapGridStoreUpgradeResult.CommitIndeterminate(
+                    backup!, backupEvidence!, ObserveActive(paths),
+                    "inspect-and-verify-active-before-any-restore-or-retry");
             }
             finally {
                 if (!published) {
@@ -114,6 +151,82 @@ public static partial class RecapGridStoreMaintenance {
             return new RecapGridStoreUpgradeResult.Invalid(
                 RecapGridStoreFactory.ErrorCode(exception), exception.Message);
         }
+        catch (Exception exception) when (!IsFatal(exception)) {
+            return new RecapGridStoreUpgradeResult.Invalid(
+                "GridStoreUpgradeFailed", exception.Message);
+        }
+    }
+
+    private static RecapGridStoreUpgradeEvidence VerifyV4(
+        StorePaths paths,
+        string path,
+        IReadOnlyList<RowWork> partialWorkProofs
+    ) {
+        if (!StoreDurableFiles.RegularFileExists(paths, path)) {
+            throw new InvalidDataException("V4 backup is absent.");
+        }
+        using SqliteConnection source = OpenRaw(path, readOnly: true);
+        if (ReadV4Version(source) != 4) {
+            throw new InvalidDataException("Backup is not a V4 Store.");
+        }
+        V4Snapshot snapshot = ReadV4Snapshot(source, partialWorkProofs);
+        return new RecapGridStoreUpgradeEvidence(
+            new RecapGridStoreIdentity(new RecapGridStoreInstanceId(snapshot.InstanceId), 4),
+            snapshot.Cells.Count,
+            snapshot.RowViews.Count,
+            snapshot.RowViews.Values.Sum(static row => row.Members.Count),
+            snapshot.Fulfilled.Count,
+            StoreDurableFiles.ComputeWitness(paths, path));
+    }
+
+    private static RecapGridStoreUpgradeEvidence VerifyV5(
+        StorePaths paths,
+        string path
+    ) {
+        if (!StoreDurableFiles.RegularFileExists(paths, path)) {
+            throw new InvalidDataException("V5 replacement is absent.");
+        }
+        RecapGridStoreInfo info = new SqliteRecapGridStore(
+            paths.WithDatabasePathForVerification(path),
+            StoreStorageLimits.Production,
+            readOnly: true).VerifyFully();
+        return new RecapGridStoreUpgradeEvidence(info.Identity,
+            info.CellCount, info.RowViewCount, info.RowViewMemberCount,
+            info.FulfilledViewCount, StoreDurableFiles.ComputeWitness(paths, path));
+    }
+
+    private static RecapGridStoreUpgradeObservation ObserveActive(
+        StorePaths paths
+    ) {
+        int? schema = null;
+        RecapGridStoreIdentity? identity = null;
+        RecapGridStorePhysicalWitness? witness = null;
+        try {
+            if (StoreDurableFiles.RegularFileExists(paths, paths.DatabasePath)) {
+                using SqliteConnection connection = OpenRaw(paths.DatabasePath,
+                    readOnly: true);
+                schema = ReadV4Version(connection);
+                if (schema == SqliteRecapGridStore.SchemaVersion) {
+                    identity = new SqliteRecapGridStore(paths,
+                        StoreStorageLimits.Production, readOnly: true).ReadIdentity();
+                }
+                witness = StoreDurableFiles.ComputeWitness(paths);
+            }
+        }
+        catch (Exception exception) when (!IsFatal(exception)) { }
+        return new RecapGridStoreUpgradeObservation(schema, identity, witness);
+    }
+
+    private static bool IsFatal(Exception exception) {
+        if (exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException) {
+            return true;
+        }
+        if (exception is AggregateException aggregate) {
+            return aggregate.InnerExceptions.Any(IsFatal);
+        }
+        return exception.InnerException is { } inner && IsFatal(inner);
     }
 
     private static int ReadV4Version(SqliteConnection connection) {

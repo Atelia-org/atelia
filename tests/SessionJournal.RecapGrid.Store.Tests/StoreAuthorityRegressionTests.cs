@@ -119,6 +119,67 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
             RecapGridStoreMaintenance.UpgradeV4(_root, apply: false));
     }
 
+    [Theory]
+    [InlineData("temp")]
+    [InlineData("backup")]
+    public void V4UpgradePreReplaceFailureLeavesActiveV4AndNeverReportsUpgraded(
+        string failpoint
+    ) {
+        CreateV4FullStore(out _, out _, out _);
+        byte[] before = File.ReadAllBytes(new StorePaths(_root).DatabasePath);
+        Action fail = () => throw new IOException("intentional pre-replace failure");
+        var hooks = new StoreUpgradeTestHooks(
+            AfterTempVerified: failpoint == "temp" ? fail : null,
+            AfterBackupDurable: failpoint == "backup" ? fail : null);
+
+        RecapGridStoreUpgradeResult result = RecapGridStoreMaintenance
+            .UpgradeV4ForTest(_root, apply: true, static () => [], hooks);
+
+        Assert.IsType<RecapGridStoreUpgradeResult.Invalid>(result);
+        Assert.Equal(4, ReadSchemaVersion(new StorePaths(_root).DatabasePath));
+        Assert.Equal(before, File.ReadAllBytes(new StorePaths(_root).DatabasePath));
+        if (failpoint == "backup") {
+            string backup = Assert.Single(Directory.GetFiles(
+                new StorePaths(_root).RootPath, "grid.sqlite.v4-backup-*.sqlite"));
+            Assert.Equal(before, File.ReadAllBytes(backup));
+        }
+    }
+
+    [Theory]
+    [InlineData("replace")]
+    [InlineData("directory")]
+    [InlineData("verify")]
+    public void V4UpgradePostReplaceFailureIsIndeterminateWithStrictBackupAndRetryIsAlreadyCurrent(
+        string failpoint
+    ) {
+        CreateV4FullStore(out _, out _, out _);
+        byte[] before = File.ReadAllBytes(new StorePaths(_root).DatabasePath);
+        Action fail = () => throw new IOException("intentional post-replace failure");
+        var hooks = new StoreUpgradeTestHooks(
+            AfterReplaceBeforeDirectoryFsync: failpoint == "replace" ? fail : null,
+            AfterDirectoryFsyncBeforeVerify: failpoint == "directory" ? fail : null,
+            AfterVerify: failpoint == "verify" ? fail : null);
+
+        RecapGridStoreUpgradeResult.CommitIndeterminate result = Assert.IsType<
+            RecapGridStoreUpgradeResult.CommitIndeterminate>(
+            RecapGridStoreMaintenance.UpgradeV4ForTest(
+                _root, apply: true, static () => [], hooks));
+
+        Assert.Equal("inspect-and-verify-active-before-any-restore-or-retry",
+            result.NextAction);
+        Assert.Equal(before, File.ReadAllBytes(result.BackupPath));
+        Assert.Equal(4, result.Backup.Identity.SchemaVersion);
+        Assert.Equal(before.Length, result.Backup.Witness.Length);
+        Assert.NotNull(result.ObservedActive.Witness);
+        Assert.Equal(5, ReadSchemaVersion(new StorePaths(_root).DatabasePath));
+        Assert.IsType<RecapGridStoreVerifyResult.Healthy>(
+            RecapGridStoreMaintenance.Verify(_root));
+        Assert.IsType<RecapGridStoreUpgradeResult.AlreadyCurrent>(
+            RecapGridStoreMaintenance.UpgradeV4(_root, apply: true));
+        Assert.Single(Directory.GetFiles(new StorePaths(_root).RootPath,
+            "grid.sqlite.v4-backup-*.sqlite"));
+    }
+
     [Fact]
     public void V4OrphanPartialIsDiagnosedAndNeverWritesDuringDryRun() {
         CreateV4FullStore(out RowBuildSpec spec, out _, out _);
@@ -504,6 +565,15 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
             ?? throw new InvalidOperationException("V4 Store schema is absent.");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
+    }
+    private static int ReadSchemaVersion(string path) {
+        using var connection = new SqliteConnection(
+            $"Data Source={path};Mode=ReadOnly;Pooling=False");
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version;";
+        return Convert.ToInt32(command.ExecuteScalar(),
+            System.Globalization.CultureInfo.InvariantCulture);
     }
     private RecapGridStoreHandle Open() => Assert.IsType<RecapGridStoreOpenResult.Opened>(RecapGridStoreFactory.Open(_root)).Handle;
     private SqliteConnection OpenRaw() => new($"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False;Foreign Keys=False");

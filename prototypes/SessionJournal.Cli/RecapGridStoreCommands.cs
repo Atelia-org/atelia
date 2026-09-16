@@ -204,9 +204,17 @@ internal static class RecapGridStoreCommands {
                 "upgrade-store-v5", "upgraded",
                 new {
                     upgraded.BackupPath,
-                    upgraded.RowViewCount,
-                    upgraded.CellCount
+                    Backup = upgraded.Backup,
+                    Active = upgraded.Active
                 }),
+            RecapGridStoreUpgradeResult.CommitIndeterminate indeterminate => Print(
+                "upgrade-store-v5", "commit-indeterminate",
+                new {
+                    indeterminate.BackupPath,
+                    Backup = indeterminate.Backup,
+                    ObservedActive = indeterminate.ObservedActive,
+                    indeterminate.NextAction
+                }, 2),
             RecapGridStoreUpgradeResult.AlreadyCurrent => Print(
                 "upgrade-store-v5", "already-current"),
             RecapGridStoreUpgradeResult.Absent => Print(

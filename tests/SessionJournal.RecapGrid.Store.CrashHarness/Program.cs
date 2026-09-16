@@ -8,9 +8,9 @@ namespace Atelia.SessionJournal.RecapGrid.Store.CrashHarness;
 internal static class Program {
     public static int Main(string[] args) {
         if (args.Length != 3
-            || args[0] is not ("cell" or "row-view" or "fulfilled" or "reset")) {
+            || args[0] is not ("cell" or "row-view" or "fulfilled" or "reset" or "upgrade-v4")) {
             Console.Error.WriteLine(
-                "usage: <cell|row-view|fulfilled|reset> <failpoint> <repository>"
+                "usage: <cell|row-view|fulfilled|reset|upgrade-v4> <failpoint> <repository>"
             );
             return 2;
         }
@@ -37,6 +37,14 @@ internal static class Program {
                 witness,
                 StoreStorageLimits.Production,
                 hooks
+            );
+        }
+        else if (operation == "upgrade-v4") {
+            _ = RecapGridStoreMaintenance.UpgradeV4ForTest(
+                repository,
+                apply: true,
+                static () => [],
+                UpgradeHooks(failpoint, crash)
             );
         }
         else {
@@ -107,6 +115,17 @@ internal static class Program {
         ),
         _ => throw new InvalidOperationException()
     };
+
+    private static StoreUpgradeTestHooks UpgradeHooks(
+        string failpoint,
+        Action crash
+    ) => new(
+        AfterTempVerified: failpoint == "after-temp-verified" ? crash : null,
+        AfterBackupDurable: failpoint == "after-backup-durable" ? crash : null,
+        AfterReplaceBeforeDirectoryFsync: failpoint == "after-replace-before-directory-fsync" ? crash : null,
+        AfterDirectoryFsyncBeforeVerify: failpoint == "after-directory-fsync-before-verify" ? crash : null,
+        AfterVerify: failpoint == "after-verify" ? crash : null
+    );
 
     internal static (RowBuildSpec Spec, RecapCellDraft Draft, FulfilledViewKey Fulfilled) Values() {
         var timeline = new TimelineId("00112233445566778899aabbccddeeff");

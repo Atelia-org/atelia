@@ -46,6 +46,20 @@ internal sealed record StorePersistenceTestHooks(
     internal static StorePersistenceTestHooks None { get; } = new();
 }
 
+/// <summary>
+/// Test-only interruption points for the offline V4 replacement protocol.
+/// They are deliberately not part of the operator-facing upgrade API.
+/// </summary>
+internal sealed record StoreUpgradeTestHooks(
+    Action? AfterTempVerified = null,
+    Action? AfterBackupDurable = null,
+    Action? AfterReplaceBeforeDirectoryFsync = null,
+    Action? AfterDirectoryFsyncBeforeVerify = null,
+    Action? AfterVerify = null
+) {
+    internal static StoreUpgradeTestHooks None { get; } = new();
+}
+
 internal sealed class StorePaths {
     internal StorePaths(string repositoryPath) {
         if (!OperatingSystem.IsLinux()) {
@@ -77,6 +91,17 @@ internal sealed class StorePaths {
     internal string JournalPath => DatabasePath + "-journal";
     internal string WalPath => DatabasePath + "-wal";
     internal string ShmPath => DatabasePath + "-shm";
+
+    private StorePaths(StorePaths original, string databasePath) {
+        CanonicalRepositoryPath = original.CanonicalRepositoryPath;
+        RootPath = original.RootPath;
+        DatabasePath = databasePath;
+        LifetimeLockPath = original.LifetimeLockPath;
+        RequireSafe(DatabasePath);
+    }
+
+    internal StorePaths WithDatabasePathForVerification(string databasePath)
+        => new(this, databasePath);
 
     internal void RequireSafe(string path) {
         RequireRepositoryChainSafe();
@@ -208,10 +233,15 @@ internal static class StoreDurableFiles {
 
     internal static RecapGridStorePhysicalWitness ComputeWitness(
         StorePaths paths
+    ) => ComputeWitness(paths, paths.DatabasePath);
+
+    internal static RecapGridStorePhysicalWitness ComputeWitness(
+        StorePaths paths,
+        string path
     ) {
-        paths.RequireSafe(paths.DatabasePath);
+        paths.RequireSafe(path);
         using var stream = new FileStream(
-            paths.DatabasePath,
+            path,
             FileMode.Open,
             FileAccess.Read,
             FileShare.Read,
@@ -234,6 +264,19 @@ internal static class StoreDurableFiles {
             );
         }
         return new RecapGridStorePhysicalWitness(length, digest);
+    }
+
+    internal static void FlushFile(StorePaths paths, string path) {
+        paths.RequireSafe(path);
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.Read,
+            bufferSize: 1,
+            FileOptions.None
+        );
+        stream.Flush(flushToDisk: true);
     }
 
     private static FileStream Acquire(
