@@ -216,8 +216,18 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                 }
             )
         );
+        RecapCellArtifact drainingCell = Cell('c', "drain");
+        RowBuildSpec drainingSpec = StoreFixture.Spec(
+            row: drainingCell.Slot.HistoryRowId
+        );
+        StoreFixture.PutWork(draining, drainingSpec);
+        RecapCellArtifact afterDisposeCell = Cell('d', "after dispose");
+        RowBuildSpec afterDisposeSpec = StoreFixture.Spec(
+            row: afterDisposeCell.Slot.HistoryRowId
+        );
+        StoreFixture.PutWork(draining, afterDisposeSpec);
         Task<RecapGridCellPutResult> put = Task.Run(
-            () => Put(draining, Cell('c', "drain"))
+            () => PutSelectedCell(draining, drainingSpec, drainingCell)
         );
         Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
         Task dispose = Task.Run(draining.Dispose);
@@ -229,7 +239,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         await dispose.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.IsType<RecapGridCellPutResult.Inserted>(await put);
         Assert.IsType<RecapGridCellPutResult.Disposed>(
-            Put(draining, Cell('d', "after dispose"))
+            PutSelectedCell(draining, afterDisposeSpec, afterDisposeCell)
         );
     }
 
@@ -238,6 +248,11 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         Create();
         using RecapGridStoreHandle handle = OpenWithHooks(new StorePersistenceTestHooks());
         RecapCellArtifact cell = Assert.IsType<RecapGridCellPutResult.Inserted>(Put(handle, Cell('b', "answer"))).Winner;
+        RecapCellArtifact rejected = Cell('c', "other");
+        RowBuildSpec rejectedSpec = StoreFixture.Spec(
+            row: rejected.Slot.HistoryRowId
+        );
+        StoreFixture.PutWork(handle, rejectedSpec);
         using (SqliteConnection connection = OpenRaw()) {
             connection.Open();
             using SqliteCommand command = connection.CreateCommand();
@@ -245,7 +260,8 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             command.ExecuteNonQuery();
         }
         var invalid = Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Invalid>(handle.Reader.TryReadCell(cell.Slot));
-        Assert.Equal(invalid.Code, Assert.IsType<RecapGridCellPutResult.Invalid>(Put(handle, Cell('c', "other"))).Code);
+        Assert.Equal(invalid.Code, Assert.IsType<RecapGridCellPutResult.Invalid>(
+            PutSelectedCell(handle, rejectedSpec, rejected)).Code);
         var unhealthy = Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(RecapGridStoreMaintenance.Verify(_root));
         Assert.True(unhealthy.Incomplete);
         Assert.NotEmpty(unhealthy.Errors);
