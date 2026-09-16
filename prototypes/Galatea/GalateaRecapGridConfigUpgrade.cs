@@ -20,8 +20,15 @@ internal static class GalateaRecapGridConfigUpgrade {
     internal static int Run(string[] args, TextWriter output, TextWriter error) {
         try {
             Invocation invocation = Parse(args);
-            UpgradeResult result = Upgrade(invocation);
-            foreach (MaintenanceCandidate candidate in result.Candidates) {
+            UpgradeResolution resolution = Upgrade(invocation);
+            IReadOnlyList<MaintenanceCandidate> candidates = resolution switch {
+                UpgradeResolution.Ready readyResolution
+                    => readyResolution.Result.Candidates,
+                UpgradeResolution.MaintenanceRouteSelectionRequired required
+                    => required.Candidates,
+                _ => throw new InvalidOperationException("Unknown config upgrade resolution.")
+            };
+            foreach (MaintenanceCandidate candidate in candidates) {
                 output.WriteLine(
                     "candidate=" + candidate.Index
                     + " connectionId=" + candidate.ConnectionId
@@ -30,11 +37,18 @@ internal static class GalateaRecapGridConfigUpgrade {
                     + candidate.DispatchTimeoutMilliseconds
                 );
             }
-            output.WriteLine("outcome=" + result.Outcome);
-            if (result.BackupPath is not null) {
-                output.WriteLine("backup=" + result.BackupPath);
+            if (resolution is UpgradeResolution.Ready ready) {
+                output.WriteLine("outcome=" + ready.Result.Outcome);
+                if (ready.Result.BackupPath is not null) {
+                    output.WriteLine("backup=" + ready.Result.BackupPath);
+                }
+                return 0;
             }
-            return 0;
+            var selectionRequired = (UpgradeResolution.MaintenanceRouteSelectionRequired)resolution;
+            error.WriteLine("code=maintenance-route-selection-required");
+            error.WriteLine("hint=rerun with --maintenance-route-index <index> (0-"
+                + (selectionRequired.Candidates.Count - 1) + ").");
+            return 3;
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
@@ -44,7 +58,7 @@ internal static class GalateaRecapGridConfigUpgrade {
         }
     }
 
-    internal static UpgradeResult Upgrade(Invocation invocation) {
+    internal static UpgradeResolution Upgrade(Invocation invocation) {
         ArgumentNullException.ThrowIfNull(invocation);
         if (!Path.IsPathFullyQualified(invocation.ConfigPath)) {
             throw Usage();
@@ -123,13 +137,12 @@ internal static class GalateaRecapGridConfigUpgrade {
                 "The V11 route manifest has no maintenance-route candidate."
             );
         }
+        if (invocation.MaintenanceRouteIndex is null && candidates.Length > 1) {
+            return new UpgradeResolution.MaintenanceRouteSelectionRequired(
+                candidates);
+        }
         MaintenanceCandidate selected = invocation.MaintenanceRouteIndex switch {
-            null when candidates.Length == 1 => candidates[0],
-            null => throw new InvalidOperationException(
-                "V11 routes have different connection/budget values. Re-run "
-                + "with --maintenance-route-index <index>; dry-run wrote "
-                + "the deterministic candidates."
-            ),
+            null => candidates[0],
             int index when index >= 0 && index < candidates.Length
                 => candidates[index],
             _ => throw new InvalidOperationException(
@@ -153,7 +166,8 @@ internal static class GalateaRecapGridConfigUpgrade {
         ) + Environment.NewLine);
         GalateaStrictConfigReader.ValidateRoot(destination);
         if (!invocation.Apply) {
-            return new UpgradeResult("DryRunReady", candidates, null);
+            return new UpgradeResolution.Ready(
+                new UpgradeResult("DryRunReady", candidates, null));
         }
         string backupPath = configPath + ".v11-backup-"
             + DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ",
@@ -184,7 +198,8 @@ internal static class GalateaRecapGridConfigUpgrade {
             "Galatea config"
         );
         GalateaStrictConfigReader.ValidateRoot(reopened);
-        return new UpgradeResult("Upgraded", candidates, backupPath);
+        return new UpgradeResolution.Ready(
+            new UpgradeResult("Upgraded", candidates, backupPath));
     }
 
     private static Invocation Parse(string[] args) {
@@ -300,4 +315,14 @@ internal static class GalateaRecapGridConfigUpgrade {
         IReadOnlyList<MaintenanceCandidate> Candidates,
         string? BackupPath
     );
+
+    internal abstract record UpgradeResolution {
+        private UpgradeResolution() { }
+
+        internal sealed record Ready(UpgradeResult Result) : UpgradeResolution;
+
+        internal sealed record MaintenanceRouteSelectionRequired(
+            IReadOnlyList<MaintenanceCandidate> Candidates
+        ) : UpgradeResolution;
+    }
 }

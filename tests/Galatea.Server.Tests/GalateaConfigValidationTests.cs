@@ -47,17 +47,19 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(configPath, V11Config());
             byte[] before = File.ReadAllBytes(configPath);
 
-            GalateaRecapGridConfigUpgrade.UpgradeResult dryRun =
+            GalateaRecapGridConfigUpgrade.UpgradeResult dryRun = Assert.IsType<
+                GalateaRecapGridConfigUpgrade.UpgradeResolution.Ready>(
                 GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, null, Apply: false));
+                    configPath, null, Apply: false))).Result;
 
             Assert.Equal("DryRunReady", dryRun.Outcome);
             Assert.Equal(before, File.ReadAllBytes(configPath));
             Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
 
-            GalateaRecapGridConfigUpgrade.UpgradeResult applied =
+            GalateaRecapGridConfigUpgrade.UpgradeResult applied = Assert.IsType<
+                GalateaRecapGridConfigUpgrade.UpgradeResolution.Ready>(
                 GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, null, Apply: true));
+                    configPath, null, Apply: true))).Result;
 
             Assert.Equal("Upgraded", applied.Outcome);
             Assert.NotNull(applied.BackupPath);
@@ -113,16 +115,74 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(configPath, V11Config());
             byte[] before = File.ReadAllBytes(configPath);
 
-            Assert.Throws<InvalidOperationException>(() =>
+            var ambiguous = Assert.IsType<
+                GalateaRecapGridConfigUpgrade.UpgradeResolution.MaintenanceRouteSelectionRequired>(
                 GalateaRecapGridConfigUpgrade.Upgrade(new(
                     configPath, null, Apply: false)));
+            Assert.Collection(ambiguous.Candidates,
+                candidate => {
+                    Assert.Equal(0, candidate.Index);
+                    Assert.Equal("a", candidate.ConnectionId);
+                    Assert.Equal(1, candidate.MaximumConcurrency);
+                    Assert.Equal(60_000, candidate.DispatchTimeoutMilliseconds);
+                },
+                candidate => {
+                    Assert.Equal(1, candidate.Index);
+                    Assert.Equal("b", candidate.ConnectionId);
+                    Assert.Equal(2, candidate.MaximumConcurrency);
+                    Assert.Equal(120_000, candidate.DispatchTimeoutMilliseconds);
+                });
             Assert.Equal(before, File.ReadAllBytes(configPath));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
 
-            GalateaRecapGridConfigUpgrade.UpgradeResult selected =
+            Assert.IsType<
+                GalateaRecapGridConfigUpgrade.UpgradeResolution.MaintenanceRouteSelectionRequired>(
                 GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, MaintenanceRouteIndex: 1, Apply: false));
+                    configPath, null, Apply: true)));
+            Assert.Equal(before, File.ReadAllBytes(configPath));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
+
+            var ambiguousOutput = new StringWriter();
+            var ambiguousError = new StringWriter();
+            int ambiguousExit = GalateaRecapGridConfigUpgrade.Run(
+                ["operator", GalateaRecapGridConfigUpgrade.CommandName,
+                    "--config", configPath],
+                ambiguousOutput,
+                ambiguousError);
+            Assert.Equal(3, ambiguousExit);
+            Assert.Equal(
+                "candidate=0 connectionId=a maximumConcurrency=1 dispatchTimeoutMilliseconds=60000"
+                + Environment.NewLine
+                + "candidate=1 connectionId=b maximumConcurrency=2 dispatchTimeoutMilliseconds=120000"
+                + Environment.NewLine,
+                ambiguousOutput.ToString());
+            Assert.Equal("code=maintenance-route-selection-required"
+                + Environment.NewLine
+                + "hint=rerun with --maintenance-route-index <index> (0-1)."
+                + Environment.NewLine,
+                ambiguousError.ToString());
+            Assert.Equal(before, File.ReadAllBytes(configPath));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
+
+            var selectedOutput = new StringWriter();
+            var selectedError = new StringWriter();
+            int selectedExit = GalateaRecapGridConfigUpgrade.Run(
+                ["operator", GalateaRecapGridConfigUpgrade.CommandName,
+                    "--config", configPath,
+                    "--maintenance-route-index", "1"],
+                selectedOutput,
+                selectedError);
+            Assert.Equal(0, selectedExit);
+            Assert.Equal(string.Empty, selectedError.ToString());
+            Assert.Contains("outcome=DryRunReady" + Environment.NewLine,
+                selectedOutput.ToString(), StringComparison.Ordinal);
+            GalateaRecapGridConfigUpgrade.UpgradeResult selected = Assert.IsType<
+                GalateaRecapGridConfigUpgrade.UpgradeResolution.Ready>(
+                GalateaRecapGridConfigUpgrade.Upgrade(new(
+                    configPath, MaintenanceRouteIndex: 1, Apply: false))).Result;
             Assert.Equal("b", selected.Candidates[1].ConnectionId);
             Assert.Equal(before, File.ReadAllBytes(configPath));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
         }
         finally {
             Directory.Delete(root, recursive: true);
