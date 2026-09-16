@@ -2,6 +2,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Online;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
@@ -22,8 +23,15 @@ internal static partial class RecapGridCommands {
             "connection",
             "message",
             "maximum-canonical-request-bytes",
-            "admission"
+            "admission",
+            "producer-target"
         );
+        BuildTarget? producerTarget = options.GetOptionalSingle(
+            "producer-target"
+        ) is { } producerTargetPath
+            ? BuildTarget.DecodeCanonical(ReadBoundedFile(
+                producerTargetPath, MaximumInputUtf8Bytes))
+            : null;
         string repositoryPath = options.RequireSingle("input");
         string branchName = options.RequireSingle("branch");
         CliIo.EnsurePathChainHasNoReparsePoint(repositoryPath, "--input");
@@ -282,12 +290,20 @@ internal static partial class RecapGridCommands {
                     ValidateOnlineSetup(engine, expectedHead, connection);
                 }
 
-                RecapGridOnlineOpenResult opened = RecapGridOnlineFactory.Open(
-                    engine,
-                    completionHost.Executor,
-                    RecapGridOnlineLimits.Production,
-                    new O200kBaseHistoryUnitLoadEstimator()
-                );
+                RecapGridOnlineOpenResult opened = producerTarget is null
+                    ? RecapGridOnlineFactory.Open(
+                        engine,
+                        completionHost.Executor,
+                        RecapGridOnlineLimits.Production,
+                        new O200kBaseHistoryUnitLoadEstimator()
+                    )
+                    : RecapGridOnlineFactory.Open(
+                        engine,
+                        completionHost.Executor,
+                        producerTarget,
+                        RecapGridOnlineLimits.Production,
+                        new O200kBaseHistoryUnitLoadEstimator()
+                    );
                 if (opened is not RecapGridOnlineOpenResult.Opened available) {
                     return MapOnlineOpen(opened);
                 }

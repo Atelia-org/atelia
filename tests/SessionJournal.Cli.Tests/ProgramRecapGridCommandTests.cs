@@ -2384,6 +2384,10 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(clientsAfterFirstOnline, factory.CallCount);
 
         int beforeSecondOnline = factory.RequestCount;
+        string producerTarget = WriteBytes(
+            "online-producer-target.canonical",
+            recipe.Target.ToCanonicalBytes()
+        );
         (int secondOnlineCode, JsonElement secondOnline) =
             RunCapturedWithFactory(factory,
                 "run-online-turn",
@@ -2394,7 +2398,8 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                 "--connection", "test",
                 "--admission", admission,
                 "--connections", onlineConnections,
-                "--routes", routes);
+                "--routes", routes,
+                "--producer-target", producerTarget);
         Assert.Equal(0, secondOnlineCode);
         Assert.Equal("completed",
             secondOnline.GetProperty("status").GetString());
