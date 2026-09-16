@@ -1535,10 +1535,7 @@ public sealed class GalateaConfigValidationTests {
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
             Assert.NotNull(loaded.RecapGrid);
-            Assert.True(loaded.RecapGrid.HistoricalAgentControlProfiles!.TryGet(
-                "test-profile",
-                out RecapGridAgentControlProfile _
-            ));
+            Assert.NotNull(loaded.RecapGrid.HistoricalAgentControlProfiles);
             Assert.Equal("test", loaded.RecapGrid.Maintenance.ConnectionId);
             Assert.Equal(0, provider.CreateCallCount);
         }

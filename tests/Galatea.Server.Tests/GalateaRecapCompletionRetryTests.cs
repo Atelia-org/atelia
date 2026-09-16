@@ -30,9 +30,11 @@ public sealed partial class GalateaRecapGridCompositionTests {
                     connection.Id,
                     1,
                     TimeSpan.FromMilliseconds(30)
-                ),
-                new RecapGridAgentControlProfileRegistry([profile])
-            )
+                )
+            ) {
+                HistoricalAgentControlProfiles =
+                    new RecapGridAgentControlProfileRegistry([profile])
+            }
         };
         var clock = new GalateaLabClock();
         var provider = new RetryMaintenanceClient();

@@ -171,9 +171,15 @@ internal sealed record GalateaCharacterRecipient(
 );
 
 public sealed record GalateaRecapGridRuntimeConfig(
-    GalateaRecapGridMaintenanceConfig Maintenance,
-    RecapGridAgentControlProfileRegistry? HistoricalAgentControlProfiles
-);
+    GalateaRecapGridMaintenanceConfig Maintenance
+) {
+    // Historical profile bytes are intentionally not decoded while config is
+    // loaded. Only frozen exact AgentControl recovery can force this lookup.
+    internal IRecapGridAgentControlProfileLookup? HistoricalAgentControlProfiles {
+        get;
+        init;
+    }
+}
 
 public sealed record GalateaRecapGridMaintenanceConfig(
     string ConnectionId,

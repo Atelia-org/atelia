@@ -165,7 +165,25 @@ public sealed class RecapGridAgentControlProfile {
 /// or wildcard route: fresh work names a profile id and frozen work supplies
 /// the exact durable tool runtime identity.
 /// </summary>
-public sealed class RecapGridAgentControlProfileRegistry {
+/// <summary>
+/// Immutable exact lookup for operator-provisioned Agent Control profiles.
+/// This is a lookup boundary only: it has no default, wildcard, mutation, or
+/// profile-selection policy.
+/// </summary>
+public interface IRecapGridAgentControlProfileLookup {
+    bool TryGet(
+        string profileId,
+        out RecapGridAgentControlProfile profile
+    );
+
+    bool TryBindExact(
+        SessionToolRuntimeIdentity runtimeIdentity,
+        out RecapGridAgentControlProfile profile
+    );
+}
+
+public sealed class RecapGridAgentControlProfileRegistry
+    : IRecapGridAgentControlProfileLookup {
     private readonly IReadOnlyDictionary<string,
         RecapGridAgentControlProfile> _byId;
     private readonly IReadOnlyDictionary<SessionToolRuntimeIdentity,

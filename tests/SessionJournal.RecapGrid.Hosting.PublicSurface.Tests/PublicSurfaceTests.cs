@@ -194,7 +194,7 @@ public sealed class PublicSurfaceTests {
             typeof(Func<RecapCompletionRouteKey,
                 RecapGridRouteManifestEntry>),
             typeof(CompletionConnectionRegistry),
-            typeof(RecapGridAgentControlProfileRegistry),
+            typeof(IRecapGridAgentControlProfileLookup),
             typeof(RecapCompletionRuntimeOptions),
             typeof(int),
             typeof(IRecapCompletionTelemetry),

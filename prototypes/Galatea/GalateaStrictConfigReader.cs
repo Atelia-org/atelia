@@ -169,6 +169,52 @@ internal static class GalateaStrictConfigReader {
         }
     }
 
+    /// <summary>
+    /// Verifies only the final file's no-follow regular-file metadata and
+    /// bounded non-empty length. It deliberately does not read file content;
+    /// callers that later consume bytes must use <see cref="ReadBoundedRegularFile"/>
+    /// again to close the time-of-check/time-of-use boundary.
+    /// </summary>
+    internal static void RequireBoundedRegularFileNoFollow(
+        string path,
+        int maximumBytes,
+        string kind
+    ) {
+        if (maximumBytes < 1) {
+            throw new ArgumentOutOfRangeException(nameof(maximumBytes));
+        }
+        RequireExistingRegularFileNoFollow(path, kind);
+        string resolved = Path.GetFullPath(path);
+        int descriptor = Open(
+            resolved,
+            OpenReadOnly | OpenNonBlocking | OpenNoFollow | OpenCloseOnExec
+        );
+        if (descriptor < 0) {
+            throw new InvalidDataException(
+                $"{kind} must be an existing no-follow regular file."
+            );
+        }
+        try {
+            if (ReadDescriptorFileType(descriptor) != LinuxRegularFileType) {
+                throw new InvalidDataException($"{kind} must be a regular file.");
+            }
+            var handle = new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
+            descriptor = -1;
+            using var stream = new FileStream(handle, FileAccess.Read,
+                bufferSize: 1, isAsync: false);
+            if (stream.Length < 1 || stream.Length > maximumBytes) {
+                throw new InvalidDataException(
+                    $"{kind} bytes are empty or exceed the code-owned cap."
+                );
+            }
+        }
+        finally {
+            if (descriptor >= 0) {
+                _ = Close(descriptor);
+            }
+        }
+    }
+
     internal static void ValidateRoot(ReadOnlySpan<byte> bytes) {
         try {
             var reader = new Utf8JsonReader(bytes, new JsonReaderOptions {

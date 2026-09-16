@@ -352,7 +352,7 @@ public abstract record RecapGridAgentConnectionResult {
 public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     private readonly CompletionConnectionRegistry _registry;
     private readonly DeferredSharedRegistryRouteResolver _routeResolver;
-    private readonly RecapGridAgentControlProfileRegistry? _agentControl;
+    private readonly IRecapGridAgentControlProfileLookup? _agentControl;
     private readonly bool _ownsRegistry;
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
@@ -362,7 +362,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         DeferredSharedRegistryRouteResolver routeResolver,
         RecapCompletionRuntime runtime,
         BoundedRecapCompletionTelemetry telemetry,
-        RecapGridAgentControlProfileRegistry? agentControl,
+        IRecapGridAgentControlProfileLookup? agentControl,
         bool ownsRegistry
     ) {
         _registry = registry;
@@ -490,7 +490,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         Func<RecapCompletionRouteKey, RecapGridRouteManifestEntry?>
             exactRouteFactory,
         CompletionConnectionRegistry registry,
-        RecapGridAgentControlProfileRegistry? agentControl = null,
+        IRecapGridAgentControlProfileLookup? agentControl = null,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
         int maximumTelemetryEvents = 1_024,
         IRecapCompletionTelemetry? liveTelemetry = null,
@@ -517,7 +517,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         Func<RecapGridRouteManifest> routeManifestLoader,
         CompletionConnectionsFileConfig connections,
         ICompletionClientFactory clientFactory,
-        RecapGridAgentControlProfileRegistry? agentControl,
+        IRecapGridAgentControlProfileLookup? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
         ISessionInputProjector? inputProjector
@@ -548,7 +548,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     private static RecapGridCompletionHost CreateWithRegistry(
         Func<RecapGridRouteManifest> routeManifestLoader,
         CompletionConnectionRegistry registry,
-        RecapGridAgentControlProfileRegistry? agentControl,
+        IRecapGridAgentControlProfileLookup? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
         bool ownsRegistry,
@@ -580,7 +580,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         Func<RecapCompletionRouteKey, RecapGridRouteManifestEntry?>
             exactRouteFactory,
         CompletionConnectionRegistry registry,
-        RecapGridAgentControlProfileRegistry? agentControl,
+        IRecapGridAgentControlProfileLookup? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
         bool ownsRegistry,

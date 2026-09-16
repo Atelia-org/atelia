@@ -4453,7 +4453,6 @@ internal static class GalateaConfigLoader {
     public const string ConnectionsFileName = "connections.json";
     public const string DelegatesFileName = "delegates.json";
     private const int MaximumAgentControlProfileCount = 256;
-    private const int MaximumAgentControlProfileUtf8Bytes = 128 * 1024;
 
     private static IReadOnlyList<GalateaPlayerConfig> ResolvePlayers(IReadOnlyList<GalateaPlayerFileConfig> players) {
         ArgumentNullException.ThrowIfNull(players);
@@ -4633,7 +4632,7 @@ internal static class GalateaConfigLoader {
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal
         );
-        var profiles = new List<RecapGridAgentControlProfile>(
+        var canonicalProfilePaths = new List<string>(
             profileFiles.Count
         );
         for (int index = 0; index < profileFiles.Count; index++) {
@@ -4649,13 +4648,12 @@ internal static class GalateaConfigLoader {
                     + "duplicate canonical path."
                 );
             }
-            profiles.Add(RecapGridAgentControlProfile.DecodeCanonical(
-                ReadBoundedFile(
-                    path,
-                    MaximumAgentControlProfileUtf8Bytes,
-                    "Agent Control profile"
-                )
-            ));
+            GalateaStrictConfigReader.RequireBoundedRegularFileNoFollow(
+                path,
+                GalateaHistoricalAgentControlProfiles.MaximumProfileUtf8Bytes,
+                "historical Agent Control profile"
+            );
+            canonicalProfilePaths.Add(path);
         }
         return new GalateaRecapGridRuntimeConfig(
             new GalateaRecapGridMaintenanceConfig(
@@ -4664,11 +4662,13 @@ internal static class GalateaConfigLoader {
                 TimeSpan.FromMilliseconds(
                     maintenance.DispatchTimeoutMilliseconds
                 )
-            ),
-            profiles.Count == 0
+            )
+        ) {
+            HistoricalAgentControlProfiles = canonicalProfilePaths.Count == 0
                 ? null
-                : new RecapGridAgentControlProfileRegistry(profiles)
-        );
+                : new GalateaHistoricalAgentControlProfiles(
+                    canonicalProfilePaths)
+        };
     }
 
     private static string ResolveRequiredFilePath(

@@ -561,11 +561,11 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     [Fact]
-    public void ProfileFileCountAndResolvedIdentityAreExact() {
+    public void ProfileFileCountAndCanonicalPathMetadataAreExact() {
         using var fixture = new RootConfigFixture();
         JsonObject one = ParseRoot(MinimalV11);
-        Assert.Equal(["test-profile"], fixture.Load(one.ToJsonString())
-            .RecapGrid!.HistoricalAgentControlProfiles!.ProfileIds);
+        GalateaConfig loadedOne = fixture.Load(one.ToJsonString());
+        Assert.NotNull(loadedOne.RecapGrid!.HistoricalAgentControlProfiles);
 
         JsonObject zero = ParseRoot(MinimalV11);
         RecapObject(zero)["historicalAgentControlProfileFiles"] = new JsonArray();
@@ -593,8 +593,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         JsonObject maximumRecap = RecapObject(maximumRoot);
         maximumRecap["historicalAgentControlProfileFiles"] = StringArray(paths);
         GalateaConfig maximum = fixture.Load(maximumRoot.ToJsonString());
-        Assert.Equal(256, maximum.RecapGrid!.HistoricalAgentControlProfiles!
-            .ProfileIds.Count);
+        Assert.NotNull(maximum.RecapGrid!.HistoricalAgentControlProfiles);
 
         JsonObject overRoot = ParseRoot(MinimalV11);
         JsonObject overRecap = RecapObject(overRoot);
@@ -614,7 +613,19 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     [Fact]
-    public void ProfileRegistryRejectsDuplicateProfileAndRuntimeIdentities() {
+    public void MalformedHistoricalProfileBytesDoNotBlockConfigLoad() {
+        using var fixture = new RootConfigFixture();
+        fixture.WriteBytes("profile.json", "{"u8.ToArray());
+
+        GalateaConfig loaded = fixture.Load(MinimalV11);
+
+        Assert.NotNull(loaded.RecapGrid!.HistoricalAgentControlProfiles);
+        Assert.Throws<InvalidDataException>(() => loaded.RecapGrid
+            .HistoricalAgentControlProfiles!.TryGet("test-profile", out _));
+    }
+
+    [Fact]
+    public void ProfileRegistryRejectsDuplicateProfileAndRuntimeIdentitiesOnlyWhenExactLookupOccurs() {
         using var fixture = new RootConfigFixture();
 
         fixture.WriteProfile(
@@ -633,9 +644,10 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             "registry/duplicate-profile-a.json",
             "registry/duplicate-profile-b.json"
         );
-        Assert.Throws<ArgumentException>(() => fixture.Load(
-            duplicateProfileRoot.ToJsonString()
-        ));
+        GalateaConfig duplicateProfile = fixture.Load(
+            duplicateProfileRoot.ToJsonString());
+        Assert.Throws<ArgumentException>(() => duplicateProfile.RecapGrid!
+            .HistoricalAgentControlProfiles!.TryGet("duplicate-profile", out _));
 
         fixture.WriteProfile(
             "registry/duplicate-runtime-a.json",
@@ -653,9 +665,10 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             "registry/duplicate-runtime-a.json",
             "registry/duplicate-runtime-b.json"
         );
-        Assert.Throws<ArgumentException>(() => fixture.Load(
-            duplicateRuntimeRoot.ToJsonString()
-        ));
+        GalateaConfig duplicateRuntime = fixture.Load(
+            duplicateRuntimeRoot.ToJsonString());
+        Assert.Throws<ArgumentException>(() => duplicateRuntime.RecapGrid!
+            .HistoricalAgentControlProfiles!.TryGet("runtime-a", out _));
     }
 
     [Fact]
