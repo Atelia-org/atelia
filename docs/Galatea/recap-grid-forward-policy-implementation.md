@@ -26,7 +26,9 @@
   精确解析；缺失/列不符返回 typed failure。Host 回归只补 P0 缺 cell、沿 P0
   route，WorkId/ProducerTarget 不变。completed P0 read 在 P1 与 throwing
   route loader 下零 maintenance，Control/Store 不变。Prepared、LegacyStarted
-  与 ToolContinuation frozen 阶段同样零 maintenance，并保留旧 tool identity。
+  与 ToolContinuation frozen 阶段同样零 maintenance，并保留旧 tool identity；
+  其明确分界后的 fresh P1 只加载一次 P1 route、生成 P1 work，P0 active root
+  及既有 P0 slots 不变。
 - G3c：`GalateaConfigLoader.Load -> GalateaCompletionOwner -> BindPrepared`
   证明 profile bytes 延迟到 frozen exact bind：malformed bytes 不阻断
   config/owner construction，exact bind 才失败；canonical old profile 成功且

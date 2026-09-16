@@ -419,6 +419,18 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             reopened, CancellationToken.None);
 
         Assert.Equal("ready", result.RecapGridReadiness?.State);
+        Assert.Contains("galatea.world-understanding Galatea积累的世界理解：",
+            result.ContextHeader.Observation, StringComparison.Ordinal);
+        Assert.Contains("p0-world-understanding", result.ContextHeader.Observation,
+            StringComparison.Ordinal);
+        Assert.Contains("galatea.first-person-autobiography Galatea积累的第一人称自传：",
+            result.ContextHeader.Action, StringComparison.Ordinal);
+        Assert.Contains("p0-autobiography", result.ContextHeader.Action,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("P1 distinct semantic heading", result.ContextHeader.Observation,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("P1 distinct semantic heading", result.ContextHeader.Action,
+            StringComparison.Ordinal);
         Assert.Equal(0, routeLoads);
         Assert.Empty(readFactory.Recap.Invocations);
         Assert.Equal(0, readFactory.Agent.DispatchCallCount);
@@ -617,6 +629,22 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             static value => value.Kind == SessionEventKind.ToolResultObserved)
             .Address;
 
+        await RunFreshAsync(service, session, "seal the durable tool-result tail");
+        Assert.Equal(1, routeLoads);
+        RecapInvocation withToolTail = Assert.Single(recoveryFactory.Recap.Invocations,
+            static value => value.Request.PromptPrefix.SharedContextMessages
+                .OfType<ToolResultsMessage>().Any());
+        Assert.Equal("p1-current-policy", withToolTail.LogicalColumnId);
+        ToolResultsMessage results = Assert.Single(withToolTail.Request
+            .PromptPrefix.SharedContextMessages.OfType<ToolResultsMessage>());
+        Assert.Contains("\"status\":\"available\"", string.Join("|",
+            results.Results.Select(static result => result.GetFlattenedText())),
+            StringComparison.Ordinal);
+        CellSlot[] continuationKeys = recoveryCompletion
+            .ReadTelemetrySnapshot().Events.Select(static value => value.Slot)
+            .ToArray();
+        Assert.Equal(continuationKeys.Length, continuationKeys.Distinct().Count());
+        Assert.DoesNotContain(continuationKeys, value => healthyKeys.Contains(value));
         Assert.Equal(fixture.Recipe.Digest,
             ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
     }

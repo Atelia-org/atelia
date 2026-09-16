@@ -185,7 +185,8 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         IEnumerable<RowBuildAssignment> orderedAssignments,
-        RowWork? work = null
+        RowWork? work = null,
+        BuildTarget? proposedProducerTarget = null
     ) {
         if (recipe?.Kind != GridBuildRecipeKind.Full) {
             throw new ArgumentException(
@@ -213,7 +214,8 @@ public sealed class RowBuildSpec {
             recipe,
             coordinate,
             assignments,
-            work
+            work,
+            proposedProducerTarget
         );
     }
 
@@ -221,7 +223,8 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         IEnumerable<RowBuildAssignment> orderedAssignments,
-        RowWork? work = null
+        RowWork? work = null,
+        BuildTarget? proposedProducerTarget = null
     ) {
         if (recipe?.Kind != GridBuildRecipeKind.Overlay) {
             throw new ArgumentException(
@@ -260,7 +263,8 @@ public sealed class RowBuildSpec {
             recipe,
             coordinate,
             assignments,
-            work
+            work,
+            proposedProducerTarget
         );
     }
 
@@ -268,7 +272,8 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         IEnumerable<RowBuildAssignment> orderedAssignments,
-        RowWork? work = null
+        RowWork? work = null,
+        BuildTarget? proposedProducerTarget = null
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
         if (!coordinate.BootstrapCompleted) {
@@ -291,7 +296,8 @@ public sealed class RowBuildSpec {
             recipe,
             coordinate,
             assignments,
-            work
+            work,
+            proposedProducerTarget
         );
     }
 
@@ -299,11 +305,13 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         RowBuildAssignment[] assignments,
-        RowWork? work
+        RowWork? work,
+        BuildTarget? proposedProducerTarget
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
         ArgumentNullException.ThrowIfNull(coordinate);
-        BuildTarget actualTarget = work?.ProducerTarget ?? recipe.Target;
+        BuildTarget actualTarget = work?.ProducerTarget
+            ?? proposedProducerTarget ?? recipe.Target;
         if (coordinate.TimelineId != recipe.TimelineId
             || coordinate.RecipeDigest != recipe.Digest
             || coordinate.TargetDigest != actualTarget.Digest) {

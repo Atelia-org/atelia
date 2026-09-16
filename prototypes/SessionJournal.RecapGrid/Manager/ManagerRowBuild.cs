@@ -99,22 +99,25 @@ public sealed partial class RecapGridManager {
                     plan.Recipe,
                     coordinate,
                     assignments,
-                    work
+                    work,
+                    proposedProducerTarget: plan.ProducerTarget
                 ),
                 GridBuildRecipeKind.Overlay
                     when isOverlayBootstrap
                     => RowBuildSpec.CreateOverlayBootstrap(
-                        plan.Recipe,
+                    plan.Recipe,
                     coordinate,
                     assignments,
-                    work
+                    work,
+                    proposedProducerTarget: plan.ProducerTarget
                     ),
                 GridBuildRecipeKind.Overlay
                     => RowBuildSpec.CreateNormal(
-                        plan.Recipe,
+                    plan.Recipe,
                     coordinate,
                     assignments,
-                    work
+                    work,
+                    proposedProducerTarget: plan.ProducerTarget
                     ),
                 _ => throw new InvalidOperationException(
                     "The recipe kind is unsupported."
@@ -497,7 +500,9 @@ public sealed partial class RecapGridManager {
                         spec.DefinitionAt(index);
                     if (!plan.RegisteredDefinitions.TryGetValue(
                             definitionDigest,
-                            out MaintainerDefinitionRevision? definition)) {
+                            out MaintainerDefinitionRevision? definition)
+                        || !plan.RegisteredFamilies.ContainsKey(
+                            definition.FamilyDigest)) {
                         return (null, Invalid(
                             "RowWorkDefinitionUnavailable",
                             "The persisted producer definition is unavailable."
