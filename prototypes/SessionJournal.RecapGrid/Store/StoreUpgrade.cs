@@ -139,7 +139,9 @@ public static partial class RecapGridStoreMaintenance {
                     backup!, backupEvidence!, ObserveActive(paths),
                     "inspect-and-verify-active-before-any-restore-or-retry");
             }
-            catch (Exception exception) when (apply && !IsFatal(exception)) {
+            catch (Exception exception) when (apply
+                && backupEvidence is not null
+                && !IsFatal(exception)) {
                 bool cleaned = TryDeleteUpgradeTemporary(temporary);
                 cleanupNeeded = false;
                 return new RecapGridStoreUpgradeResult.PreCommitFailed(
