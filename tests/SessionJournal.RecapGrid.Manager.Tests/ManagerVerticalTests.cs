@@ -1144,6 +1144,52 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task NewOverlayRejectsBaseMemberThatIsNotBaseRowWorkAssignment() {
+        Fixture fixture = CreateOverlayFixture(initialTurns: 1, laterTurns: 0);
+        Assert.NotNull(fixture.BaseRecipe);
+        Assert.NotNull(fixture.RetroRecipe);
+        HistoryRowId row = fixture.Rows[0].Descriptor.RowId;
+        CellId replacement;
+        using (fixture.Journal) {
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await manager.Manager.BuildAsync(
+                        CandidateRequest(fixture.BaseRecipe.Digest),
+                        new RecordingExecutor()));
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await manager.Manager.BuildAsync(
+                        CandidateRequest(fixture.RetroRecipe.Digest),
+                        new RecordingExecutor()));
+            }
+            using (RecapGridStoreReaderHandle sourceReader = OpenStoreReader(fixture)) {
+                RecapRowView retro = Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                    sourceReader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                        fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                        fixture.RetroRecipe.Digest, row))).Value;
+                replacement = retro.OrderedCells.Single(cell =>
+                    cell.LogicalColumnId.Value == "case.culprit").CellId;
+            }
+            ReplaceBaseCulpritMember(fixture, row, replacement);
+
+            var executor = new RecordingExecutor();
+            using RecapGridManagerHandle reopened = OpenManager(fixture);
+            RecapGridBuildResult.OverlaySourceIncompatible result = Assert.IsType<
+                RecapGridBuildResult.OverlaySourceIncompatible>(
+                await reopened.Manager.BuildAsync(
+                    CandidateRequest(fixture.Recipe.Digest), executor));
+            Assert.Equal("case.culprit", result.LogicalColumnId.Value);
+            Assert.Equal("BaseEvaluateCellDoesNotMatchBaseWork", result.Reason);
+            Assert.Equal(0, result.Metrics.NewCalls);
+            Assert.Empty(executor.Batches);
+            using RecapGridStoreReaderHandle reader = OpenStoreReader(fixture);
+            Assert.IsType<RecapGridStoreReadResult<RowWork>.Missing>(
+                reader.Reader.ReadRowWork(new RowWorkKey(
+                    fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                    fixture.Recipe.Digest, row)));
+        }
+    }
+
+    [Fact]
     public async Task OverlayBootstrapAnchorSkipsBaseForNewerSuffix() {
         Fixture fixture = CreateOverlayFixture(
             initialTurns: 1,
@@ -3224,6 +3270,44 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             "v1",
             "grid.sqlite"
         ));
+
+    private static void ReplaceBaseCulpritMember(
+        Fixture fixture,
+        HistoryRowId row,
+        CellId replacement
+    ) {
+        string database = Path.Combine(fixture.Path, "derived", "recap-grid",
+            "v1", "grid.sqlite");
+        Type connectionType = Type.GetType(
+            "Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite",
+            throwOnError: true)!;
+        using var connection = (DbConnection)Activator.CreateInstance(
+            connectionType,
+            $"Data Source={database};Mode=ReadWrite;Pooling=False;Foreign Keys=False")!;
+        connection.Open();
+        using DbCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE row_view_member SET cell_id = $replacement
+            WHERE row_result_id = (
+                SELECT row_result_id FROM row_view
+                WHERE ref_id = $ref AND timeline_id = $timeline
+                  AND recipe_digest = $recipe AND history_row_id = $row)
+              AND logical_column_id = 'case.culprit';
+            """;
+        foreach ((string name, object value) in new[] {
+            ("$replacement", (object)replacement.Value),
+            ("$ref", fixture.TimelineHead.RefId.ToHexString()),
+            ("$timeline", fixture.TimelineHead.TimelineId.Value),
+            ("$recipe", fixture.BaseRecipe!.Digest.Value),
+            ("$row", row.Value)
+        }) {
+            DbParameter parameter = command.CreateParameter();
+            parameter.ParameterName = name;
+            parameter.Value = value;
+            command.Parameters.Add(parameter);
+        }
+        Assert.Equal(1, command.ExecuteNonQuery());
+    }
 
     private RecapGridManagerHandle OpenManager(
         Fixture fixture,

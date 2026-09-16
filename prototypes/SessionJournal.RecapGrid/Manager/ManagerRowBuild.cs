@@ -69,6 +69,9 @@ public sealed partial class RecapGridManager {
         catch (OverlaySourceIncompatibleException exception) {
             return (null, exception.Result);
         }
+        catch (RowWorkReadException exception) {
+            return (null, exception.Result);
+        }
         catch (Exception exception) when (IsContractFailure(exception)) {
             return (null, Invalid("RowWorkAssignmentDerivationInvalid", exception.Message));
         }
@@ -90,6 +93,9 @@ public sealed partial class RecapGridManager {
                     producerTarget, work);
             }
             catch (OverlaySourceIncompatibleException exception) {
+                return (null, exception.Result);
+            }
+            catch (RowWorkReadException exception) {
                 return (null, exception.Result);
             }
             catch (Exception exception) when (IsContractFailure(exception)) {
@@ -184,6 +190,10 @@ public sealed partial class RecapGridManager {
             reusable = baseRow.Cells.ToDictionary(
                 static cell => cell.LogicalColumnId
             );
+            if (work is null) {
+                ValidateNewOverlayBaseAssignments(
+                    plan, descriptor, baseRow, producerTarget, recomputed);
+            }
         }
         var assignments = new RowBuildAssignment[
             producerTarget.OrderedColumns.Count
@@ -244,6 +254,78 @@ public sealed partial class RecapGridManager {
         return assignments;
     }
 
+    private void ValidateNewOverlayBaseAssignments(
+        FrozenRecipePlan plan,
+        HistorySegmentDescriptor descriptor,
+        BuiltRow baseRow,
+        BuildTarget producerTarget,
+        IReadOnlySet<LogicalColumnId> recomputed
+    ) {
+        BuildTargetColumn? firstReusedTarget = producerTarget.OrderedColumns
+            .FirstOrDefault(column => !recomputed.Contains(
+                column.LogicalColumnId));
+        if (firstReusedTarget is null) {
+            return;
+        }
+        GridBuildRecipeDigest baseDigest = plan.Recipe.BaseRecipeDigest
+            ?? throw new InvalidOperationException(
+                "Overlay bootstrap requires a base recipe digest.");
+        var key = new RowWorkKey(descriptor.RefId, descriptor.TimelineId,
+            baseDigest, descriptor.RowId);
+        RecapGridStoreReadResult<RowWork> read = _store.Reader.ReadRowWork(key);
+        if (read is RecapGridStoreReadResult<RowWork>.Missing) {
+            throw Incompatible(plan, descriptor,
+                firstReusedTarget.LogicalColumnId, "BaseRowWorkMissing");
+        }
+        if (read is not RecapGridStoreReadResult<RowWork>.Found found) {
+            throw new RowWorkReadException(MapRowWorkRead(read));
+        }
+        RowWork baseWork = found.Value;
+        if (baseRow.View.TargetDigest != baseWork.ProducerTarget.Digest
+            || baseRow.View.PreviousHistoryRowId
+                != baseWork.PreviousHistoryRowId
+            || baseRow.View.PreviousRowResultId != baseWork.PreviousRowResultId
+            || baseRow.Cells.Count != baseWork.ProducerTarget.OrderedColumns.Count
+            || baseRow.View.OrderedCells.Count != baseWork.ProducerTarget.OrderedColumns.Count
+            || baseWork.OrderedAssignments.Count
+                != baseWork.ProducerTarget.OrderedColumns.Count) {
+            throw Incompatible(plan, descriptor,
+                firstReusedTarget.LogicalColumnId,
+                "BaseViewDoesNotMatchBaseRowWork");
+        }
+        for (int index = 0; index < baseWork.ProducerTarget.OrderedColumns.Count;
+             index++) {
+            BuildTargetColumn target = baseWork.ProducerTarget.OrderedColumns[index];
+            RowWorkAssignment assignment = baseWork.OrderedAssignments[index];
+            RecapCellArtifact cell = baseRow.Cells[index];
+            if (assignment.LogicalColumnId != target.LogicalColumnId
+                || cell.LogicalColumnId != target.LogicalColumnId
+                || cell.DefinitionDigest != target.DefinitionDigest
+                || cell.Slot.HistoryRowId != descriptor.RowId) {
+                throw Incompatible(plan, descriptor, target.LogicalColumnId,
+                    "BaseViewMemberDoesNotMatchBaseProducer");
+            }
+            if (assignment.IsEvaluate) {
+                // V4 complete rows retain their legacy CellSlot identity during
+                // V5 import. A null WorkId is therefore valid only for this
+                // exact base root/row/column; it never authorizes a foreign cell.
+                bool v5WorkAddressed = cell.Slot.WorkId == baseWork.WorkId;
+                bool legacyBaseSlot = cell.Slot.WorkId is null
+                    && cell.Slot.RecipeDigest == baseDigest
+                    && cell.Slot.HistoryRowId == descriptor.RowId
+                    && cell.Slot.LogicalColumnId == target.LogicalColumnId;
+                if (!v5WorkAddressed && !legacyBaseSlot) {
+                    throw Incompatible(plan, descriptor, target.LogicalColumnId,
+                        "BaseEvaluateCellDoesNotMatchBaseWork");
+                }
+            }
+            else if (cell.Id != assignment.ReusedCellId) {
+                throw Incompatible(plan, descriptor, target.LogicalColumnId,
+                    "BaseReuseCellDoesNotMatchBaseWork");
+            }
+        }
+    }
+
     private static OverlaySourceIncompatibleException Incompatible(
         FrozenRecipePlan plan,
         HistorySegmentDescriptor descriptor,
@@ -257,6 +339,11 @@ public sealed partial class RecapGridManager {
     ) : Exception(result.Reason) {
         internal RecapGridBuildResult.OverlaySourceIncompatible Result { get; }
             = result;
+    }
+
+    private sealed class RowWorkReadException(RecapGridBuildResult result)
+        : Exception() {
+        internal RecapGridBuildResult Result { get; } = result;
     }
 
     private static RecapGridBuildResult? ValidateNewWorkProducerTarget(

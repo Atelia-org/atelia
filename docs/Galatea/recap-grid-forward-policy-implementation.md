@@ -96,17 +96,24 @@
   target 成功，recipe/progress/promote 均拒绝 `--producer-target`；
   AgentControl 显式映射 typed result。非规模 ManagerVertical TRX：87 passed。
 - G4b1：Overlay bootstrap 的新 work 在写入前以 exact base same-row view
-  验证非重算列；已有 RowWork 则只接受其 `ReusedCellId` 指向的 exact base
-  member，绝不按当前 logical column 重选。缺失、替换或 definition/row 不符
+  与 base RowWork 的实际 assignment 验证非重算列；已有 RowWork 则只接受其
+  `ReusedCellId` 指向的 exact base member，绝不按当前 logical column 重选。
+  缺失、替换或 definition/row 不符
   返回 public `OverlaySourceIncompatible`（CLI status
   `overlay-source-incompatible`），在 executor/provider 前停止，且不替换
   RowWork、不扩大预算。progress、Online/readiness 与 AgentControl 都显式映射
-  此结果。Full V2 的 CLI composition 聚焦断言 mixed active origin 产生不同
-  candidate digest，active root 不会被候选完成状态冒充。
+  此结果。Full V2 的 CLI composition 聚焦仅证明 active origin 参与 candidate
+  digest 且 compose 不改 active；mixed-active completed/unpromoted 隔离留待
+  G4b2 的独立 E2E。
 - G4b1 聚焦 Release `--no-restore -m:1 -nr:false`：Manager frozen C0→base
   C1 replacement/cold reopen：1 passed；CLI build report + Full V2 composition：
   6 passed；AgentControl stable result code：1 passed；Galatea readiness：3 passed；
   Manager full：94 passed（含规模回归）；Manager PublicSurface：3 passed。
+- G4b1 tail：new Overlay RowWork 选择前还验证 base view 的 target/prior、
+  producer order 与每个 base RowWork assignment；C1 同列替换在 overlay
+  RowWork 尚不存在时也 typed 拒绝并保持 missing。V5 work-addressed cell 与
+  strict legacy base-slot 两种 Evaluate 形状都可作为已导入 complete row 的
+  provenance；tail Manager 聚焦：2 passed。
 - Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。
