@@ -65,6 +65,7 @@ internal sealed record StoreUpgradeTestHooks(
 /// </summary>
 internal sealed record StoreRestoreTestHooks(
     Action? AfterTempVerified = null,
+    Action? AfterBackupVerifiedBeforeActiveRecheck = null,
     Action? AfterReplaceBeforeDirectoryFsync = null,
     Action? AfterDirectoryFsyncBeforeVerify = null,
     Action? AfterVerify = null

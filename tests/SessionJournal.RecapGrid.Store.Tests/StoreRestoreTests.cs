@@ -76,11 +76,12 @@ public sealed class StoreRestoreTests : IDisposable {
     }
 
     [Fact]
-    public void RestoreRechecksActiveAfterTempVerification() {
+    public void RestoreRechecksActiveAfterBackupVerification() {
         CreateV4(out _, out _, out _);
         RecapGridStoreUpgradeResult.Upgraded upgraded = Upgrade();
         RecapGridStorePrepareRestoreResult.Prepared prepared = Prepare(upgraded);
-        var hooks = new StoreRestoreTestHooks(AfterTempVerified: () =>
+        var hooks = new StoreRestoreTestHooks(
+            AfterBackupVerifiedBeforeActiveRecheck: () =>
             Execute(DatabasePath,
                 "UPDATE cell_artifact SET content='changed V5 before replace';"));
 
@@ -93,6 +94,35 @@ public sealed class StoreRestoreTests : IDisposable {
             DatabasePath));
         Assert.Empty(Directory.GetFiles(StoreRoot,
             ".grid.restore-v4.*.sqlite"));
+    }
+
+    [Fact]
+    public void RestoreChecksPhysicalWitnessesBeforeResolvingPartialProofs() {
+        CreateV4(out _, out _, out _);
+        RecapGridStoreUpgradeResult.Upgraded upgraded = Upgrade();
+        RecapGridStorePrepareRestoreResult.Prepared prepared = Prepare(upgraded);
+        int resolverCalls = 0;
+        Func<IReadOnlyList<RowWork>> resolver = () => {
+            resolverCalls++;
+            throw new InvalidOperationException(
+                "A stale physical request must not read proof authorities.");
+        };
+        var wrongBackup = new RecapGridStorePhysicalWitness(
+            prepared.Backup.Witness.Length, new string('0', 64));
+
+        Assert.IsType<RecapGridStoreRestoreResult.BackupChanged>(
+            RecapGridStoreMaintenance.RestoreV4(
+                _root, upgraded.BackupPath, prepared.Active.Witness,
+                wrongBackup, resolver));
+        Assert.Equal(0, resolverCalls);
+
+        var wrongActive = new RecapGridStorePhysicalWitness(
+            prepared.Active.Witness.Length, new string('0', 64));
+        Assert.IsType<RecapGridStoreRestoreResult.ActiveChanged>(
+            RecapGridStoreMaintenance.RestoreV4(
+                _root, upgraded.BackupPath, wrongActive,
+                prepared.Backup.Witness, resolver));
+        Assert.Equal(0, resolverCalls);
     }
 
     [Fact]

@@ -146,6 +146,19 @@ public static partial class RecapGridStoreMaintenance {
                 return new RecapGridStoreRestoreResult
                     .OfflineCleanupRequired(sidecar);
             }
+            RecapGridStorePhysicalWitness backupWitness =
+                StoreDurableFiles.ComputeWitness(paths, backup);
+            if (backupWitness != expectedBackup) {
+                return new RecapGridStoreRestoreResult.BackupChanged(
+                    backupWitness);
+            }
+            RecapGridStorePhysicalWitness activeWitness =
+                StoreDurableFiles.ComputeWitness(paths);
+            bool mayBeAlreadyRestored = activeWitness == expectedBackup;
+            if (!mayBeAlreadyRestored && activeWitness != expectedActive) {
+                return new RecapGridStoreRestoreResult.ActiveChanged(
+                    activeWitness);
+            }
             int backupSchema = ReadSchema(backup);
             if (backupSchema != 4) {
                 return new RecapGridStoreRestoreResult.UnsupportedSchema(
@@ -159,17 +172,22 @@ public static partial class RecapGridStoreMaintenance {
                 return new RecapGridStoreRestoreResult.BackupChanged(
                     backupEvidence.Witness);
             }
-            int activeSchema = ReadSchema(paths.DatabasePath);
-            if (activeSchema == 4) {
+            if (mayBeAlreadyRestored) {
+                int restoredSchema = ReadSchema(paths.DatabasePath);
+                if (restoredSchema != 4) {
+                    return new RecapGridStoreRestoreResult.ActiveChanged(
+                        StoreDurableFiles.ComputeWitness(paths));
+                }
                 RecapGridStoreUpgradeEvidence restored = VerifyV4(
                     paths, paths.DatabasePath, partialWorkProofs).Evidence;
                 if (restored == backupEvidence) {
                     return new RecapGridStoreRestoreResult.AlreadyRestored(
                         backup, restored);
                 }
-                return new RecapGridStoreRestoreResult.UnsupportedSchema(
-                    "active", activeSchema);
+                return new RecapGridStoreRestoreResult.ActiveChanged(
+                    restored.Witness);
             }
+            int activeSchema = ReadSchema(paths.DatabasePath);
             if (activeSchema != SqliteRecapGridStore.SchemaVersion) {
                 return new RecapGridStoreRestoreResult.UnsupportedSchema(
                     "active", activeSchema);
@@ -194,6 +212,14 @@ public static partial class RecapGridStoreMaintenance {
                         "The V4 restore temporary does not match its backup.");
                 }
                 hooks.AfterTempVerified?.Invoke();
+                RecapGridStoreUpgradeEvidence backupBeforeReplace = VerifyV4(
+                    paths, backup, partialWorkProofs).Evidence;
+                if (backupBeforeReplace != backupEvidence
+                    || backupBeforeReplace.Witness != expectedBackup) {
+                    return new RecapGridStoreRestoreResult.BackupChanged(
+                        backupBeforeReplace.Witness);
+                }
+                hooks.AfterBackupVerifiedBeforeActiveRecheck?.Invoke();
                 sidecar = ExistingRestoreSidecar(paths, backup);
                 if (sidecar is not null) {
                     return new RecapGridStoreRestoreResult
@@ -205,13 +231,6 @@ public static partial class RecapGridStoreMaintenance {
                     || activeBeforeReplace.Witness != expectedActive) {
                     return new RecapGridStoreRestoreResult.ActiveChanged(
                         activeBeforeReplace.Witness);
-                }
-                RecapGridStoreUpgradeEvidence backupBeforeReplace = VerifyV4(
-                    paths, backup, partialWorkProofs).Evidence;
-                if (backupBeforeReplace != backupEvidence
-                    || backupBeforeReplace.Witness != expectedBackup) {
-                    return new RecapGridStoreRestoreResult.BackupChanged(
-                        backupBeforeReplace.Witness);
                 }
                 File.Move(temporary, paths.DatabasePath, overwrite: true);
                 published = true;
