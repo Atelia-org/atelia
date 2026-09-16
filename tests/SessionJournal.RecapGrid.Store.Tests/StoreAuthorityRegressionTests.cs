@@ -132,17 +132,46 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
             AfterTempVerified: failpoint == "temp" ? fail : null,
             AfterBackupDurable: failpoint == "backup" ? fail : null);
 
-        RecapGridStoreUpgradeResult result = RecapGridStoreMaintenance
-            .UpgradeV4ForTest(_root, apply: true, static () => [], hooks);
-
-        Assert.IsType<RecapGridStoreUpgradeResult.Invalid>(result);
+        RecapGridStoreUpgradeResult.PreCommitFailed result = Assert.IsType<
+            RecapGridStoreUpgradeResult.PreCommitFailed>(RecapGridStoreMaintenance
+            .UpgradeV4ForTest(_root, apply: true, static () => [], hooks));
+        Assert.Equal("precommit-failed", result.Code);
+        Assert.True(result.TemporaryCleanupSucceeded);
         Assert.Equal(4, ReadSchemaVersion(new StorePaths(_root).DatabasePath));
         Assert.Equal(before, File.ReadAllBytes(new StorePaths(_root).DatabasePath));
         if (failpoint == "backup") {
+            Assert.NotNull(result.Backup);
             string backup = Assert.Single(Directory.GetFiles(
                 new StorePaths(_root).RootPath, "grid.sqlite.v4-backup-*.sqlite"));
             Assert.Equal(before, File.ReadAllBytes(backup));
         }
+    }
+
+    [Fact]
+    public void V4UpgradeRejectsChangedActiveBeforeReplaceAndBuildsOnlyFromDurableBackup() {
+        CreateV4FullStore(out _, out _, out _);
+        string active = new StorePaths(_root).DatabasePath;
+        byte[] original = File.ReadAllBytes(active);
+        var hooks = new StoreUpgradeTestHooks(AfterBackupDurable: () => {
+            using var connection = new SqliteConnection(
+                $"Data Source={active};Mode=ReadWrite;Pooling=False");
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "UPDATE cell_artifact SET content='strict-v4-b';";
+            _ = command.ExecuteNonQuery();
+        });
+
+        RecapGridStoreUpgradeResult.PreCommitFailed result = Assert.IsType<
+            RecapGridStoreUpgradeResult.PreCommitFailed>(
+            RecapGridStoreMaintenance.UpgradeV4ForTest(
+                _root, apply: true, static () => [], hooks));
+
+        Assert.Equal("active-changed-before-replace", result.Code);
+        Assert.NotNull(result.Backup);
+        Assert.Equal(original, File.ReadAllBytes(result.BackupPath!));
+        Assert.Equal(4, ReadSchemaVersion(active));
+        Assert.Contains("strict-v4-b", File.ReadAllText(active));
+        Assert.True(result.TemporaryCleanupSucceeded);
     }
 
     [Theory]

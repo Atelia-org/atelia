@@ -59,9 +59,11 @@ public static partial class RecapGridStoreMaintenance {
                 return new RecapGridStoreUpgradeResult.OfflineCleanupRequired(
                     sidecar);
             }
-            using SqliteConnection source = OpenRaw(paths.DatabasePath,
-                readOnly: true);
-            int version = ReadV4Version(source);
+            int version;
+            using (SqliteConnection source = OpenRaw(paths.DatabasePath,
+                       readOnly: true)) {
+                version = ReadV4Version(source);
+            }
             if (version == SqliteRecapGridStore.SchemaVersion) {
                 return new RecapGridStoreUpgradeResult.AlreadyCurrent();
             }
@@ -71,21 +73,27 @@ public static partial class RecapGridStoreMaintenance {
             }
             IReadOnlyList<RowWork> partialWorkProofs =
                 resolvePartialWorkProofs();
-            V4Snapshot snapshot = ReadV4Snapshot(source,
-                partialWorkProofs);
             string temporary = Path.Combine(paths.RootPath,
                 $".grid.upgrade-v5.{Guid.NewGuid():N}.sqlite");
             paths.RequireSafe(temporary);
             string? backup = null;
             RecapGridStoreUpgradeEvidence? backupEvidence = null;
             bool published = false;
+            bool cleanupNeeded = true;
             try {
-                BuildV5Replacement(temporary, snapshot);
-                _ = VerifyV5(paths, temporary);
-                hooks.AfterTempVerified?.Invoke();
                 if (!apply) {
+                    V4Snapshot dryRunSnapshot;
+                    using (SqliteConnection source = OpenRaw(paths.DatabasePath,
+                               readOnly: true)) {
+                        dryRunSnapshot = ReadV4Snapshot(source,
+                            partialWorkProofs);
+                    }
+                    BuildV5Replacement(temporary, dryRunSnapshot);
+                    _ = VerifyV5(paths, temporary);
+                    hooks.AfterTempVerified?.Invoke();
                     return new RecapGridStoreUpgradeResult.DryRunReady(
-                        snapshot.RowViews.Count, snapshot.Cells.Count);
+                        dryRunSnapshot.RowViews.Count,
+                        dryRunSnapshot.Cells.Count);
                 }
                 backup = paths.DatabasePath + ".v4-backup-"
                     + DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ",
@@ -95,9 +103,23 @@ public static partial class RecapGridStoreMaintenance {
                 File.Copy(paths.DatabasePath, backup, overwrite: false);
                 StoreDurableFiles.FlushFile(paths, backup);
                 StoreDurableFiles.FlushDirectory(paths.RootPath);
-                backupEvidence = VerifyV4(
+                VerifiedV4 verifiedBackup = VerifyV4(
                     paths, backup, partialWorkProofs);
+                backupEvidence = verifiedBackup.Evidence;
                 hooks.AfterBackupDurable?.Invoke();
+                BuildV5Replacement(temporary, verifiedBackup.Snapshot);
+                _ = VerifyV5(paths, temporary);
+                hooks.AfterTempVerified?.Invoke();
+                VerifiedV4 activeBeforeReplace = VerifyV4(paths,
+                    paths.DatabasePath, partialWorkProofs);
+                if (activeBeforeReplace.Evidence != backupEvidence) {
+                    bool cleaned = TryDeleteUpgradeTemporary(temporary);
+                    cleanupNeeded = false;
+                    return new RecapGridStoreUpgradeResult.PreCommitFailed(
+                        backup, backupEvidence, "active-changed-before-replace",
+                        "The active V4 Store no longer matches the durable backup.",
+                        cleaned, "inspect-active-and-backup-before-a-new-upgrade");
+                }
                 File.Move(temporary, paths.DatabasePath, overwrite: true);
                 published = true;
                 hooks.AfterReplaceBeforeDirectoryFsync?.Invoke();
@@ -117,8 +139,17 @@ public static partial class RecapGridStoreMaintenance {
                     backup!, backupEvidence!, ObserveActive(paths),
                     "inspect-and-verify-active-before-any-restore-or-retry");
             }
+            catch (Exception exception) when (apply && !IsFatal(exception)) {
+                bool cleaned = TryDeleteUpgradeTemporary(temporary);
+                cleanupNeeded = false;
+                return new RecapGridStoreUpgradeResult.PreCommitFailed(
+                    backup, backupEvidence, "precommit-failed", exception.Message,
+                    cleaned, backupEvidence is null
+                        ? "inspect-active-before-a-new-upgrade"
+                        : "inspect-active-and-backup-before-a-new-upgrade");
+            }
             finally {
-                if (!published) {
+                if (!published && cleanupNeeded) {
                     TryDeleteTemporary(temporary);
                 }
             }
@@ -157,7 +188,7 @@ public static partial class RecapGridStoreMaintenance {
         }
     }
 
-    private static RecapGridStoreUpgradeEvidence VerifyV4(
+    private static VerifiedV4 VerifyV4(
         StorePaths paths,
         string path,
         IReadOnlyList<RowWork> partialWorkProofs
@@ -170,13 +201,14 @@ public static partial class RecapGridStoreMaintenance {
             throw new InvalidDataException("Backup is not a V4 Store.");
         }
         V4Snapshot snapshot = ReadV4Snapshot(source, partialWorkProofs);
-        return new RecapGridStoreUpgradeEvidence(
+        var evidence = new RecapGridStoreUpgradeEvidence(
             new RecapGridStoreIdentity(new RecapGridStoreInstanceId(snapshot.InstanceId), 4),
             snapshot.Cells.Count,
             snapshot.RowViews.Count,
             snapshot.RowViews.Values.Sum(static row => row.Members.Count),
             snapshot.Fulfilled.Count,
             StoreDurableFiles.ComputeWitness(paths, path));
+        return new VerifiedV4(snapshot, evidence);
     }
 
     private static RecapGridStoreUpgradeEvidence VerifyV5(
@@ -227,6 +259,14 @@ public static partial class RecapGridStoreMaintenance {
             return aggregate.InnerExceptions.Any(IsFatal);
         }
         return exception.InnerException is { } inner && IsFatal(inner);
+    }
+
+    private static bool TryDeleteUpgradeTemporary(string path) {
+        TryDeleteTemporary(path);
+        return !File.Exists(path)
+            && !File.Exists(path + "-journal")
+            && !File.Exists(path + "-wal")
+            && !File.Exists(path + "-shm");
     }
 
     private static int ReadV4Version(SqliteConnection connection) {
@@ -776,6 +816,11 @@ public static partial class RecapGridStoreMaintenance {
         IReadOnlyDictionary<string, V4Row> RowViews,
         IReadOnlyList<V4Fulfilled> Fulfilled,
         IReadOnlyList<V4PartialWork> PartialWorks);
+
+    private sealed record VerifiedV4(
+        V4Snapshot Snapshot,
+        RecapGridStoreUpgradeEvidence Evidence
+    );
 
     private sealed record V4Cell(string Id, string RecipeDigest,
         string HistoryRowId, string LogicalColumnId, string DefinitionDigest,

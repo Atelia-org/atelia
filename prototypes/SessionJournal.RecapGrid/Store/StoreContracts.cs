@@ -86,6 +86,14 @@ public abstract record RecapGridStoreUpgradeResult {
         RecapGridStoreUpgradeObservation ObservedActive,
         string NextAction
     ) : RecapGridStoreUpgradeResult;
+    public sealed record PreCommitFailed(
+        string? BackupPath,
+        RecapGridStoreUpgradeEvidence? Backup,
+        string Code,
+        string Detail,
+        bool TemporaryCleanupSucceeded,
+        string NextAction
+    ) : RecapGridStoreUpgradeResult;
     public sealed record AlreadyCurrent : RecapGridStoreUpgradeResult;
     public sealed record Absent : RecapGridStoreUpgradeResult;
     public sealed record Busy : RecapGridStoreUpgradeResult;

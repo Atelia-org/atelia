@@ -8,13 +8,14 @@
 
 ## 已实现并验证
 
-- G5c1（仅 Store apply durability）：V4→V5 的 apply 先构造并以 Store
-  full verifier 严格验证同目录 temporary V5；copy 出的 exact-name regular
-  V4 backup 随后 `Flush(true)` 加 parent-directory fsync，并重新执行 V4
+- G5c1（仅 Store apply durability）：V4→V5 apply 先 copy exact-name regular
+  V4 backup，`Flush(true)` 加 parent-directory fsync，并重新执行 V4
   identity/integrity/foreign-key/counter/partial-proof 校验及 SHA-256+length
-  witness，才允许 replace active。replace 后再 fsync directory 并 strict
-  verify V5。成功结果带 backup 与 active 的 identity、counters、physical
-  witness，不再只报路径。
+  witness；temporary V5 只从该已验证 backup snapshot 构造并以 Store full
+  verifier 严格验证。replace 前重新 strict-verify active 并要求 identity、
+  counters 和 physical witness 全等；不等返回 typed pre-commit failure，
+  active 不动。replace 后再 fsync directory 并 strict verify V5。成功结果带
+  backup 与 active 的 identity、counters、physical witness，不再只报路径。
 - G5c1：replace 成功后的 directory fsync、strict verify 或测试中断均返回
   typed `CommitIndeterminate`（保留已验证 backup evidence、best-effort
   observed active schema/identity/witness 与唯一 next action：先
@@ -22,8 +23,9 @@
   失败仍保持 V4、清理 temporary，backup 即使保留也不冒称升级成功。
   public `UpgradeV4` 没有 hook；内部 `UpgradeV4ForTest` 仅有 temporary
   verified、backup durable、replace/directory fsync、verify 五个 failpoint。
-  Store crash harness 已预留 `upgrade-v4` 同名 failpoint 入口，仍只使用
-  合成 stopped repository fixture，未触碰真实实例。
+  Store crash harness 已预留 `upgrade-v4` 同名 failpoint 入口；本包只有
+  in-process hooks/harness interface，未宣称 A13 cold-process crash 验收完成，
+  仍只使用合成 stopped repository fixture，未触碰真实实例。
 
 - G5a：HistoryTimeline 与 RecapGrid Control 增加 maintenance-only 的
   canonical exact-scope inventory / `(RefId, TimelineId)` read-only reader；

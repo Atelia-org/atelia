@@ -215,6 +215,16 @@ internal static class RecapGridStoreCommands {
                     ObservedActive = indeterminate.ObservedActive,
                     indeterminate.NextAction
                 }, 2),
+            RecapGridStoreUpgradeResult.PreCommitFailed failed => Print(
+                "upgrade-store-v5", "precommit-failed",
+                new {
+                    failed.BackupPath,
+                    Backup = failed.Backup,
+                    failed.Code,
+                    failed.Detail,
+                    failed.TemporaryCleanupSucceeded,
+                    failed.NextAction
+                }, 2),
             RecapGridStoreUpgradeResult.AlreadyCurrent => Print(
                 "upgrade-store-v5", "already-current"),
             RecapGridStoreUpgradeResult.Absent => Print(
