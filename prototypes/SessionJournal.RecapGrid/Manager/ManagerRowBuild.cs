@@ -493,15 +493,28 @@ public sealed partial class RecapGridManager {
                         }
                         cell = found.Value;
                     }
+                    MaintainerDefinitionDigest definitionDigest =
+                        spec.DefinitionAt(index);
+                    if (!plan.RegisteredDefinitions.TryGetValue(
+                            definitionDigest,
+                            out MaintainerDefinitionRevision? definition)) {
+                        return (null, Invalid(
+                            "RowWorkDefinitionUnavailable",
+                            "The persisted producer definition is unavailable."
+                        ));
+                    }
+                    if (definition.LogicalColumnId
+                        != assignment.LogicalColumnId) {
+                        return (null, Invalid(
+                            "RowWorkDefinitionInvalid",
+                            "The persisted producer definition does not match the assignment logical column."
+                        ));
+                    }
                     RecapGridBuildResult? invalid = ValidateCell(
                         cell,
                         assignment.LogicalColumnId,
-                        plan.Definitions[
-                            assignment.LogicalColumnId
-                        ].Digest,
-                        plan.Definitions[
-                            assignment.LogicalColumnId
-                        ].MaxContentUtf8Bytes,
+                        definition.Digest,
+                        definition.MaxContentUtf8Bytes,
                         evaluate.Slot,
                         previousCells
                     );

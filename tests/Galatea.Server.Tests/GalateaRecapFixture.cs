@@ -78,7 +78,8 @@ internal static class GalateaRecapFixture {
             RecapConnectionId, maximumConcurrency: 2, dispatchTimeout: TimeSpan.FromSeconds(20))
     ]);
 
-    internal static Repository Provision(SessionJournalEngine engine, IHistoryUnitLoadEstimator estimator) {
+    internal static Repository Provision(SessionJournalEngine engine, IHistoryUnitLoadEstimator estimator,
+        RecapGridControlRegistrationBundle? inactiveAdditionalBundle = null) {
         string path = engine.Path;
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV7,
@@ -97,11 +98,15 @@ internal static class GalateaRecapFixture {
                 | RecapGridControlPermission.RegisterDefinition
                 | RecapGridControlPermission.RegisterRecipe
                 | RecapGridControlPermission.Activate,
-            [family.Digest],
-            bundle.Definitions.Select(static value =>
+            new[] { family.Digest }.Concat(inactiveAdditionalBundle?.Families.Select(
+                static value => value.Digest) ?? Enumerable.Empty<FamilyDefinitionDigest>()),
+            bundle.Definitions.Concat(inactiveAdditionalBundle?.Definitions ?? Enumerable.Empty<MaintainerDefinitionRevision>())
+                .Select(static value =>
                 value.Capability.CapabilityFingerprint),
-            bundle.Definitions.Select(static value => value.Target.Carrier),
-            ["world", "autobiography"],
+            bundle.Definitions.Concat(inactiveAdditionalBundle?.Definitions ?? Enumerable.Empty<MaintainerDefinitionRevision>())
+                .Select(static value => value.Target.Carrier),
+            new[] { "world", "autobiography" }.Concat(inactiveAdditionalBundle?
+                .Definitions.Select(static value => value.LogicalColumnId.Value!) ?? Enumerable.Empty<string>()),
             maximumBootstrapRows: 64,
             maximumProjectedCalls: 1_024
         );
@@ -170,6 +175,23 @@ internal static class GalateaRecapFixture {
             operation,
             bundle
         )).Head;
+        if (inactiveAdditionalBundle is not null) {
+            foreach (FamilyDefinition additional in inactiveAdditionalBundle.Families) {
+                registered = Assert.IsType<RecapGridControlPutResult.Stored>(
+                    control.Coordinator.PutFamilyDefinition(registered, additional)).Head;
+            }
+            foreach (MaintainerDefinitionRevision additional in inactiveAdditionalBundle.Definitions) {
+                registered = Assert.IsType<RecapGridControlPutResult.Stored>(
+                    control.Coordinator.PutMaintainerDefinition(registered, additional)).Head;
+            }
+            BuildTarget additionalTarget = BuildTarget.Create(inactiveAdditionalBundle.Definitions.Select(
+                static definition => new BuildTargetColumn(definition.LogicalColumnId, definition.Digest)));
+            GridBuildRecipe additionalRecipe = GridBuildRecipe.CreateFull(timeline.TimelineId,
+                bootstrapThroughRowId: null, additionalTarget);
+            registered = Assert.IsType<RecapGridControlPutResult.Stored>(
+                control.Coordinator.PutBuildRecipe(registered, timeline, additionalRecipe,
+                    bootstrapWitness: null)).Head;
+        }
         GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
             timeline.TimelineId,
             bootstrapThroughRowId: null,

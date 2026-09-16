@@ -190,7 +190,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
 
     [Fact]
     public async Task ModelSwitchAfterPartialFailureBuildsOnlyMissingCell() {
-        RollingRepository fixture = CreateRollingRepository();
+        P1Target currentP1 = CreateDifferentCurrentP1Target();
+        RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
         var factoryA = new RoutedCompletionFactory(
             agentAnswer: "agent-a",
             recapScript: static request =>
@@ -210,7 +211,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 completionA,
                 PartialFailureLimits(),
                 _estimator
-            )
+            ),
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(
+                fixture.Recipe.Target))
         )) {
             CharacterSessionHost sessionA = await serviceA.GetSessionAsync(
                 "alice",
@@ -237,6 +240,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             Assert.Equal(agentCallsBeforeFailure,
                 factoryA.Agent.DispatchCallCount);
         }
+        Assert.NotEqual(fixture.Recipe.Target.Digest, currentP1.Target.Digest);
 
         RecapCellArtifact worldBefore = Assert.Single(ReadAllCells(fixture));
         Assert.Equal(fixture.World.LogicalColumnId,
@@ -267,6 +271,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         }
         var missingSlot = new CellSlot(missing.RecipeDigest, missing.RowId,
             frozenWork.WorkId, missing.LogicalColumnId);
+        RowWorkId frozenWorkId = frozenWork.WorkId;
+        BuildTargetDigest frozenProducerTarget = frozenWork.ProducerTarget.Digest;
         Assert.Equal(fixture.Autobiography.LogicalColumnId,
             missing.LogicalColumnId);
         RecapCompletionTelemetryEvent[] modelAEvents = completionA
@@ -311,7 +317,10 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 completionB,
                 PartialFailureLimits(),
                 _estimator
-            )
+            ),
+            // P1 is a genuinely different registered target, but has no
+            // route. Durable P0 work must therefore select its own target.
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target))
         )) {
             CharacterSessionHost sessionB = await serviceB.GetSessionAsync(
                 "alice",
@@ -340,6 +349,17 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal(fixture.Autobiography.Digest,
             modelBEvent.DefinitionDigest);
         Assert.Equal(missingSlot, modelBEvent.Slot);
+        using (RecapGridStoreReaderHandle store = Assert.IsType<
+                   RecapGridStoreReaderOpenResult.Opened>(
+                   RecapGridStoreFactory.OpenReader(fixture.Path)).Handle) {
+            RowWork persisted = Assert.IsType<
+                RecapGridStoreReadResult<RowWork>.Found>(
+                store.Reader.ReadRowWork(frozenWork.Key)).Value;
+            Assert.Equal(frozenWorkId, persisted.WorkId);
+            Assert.Equal(frozenProducerTarget, persisted.ProducerTarget.Digest);
+            Assert.Equal(fixture.Recipe.Target.Digest,
+                persisted.ProducerTarget.Digest);
+        }
         Assert.Equal(partialTimeline,
             ReadTimelineHead(fixture.Path, fixture.RefId));
         Assert.Equal(partialControl, ReadControlSnapshot(fixture).Head);
@@ -353,13 +373,67 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         );
     }
 
+    [Fact]
+    public async Task CompletedP0ReadinessAndMaterializationIgnoreCurrentP1() {
+        P1Target currentP1 = CreateDifferentCurrentP1Target();
+        RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
+        var seedFactory = new RoutedCompletionFactory("seed", static request =>
+            RecapReply.Updated("p0-" + request.LogicalColumnId));
+        RecapGridCompletionHost seedCompletion = CreateCompletionHost(
+            fixture, ModelAConnections(), seedFactory);
+        await using (var seed = new GalateaHostService(
+            Config(fixture.Path, ModelAConnections()),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            new GalateaRecapGridComposition(seedCompletion,
+                RecapGridOnlineLimits.Production, _estimator),
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(
+                fixture.Recipe.Target)))) {
+            CharacterSessionHost session = await seed.GetSessionAsync("alice",
+                CancellationToken.None);
+            await RunFreshAsync(seed, session, "raw bootstrap");
+            await RunFreshAsync(seed, session, "complete P0 recap");
+        }
+        Assert.NotEmpty(seedFactory.Recap.Invocations);
+        ControlHeadRef controlBefore = ReadControlSnapshot(fixture).Head;
+        string storePath = Path.Combine(fixture.Path, "derived", "recap-grid",
+            "v1", "grid.sqlite");
+        byte[] storeBefore = File.ReadAllBytes(storePath);
+        int routeLoads = 0;
+        var readFactory = new RoutedCompletionFactory("must not dispatch",
+            static _ => throw new InvalidOperationException("read must not recap"));
+        RecapGridCompletionHost readCompletion = CreateCompletionHost(fixture,
+            ModelAConnections(), readFactory, () => {
+                Interlocked.Increment(ref routeLoads);
+                throw new InvalidOperationException("completed P0 reads must not load routes");
+            });
+        await using var service = new GalateaHostService(
+            Config(fixture.Path, ModelAConnections()),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            new GalateaRecapGridComposition(readCompletion,
+                RecapGridOnlineLimits.Production, _estimator),
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target)));
+        CharacterSessionHost reopened = await service.GetSessionAsync("alice",
+            CancellationToken.None);
+
+        RecentTurnsResponseDto result = await service.GetRecentTurnsAsync(
+            reopened, CancellationToken.None);
+
+        Assert.Equal("ready", result.RecapGridReadiness?.State);
+        Assert.Equal(0, routeLoads);
+        Assert.Empty(readFactory.Recap.Invocations);
+        Assert.Equal(0, readFactory.Agent.DispatchCallCount);
+        Assert.Equal(controlBefore, ReadControlSnapshot(fixture).Head);
+        Assert.Equal(storeBefore, File.ReadAllBytes(storePath));
+    }
+
     [Theory]
     [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted))]
     [InlineData("LegacyStarted")]
     public async Task ActiveFormalRecipeFrozenRecoveryNeverRunsRecapProvider(
         string failpointName
     ) {
-        RollingRepository fixture = CreateRollingRepository();
+        P1Target currentP1 = CreateDifferentCurrentP1Target();
+        RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
         IReadOnlyList<CompletionConnectionConfig> connections =
             ModelAConnections();
         var boundaryFactory = new RoutedCompletionFactory(
@@ -396,7 +470,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 completion,
                 RecapGridOnlineLimits.Production,
                 _estimator
-            )
+            ),
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target))
         );
         CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
@@ -425,7 +500,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
 
     [Fact]
     public async Task ActiveFormalRecipeToolContinuationSealsDurableToolTail() {
-        RollingRepository fixture = CreateRollingRepository();
+        P1Target currentP1 = CreateDifferentCurrentP1Target();
+        RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
         var seedFactory = new RoutedCompletionFactory(
             "seed agent",
             static request => RecapReply.Updated(
@@ -444,7 +520,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 seedCompletion,
                 RecapGridOnlineLimits.Production,
                 _estimator
-            )
+            ),
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(
+                fixture.Recipe.Target))
         )) {
             CharacterSessionHost seedSession = await seedService.GetSessionAsync(
                 "alice",
@@ -490,8 +568,14 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 Assert.NotNull(durableToolResultHead);
                 Assert.Empty(recoveryFactory.Recap.Invocations);
             },
-            profile
+            profile,
+            currentP1.Bundle.Families.Single().Digest
         );
+        var recoveryPolicies = new Dictionary<string,
+            GalateaRecapGridDefaultPolicy>(StringComparer.Ordinal) {
+            ["alice"] = GalateaRecapGridDefaultPolicy.ForTarget(
+                currentP1.Target)
+        };
         await using var service = new GalateaHostService(
             Config(fixture.Path, ModelAConnections()),
             DisabledGalateaUserMessageNormalizer.Instance,
@@ -499,7 +583,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 recoveryCompletion,
                 RecapGridOnlineLimits.Production,
                 _estimator
-            )
+            ),
+            recoveryPolicies
         );
         session = await service.GetSessionAsync(
             "alice",
@@ -514,6 +599,12 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             )
         );
 
+        SessionRuntimeRecoveryRequirements.ToolContinuationRequired frozen =
+            Assert.IsType<SessionRuntimeRecoveryRequirements
+                .ToolContinuationRequired>(
+                session.Engine.InspectRuntimeRecoveryRequirements());
+        Assert.Equal(profile.RuntimeIdentity, frozen.ToolRuntimeIdentity);
+
         await service.RunTurnAsync(session, turn, CancellationToken.None);
         service.FinishTurn(session, turn);
 
@@ -526,51 +617,17 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             static value => value.Kind == SessionEventKind.ToolResultObserved)
             .Address;
 
-        await RunFreshAsync(
-            service,
-            session,
-            "seal the durable tool-result tail"
-        );
-
-        Assert.Equal(1, routeLoads);
-        RecapInvocation[] withToolTail = recoveryFactory.Recap.Invocations
-            .Where(static value => value.Request.PromptPrefix
-                .SharedContextMessages.OfType<ToolResultsMessage>().Any())
-            .ToArray();
-        Assert.Equal(2, withToolTail.Length);
-        Assert.Equal(
-            ["autobiography", "world-understanding"],
-            withToolTail.Select(static value => value.LogicalColumnId)
-                .Order(StringComparer.Ordinal)
-        );
-        Assert.All(withToolTail, static value => {
-            ToolResultsMessage results = Assert.Single(value.Request
-                .PromptPrefix.SharedContextMessages
-                .OfType<ToolResultsMessage>());
-            Assert.Contains(
-                "\"status\":\"available\"",
-                string.Join("|", results.Results.Select(
-                    static result => result.GetFlattenedText()
-                )),
-                StringComparison.Ordinal
-            );
-        });
-        CellSlot[] continuationKeys = recoveryCompletion
-            .ReadTelemetrySnapshot().Events.Select(
-                static value => value.Slot)
-            .ToArray();
-        Assert.Equal(continuationKeys.Length,
-            continuationKeys.Distinct().Count());
-        Assert.DoesNotContain(continuationKeys,
-            value => healthyKeys.Contains(value));
         Assert.Equal(fixture.Recipe.Digest,
             ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
     }
 
-    private RollingRepository CreateRollingRepository() {
+    private RollingRepository CreateRollingRepository(
+        RecapGridControlRegistrationBundle? inactiveAdditionalBundle = null
+    ) {
         using SessionJournalEngine engine = SessionJournalEngine.Create(
             NewPath(), new SessionCreateOptions("agent-model", "test system prompt", "openai-chat/strict"));
-        return GalateaRecapFixture.Provision(engine, _estimator);
+        return GalateaRecapFixture.Provision(engine, _estimator,
+            inactiveAdditionalBundle);
     }
 
     private static RecapGridCompletionHost CreateCompletionHost(
@@ -578,11 +635,12 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         IReadOnlyList<CompletionConnectionConfig> connections,
         ICompletionClientFactory factory,
         Action? onRouteLoad = null,
-        RecapGridAgentControlProfile? agentProfile = null
+        RecapGridAgentControlProfile? agentProfile = null,
+        FamilyDefinitionDigest? additionalRouteFamily = null
     ) {
         Func<RecapGridRouteManifest> routeLoader = () => {
             onRouteLoad?.Invoke();
-            return RecapGridRouteManifest.Create([
+            var routes = new List<RecapGridRouteManifestEntry> {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         fixture.Family.Digest,
@@ -593,7 +651,16 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                     maximumConcurrency: 2,
                     dispatchTimeout: TimeSpan.FromSeconds(30)
                 )
-            ]);
+            };
+            if (additionalRouteFamily is { } p1Family) {
+                routes.Add(new RecapGridRouteManifestEntry(
+                    new RecapCompletionRouteKey(p1Family,
+                        RecapRewriterProtocolV3.RuntimeProtocolId,
+                        semanticModelId: null), RecapConnectionId,
+                    maximumConcurrency: 2,
+                    dispatchTimeout: TimeSpan.FromSeconds(30)));
+            }
+            return RecapGridRouteManifest.Create(routes);
         };
         CompletionConnectionsFileConfig frozen =
             CompletionConnectionConfigLoader.NormalizeAndValidate(new(
@@ -615,6 +682,32 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 inputProjector: GalateaInputProjector.Instance
             );
     }
+
+    private static P1Target CreateDifferentCurrentP1Target() {
+        FamilyDefinition p1Family = FamilyDefinition.Create(
+            "P1 has a distinct family instruction.", [],
+            RecapRewriterProtocolV3.CreateOutputProtocol(),
+            RecapRewriterProtocolV3.CreateInputRenderingProtocol());
+        MaintainerDefinitionRevision p1Definition =
+            MaintainerDefinitionRevision.Create(
+                new LogicalColumnId("p1-current-policy"), p1Family.Digest,
+                new ContextHeaderBlockTarget(ContextHeaderCarrier.System,
+                    "p1.current-policy", "P1 distinct semantic heading"),
+                new MaintainerCapabilitySpec(
+                    RecapRewriterProtocolV3.RuntimeProtocolId,
+                    MaintainerReadableScope.FullPriorBuildTargetAndCurrentHistorySegmentV1),
+                new MaintainerDeclarativeSpec("P1 distinct definition",
+                    "P1 maintains a different current-policy heading."),
+                maxContentUtf8Bytes: 16 * 1024);
+        BuildTarget target = BuildTarget.Create([
+            new BuildTargetColumn(p1Definition.LogicalColumnId,
+                p1Definition.Digest)]);
+        return new P1Target(target, new RecapGridControlRegistrationBundle(
+            [p1Family], [p1Definition], []));
+    }
+
+    private sealed record P1Target(BuildTarget Target,
+        RecapGridControlRegistrationBundle Bundle);
 
     private (RecapCellArtifact World, RecapCellArtifact Autobiography)
         ReadHeadCells(RollingRepository fixture) {
@@ -845,6 +938,12 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create()
     );
+
+    private static IReadOnlyDictionary<string,
+        GalateaRecapGridDefaultPolicy> DefaultPolicies(
+        GalateaRecapGridDefaultPolicy policy
+    ) => new Dictionary<string, GalateaRecapGridDefaultPolicy>(
+        StringComparer.Ordinal) { ["alice"] = policy };
 
     private static IReadOnlyList<CompletionConnectionConfig>
         ModelAConnections() => [

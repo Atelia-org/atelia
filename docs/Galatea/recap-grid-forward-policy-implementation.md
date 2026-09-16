@@ -21,6 +21,16 @@
 - Galatea read/admission 不再把 active root target 与当前 code-owned
   default target 不同不再构成读取或恢复门禁；新工作才使用当前
   maintenance policy。
+- G3c：P0 partial RowWork 在 current default 切至已注册但 inactive 的不同
+  P1 时，cell validation 从 `RowBuildSpec` 的 frozen producer definition
+  精确解析；缺失/列不符返回 typed failure。Host 回归只补 P0 缺 cell、沿 P0
+  route，WorkId/ProducerTarget 不变。completed P0 read 在 P1 与 throwing
+  route loader 下零 maintenance，Control/Store 不变。Prepared、LegacyStarted
+  与 ToolContinuation frozen 阶段同样零 maintenance，并保留旧 tool identity。
+- G3c：`GalateaConfigLoader.Load -> GalateaCompletionOwner -> BindPrepared`
+  证明 profile bytes 延迟到 frozen exact bind：malformed bytes 不阻断
+  config/owner construction，exact bind 才失败；canonical old profile 成功且
+  zero dispatch。
 - Galatea config V12 使用单一 maintenance connection/concurrency/attempt
   timeout 和可为空的 `historicalAgentControlProfileFiles`。fresh bootstrap
   只使用 code-owned bundle；历史 profile 仅供 frozen tool exact recovery。
@@ -65,6 +75,7 @@
   风险，应在后续优化中保留相同语义复测。
 - Galatea partial model-switch / Prepared、LegacyStarted frozen recovery 聚焦：
   3 passed；补列事件现断言携带原 RowWork 的 WorkId，已成功 cell 不重发。
+- G3c 聚焦 Host/Owner：6 passed（A/B/C/D）。
 - Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。
