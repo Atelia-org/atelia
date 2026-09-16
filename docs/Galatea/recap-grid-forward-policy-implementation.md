@@ -90,7 +90,11 @@
 - G4a Manager 聚焦：`LiveNewWorkRequiresExplicitProducerPolicyBeforeDispatch`
   通过（build/progress typed required、零 executor batch/零 RowWork，提供
   policy 后完成）；Manager PublicSurface：3 passed；RecapGrid 与 CLI Release
-  build 成功。
+  build 成功。尾修证明 P1 已选 work 在缺 policy 时先恢复，下一无
+  work 行才要求 policy；后续 P2 work 的 exact prior 指向 P1 row result。
+  CLI 缺 policy 在读 routes/connections 与创建 client 前返回，canonical
+  target 成功，recipe/progress/promote 均拒绝 `--producer-target`；
+  AgentControl 显式映射 typed result。非规模 ManagerVertical TRX：87 passed。
 - Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。
@@ -101,8 +105,8 @@
 ## 尚未完成
 
 G3 尚缺“历史未完成 family 按实际 work 路由”的完整纵向回归与全部冻结恢复
-覆盖；G4 仍缺 candidate/Overlay/promotion、CLI canonical target 的完整矩阵和
-既有 live 无 policy 测试调用点的显式 policy 迁移；G5 尚缺 V4 partial、Overlay
+覆盖；G4a 已收口显式 live producer policy，G4 仍缺 Full/Overlay
+candidate 与 promotion/prefix 完整矩阵；G5 尚缺 V4 partial、Overlay
 共享 cell、多 ref、crash/reopen、export/restore 的完整无损矩阵；A1--A15
 完整/规模验收尚未完成。本记录不能作为服务部署、真实 `.atelia/galatea` 迁移
 或 NuGet 发布的授权。
