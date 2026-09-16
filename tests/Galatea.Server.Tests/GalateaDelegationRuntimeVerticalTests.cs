@@ -651,7 +651,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     }
 
     [Fact]
-    public async Task FailedAutonomyPausesButReadyReplyStillWinsAndClearsPause() {
+    public async Task FailedAutonomyPreservesPreparedUntilExplicitEndBeforeReadyReply() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
@@ -717,12 +717,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             .WaitAsync(Deadline);
         Assert.Equal("failed", failed.Status);
 
-        LoopPulseStatusDto paused = await PostPulseStatusAsync(http);
-        Assert.Equal(GalateaAutonomyCadence.PausedState,
-            paused.State);
-        Assert.Null(paused.NextActivationAtUnixTimeMilliseconds);
-        Assert.Equal(GalateaAutonomyCadence.PausedCode,
-            paused.Code);
+        Assert.True(session.GenerationBlocked);
+        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, session.Engine.InspectExecutionBoundary().Phase);
+        string pendingHead = EventAddressTextCodec.Format(session.Engine.ReadCurrentHead()!.Value);
         Assert.Equal(2, mainClient.CallCount);
 
         backend.Complete(0, "durable reply after pause");
@@ -730,6 +727,17 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await WaitUntilAsync(() => session.DelegationHandle.Store
             .ReadSnapshot().Notices.SingleOrDefault()?.State
                 == GalateaReplyNoticeState.Ready);
+        using (HttpResponseMessage blocked = await http.PostAsJsonAsync(
+                   "/api/v1/characters/alice/mailbox/ready-turn", new ReadyReplyTurnRequest())) {
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+        }
+        Assert.Equal(2, mainClient.CallCount);
+        Assert.Equal(pendingHead, EventAddressTextCodec.Format(session.Engine.ReadCurrentHead()!.Value));
+        using (HttpResponseMessage ended = await http.PostAsJsonAsync(
+                   "/api/v1/characters/alice/chat/turns/pending/stop", new { expectedHead = pendingHead })) {
+            Assert.Equal(HttpStatusCode.NoContent, ended.StatusCode);
+        }
+        Assert.False(session.GenerationBlocked);
         LoopPulseAcceptedTurnDto reply;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
                    "/api/v1/characters/alice/mailbox/ready-turn",
@@ -755,12 +763,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     }
 
     [Fact]
-    public async Task PreDispatchStoppedReplyBlocksAutomaticRetryUntilSuccessfulManualTurn() {
+    public async Task PreDispatchStoppedReplyWithoutAcceptedObservationRemainsReadyForAutomaticClaim() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
             _ => Completed(main, "[Galatea] sent one letter."),
-            _ => Completed(main, "manual activity completed"),
             _ => Completed(main, "received reply after manual activity")
         );
         var extractorClient = new QueueClient(
@@ -822,30 +829,14 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Null(retained.ActiveLease);
         Assert.Equal(GalateaReplyNoticeState.Ready,
             Assert.Single(retained.Notices).State);
-        int mainCallsBeforeRetry = mainClient.CallCount;
-        int extractorCallsBeforeRetry = extractorClient.CallCount;
-
-        using (HttpResponseMessage blocked = await http.PostAsJsonAsync(
-                   "/api/v1/characters/alice/mailbox/ready-turn", new ReadyReplyTurnRequest())) {
-            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
-            using JsonDocument body = JsonDocument.Parse(
-                await blocked.Content.ReadAsStringAsync());
-            Assert.Equal("automatic-reply-failed",
-                body.RootElement.GetProperty("code").GetString());
-        }
-        Assert.Equal(mainCallsBeforeRetry, mainClient.CallCount);
-        Assert.Equal(extractorCallsBeforeRetry, extractorClient.CallCount);
         Assert.Equal(1, mainClient.CallCount);
         Assert.Null(session.DelegationHandle.Store.ReadSnapshot().ActiveLease);
         Assert.Equal(GalateaReplyNoticeState.Ready,
             Assert.Single(session.DelegationHandle.Store.ReadSnapshot()
                 .Notices).State);
 
-        // This existing manual-input collision case leaves the Ready reply
-        // untouched, allowing the same reply to prove automatic resumption.
-        GalateaLiveTurn manual = await StartAndWaitAsync(http, service, session,
-            PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator);
-        Assert.Equal("completed", manual.Status);
+        // No Observation was accepted, so stop must not consume this reply or
+        // invent a durable turn ending. The original Ready notice can be claimed.
         Assert.False(session.AutomaticReplyFailed);
         using HttpResponseMessage resumed = await http.PostAsJsonAsync(
             "/api/v1/characters/alice/mailbox/ready-turn", new ReadyReplyTurnRequest());
@@ -857,7 +848,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             service.FindTurn(session, accepted.TurnId));
         await Assert.IsAssignableFrom<Task>(received.RunTask).WaitAsync(Deadline);
         Assert.Equal("completed", received.Status);
-        Assert.Equal(3, mainClient.CallCount);
+        Assert.Equal(2, mainClient.CallCount);
         Assert.Equal(GalateaReplyNoticeState.Consumed,
             Assert.Single(session.DelegationHandle.Store.ReadSnapshot()
                 .Notices).State);
@@ -1032,7 +1023,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             .Store.ReadSnapshot();
         Assert.All(consumed.Notices, static notice => {
             Assert.Equal(GalateaReplyNoticeState.Consumed, notice.State);
-            Assert.NotNull(notice.ConsumedActionAddress);
+            Assert.NotNull(notice.ConsumedTurnEndAddress);
         });
 
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<

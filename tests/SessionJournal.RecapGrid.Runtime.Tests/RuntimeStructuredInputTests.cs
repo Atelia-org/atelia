@@ -6,6 +6,29 @@ using Xunit;
 namespace Atelia.SessionJournal.RecapGrid.Runtime.Tests;
 
 public sealed class RuntimeStructuredInputTests {
+    [Theory]
+    [InlineData(SessionTurnEndReason.Stopped)]
+    [InlineData(SessionTurnEndReason.Rejected)]
+    [InlineData(SessionTurnEndReason.Incomplete)]
+    public async Task EndedTurnProjectsAsExplicitObservationWithoutAFakeAction(SessionTurnEndReason reason) {
+        var ended = new SessionTurnEndedMessage(reason);
+        FrozenRowBatch batch = RuntimeTestFixture.Batch(history: [ended]);
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker((request, _) => {
+            Assert.DoesNotContain(request.PromptPrefix.SharedContextMessages,
+                static message => message is SessionTurnEndedMessage or ActionMessage);
+            Assert.Equal(ended.Render(), Assert.IsType<ObservationMessage>(
+                request.PromptPrefix.SharedContextMessages[1]).Content);
+            return ValueTask.FromResult(RuntimeTestFixture.Updated(request, invoker!));
+        });
+        using var runtime = Runtime(batch, invoker);
+
+        var result = Assert.IsType<RecapCellBatchExecutionResult.Completed>(await runtime.ExecuteAsync(batch, default));
+
+        Assert.IsType<RecapCellExecutionOutcome.Updated>(Assert.Single(result.OrderedOutcomes));
+        Assert.Equal(1, invoker.CallCount);
+    }
+
     [Fact]
     public async Task StructuredHistoryWithoutProjectorRejectsBeforeAnyCall() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch(history: [new SessionInputObservationMessage(Content())]);

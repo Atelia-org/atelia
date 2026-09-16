@@ -15,6 +15,23 @@ public sealed class O200kBaseHistoryUnitLoadEstimatorTests {
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator =
         new();
 
+    [Theory]
+    [InlineData(SJ.SessionTurnEndReason.Stopped, "stopped")]
+    [InlineData(SJ.SessionTurnEndReason.Rejected, "rejected")]
+    [InlineData(SJ.SessionTurnEndReason.Incomplete, "incomplete")]
+    public void TurnEndingHasTypedStableMeasurement(
+        SJ.SessionTurnEndReason reason,
+        string token
+    ) {
+        var message = new SJ.SessionTurnEndedMessage(reason);
+        HistoryUnitLoadRendering rendering = HistoryUnitLoadRenderer.Render(message, 4096);
+        Assert.Equal($"[turn-ended]\n{token}\n", rendering.Text);
+        Assert.Equal(Encoding.UTF8.GetByteCount(rendering.Text), rendering.Utf8Bytes);
+        Assert.Equal(Measure(message), Measure(new SJ.SessionTurnEndedMessage(reason)));
+        Assert.Throws<HistoryLoadMeasurementException>(() =>
+            HistoryUnitLoadRenderer.Render(message, rendering.Utf8Bytes - 1));
+    }
+
     [Fact]
     public void StructuredObservationMeasuresStableMachineContentWithoutAProjector() {
         using JsonDocument json = JsonDocument.Parse("{\"body\":\"角色正文\\n```\",\"sender\":\"character-a\"}");

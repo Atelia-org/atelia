@@ -118,11 +118,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.All(manifest.Plan.SemanticContributions, input => Assert.Equal(
             SessionContextContributionHasher.ComputeSha256(input.ExactText), input.ContentSha256));
         Assert.Null(manifest.Commitment);
-        EventAddress started = Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
-        using (var inspection = SessionJournalEngine.Open(path)) {
-            var evidence = Assert.IsType<CompletionAttemptStartedBody>(SessionEventCodec.Decode(SessionEventKind.CompletionAttemptStarted, inspection.ReadPayloadBytes(started), out _));
-            Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), evidence.Commitment);
-        }
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
         Assert.Equal(runtimeB, manifest.Setups.RuntimeConfig.Address);
         Assert.Equal(promptB, manifest.Setups.SystemPrompt.Address);
     }
@@ -363,7 +360,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_TailProviderToolCall_PersistsKnownFailureAndAllowsAfterAbandon() {
+    public async Task SendAsync_TailProviderToolCall_PreservesPreparedAndAllowsAfterExplicitEnd() {
         string path = NewJournalPath();
         int responseIndex = 0;
         var client = new CapturingCompletionClient(request => {
@@ -399,20 +396,17 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             Assert.Contains("supports no tools", error.Termination.Detail, StringComparison.Ordinal);
             SessionExecutionBoundaryInspection failed =
                 engine.InspectExecutionBoundary();
-            Assert.Equal(SessionExecutionPhase.TurnFailed, failed.Phase);
+            Assert.Equal(SessionExecutionPhase.AwaitingCompletion, failed.Phase);
             EventAddress failureAddress = failed.Head!.Value;
-            CompletionAttemptFailedBody failure = Assert.IsType<CompletionAttemptFailedBody>(
+            Assert.IsType<CompletionRequestPreparedBody>(
                 SessionEventCodec.Decode(
-                    SessionEventKind.CompletionAttemptFailed,
+                    SessionEventKind.CompletionRequestPrepared,
                     engine.ReadPayloadBytes(failureAddress),
                     out _
                 )
             );
-            Assert.Equal(CompletionTerminationKind.Failed, failure.TerminationKind);
-            Assert.Equal("atelia.host.unsupported-tool-call", failure.ProviderReason);
-
-            Assert.IsType<SessionTurnRetractionResult.Moved>(
-                engine.AbandonFailedTurn(failureAddress)
+            Assert.IsType<SessionTurnEndResult.Ended>(
+                engine.EndPendingTurn(failureAddress, SessionTurnEndReason.Stopped)
             );
             TurnResult recovered = await engine.SendAsync(
                 "recovery observation",
@@ -421,15 +415,17 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             Assert.Equal("recovered answer", recovered.Message.GetFlattenedText());
         }
         Assert.Equal(2, client.Requests.Count);
-        Assert.Single(ReadAddressesByKind(
+        Assert.Equal(2, ReadAddressesByKind(
             path,
             SessionEventKind.CompletionRequestPrepared
-        ));
+        ).Length);
         Assert.Empty(ReadAddressesByKind(
             path,
             SessionEventKind.CompletionAttemptFailed
         ));
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.TurnEnded));
+        Assert.Equal(3, ReadAddressesByKind(path, SessionEventKind.ObservationAccepted).Length);
     }
 
     [Fact]
@@ -690,10 +686,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             );
         }
 
-        SessionRuntime recoveryRuntime = CreateRuntime(client, candidate) with {
-            UncertainCompletionRecoveryPolicy =
-                SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
-        };
+        SessionRuntime recoveryRuntime = CreateRuntime(client, candidate);
         using var reopened = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Open(
                 path

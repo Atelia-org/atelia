@@ -148,7 +148,9 @@ internal static class SessionInputProjection {
             ? (projector ?? throw new NotSupportedException($"No input projector is configured for '{content.SchemaId}'.")).Project(content)
             : content.TextValue;
     internal static IHistoryMessage Project(IHistoryMessage message, ISessionInputProjector? projector) =>
-        message is SessionInputObservationMessage observation
-            ? new ObservationMessage(Project(observation.Content, projector))
-            : message;
+        message switch {
+            SessionInputObservationMessage observation => new ObservationMessage(Project(observation.Content, projector)),
+            SessionTurnEndedMessage ended => new ObservationMessage(ended.Render()),
+            _ => message
+        };
 }

@@ -95,6 +95,9 @@ internal sealed class SessionJournalOfflineForwardFold {
             case SessionEventKind.CompletionAttemptFailed:
                 AcceptAttemptFailed(auditEvent);
                 break;
+            case SessionEventKind.TurnEnded:
+                AcceptTurnEnded(auditEvent);
+                break;
             case SessionEventKind.AgentActionProduced:
             case SessionEventKind.ImportedAgentAction:
                 AcceptAction(auditEvent);
@@ -165,6 +168,7 @@ internal sealed class SessionJournalOfflineForwardFold {
                 or SessionEventKind.RuntimeConfigSetup
                 or SessionEventKind.SystemPromptSetup
                 or SessionEventKind.CompletionAttemptFailed
+                or SessionEventKind.TurnEnded
             )
             || _headKind is (
                 SessionEventKind.AgentActionProduced
@@ -306,11 +310,18 @@ internal sealed class SessionJournalOfflineForwardFold {
             RequireFact<SessionJournalAuditActionFact>(auditEvent);
         EventAddress? activeAttempt =
             _activeCompletionAttemptAddress;
+        EventAddress? completionParent = auditEvent.BodySchemaVersion switch {
+            1 => activeAttempt,
+            2 => activeAttempt ?? _pendingRequestPreparedAddress,
+            _ => null
+        };
         bool preparedAction =
             auditEvent.Kind
                 == SessionEventKind.AgentActionProduced
             && _pendingRequestPreparedAddress.HasValue
-            && activeAttempt.HasValue;
+            && completionParent.HasValue
+            && _headKind is (SessionEventKind.CompletionRequestPrepared
+                or SessionEventKind.CompletionAttemptStarted);
         bool importedAction =
             auditEvent.Kind
                 == SessionEventKind.ImportedAgentAction
@@ -328,11 +339,11 @@ internal sealed class SessionJournalOfflineForwardFold {
         }
         if (preparedAction
             && auditEvent.Parent
-                != activeAttempt.GetValueOrDefault()) {
+                != completionParent.GetValueOrDefault()) {
             throw Error(
                 auditEvent,
-                "must directly descend from active completion attempt "
-                + $"{activeAttempt}"
+                "must directly descend from its completion frontier "
+                + $"{completionParent}"
             );
         }
         if (_activeCorrelationId is null
@@ -399,6 +410,27 @@ internal sealed class SessionJournalOfflineForwardFold {
             _activeCorrelationId = null;
             _pendingToolRuntimeIdentity = null;
         }
+    }
+
+    private void AcceptTurnEnded(SessionJournalAuditEvent auditEvent) {
+        EnsureSessionCreated(auditEvent);
+        SessionJournalAuditTurnEndedFact fact =
+            RequireFact<SessionJournalAuditTurnEndedFact>(auditEvent);
+        bool safeFrontier = _headKind is (
+            SessionEventKind.ObservationAccepted
+            or SessionEventKind.CompletionRequestPrepared
+            or SessionEventKind.CompletionAttemptStarted
+            or SessionEventKind.CompletionAttemptFailed
+            or SessionEventKind.ToolResultObserved);
+        if (!safeFrontier || _openToolCalls is not null
+            || _pendingToolCall is not null || _pendingToolExecutionStarted
+            || (_headKind == SessionEventKind.CompletionAttemptFailed
+                && fact.Reason != SessionTurnEndReason.Stopped)) {
+            throw Error(auditEvent, "requires a safe pending generation frontier with all tools settled");
+        }
+        AppendHistoryContribution(
+            SessionHistorySemanticCommitment.ComputeTurnEndContributionSha256(fact.Reason));
+        ResetTurnState(resetSequence: false);
     }
 
     private void AcceptToolExecutionStarted(
@@ -544,6 +576,13 @@ internal sealed class SessionJournalOfflineForwardFold {
                     SessionExecutionPhase.Idle,
                     _headKind
                 ),
+            SessionEventKind.TurnEnded =>
+                new SessionExecutionState(
+                    SessionExecutionPhase.Idle,
+                    _headKind,
+                    ToolExecutionSequenceCheckpoint:
+                        _toolExecutionSequenceCheckpoint
+                ),
             SessionEventKind.ObservationAccepted =>
                 new SessionExecutionState(
                     SessionExecutionPhase.AwaitingAgentAction,
@@ -555,7 +594,7 @@ internal sealed class SessionJournalOfflineForwardFold {
             SessionEventKind.CompletionRequestPrepared =>
                 new SessionExecutionState(
                     SessionExecutionPhase
-                        .AwaitingCompletionDispatch,
+                        .AwaitingCompletion,
                     _headKind,
                     ToolExecutionSequenceCheckpoint:
                         _toolExecutionSequenceCheckpoint,
@@ -659,6 +698,7 @@ internal sealed class SessionJournalOfflineForwardFold {
                 or SessionEventKind.SystemPromptSetup
                 or SessionEventKind.SessionCreated
                 or SessionEventKind.CompletionAttemptFailed
+                or SessionEventKind.TurnEnded
             || _headKind is (
                 SessionEventKind.AgentActionProduced
                 or SessionEventKind.ImportedAgentAction

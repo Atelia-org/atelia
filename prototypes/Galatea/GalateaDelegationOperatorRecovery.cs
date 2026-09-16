@@ -532,7 +532,7 @@ internal static class GalateaDelegationOperatorRecovery {
             Code: null,
             before.NextCompletionSequence,
             GalateaReplyNoticeState.Ready,
-            ConsumedActionAddress: null,
+            ConsumedTurnEndAddress: null,
             Revision: 0,
             NoticeFormat: "semantic-notice-v1",
             Sender: new GalateaSenderSnapshot("delegate", "codex", "Codex"),

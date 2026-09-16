@@ -48,9 +48,12 @@ public sealed class GalateaServerAgentRuntimeTests {
         long? due = coordinator.ReadStatus("alice").NextActivationAtUnixTimeMilliseconds;
 
         var pulsed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        loop.PulseCompletedForTest = _ => pulsed.TrySetResult();
+        loop.PulseCompletedForTest = id => { if (id == "alice") { pulsed.TrySetResult(); } };
         clock.Advance(TimeSpan.FromMinutes(9) + TimeSpan.FromSeconds(59));
         await pulsed.Task.WaitAsync(Deadline);
+        // Admission is now an observable transient state with no cadence deadline.
+        // Inspect the settled Alice pulse, not Bob's completion or an in-flight admission.
+        await UntilAsync(() => coordinator.ReadStatus("alice").State == "waiting");
         Assert.Equal(0, completion.Calls);
         Assert.Equal(due, coordinator.ReadStatus("alice").NextActivationAtUnixTimeMilliseconds);
 
@@ -58,17 +61,17 @@ public sealed class GalateaServerAgentRuntimeTests {
         // The next cheap check is at 10m09s after the delayed previous pulse.
         clock.Advance(TimeSpan.FromSeconds(9));
         await UntilAsync(() => completion.Calls >= 1);
-        await UntilAsync(() => coordinator.ReadStatus("alice").State != "running");
+        await UntilAsync(() => coordinator.ReadStatus("alice").State == "waiting");
         Assert.Equal("waiting", coordinator.ReadStatus("alice").State);
         Assert.Equal("test", completion.LastConnectionId);
         Assert.Equal("test", coordinator.ReadStatus("alice").ConnectionId);
 
         clock.Advance(TimeSpan.FromHours(3));
         await UntilAsync(() => completion.Calls >= 2);
-        await UntilAsync(() => coordinator.ReadStatus("alice").State != "running");
+        await UntilAsync(() => coordinator.ReadStatus("alice").State == "waiting");
         Assert.Equal("waiting", coordinator.ReadStatus("alice").State);
         pulsed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        loop.PulseCompletedForTest = _ => pulsed.TrySetResult();
+        loop.PulseCompletedForTest = id => { if (id == "alice") { pulsed.TrySetResult(); } };
         clock.Advance(TimeSpan.FromSeconds(10));
         await pulsed.Task.WaitAsync(Deadline);
         Assert.Equal(2, completion.Calls);

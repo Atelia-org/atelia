@@ -276,12 +276,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
     internal void ConsumeReplyLease(
         string leaseId,
         long expectedLeaseRevision,
-        string terminalActionAddress
+        string terminalEventAddress
     ) {
         RequireWireIdentity(leaseId, nameof(leaseId));
         RequireEventAddress(
-            terminalActionAddress,
-            nameof(terminalActionAddress)
+            terminalEventAddress,
+            nameof(terminalEventAddress)
         );
         lock (_gate) {
             ThrowIfNotWritable();
@@ -299,7 +299,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         connection,
                         transaction,
                         lease,
-                        terminalActionAddress
+                        terminalEventAddress
                     );
                     return GalateaDelegationStateSnapshot.Freeze(
                         lease.NoticeIds
@@ -311,8 +311,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         .All(value => value.State
                                 == GalateaReplyNoticeState.Consumed
                             && string.Equals(
-                                value.ConsumedActionAddress,
-                                terminalActionAddress,
+                                value.ConsumedTurnEndAddress,
+                                terminalEventAddress,
                                 StringComparison.Ordinal))
             );
         }
@@ -476,8 +476,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
         SqliteConnection connection,
         SqliteTransaction transaction,
         GalateaReplyLeaseSnapshot lease,
-        string terminalActionAddress
+        string terminalEventAddress
     ) {
+        // Historical physical column name: consumed_action_address now stores
+        // either a terminal Action or TurnEnded. The Journal owns the outcome.
         _ = IncrementStoreRevision(connection, transaction);
         using (SqliteCommand updateNotices = connection.CreateCommand()) {
             updateNotices.Transaction = transaction;
@@ -493,7 +495,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 """;
             updateNotices.Parameters.AddWithValue(
                 "$action",
-                terminalActionAddress
+                terminalEventAddress
             );
             updateNotices.Parameters.AddWithValue("$lease", lease.LeaseId);
             if (updateNotices.ExecuteNonQuery() != lease.NoticeIds.Count) {
@@ -559,7 +561,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 ));
             if (notice is null
                 || notice.State != GalateaReplyNoticeState.Ready
-                || notice.ConsumedActionAddress is not null
+                || notice.ConsumedTurnEndAddress is not null
                 || notice.Revision != expectedNotice.Revision) {
                 return false;
             }

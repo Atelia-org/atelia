@@ -105,12 +105,12 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         (GalateaHostService service, CharacterSessionHost session) = await GetSessionAsync(host);
         var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
             session.Engine.InspectRuntimeRecoveryRequirements());
-        Assert.Equal(expectedDispatchState, frozen.DispatchState);
+        Assert.NotEqual(default, frozen.SourcePreparedAddress);
 
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead),
-                ConnectionId: null, RestartUncertainCompletion: true));
+                ConnectionId: null));
         GalateaLiveTurn recovered = await WaitForTurnAsync(accepted, service, session);
 
         Assert.Equal("completed", recovered.Status);
@@ -127,7 +127,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
     }
 
     [Fact]
-    public async Task FrozenStartedModelSwitch_RequiresExplicitRestartThenUsesProductionAdapter() {
+    public async Task LegacyStartedModelSwitch_ResumesWithoutConfirmationUsingProductionAdapter() {
         var factory = new CodexFixtureFactory();
         await using var host = CreateHost(factory);
         CompletionConnectionConfig oldConnection = Connection("test", OldModel);
@@ -155,23 +155,13 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         (GalateaHostService service, CharacterSessionHost session) = await GetSessionAsync(host);
-        using (HttpResponseMessage refused = await http.PostAsJsonAsync(
-                   "/api/v1/characters/alice/chat/turns/resume",
-                   new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead),
-                       ConnectionId: null, RestartUncertainCompletion: false))) {
-            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-            using JsonDocument body = JsonDocument.Parse(
-                await refused.Content.ReadAsStringAsync());
-            Assert.Equal("uncertain-completion-restart-required",
-                body.RootElement.GetProperty("code").GetString());
-        }
         Assert.Single(factory.Requests);
         Assert.Equal(startedHead, session.Engine.ReadCurrentHead());
 
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead),
-                ConnectionId: null, RestartUncertainCompletion: true));
+                ConnectionId: null));
         GalateaLiveTurn recovered = await WaitForTurnAsync(accepted, service, session);
 
         Assert.Equal("completed", recovered.Status);
@@ -213,17 +203,18 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
                 rejected.Termination.ProviderReason);
             Assert.Equal(["adapter-validation=reasoning-replay"], rejected.Errors);
             failedHead = Assert.IsType<SessionRuntimeRecoveryRequirements
-                .FailedTurnMustBeAbandoned>(engine.InspectRuntimeRecoveryRequirements())
-                .FailedHead;
+                .FrozenCompletionRequired>(engine.InspectRuntimeRecoveryRequirements())
+                .CapturedHead!.Value;
         }
         using (var reopened = SessionJournalEngine.OpenReadOnly(host.SessionDirectory)) {
             Assert.Equal(failedHead, Assert.IsType<SessionRuntimeRecoveryRequirements
-                .FailedTurnMustBeAbandoned>(reopened.InspectRuntimeRecoveryRequirements())
-                .FailedHead);
+                .FrozenCompletionRequired>(reopened.InspectRuntimeRecoveryRequirements())
+                .CapturedHead!.Value);
             var events = new List<SessionJournalAuditEvent>();
             reopened.ScanCheckedAuditEvents(events.Add);
-            SessionJournalAuditEvent failure = Assert.Single(events,
-                entry => entry.Kind == SessionEventKind.CompletionAttemptFailed);
+            Assert.DoesNotContain(events, entry => entry.Kind == SessionEventKind.CompletionAttemptFailed);
+            SessionJournalAuditEvent failure = events.Last(
+                entry => entry.Kind == SessionEventKind.CompletionRequestPrepared);
             Assert.Equal(failedHead, failure.Address);
         }
         Assert.Empty(factory.Requests);
@@ -234,9 +225,8 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
         CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
             await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
-        Assert.Equal("idle", current.Status);
-        Assert.False(current.RestartRequired);
-        Assert.Null(current.RecoveryHead);
+        Assert.Equal("recovery-required", current.Status);
+        Assert.Equal(EventAddressTextCodec.Format(failedHead), current.RecoveryHead);
         Assert.Empty(factory.Requests);
     }
 

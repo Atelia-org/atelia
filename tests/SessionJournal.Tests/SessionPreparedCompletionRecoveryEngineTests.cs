@@ -69,19 +69,9 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             var requirement = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 inspection.InspectRuntimeRecoveryRequirements()
             );
-            Assert.Equal(
-                started ? SessionDurableDispatchState.StartedOutcomeUncertain : SessionDurableDispatchState.NotStarted,
-                requirement.DispatchState
-            );
-        }
-        if (started) {
-            EventAddress head = ReadHead(path);
-            using var refused = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(path), runtime);
-            await Assert.ThrowsAsync<InvalidOperationException>(
-                () => refused.ResumeAsync(CancellationToken.None)
-            );
-            Assert.Equal(head, refused.ReadCurrentHead());
-            Assert.Equal(0, client.Calls);
+            Assert.Equal(legacyPrepared, requirement.SourcePreparedAddress);
+            Assert.Equal(started ? SessionEventKind.CompletionAttemptStarted : SessionEventKind.CompletionRequestPrepared,
+                requirement.HeadKind);
         }
 
         client.Enqueue(request => {
@@ -91,8 +81,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         var recoverySource = new TestContextCandidateSource();
         using (var reopened = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Open(path),
-            CreateRuntime(client, recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt)
-                with { ContextCandidateSource = recoverySource }
+            CreateRuntime(client) with { ContextCandidateSource = recoverySource }
         )) {
             ResumeOutcome result = await reopened.ResumeAsync(CancellationToken.None);
             Assert.Equal("legacy recovered", result.Message?.GetFlattenedText());
@@ -138,7 +127,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_DefaultRefuse_ValidatesPreparedButDoesNotMutateOrCallProvider() {
+    public async Task ResumeAsync_LegacyStarted_AutomaticallyRecoversWithoutReselectingContext() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         EventAddress prepared = await CreateUncertainAsync(
@@ -146,6 +135,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(client)
         );
         var recoverySource = new TestContextCandidateSource();
+        client.Enqueue(request => Success(request, "automatically recovered"));
         var lifecycle = new TestContextLifecycle {
             Result = new(
                 SessionContextLifecycleStatus.Unavailable,
@@ -161,20 +151,20 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 ContextLifecycle = lifecycle
             }
         )) {
-            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => reopened.ResumeAsync(CancellationToken.None)
-            );
-            Assert.Contains("Refuse", error.Message, StringComparison.Ordinal);
+            ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
+            Assert.Equal("automatically recovered", outcome.Message?.GetFlattenedText());
+            Assert.Equal(SessionExecutionPhase.Idle, reopened.InspectExecutionBoundary().Phase);
         }
-        Assert.Equal(prepared, ReadHead(path));
+        Assert.Equal(prepared, ReadParent(path, ReadHead(path)));
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
-        Assert.Equal(0, client.Calls);
+        Assert.Equal(1, client.Calls);
         Assert.Equal(0, recoverySource.SelectionCount);
         Assert.Equal(0, lifecycle.InvocationCount);
     }
 
     [Fact]
-    public async Task ResumeAsync_DefaultRefuse_RejectsCorruptPreparedBeforePolicyRefusal() {
+    public async Task ResumeAsync_RejectsCorruptPreparedBeforeProviderDispatch() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         EventAddress validPrepared = await CreatePreparedAsync(
@@ -270,8 +260,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         using (var reopened = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Open(path),
             CreateRuntime(
-                client,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                client
             )
         )) {
             NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
@@ -315,8 +304,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         using (var reopened = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Open(path),
             CreateRuntime(
-                client,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                client
             )
         )) {
             await Assert.ThrowsAsync<NotSupportedException>(
@@ -387,7 +375,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 SessionJournalDefaults.MainBranchName,
                 started,
                 SessionEventCodec.Encode(
-                    SessionEventKind.AgentActionProduced,
+                    // ImportedAction shares the historical v1 body writer; opaque kind stays produced.
+                    SessionEventKind.ImportedAgentAction,
                     new AgentActionProducedBody(
                         new ActionMessage([
                             new ActionBlock.Text("historical answer")
@@ -630,7 +619,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_RestartSuccess_AppendsNewAttemptAndBindsActionToIt() {
+    public async Task ResumeAsync_LegacyStartedSuccess_BindsOnlyActionToHistoricalTail() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
         EventAddress prepared = await CreateUncertainAsync(
@@ -644,29 +633,26 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 path
             ),
             CreateRuntime(
-                recoveryClient,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                recoveryClient
             )
         )) {
             ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
             Assert.True(outcome.Advanced);
             Assert.Equal("recovered", outcome.Message?.GetFlattenedText());
         }
-        EventAddress restarted =
-            ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted)[1];
+        Assert.Equal(prepared, Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted)));
         EventAddress action = Assert.Single(
             ReadAddressesByKind(path, SessionEventKind.AgentActionProduced)
         );
-        Assert.Equal(prepared, ReadParent(path, restarted));
-        Assert.Equal(restarted, ReadParent(path, action));
+        Assert.Equal(prepared, ReadParent(path, action));
         Assert.Equal(1, recoveryClient.Calls);
     }
 
     [Fact]
-    public async Task ResumeAsync_RestartTypedRejection_BindsFailureToNewAttempt() {
+    public async Task ResumeAsync_LegacyStartedTypedRejection_PreservesHistoricalTailWithoutFailureEvent() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
-        _ = await CreateUncertainAsync(path, CreateRuntime(sourceClient));
+        EventAddress originalHead = await CreateUncertainAsync(path, CreateRuntime(sourceClient));
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(_ => throw new CompletionRequestRejectedException(
             CompletionTermination.Failed(
@@ -680,8 +666,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 path
             ),
             CreateRuntime(
-                recoveryClient,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                recoveryClient
             )
         )) {
             SessionJournalTurnAbortedException error =
@@ -697,29 +682,16 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 error.Errors
             );
             Assert.Equal(
-                SessionExecutionPhase.TurnFailed,
+                SessionExecutionPhase.AwaitingCompletion,
                 reopened.InspectExecutionBoundary().Phase
             );
         }
 
-        EventAddress restarted =
-            ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted)[1];
-        EventAddress failureAddress = Assert.Single(
-            ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed)
-        );
-        Assert.Equal(restarted, ReadParent(path, failureAddress));
-        CompletionAttemptFailedBody failure = ReadBody<
-            CompletionAttemptFailedBody
-        >(
-            path,
-            failureAddress,
-            SessionEventKind.CompletionAttemptFailed
-        );
-        Assert.Equal("provider.rate-limited", failure.ProviderReason);
-        Assert.Equal(
-            ["http-status=429", "retry-after-seconds=5"],
-            failure.Errors
-        );
+        Assert.Equal(originalHead, ReadHead(path));
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
+        Assert.Equal(1, recoveryClient.Calls);
     }
 
     [Fact]
@@ -742,10 +714,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 path
             ),
             CreateRuntime(
-                recoveryClient,
-                recoveryPolicy:
-                    SessionUncertainCompletionRecoveryPolicy
-                        .RestartWithNewAttempt
+                recoveryClient
             )
         )) {
             await Assert.ThrowsAsync<
@@ -759,15 +728,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             SessionHistoryPlanningUnit unit =
                 Assert.Single(window.Units);
             Assert.IsType<ObservationMessage>(unit.Message);
-            Assert.Equal(
-                1,
-                Assert.Single(
-                    window.ReplaySafeBoundaries,
-                    boundary =>
-                        boundary.Address
-                        == reopened.ReadCurrentHead()!.Value
-                ).CompletedUnitCount
-            );
+            Assert.DoesNotContain(window.ReplaySafeBoundaries,
+                boundary => boundary.Address == reopened.ReadCurrentHead()!.Value);
+            Assert.Contains(window.ReplaySafeBoundaries,
+                boundary => boundary.CompletedUnitCount == 1);
         }
 
         Assert.Single(
@@ -777,13 +741,13 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             )
         );
         Assert.Equal(
-            2,
+            1,
             ReadAddressesByKind(
                 path,
                 SessionEventKind.CompletionAttemptStarted
             ).Length
         );
-        Assert.Single(
+        Assert.Empty(
             ReadAddressesByKind(
                 path,
                 SessionEventKind.CompletionAttemptFailed
@@ -792,7 +756,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_RestartWithoutTools_ProviderToolCallDurablyFails() {
+    public async Task ResumeAsync_WithoutTools_ProviderToolCallPreservesPendingWithoutExecutingTool() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
         _ = await CreateUncertainAsync(path, CreateRuntime(sourceClient));
@@ -810,9 +774,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 path
             ),
             CreateRuntime(
-                recoveryClient,
-                recoveryPolicy:
-                    SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                recoveryClient
             )
         )) {
             SessionJournalTurnAbortedException error =
@@ -824,23 +786,20 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 error.Termination.ProviderReason
             );
             Assert.Equal(
-                SessionExecutionPhase.TurnFailed,
+                SessionExecutionPhase.AwaitingCompletion,
                 reopened.ResolveExecutionTail().State.Phase
             );
-
-            ResumeOutcome settled =
-                await reopened.ResumeAsync(CancellationToken.None);
-            Assert.False(settled.Advanced);
+            Assert.Equal(SessionEventKind.CompletionAttemptStarted, reopened.InspectExecutionBoundary().HeadKind);
         }
 
         Assert.Equal(
-            2,
+            1,
             ReadAddressesByKind(
                 path,
                 SessionEventKind.CompletionAttemptStarted
             ).Length
         );
-        Assert.Single(
+        Assert.Empty(
             ReadAddressesByKind(
                 path,
                 SessionEventKind.CompletionAttemptFailed
@@ -896,8 +855,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 recoveryClient,
                 new ToolRegistry([recoveryTool]).CreateSession(),
-                recoveryPolicy:
-                    SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
                 contextCandidate: candidate
             )
         )) {
@@ -944,7 +901,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_RestartFailpointThenReopen_AppendsSecondAuditableRestart() {
+    public async Task ResumeAsync_TransportFailureThenReopen_ReusesHistoricalTailWithoutNewAttempts() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
         EventAddress prepared = await CreateUncertainAsync(
@@ -952,26 +909,17 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(sourceClient)
         );
         var recoveryClient = new ScriptedClient();
-        using (var firstRecovery = SessionJournalEngine.OpenForTest(
-            path,
-            CreateRuntime(
-                recoveryClient,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
-            ),
-            new SessionJournalTestHooks(
-                SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted
-            )
+        recoveryClient.Enqueue(_ => throw new IOException("connection lost"));
+        using (var firstRecovery = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            CreateRuntime(recoveryClient)
         )) {
-            SessionJournalFailpointException error =
-                await Assert.ThrowsAsync<SessionJournalFailpointException>(
-                    () => firstRecovery.ResumeAsync(CancellationToken.None)
-                );
-            Assert.Equal(
-                SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted,
-                error.Failpoint
+            await Assert.ThrowsAsync<IOException>(
+                () => firstRecovery.ResumeAsync(CancellationToken.None)
             );
+            Assert.Equal(prepared, firstRecovery.ReadCurrentHead());
         }
-        Assert.Equal(0, recoveryClient.Calls);
+        Assert.Equal(1, recoveryClient.Calls);
 
         recoveryClient.Enqueue(request => Success(request, "second restart"));
         using (var secondRecovery = SessionJournalTestRuntime.Attach(
@@ -979,8 +927,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 path
             ),
             CreateRuntime(
-                recoveryClient,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                recoveryClient
             )
         )) {
             ResumeOutcome outcome = await secondRecovery.ResumeAsync(CancellationToken.None);
@@ -989,14 +936,14 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
 
         EventAddress[] restarts =
             ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted);
-        Assert.Equal(3, restarts.Length);
-        Assert.Equal(prepared, restarts[0]);
-        Assert.Equal(restarts[0], ReadParent(path, restarts[1]));
-        Assert.Equal(restarts[1], ReadParent(path, restarts[2]));
+        Assert.Equal(prepared, Assert.Single(restarts));
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
+        Assert.Equal(prepared, ReadParent(path, Assert.Single(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced))));
+        Assert.Equal(2, recoveryClient.Calls);
     }
 
     [Fact]
-    public async Task SendFailpoint_AfterProviderBeforeAction_CanRestartWithNewAttempt() {
+    public async Task SendFailpoint_AfterProviderBeforeAction_CanRegenerateWithOnePreparedAndAction() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var candidateSource = new TestContextCandidateSource();
@@ -1029,18 +976,16 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 path
             ),
             CreateRuntime(
-                client,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                client
             )
         )) {
             ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
             Assert.Equal("restarted result", outcome.Message?.GetFlattenedText());
         }
         Assert.Equal(2, client.Calls);
-        Assert.Equal(
-            2,
-            ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted).Length
-        );
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
     }
 
     [Theory]
@@ -1072,8 +1017,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 recoveryClient,
                 tools,
-                target,
-                SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                target
             )
         )) {
             await Assert.ThrowsAsync<InvalidOperationException>(
@@ -1103,9 +1047,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 recoveryClient,
                 target: DefaultTarget with {
                     ConnectionFingerprint = "different-connection-v2"
-                },
-                recoveryPolicy:
-                    SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                }
             )
         )) {
             await Assert.ThrowsAsync<InvalidOperationException>(
@@ -1157,8 +1099,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 path
             ),
             CreateRuntime(
-                recoveryClient,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                recoveryClient
             ) with { ContextCandidateSource = recoverySource }
         );
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -1218,7 +1159,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         CompletionRequestPreparedBody sourceManifest =
             ReadBody<CompletionRequestPreparedBody>(
                 path,
-                ReadParent(path, ReadHead(path))!.Value,
+                ReadHead(path),
                 SessionEventKind.CompletionRequestPrepared
             );
         Assert.Equal("tool-continuation", sourceManifest.Origin.Reason);
@@ -1232,7 +1173,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 client,
                 recoveryTools,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
                 contextCandidate: candidateFixture.Candidate
             )
         )) {
@@ -1273,7 +1213,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 client,
                 recoveryTools,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
                 toolRuntimeIdentity: ToolRuntimeIdentity with {
                     ImplementationSetFingerprint = "different-implementations-v2"
                 }
@@ -1284,7 +1223,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             );
             Assert.Contains("do not exactly match", error.Message, StringComparison.Ordinal);
             Assert.Equal(
-                SessionExecutionPhase.AwaitingCompletionDispatch,
+                SessionExecutionPhase.AwaitingCompletion,
                 reopened.InspectExecutionBoundary().Phase
             );
         }
@@ -1379,7 +1318,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             SessionJournalDefaults.MainBranchName,
             started,
             SessionEventCodec.Encode(
-                SessionEventKind.AgentActionProduced,
+                // Explicit historical v1 Action payload, not the new Prepared-parent schema.
+                SessionEventKind.ImportedAgentAction,
                 new AgentActionProducedBody(
                     action,
                     new CompletionDescriptor(
@@ -1419,15 +1359,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         ScriptedClient client,
         ToolSession? tools = null,
         SessionCompletionTargetIdentity? target = null,
-        SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
-            SessionUncertainCompletionRecoveryPolicy.Refuse,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null,
         SessionContextCandidate? contextCandidate = null
     ) => new(
         CompletionClient: client,
         ToolSession: tools,
         CompletionTarget: target ?? DefaultTarget,
-        UncertainCompletionRecoveryPolicy: recoveryPolicy,
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity,
         ContextCandidateSource: new TestContextCandidateSource(contextCandidate)
     );

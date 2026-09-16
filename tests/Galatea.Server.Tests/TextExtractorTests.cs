@@ -1,11 +1,9 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Net;
-using System.Reflection;
 using System.Text.Json.Serialization;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.OpenAI;
 using Atelia.Completion.Tools;
 using Xunit;
 
@@ -448,159 +446,68 @@ public sealed class TextExtractorTests {
         Assert.Same(transportFailure, propagated);
     }
 
-    [Fact]
-    public async Task TransientCodexTransportFailure_RetriesFiveAttemptsWithExponentialBackoff() {
-        var delays = new List<TimeSpan>();
-        var client = new ScriptedClient((self, request, _) =>
-            self.CallCount < TextExtractorRetryPolicy.MaximumAttempts
-                ? Task.FromException<CompletionResult>(CodexFailure(
-                    OpenAICodexResponsesFailureReason
-                        .TransportOutcomeUnknown
-                ))
-                : Task.FromResult(self.Completed(
-                    request,
-                    new ActionMessage([])
-                ))
-        );
-        var extractor = new TextExtractor(
-            "system fixture",
-            PersonTools(),
-            Connection(kind: "openai-codex-responses"),
-            () => client,
-            (delay, cancellationToken) => {
-                cancellationToken.ThrowIfCancellationRequested();
-                delays.Add(delay);
-                return ValueTask.CompletedTask;
-            }
-        );
-
-        TextExtractionResult result = await extractor.ExtractAsync(
-            "target",
-            "extract",
-            CancellationToken.None
-        );
-
-        Assert.Empty(result.Artifacts);
-        Assert.Equal(5, client.CallCount);
-        Assert.Equal([
-            TimeSpan.FromSeconds(1),
-            TimeSpan.FromSeconds(2),
-            TimeSpan.FromSeconds(4),
-            TimeSpan.FromSeconds(8),
-        ], delays);
-    }
-
-    [Fact]
-    public async Task TransientCodexTransportFailure_ExhaustionRethrowsFifthFailure() {
-        OpenAICodexResponsesException[] failures = Enumerable.Range(0, 5)
-            .Select(_ => CodexFailure(
-                OpenAICodexResponsesFailureReason.TransportOutcomeUnknown
-            ))
-            .ToArray();
-        var delays = new List<TimeSpan>();
-        var client = new ScriptedClient((self, _, _) =>
-            Task.FromException<CompletionResult>(
-                failures[self.CallCount - 1]
-            )
-        );
-        var extractor = new TextExtractor(
-            "system fixture",
-            PersonTools(),
-            Connection(kind: "openai-codex-responses"),
-            () => client,
-            (delay, _) => {
-                delays.Add(delay);
-                return ValueTask.CompletedTask;
-            }
-        );
-
-        OpenAICodexResponsesException observed =
-            await Assert.ThrowsAsync<OpenAICodexResponsesException>(() =>
-                extractor.ExtractAsync(
-                    "target",
-                    "extract",
-                    CancellationToken.None
-                ).AsTask()
-            );
-
-        Assert.Same(failures[^1], observed);
-        Assert.Equal(5, client.CallCount);
-        Assert.Equal(4, delays.Count);
-    }
-
-    [Fact]
-    public async Task NonTransportCodexFailure_IsNotRetried() {
-        OpenAICodexResponsesException failure = CodexFailure(
-            OpenAICodexResponsesFailureReason.BackendFailure
-        );
-        int delayCalls = 0;
+    [Theory]
+    [InlineData(CompletionFailureKind.Transport, null)]
+    [InlineData(CompletionFailureKind.Http, 429)]
+    [InlineData(CompletionFailureKind.Http, 503)]
+    [InlineData(CompletionFailureKind.Http, 401)]
+    public async Task ClassifiedFailure_PropagatesWithoutAnExtractorRetryLoop(
+        CompletionFailureKind kind, int? status
+    ) {
+        var failure = new CompletionFailureException(new(kind, status), "fixture failure");
         var client = new ScriptedClient((_, _, _) =>
-            Task.FromException<CompletionResult>(failure)
-        );
-        var extractor = new TextExtractor(
-            "system fixture",
-            PersonTools(),
-            Connection(kind: "openai-codex-responses"),
-            () => client,
-            (_, _) => {
-                delayCalls++;
-                return ValueTask.CompletedTask;
-            }
-        );
+            Task.FromException<CompletionResult>(failure));
+        var extractor = CreateExtractor(client);
 
-        OpenAICodexResponsesException observed =
-            await Assert.ThrowsAsync<OpenAICodexResponsesException>(() =>
-                extractor.ExtractAsync(
-                    "target",
-                    "extract",
-                    CancellationToken.None
-                ).AsTask()
-            );
+        var observed = await Assert.ThrowsAsync<CompletionFailureException>(() =>
+            extractor.ExtractAsync("target", "extract", CancellationToken.None).AsTask());
 
         Assert.Same(failure, observed);
         Assert.Equal(1, client.CallCount);
-        Assert.Equal(0, delayCalls);
     }
 
     [Fact]
-    public async Task CallerCancellationDuringRetryBackoffStopsBeforeSecondAttempt() {
-        var delayEntered = new TaskCompletionSource<TimeSpan>(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
-        var client = new ScriptedClient((_, _, _) =>
-            Task.FromException<CompletionResult>(CodexFailure(
-                OpenAICodexResponsesFailureReason.TransportOutcomeUnknown
-            ))
-        );
-        var extractor = new TextExtractor(
-            "system fixture",
-            PersonTools(),
-            Connection(kind: "openai-codex-responses"),
-            () => client,
-            (delay, cancellationToken) => {
-                delayEntered.TrySetResult(delay);
-                return new ValueTask(Task.Delay(
-                    Timeout.InfiniteTimeSpan,
-                    cancellationToken
-                ));
-            }
-        );
-        using var cancellation = new CancellationTokenSource();
+    public async Task ExplicitNextExtractionAfterFailure_DoesNotInheritArtifactsOrRetryState() {
+        var failure = new CompletionFailureException(new(CompletionFailureKind.Transport), "network");
+        var client = new ScriptedClient((self, request, _) =>
+            self.CallCount == 1
+                ? Task.FromException<CompletionResult>(failure)
+                : Task.FromResult(self.Completed(request, new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        "artifact_person", "call-person", """{"name":"Ada"}"""))
+                ]))));
+        var extractor = CreateExtractor(client);
+        Assert.Same(failure, await Assert.ThrowsAsync<CompletionFailureException>(() =>
+            extractor.ExtractAsync("target", "extract", CancellationToken.None).AsTask()));
+        Assert.Equal(1, client.CallCount);
 
-        Task<TextExtractionResult> pending = extractor.ExtractAsync(
-            "target",
-            "extract",
-            cancellation.Token
-        ).AsTask();
-        Assert.Equal(
-            TimeSpan.FromSeconds(1),
-            await delayEntered.Task.WaitAsync(TimeSpan.FromSeconds(5))
-        );
-        cancellation.Cancel();
+        var result = await extractor.ExtractAsync("target", "extract", CancellationToken.None);
 
-        OperationCanceledException observed = await Assert.ThrowsAnyAsync<
-            OperationCanceledException>(() => pending);
-        Assert.Equal(cancellation.Token, observed.CancellationToken);
+        var artifact = Assert.IsType<TextExtractionArtifact<PersonArtifact>>(Assert.Single(result.Artifacts));
+        Assert.Equal("Ada", artifact.Value.Name);
+        Assert.Equal(1, artifact.ExecutionSequence);
+        Assert.Equal(2, client.CallCount);
+    }
+
+    [Fact]
+    public async Task ArtifactValidationFailure_DoesNotRegenerateOrRepeatEarlierAcceptedArtifact() {
+        int validations = 0;
+        var tools = TextExtractorToolSet.Create(
+            TextExtractorArtifactTool.Create<PersonArtifact>("artifact_person", (_, _) => {
+                validations++;
+                return new ValidateResult(validations == 1, message: "second artifact rejected");
+            }));
+        var client = CallsClient(
+            new RawToolCall("artifact_person", "first", """{"name":"Ada"}"""),
+            new RawToolCall("artifact_person", "second", """{"name":"Grace"}"""));
+        var extractor = new TextExtractor("system fixture", tools, Connection(), () => client);
+
+        var error = await Assert.ThrowsAsync<TextExtractionException>(() =>
+            extractor.ExtractAsync("target", "extract", CancellationToken.None).AsTask());
+
+        Assert.Equal(TextExtractionFailureKind.ToolExecutionFailed, error.Kind);
+        Assert.Equal("second", error.ToolCallId);
+        Assert.Equal(2, validations);
         Assert.Equal(1, client.CallCount);
     }
 
@@ -828,29 +735,6 @@ public sealed class TextExtractorTests {
                 (ActionBlock)new ActionBlock.ToolCall(call)
             ).ToArray())
         )));
-
-    private static OpenAICodexResponsesException CodexFailure(
-        OpenAICodexResponsesFailureReason reason
-    ) {
-        ConstructorInfo constructor = Assert.Single(
-            typeof(OpenAICodexResponsesException).GetConstructors(
-                BindingFlags.Instance | BindingFlags.NonPublic
-            )
-        );
-        return Assert.IsType<OpenAICodexResponsesException>(
-            constructor.Invoke([
-                reason,
-                "code-owned fixture failure",
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-            ])
-        );
-    }
 
     [Description("A person extracted from text.")]
     private sealed record PersonArtifact {

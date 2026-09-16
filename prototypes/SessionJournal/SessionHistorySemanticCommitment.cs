@@ -51,6 +51,11 @@ public static class SessionHistorySemanticCommitment {
         );
     }
 
+    public static string ComputeTurnEndContributionSha256(SessionTurnEndReason reason) {
+        if (!Enum.IsDefined(reason)) { throw new ArgumentOutOfRangeException(nameof(reason)); }
+        return ComputeCanonicalJsonHash("turn-ended", writer => writer.WriteStringValue(reason.ToString()));
+    }
+
     public static string ComputeToolResultSha256(
         ToolResult result
     ) {

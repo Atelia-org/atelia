@@ -221,22 +221,21 @@ public sealed partial class RecapCompletionRuntime {
                 );
             }
             started = true;
-            timeout = new CancellationTokenSource(
-                prepared.Route.DispatchTimeout
-            );
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                callerToken,
-                timeout.Token
-            );
+            if (prepared.Route.Invoker is not IRecapCompletionAttemptDeadlineInvoker) {
+                timeout = new CancellationTokenSource(prepared.Route.DispatchTimeout);
+            }
+            using var linked = timeout is null ? null : CancellationTokenSource.CreateLinkedTokenSource(
+                callerToken, timeout.Token);
             SignalStartedOrTerminal();
-            // This is a local invoker boundary, not evidence of network delivery.
+            // One logical work dispatch, not a physical attempt/charge count.
+            // A host-owned retry invoker may recompute the same frozen request.
             RecordTelemetry(prepared, priority, admissionWait, laneWait,
                 elapsed.Elapsed, null, "invoking", null, null,
                 kind: "completion-started");
             completionResult = await prepared.Route.Invoker.InvokeAsync(
                 request,
                 _options.InvocationOptions,
-                linked.Token
+                linked?.Token ?? callerToken
             ).ConfigureAwait(false);
             RuntimeParseResult parsed = RuntimeParser.Parse(
                 prepared,

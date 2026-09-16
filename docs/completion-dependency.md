@@ -5,17 +5,38 @@ Diagnostics、Completion.Abstractions、Completion、Completion.Tools 的源码�
 本仓的包版本、源码身份与仓库地址统一记录在 [CompletionDependency.props](../eng/CompletionDependency.props)。
 各产品仍只引用其实际使用的包；Diagnostics 不会带入 Completion。
 
-## 默认包模式
+## 当前本地包交付
 
-普通 `dotnet build Atelia.sln -c Release` 直接从 nuget.org restore，
-不需要新仓检出或 Prepare 脚本。当前使用 `0.1.0-preview.1`，对应源码
-`3ae1ebeccdd94a7bd507444154a283201a68c992`；具体 pin 以 props 为准。
+当前 pin 为 `0.1.0-dev.20260916114103`，源码身份
+`612b9bc7fec52c4bd3a98b06b64f61e3ead6ef93`。用户选择先本地试运行，再另行安排公开发布；
+此版本不在 nuget.org，普通默认 restore 尚不可用，也不能降回缺少新 API 的 preview.1。
 
-对应版本指南：[快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)、
-[传输合同](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Completion/README.md)、
-[Tools](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Completion.Tools/README.md)、
-[Diagnostics](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Diagnostics/README.md)。
-固定 tag 与 props 的版本一起更新；源码和 Source Link 不会自动成为 Agent 的上下文，修改消费代码前应主动阅读相关指南。
+本机冻结包及 manifest 位于 `gitignore/completion-packages/0.1.0-dev.20260916114103/`。
+[本地配置](../eng/NuGet.Completion.Local.config)精确映射四包，其他依赖仍用 nuget.org，
+独立缓存为 `gitignore/completion-local-cache/`。在仓库根执行（SDK 10.0.201）：
+
+本机默认 SDK 版本低于 global.json，已将本轮固定 SDK 保存在 ignored 的
+`gitignore/dotnet-10.0.201/`（不改全局安装，约 860 MiB）。本机新 shell 先执行：
+
+```sh
+export DOTNET_ROOT="$PWD/gitignore/dotnet-10.0.201"
+export PATH="$DOTNET_ROOT:$PATH"
+dotnet --version
+```
+
+其他机器正常安装 10.0.201 即可，不需要复制本机 SDK。然后执行：
+
+```sh
+dotnet restore tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --configfile eng/NuGet.Completion.Local.config -p:UseCompletionSources=false -m:1 -nr:false
+dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -c Release -p:UseCompletionSources=false -m:1 -nr:false
+```
+
+feed/cache 为 ignored 本地产物，不随 Git clone 搬运。另一台机器需复制该版本目录与 manifest，
+核对全部 SHA256 后使用同一显式配置；或者使用下文显式源码模式。不能在相同版本下重新打包覆盖。
+本轮验收与试运行注意事项见[实施记录](Galatea/completion-auto-retry-implementation.md)。
+对应源码指南在本机 `/repos/focus/atelia-completion/docs/Completion/quick-start.md` 与
+`src/Completion/README.md`、`src/Completion.Tools/README.md`、`src/Diagnostics/README.md`；
+提交尚未推送，不以远端链接宣称已经可取得。公开发布后须一起更新 props、来源说明和包源配置。
 
 ## 显式源码联调
 
@@ -36,7 +57,9 @@ Storage 开关独立；通常只需 Completion 源码 + Storage 包。源码模�
 ## 调用与调试边界
 
 宿主传递 CancellationToken 并控制期限；只把 Completed 正文交给成功业务处理。
-Incomplete/Failed 与 terminal 前流中断分开处理；结果不确定时不能透明重试。
+Incomplete/Failed 与 terminal 前流中断分开处理。库不自动重试；宿主可依据业务语义，在本次调用
+退出并完成清理后重新计算纯生成。Galatea 的自动重试不包含 Journal 提交、工具执行或其他外部副作用；
+可能重复计算和计费，不宣称远端 exactly-once。
 usage 的 null 是未知；保留消息中的 reasoning 原始信息供协议内回放。
 Tools 权限、参数校验和执行序号不代替宿主副作用事务。
 

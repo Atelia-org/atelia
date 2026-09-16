@@ -32,7 +32,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
     [Theory]
     [InlineData(1)]
     [InlineData(32)]
-    public async Task ResumeStartedRefusal_ReconstructsBeforePolicyWithoutExternalWork(
+    public async Task ResumePrepared_ReconstructsWithoutReselectingContextBeforeProviderFailure(
         int turnCount
     ) {
         string path = CreateColdIdleJournal(turnCount);
@@ -45,7 +45,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             path,
             runtime,
             new SessionJournalTestHooks(
-                SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted
+                SessionJournalFailpoint.AfterRequestPreparedCommitted
             )
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -82,7 +82,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         Assert.True(delta.LogicalPayloadByteCount > 0);
         Assert.Equal(0, delta.ChronologicalChainReadCount);
         Assert.Equal(0, delta.ChronologicalEventCount);
-        Assert.Equal(0, client.Calls);
+        Assert.Equal(1, client.Calls);
+        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.InspectExecutionBoundary().Phase);
+        Assert.Equal(SessionEventKind.CompletionRequestPrepared, reopened.InspectExecutionBoundary().HeadKind);
         Assert.Equal(
             selectionCountBeforeResume,
             candidateSource.SelectionCount

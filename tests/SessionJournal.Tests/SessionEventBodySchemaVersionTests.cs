@@ -231,6 +231,7 @@ public sealed class SessionEventBodySchemaVersionTests {
             SessionEventKind.SystemPromptSetup => 2,
             SessionEventKind.ObservationAccepted => 2,
             SessionEventKind.CompletionAttemptStarted => 2,
+            SessionEventKind.AgentActionProduced => 2,
             _ => 1
         };
 }

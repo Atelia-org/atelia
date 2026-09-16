@@ -311,7 +311,7 @@ export function requireAgentStatus(value) {
     if (status.nextActivationAtUnixTimeMilliseconds !== null || status.code === null) {
       throw new Error("blocked agent status has an invalid state matrix");
     }
-  } else if (status.code !== null) {
+  } else if (status.code !== null && !["ADMISSION_RUNNING", "ADMISSION_STOPPING"].includes(status.code)) {
     throw new Error("running agent status must not carry an error code");
   }
   if (status.state === "disabled" && status.connectionId !== null) {
@@ -503,7 +503,8 @@ export function formatAgentStatus(
       blocked: status.admissionFailure === null
         ? `等待人工处理（${status.code}）`
         : `${status.admissionFailure.error}（${status.admissionFailure.code}）`,
-      running: "正在运行",
+      running: status.code === "ADMISSION_RUNNING" ? "正在整理"
+        : status.code === "ADMISSION_STOPPING" ? "正在停止整理" : "正在运行",
       maintenance: "维护模式",
       stopping: "正在停止",
     };
@@ -651,8 +652,13 @@ export function requireRecentTurnsResponse(value) {
     throw new Error("recent turns response.turns must be an array");
   }
   recent.turns.forEach((value, index) => {
-    const turn = requireExactKeys(value, ["userText", "assistant"], `turns[${index}]`);
+    const turn = requireExactKeys(value, ["userText", "assistant", "endReason"], `turns[${index}]`);
     requireString(turn.userText, `turns[${index}].userText`);
+    if (turn.endReason !== null) {
+      terminationLabel(turn.endReason);
+      if (turn.assistant !== null) throw new Error("terminated turn must not carry an assistant result");
+      return;
+    }
     const assistant = requireExactKeys(
       turn.assistant,
       ["text", "reasoningText"],
@@ -824,7 +830,6 @@ export class GalateaSseEofBeforeTerminalError extends Error {
 export class GalateaSseV1Parser {
   constructor(limitsValue) {
     this.limits = requireStreamLimits(limitsValue);
-    this.connectionBytes = 0;
     this.frameBytes = new Uint8Array(Math.min(
       4096,
       this.limits.maximumFrameBytes,
@@ -845,11 +850,11 @@ export class GalateaSseV1Parser {
     if (this.terminal !== null && chunk.byteLength !== 0) {
       throw new GalateaSseProtocolError("SSE data followed a terminal event");
     }
-    if (chunk.byteLength
-        > this.limits.maximumConnectionBytes - this.connectionBytes) {
-      throw new GalateaSseProtocolError("SSE connection byte limit exceeded");
+    // Bound one buffered decode batch, not lifetime traffic: retry streams
+    // may continue indefinitely while each discarded preview is reclaimed.
+    if (chunk.byteLength > this.limits.maximumConnectionBytes) {
+      throw new GalateaSseProtocolError("SSE buffered chunk byte limit exceeded");
     }
-    this.connectionBytes += chunk.byteLength;
 
     const rawFrames = [];
     for (const byte of chunk) {
@@ -877,7 +882,7 @@ export class GalateaSseV1Parser {
       }
       const event = this.parseFrame(rawFrames[index]);
       events.push(event);
-      if (event.type === "done" || event.type === "error") {
+      if (isTerminalEvent(event)) {
         this.terminal = event;
         if (index !== rawFrames.length - 1 || this.frameLength !== 0) {
           throw new GalateaSseProtocolError("SSE data followed a terminal event");
@@ -966,9 +971,13 @@ export async function consumeGalateaSseStream(
     if (done) {
       break;
     }
-    for (const streamEvent of parser.push(value)) {
-      if (streamEvent.type !== "done" && streamEvent.type !== "error") {
-        onEvent(streamEvent);
+    // Browser read chunk sizes are not protocol boundaries. Split before
+    // parsing so rawFrames and decoded event arrays stay bounded.
+    for (let offset = 0; offset < value.byteLength; offset += parser.limits.maximumFrameBytes) {
+      for (const streamEvent of parser.push(value.subarray(offset, offset + parser.limits.maximumFrameBytes))) {
+        if (!isTerminalEvent(streamEvent)) {
+          onEvent(streamEvent);
+        }
       }
     }
   }
@@ -977,8 +986,79 @@ export async function consumeGalateaSseStream(
   return terminal;
 }
 
+function isTerminalEvent(event) {
+  return ["done", "error", "terminated"].includes(event.type);
+}
+
+function terminationLabel(reason) {
+  switch (reason) {
+    case "stopped": return "本轮已停止";
+    case "rejected": return "本轮请求被拒绝";
+    case "incomplete": return "本轮未完整完成";
+    default: throw new Error("termination reason is unknown");
+  }
+}
+
+function requirePositiveInteger(value, name) {
+  requireNonnegativeInteger(value, name);
+  if (value === 0) throw new Error(`${name} must be positive`);
+  return value;
+}
+
+// One checkpoint per logical generation, not per network attempt. Earlier
+// committed generations remain visible when the current preview is discarded.
+export function projectAttemptPreview(preview, event) {
+  if (event.type === "attempt-start") {
+    if (preview.segment === event.segment) return preview;
+    if (preview.segment !== null && event.segment <= preview.segment) {
+      throw new GalateaSseProtocolError("attempt segment must advance");
+    }
+    return { ...preview, segment: event.segment,
+      textPrefix: preview.text, reasoningPrefix: preview.reasoning };
+  }
+  if (event.type === "attempt-reset") {
+    // Preview caps may suppress this segment's start and every delta while
+    // control resets still arrive. Nothing from an unseen segment to remove.
+    if (preview.segment === null || event.segment > preview.segment) return preview;
+    if (preview.segment !== event.segment) {
+      throw new GalateaSseProtocolError("attempt reset has no matching segment");
+    }
+    return { ...preview, text: preview.textPrefix, reasoning: preview.reasoningPrefix };
+  }
+  if (event.type === "text-delta") return { ...preview, text: preview.text + event.delta };
+  if (event.type === "reasoning-delta") return { ...preview, reasoning: preview.reasoning + event.delta };
+  return preview;
+}
+
 function requireSseEvent(eventName, value) {
   switch (eventName) {
+    case "attempt-start": {
+      const payload = requireExactKeys(value, ["attempt", "segment"], "SSE attempt-start");
+      requirePositiveInteger(payload.attempt, "SSE attempt-start.attempt");
+      requirePositiveInteger(payload.segment, "SSE attempt-start.segment");
+      return { type: eventName, ...payload };
+    }
+    case "attempt-reset": {
+      const payload = requireExactKeys(value, ["segment"], "SSE attempt-reset");
+      requirePositiveInteger(payload.segment, "SSE attempt-reset.segment");
+      return { type: eventName, ...payload };
+    }
+    case "retry-wait": {
+      const payload = requireExactKeys(value,
+        ["attempt", "code", "nextRetryAtUnixTimeMilliseconds"], "SSE retry-wait");
+      requirePositiveInteger(payload.attempt, "SSE retry-wait.attempt");
+      requireNonblankString(payload.code, "SSE retry-wait.code");
+      requireNonnegativeInteger(payload.nextRetryAtUnixTimeMilliseconds, "SSE retry-wait.nextRetryAtUnixTimeMilliseconds");
+      return { type: eventName, ...payload };
+    }
+    case "terminated": {
+      const payload = requireExactKeys(value, ["reason", "recent"], "SSE terminated");
+      if (!["stopped", "rejected", "incomplete"].includes(payload.reason)) {
+        throw new Error("SSE terminated.reason is unknown");
+      }
+      const recent = payload.recent === null ? null : requireRecentTurnsResponse(payload.recent);
+      return { type: eventName, reason: payload.reason, recent };
+    }
     case "status": {
       const object = requireObject(value, "SSE status");
       const code = requireString(object.code, "SSE status.code");
@@ -991,7 +1071,7 @@ function requireSseEvent(eventName, value) {
         requireBoolean(payload.changed, "SSE status.changed");
         return { type: "status", code, changed: payload.changed };
       }
-      if (!["generating", "normalizing-input", "using-tools"].includes(code)) {
+      if (!["generating", "normalizing-input", "using-tools", "transport-unresponsive"].includes(code)) {
         throw new Error("SSE status.code is unknown");
       }
       requireExactKeys(object, ["code"], "SSE status");
@@ -1161,18 +1241,17 @@ function requirePopReceipt(value) {
 
 function requireCurrentTurn(value) {
   const current = requireExactKeys(value, [
-    "status", "turnId", "connectionId", "restartRequired", "recoveryHead",
+    "status", "turnId", "connectionId", "recoveryHead",
   ], "current turn");
   requireNullableString(current.turnId, "current turn.turnId");
   requireNullableString(current.connectionId, "current turn.connectionId");
-  requireBoolean(current.restartRequired, "current turn.restartRequired");
   requireNullableString(current.recoveryHead, "current turn.recoveryHead");
   if (current.status === "running") {
     const published = current.turnId !== null || current.connectionId !== null;
     if (published && (!/^[0-9a-f]{32}$/.test(current.turnId ?? "") || !current.connectionId)) {
       throw new Error("running current turn is only partially published");
     }
-    if (current.restartRequired || current.recoveryHead !== null) {
+    if (current.recoveryHead !== null) {
       throw new Error("running current turn carries recovery state");
     }
   } else if (current.status === "recovery-required") {
@@ -1181,7 +1260,7 @@ function requireCurrentTurn(value) {
     }
   } else if (["idle", "unprovisioned"].includes(current.status)) {
     if (current.turnId !== null || current.connectionId !== null
-        || current.restartRequired || current.recoveryHead !== null) {
+        || current.recoveryHead !== null) {
       throw new Error("terminal current turn has an invalid state matrix");
     }
   } else {
@@ -1239,6 +1318,19 @@ export function shouldClearDraftForTurnOrigin(origin) {
   }
 }
 
+export function requireAdmissionOperation(value) {
+  const operation = requireExactKeys(value, ["operationId", "state"], "admission operation");
+  if (!["idle", "running", "stopping"].includes(operation.state)) throw new Error("admission operation state is unknown");
+  if (operation.state === "idle") {
+    if (operation.operationId !== null) throw new Error("idle admission operation carries an id");
+  } else {
+    if (typeof operation.operationId !== "string" || !/^[0-9a-f]{32}$/.test(operation.operationId)) {
+      throw new Error("admission operation.operationId is invalid");
+    }
+  }
+  return operation;
+}
+
 export function statusReadFailureCode(error) {
   if (Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599) {
     return `HTTP_${error.status}`;
@@ -1290,8 +1382,10 @@ function startGalateaApp() {
     pendingPoppedDraftText: null,
     liveText: "",
     liveReasoning: "",
+    attemptPreview: null,
     streaming: false,
     retryingAdmission: false,
+    stoppingAdmission: false,
     stopRequested: false,
     activeTurnId: null,
     activeTurnOrigin: null,
@@ -1334,11 +1428,13 @@ function startGalateaApp() {
   const undoLastButton = document.getElementById("undo-last-button");
   const stopButton = document.getElementById("stop-button");
   const resumeTurnButton = document.getElementById("resume-turn-button");
+  const pendingStopButton = document.getElementById("pending-stop-button");
   const autonomyConnection = document.getElementById("autonomy-connection");
   const mailboxStatus = document.getElementById("mailbox-status");
   const autonomyStatus = document.getElementById("autonomy-status");
   const autonomyState = document.getElementById("autonomy-state");
   const retryAdmissionButton = document.getElementById("retry-admission");
+  const stopAdmissionButton = document.getElementById("stop-admission");
   const autonomyCountdown = document.getElementById("autonomy-countdown");
   const autonomyLastActivation = document.getElementById(
     "autonomy-last-activation",
@@ -1503,9 +1599,7 @@ function startGalateaApp() {
     refreshInteractionControls();
     let message = null;
     if (current.status === "recovery-required") {
-      message = current.restartRequired
-        ? "上次模型调用结果不确定；点击恢复可明确授权重新调用。"
-        : "存在待恢复轮次；点击恢复继续。";
+      message = "存在待处理轮次；可恢复原任务或结束待处理轮次。";
     } else if (current.status === "unprovisioned") {
       message = "会话仓库尚未完成初始化。";
     }
@@ -1540,6 +1634,10 @@ function startGalateaApp() {
   }
 
   function renderTurn(turn) {
+    if (turn.endReason !== null) {
+      return `<article class="turn-card"><header>${terminationLabel(turn.endReason)}</header></article>
+        <article class="turn-card user"><header>User</header><pre>${escapeHtml(turn.userText)}</pre></article>`;
+    }
     const reasoningText = turn.assistant.reasoningText ?? "";
     const reasoning = reasoningText.length > 0
       ? `<details class="reasoning-panel"><summary>Reasoning</summary><pre>${escapeHtml(reasoningText)}</pre></details>`
@@ -1560,17 +1658,29 @@ function startGalateaApp() {
 
   function refreshInteractionControls() {
     const admissionBusy = state.initializing || state.streaming || state.retryingAdmission;
+    if (stopAdmissionButton) {
+      const admissionRunning = state.agentStatus?.state === "running"
+        && ["ADMISSION_RUNNING", "ADMISSION_STOPPING"].includes(state.agentStatus.code);
+      stopAdmissionButton.classList.toggle("hidden", !admissionRunning);
+      // Preparation is not a liveTurn. Its exact operation stop remains
+      // available while a foreground send/retry is waiting for admission.
+      stopAdmissionButton.disabled = maintenanceMode || state.initializing || !admissionRunning
+        || state.stoppingAdmission || state.agentStatus?.code === "ADMISSION_STOPPING";
+    }
     if (retryAdmissionButton) {
       retryAdmissionButton.classList.toggle("hidden", state.agentStatus?.admissionFailure == null);
       retryAdmissionButton.disabled = maintenanceMode || admissionBusy;
     }
-    sendButton.disabled = maintenanceMode || admissionBusy;
-    input.disabled = maintenanceMode || admissionBusy;
+    sendButton.disabled = maintenanceMode || admissionBusy || state.recoveryTurn !== null;
+    input.disabled = maintenanceMode || admissionBusy || state.recoveryTurn !== null;
     if (stopButton) {
-      stopButton.disabled = maintenanceMode || state.initializing || !state.streaming;
+      stopButton.disabled = maintenanceMode || state.initializing || !state.streaming || state.stopRequested;
     }
     if (resumeTurnButton) {
       resumeTurnButton.disabled = maintenanceMode || admissionBusy || state.recoveryTurn === null;
+    }
+    if (pendingStopButton) {
+      pendingStopButton.disabled = maintenanceMode || admissionBusy || state.recoveryTurn === null;
     }
     if (connectionPicker) {
       connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
@@ -1629,6 +1739,7 @@ function startGalateaApp() {
   }
 
   function resetLive() {
+    state.attemptPreview = { segment: null, text: "", reasoning: "", textPrefix: "", reasoningPrefix: "" };
     state.liveText = "";
     state.liveReasoning = "";
     liveText.textContent = "";
@@ -1638,6 +1749,7 @@ function startGalateaApp() {
   }
 
   function beginLive() {
+    state.attemptPreview = { segment: null, text: "", reasoning: "", textPrefix: "", reasoningPrefix: "" };
     state.liveText = "";
     state.liveReasoning = "";
     liveText.textContent = "";
@@ -2013,7 +2125,24 @@ function startGalateaApp() {
   }
 
   function handleEvent(streamEvent) {
+    if (["attempt-start", "attempt-reset", "text-delta", "reasoning-delta"].includes(streamEvent.type)) {
+      state.attemptPreview = projectAttemptPreview(state.attemptPreview, streamEvent);
+      state.liveText = state.attemptPreview.text;
+      state.liveReasoning = state.attemptPreview.reasoning;
+      liveText.textContent = state.liveText;
+      liveReasoning.textContent = state.liveReasoning;
+      liveReasoningPanel.classList.toggle("hidden", state.liveReasoning.length === 0);
+    }
     switch (streamEvent.type) {
+      case "attempt-start":
+        setStreaming(true, state.stopRequested ? "正在停止…" : `正在生成（第 ${streamEvent.attempt} 次尝试）…`);
+        break;
+      case "attempt-reset":
+        break;
+      case "retry-wait":
+        setStreaming(true, state.stopRequested ? "正在停止…" :
+          `暂时无法生成（${streamEvent.code}），将在 ${new Date(streamEvent.nextRetryAtUnixTimeMilliseconds).toLocaleTimeString()} 重试。`);
+        break;
       case "status":
         if (streamEvent.code === "generating") {
           setStreaming(true, "正在生成…");
@@ -2027,17 +2156,14 @@ function startGalateaApp() {
           }
         } else if (streamEvent.code === "using-tools") {
           setStreaming(true, "正在调用工具…");
+        } else if (streamEvent.code === "transport-unresponsive") {
+          setStreaming(true, "连接未响应取消，正在等待原调用退出；不会发起重叠请求。");
         }
         break;
       case "reasoning-delta":
-        state.liveReasoning += streamEvent.delta;
-        liveReasoning.textContent = state.liveReasoning;
-        liveReasoningPanel.classList.toggle("hidden", state.liveReasoning.length === 0);
-        break;
       case "text-delta":
-        state.liveText += streamEvent.delta;
-        liveText.textContent = state.liveText;
         break;
+      case "terminated":
       case "done":
         if (streamEvent.recent !== null) {
           applyRecentTurnsPayload(streamEvent.recent);
@@ -2047,7 +2173,7 @@ function startGalateaApp() {
           renderTurns();
         }
         resetLive();
-        setStreaming(true, "正在收尾…");
+        setStreaming(true, streamEvent.type === "terminated" ? terminationLabel(streamEvent.reason) : "正在收尾…");
         if (shouldClearDraftForTurnOrigin(state.activeTurnOrigin)) {
           input.value = "";
         }
@@ -2264,13 +2390,13 @@ function startGalateaApp() {
         await loadRecapCadenceProgressBestEffort();
         let terminalStatus;
         if (currentTurn?.status === "recovery-required") {
-          terminalStatus = currentTurn.restartRequired
-            ? "上次模型调用结果不确定；需要明确授权后才能恢复。"
-            : "本轮保留在可恢复状态；刷新页面可继续恢复。";
+          terminalStatus = "本轮保留在可恢复状态；可恢复原任务或结束待处理轮次。";
         } else if (currentTurn?.status === "unprovisioned") {
           terminalStatus = "会话仓库尚未完成初始化。";
         } else if (terminalEvent.type === "error") {
           terminalStatus = terminalEvent.message;
+        } else if (terminalEvent.type === "terminated") {
+          terminalStatus = terminationLabel(terminalEvent.reason);
         } else if (recentUnavailable) {
           terminalStatus = "生成已完成；recent view 暂不可用，请稍后刷新。";
         } else {
@@ -2328,9 +2454,7 @@ function startGalateaApp() {
           resetLive();
           await loadRecentTurns().catch(() => {});
           if (currentTurn?.status === "recovery-required") {
-            setStreaming(false, currentTurn.restartRequired
-              ? "生成中断且结果不确定；需要明确授权后才能恢复。"
-              : "生成中断；本轮保留在可恢复状态。");
+            setStreaming(false, "生成中断；本轮保留在可恢复状态。");
           } else if (currentTurn?.status === "unprovisioned") {
             setStreaming(false, "会话仓库尚未完成初始化。");
           } else {
@@ -2351,7 +2475,7 @@ function startGalateaApp() {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (maintenanceMode || state.initializing || state.streaming || state.retryingAdmission) {
+    if (maintenanceMode || state.initializing || state.streaming || state.retryingAdmission || state.recoveryTurn !== null) {
       return;
     }
 
@@ -2438,7 +2562,7 @@ function startGalateaApp() {
       throw new Error("stop response must be an empty 204");
     }
 
-    setStreaming(true, "已发送停止请求，等待模型收尾…");
+    setStreaming(true, "正在停止，等待轮次结束确认…");
   });
 
   async function initializeApp() {
@@ -2475,17 +2599,6 @@ function startGalateaApp() {
     const currentTurn = state.recoveryTurn;
     setStreaming(true, "正在恢复…");
     try {
-      const restartUncertainCompletion = currentTurn.restartRequired
-        ? window.confirm(
-          "上次模型调用的结果不确定。重新调用可能产生重复请求；是否明确授权重新调用？"
-        )
-        : false;
-      if (currentTurn.restartRequired && !restartUncertainCompletion) {
-        resetLive();
-        refreshComposerMode();
-        setStreaming(false, "已保留不确定状态，未重新调用模型。");
-        return;
-      }
       const response = await fetch(`${apiBase}/chat/turns/resume`, {
         method: "POST",
         credentials: "same-origin",
@@ -2495,7 +2608,6 @@ function startGalateaApp() {
         body: JSON.stringify({
           expectedHead: currentTurn.recoveryHead,
           connectionId: state.selectedConnectionId,
-          restartUncertainCompletion,
         }),
       });
       if (response.ok) {
@@ -2519,6 +2631,66 @@ function startGalateaApp() {
       return;
     } catch (error) {
       setStreaming(false, error.message || "恢复失败");
+    }
+  });
+
+  pendingStopButton?.addEventListener("click", async () => {
+    if (maintenanceMode || state.initializing || state.streaming || state.retryingAdmission || state.recoveryTurn === null) return;
+    const expectedHead = state.recoveryTurn.recoveryHead;
+    setStreaming(true, "正在结束待处理轮次…");
+    try {
+      const response = await fetch(`${apiBase}/chat/turns/pending/stop`, {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedHead }),
+      });
+      if (!response.ok) {
+        const error = await readJsonResponse(response, (value) =>
+          value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+        throw new Error(error.error);
+      }
+      if (response.status !== 204 || (await response.text()) !== "") {
+        throw new Error("pending stop response must be an empty 204");
+      }
+      publishObservedCurrent(await loadCurrentTurn());
+      await loadRecentTurns();
+      setStreaming(false, "本轮已停止");
+    } catch (error) {
+      // Never resubmit on an ambiguous response; reconcile durable state.
+      await loadCurrentTurn().then(publishObservedCurrent).catch(() => {});
+      setStreaming(false, error.message || "结束结果未确认，请刷新查看。");
+    }
+  });
+
+  stopAdmissionButton?.addEventListener("click", async () => {
+    if (maintenanceMode || state.initializing || state.stoppingAdmission
+        || state.agentStatus?.state !== "running" || state.agentStatus?.code !== "ADMISSION_RUNNING") return;
+    state.stoppingAdmission = true;
+    refreshInteractionControls();
+    try {
+      const operation = await fetchJson(`${apiBase}/agent/admission`, requireAdmissionOperation);
+      if (operation.state === "idle") {
+        statusText.textContent = "整理已经结束。";
+        return;
+      }
+      if (operation.state === "stopping") {
+        statusText.textContent = "正在停止整理…";
+        return;
+      }
+      const response = await fetch(`${apiBase}/agent/admission/${encodeURIComponent(operation.operationId)}/stop`, {
+        method: "POST", credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const failure = await readJsonResponse(response, requireApiError);
+        throw new Error(failure.error);
+      }
+      if (response.status !== 202) throw new Error("admission stop response must be 202");
+      statusText.textContent = "正在停止整理，原持久化目标保留。";
+    } catch (error) {
+      statusText.textContent = error.message || "停止整理结果未确认，请刷新查看。";
+    } finally {
+      state.stoppingAdmission = false;
+      refreshInteractionControls();
     }
   });
 

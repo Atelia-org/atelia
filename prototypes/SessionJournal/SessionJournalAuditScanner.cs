@@ -247,6 +247,7 @@ internal static class SessionJournalAuditScanner {
             ),
         SessionEventKind.CompletionAttemptStarted =>
             new SessionJournalAuditCompletionAttemptStartedFact(),
+        SessionEventKind.TurnEnded => new SessionJournalAuditTurnEndedFact(RequireBody<TurnEndedBody>(kind, body).Reason),
         SessionEventKind.CompletionAttemptFailed =>
             new SessionJournalAuditCompletionAttemptFailedFact(
                 RequireBody<CompletionAttemptFailedBody>(

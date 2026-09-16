@@ -2613,7 +2613,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
     }
 
     [Fact]
-    public async Task StartedRefuseReturnsBeforeConnectionsOrProvider() {
+    public async Task HistoricalStartedResumesFrozenRequestWithoutConfirmation() {
         var factory = new DeterministicCompletionClientFactory();
         CompletionConnectionConfig connection = CandidateConnection();
         EventAddress prepared = await CreatePreparedAsync(connection);
@@ -2645,17 +2645,17 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--branch", SessionJournalDefaults.MainBranchName,
             "--confirm-ref", refId,
-            "--connections", Path.Combine(_root, "missing-connections.json"),
+            "--connections", WriteConnections(),
             "--routes", Path.Combine(_root, "missing-routes.json"));
 
-        Assert.Equal(2, code);
-        Assert.Equal(
-            "started-outcome-uncertain",
-            report.GetProperty("status").GetString());
-        Assert.Equal(0, factory.CallCount);
+        Assert.Equal(0, code);
+        Assert.Equal("completed", report.GetProperty("status").GetString());
+        Assert.Equal(1, factory.CallCount);
+        Assert.Equal(1, factory.RequestCount);
         Assert.False(Directory.Exists(Path.Combine(_root, "derived")));
-        using var unchanged = SessionJournalEngine.OpenReadOnly(_root);
-        Assert.Equal(started, unchanged.ReadCurrentHead());
+        using var completed = SessionJournalEngine.OpenReadOnly(_root);
+        Assert.NotEqual(started, completed.ReadCurrentHead());
+        Assert.Equal(SessionExecutionPhase.Idle, completed.InspectExecutionBoundary().Phase);
     }
 
     private void CreateJournal(int turns = 1) {

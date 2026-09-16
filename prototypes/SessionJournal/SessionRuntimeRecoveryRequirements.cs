@@ -5,9 +5,8 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Durable dispatch state at the captured raw head. A Started state has an
-/// uncertain external outcome and must follow the corresponding recovery
-/// policy; inspection itself never dispatches or mutates the journal.
+/// Durable tool dispatch state at the captured raw head. An already started tool
+/// must follow its side-effect recovery contract. Pure generation has no dispatch gate.
 /// </summary>
 public enum SessionDurableDispatchState {
     NotStarted,
@@ -49,12 +48,12 @@ public abstract class SessionRuntimeRecoveryRequirements {
     }
 
     /// <summary>
-    /// The exact failed-turn head must be abandoned before a fresh Send or
-    /// setup mutation can begin.
+    /// Historical failure remains blocked until explicitly ended. The legacy type name
+    /// does not authorize rewinding input or already committed tool facts.
     /// </summary>
-    public sealed class FailedTurnMustBeAbandoned
+    public sealed class LegacyFailedTurnBlocked
         : SessionRuntimeRecoveryRequirements {
-        internal FailedTurnMustBeAbandoned(EventAddress failedHead)
+        internal LegacyFailedTurnBlocked(EventAddress failedHead)
             : base(
                 failedHead,
                 SessionExecutionPhase.TurnFailed,
@@ -95,14 +94,14 @@ public abstract class SessionRuntimeRecoveryRequirements {
             string apiSpecId,
             string visibleToolSetSha256,
             SessionToolRuntimeIdentity? toolRuntimeIdentity,
-            SessionDurableDispatchState dispatchState
+            EventAddress sourcePreparedAddress
         ) : base(capturedHead, phase, headKind) {
             CompletionTarget = completionTarget;
             ClientName = clientName;
             ApiSpecId = apiSpecId;
             VisibleToolSetSha256 = visibleToolSetSha256;
             ToolRuntimeIdentity = toolRuntimeIdentity;
-            DispatchState = dispatchState;
+            SourcePreparedAddress = sourcePreparedAddress;
         }
 
         public SessionCompletionTargetIdentity CompletionTarget { get; }
@@ -110,7 +109,7 @@ public abstract class SessionRuntimeRecoveryRequirements {
         public string ApiSpecId { get; }
         public string VisibleToolSetSha256 { get; }
         public SessionToolRuntimeIdentity? ToolRuntimeIdentity { get; }
-        public SessionDurableDispatchState DispatchState { get; }
+        public EventAddress SourcePreparedAddress { get; }
     }
 
     /// <summary>

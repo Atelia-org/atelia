@@ -1292,7 +1292,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal(GalateaReplyNoticeState.Consumed,
             settled.Notices.Single().State);
         Assert.Equal(Address(42),
-            settled.Notices.Single().ConsumedActionAddress);
+            settled.Notices.Single().ConsumedTurnEndAddress);
         Assert.Equal(0, ExecuteScalarLong(
             fixture.DatabasePath,
             "SELECT COUNT(*) FROM reply_lease;"
@@ -1346,7 +1346,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Null(reopened.ActiveLease);
         GalateaReplyNoticeSnapshot notice = reopened.Notices.Single();
         Assert.Equal(GalateaReplyNoticeState.Ready, notice.State);
-        Assert.Null(notice.ConsumedActionAddress);
+        Assert.Null(notice.ConsumedTurnEndAddress);
         Assert.Equal(0, ExecuteScalarLong(
             fixture.DatabasePath,
             "SELECT COUNT(*) FROM reply_lease;"

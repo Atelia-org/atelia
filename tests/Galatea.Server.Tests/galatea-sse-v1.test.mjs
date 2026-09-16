@@ -14,6 +14,7 @@ const encoder = new TextEncoder();
 const validRecent = {
   turns: [{
     userText: "user",
+    endReason: null,
     assistant: { text: "assistant", reasoningText: null },
   }],
   rewindLatestToken: null,
@@ -90,6 +91,43 @@ assert.equal(split.terminal.type, "done");
 assert.deepEqual(split.terminal.recent, validRecent);
 
 const nullDone = frame("done", { recent: null });
+const retryEvents = concat(
+  frame("attempt-start", { attempt: 1, segment: 1 }),
+  frame("text-delta", { delta: "failed" }),
+  frame("attempt-reset", { segment: 1 }),
+  frame("retry-wait", { attempt: 1, code: "transport", nextRetryAtUnixTimeMilliseconds: 1000 }),
+  frame("attempt-start", { attempt: 2, segment: 1 }),
+  frame("text-delta", { delta: "good" }),
+  frame("attempt-start", { attempt: 1, segment: 2 }),
+  frame("reasoning-delta", { delta: "failed reasoning" }),
+  frame("attempt-reset", { segment: 2 }),
+  frame("attempt-start", { attempt: 2, segment: 2 }),
+  frame("text-delta", { delta: " next" }),
+  frame("terminated", { reason: "stopped", recent: null }),
+);
+let preview = { segment: null, text: "", reasoning: "", textPrefix: "", reasoningPrefix: "" };
+const retryParsed = parse(retryEvents, limitsFor(retryEvents), true);
+for (const event of retryParsed.events) preview = production.projectAttemptPreview(preview, event);
+assert.equal(preview.text, "good next");
+assert.equal(preview.reasoning, "");
+assert.equal(production.projectAttemptPreview(preview, { type: "attempt-reset", segment: 3 }), preview);
+const emptyPreview = { segment: null, text: "", reasoning: "", textPrefix: "", reasoningPrefix: "" };
+assert.equal(production.projectAttemptPreview(emptyPreview, { type: "attempt-reset", segment: 1 }), emptyPreview);
+assert.equal(retryParsed.terminal.type, "terminated");
+assert.throws(() => production.projectAttemptPreview(preview, { type: "attempt-reset", segment: 1 }), /matching segment/);
+assert.throws(() => parse(concat(frame("terminated", { reason: "stopped", recent: null }), nullDone)), /followed a terminal/);
+for (const [name, payload] of [
+  ["attempt-start", { attempt: 0, segment: 1 }],
+  ["attempt-start", { attempt: 1, segment: 1, extra: true }],
+  ["attempt-reset", { segment: -1 }],
+  ["retry-wait", { attempt: 1, code: "", nextRetryAtUnixTimeMilliseconds: 10 }],
+  ["retry-wait", { attempt: 1, code: "transport", nextRetryAtUnixTimeMilliseconds: 1.5 }],
+  ["terminated", { reason: "provider-secret", recent: null }],
+]) assert.throws(() => parse(concat(frame(name, payload), nullDone)), production.GalateaSseProtocolError);
+const endedRecent = { ...validRecent, turns: [{ userText: "user", assistant: null, endReason: "stopped" }] };
+assert.equal(production.requireRecentTurnsResponse(endedRecent), endedRecent);
+assert.throws(() => production.requireRecentTurnsResponse({ ...endedRecent,
+  turns: [{ ...endedRecent.turns[0], assistant: { text: "fake", reasoningText: null } }] }), /must not carry/);
 assert.deepEqual(parse(nullDone).terminal, { type: "done", recent: null });
 
 const terminalError = frame("error", {
@@ -195,7 +233,7 @@ assert.throws(
     maximumConnectionBytes: nullDone.byteLength - 1,
     maximumFrameBytes: nullDone.byteLength - 1,
   })),
-  /connection byte limit exceeded/,
+  /buffered chunk byte limit exceeded/,
 );
 assert.throws(
   () => parse(nullDone, limitsFor(nullDone, {
@@ -213,6 +251,22 @@ assert.throws(
 );
 assert.doesNotMatch(source, /maximumConnectionBytes\s*=\s*\d/);
 assert.doesNotMatch(source, /maximumFrameBytes\s*=\s*\d/);
+
+// Traffic across unlimited retries can exceed the bounded decode/replay size.
+const unboundedTraffic = new production.GalateaSseV1Parser({ maximumConnectionBytes: 256, maximumFrameBytes: 256 });
+for (let attempt = 1; attempt <= 100; attempt++) {
+  unboundedTraffic.push(frame("attempt-start", { attempt, segment: 1 }));
+  unboundedTraffic.push(frame("text-delta", { delta: "discard this preview" }));
+  unboundedTraffic.push(frame("attempt-reset", { segment: 1 }));
+}
+unboundedTraffic.push(nullDone);
+assert.equal(unboundedTraffic.finish().type, "done");
+const bigReadEvents = [];
+await production.consumeGalateaSseStream({
+  chunks: [concat(retryEvents)],
+  async read() { return this.chunks.length ? { value: this.chunks.shift(), done: false } : { done: true }; },
+}, { maximumConnectionBytes: 256, maximumFrameBytes: 256 }, (event) => bigReadEvents.push(event));
+assert.equal(bigReadEvents.at(-1).type, "terminated");
 
 function readerFrom(...chunks) {
   let index = 0;
@@ -254,21 +308,18 @@ const idleCurrent = {
   status: "idle",
   turnId: null,
   connectionId: null,
-  restartRequired: false,
   recoveryHead: null,
 };
 const runningCurrent = {
   status: "running",
   turnId: "a".repeat(32),
   connectionId: "test",
-  restartRequired: false,
   recoveryHead: null,
 };
 const recoveryCurrent = {
   status: "recovery-required",
   turnId: null,
   connectionId: null,
-  restartRequired: true,
   recoveryHead: "head",
 };
 assert.equal(production.decideGalateaStreamContinuation({

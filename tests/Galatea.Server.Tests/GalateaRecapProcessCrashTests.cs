@@ -43,7 +43,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
                          lab.RootDirectory, configPath)) {
             using HttpClient http = first.CreateClient();
             await LoginAsync(http);
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
+            using HttpResponseMessage accepted = await GalateaLabAdmission.PostFreshAsync(http,
                 new ChatStreamRequest(GalateaLabRecapResponsesServer.CrashMessage));
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             // Observation and Action seal separate rows in this target-1
@@ -63,38 +63,23 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         using (var engine = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
             var recovery = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 engine.InspectRuntimeRecoveryRequirements());
-            Assert.Equal(SessionDurableDispatchState.StartedOutcomeUncertain, recovery.DispatchState);
+            Assert.NotEqual(default, recovery.SourcePreparedAddress);
             Assert.Equal(SessionExecutionPhase.AwaitingCompletion, recovery.Phase);
             startedHead = recovery.CapturedHead!.Value;
             IReadOnlyList<SessionJournalAuditEvent> events = ReadAudit(engine);
-            AssertCounts(events, observations: 3, prepared: 3, started: 3, actions: 2);
+            AssertCounts(events, observations: 3, prepared: 3, started: 0, actions: 2);
             frozenObservations = events.Where(item => item.Kind == SessionEventKind.ObservationAccepted)
                 .Select(item => item.Address).ToArray();
             Assert.Equal(frozenObservations[^1], frozen.RawEndInclusive);
         }
 
+        provider.AssertHeld();
+        provider.AuthorizeRecovery();
         await using (GalateaLabServerProcess recovery = await GalateaLabServerProcess.StartAsync(
                          lab.RootDirectory, configPath)) {
             using HttpClient http = recovery.CreateClient();
             await LoginAsync(http);
-            CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
-                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
-            Assert.Equal("recovery-required", current.Status);
-            Assert.True(current.RestartRequired);
-            Assert.Equal(EventAddressTextCodec.Format(startedHead), current.RecoveryHead);
-            provider.AssertHeld();
-            using (HttpResponseMessage refused = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
-                       new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead)))) {
-                Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-                using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
-                Assert.Equal("uncertain-completion-restart-required",
-                    problem.RootElement.GetProperty("code").GetString());
-            }
-            provider.AssertHeld();
-            provider.AuthorizeRecovery();
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
-                new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead), RestartUncertainCompletion: true));
-            await WaitForTurnAsync(http, accepted);
+            await WaitForIdleAsync(http);
             provider.AssertRecovered();
             await recovery.KillAsync();
         }
@@ -109,14 +94,16 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         Assert.True(frozen.Manifest.Plan.SemanticContributions.SequenceEqual(recovered.Manifest.Plan.SemanticContributions));
         IReadOnlyList<SessionRequestCommitment> attempts = GalateaRecapFixture.ReadAttemptCommitments(
             lab.SessionDirectory, frozen.SourcePreparedAddress!.Value);
-        Assert.Equal(2, attempts.Count);
+        Assert.Empty(attempts);
         Assert.All(attempts, commitment => Assert.Equal(
             SessionRequestCanonicalizer.CreateCommitment(recovered.Request), commitment));
         Assert.Equal(frozenDerived, ReadDerivedIdentity(lab.SessionDirectory, generation: 3));
+        EventAddress recoveredHead;
         using (var engine = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
             Assert.Equal(SessionExecutionPhase.Idle, engine.InspectExecutionBoundary().Phase);
+            recoveredHead = engine.ReadCurrentHead()!.Value;
             IReadOnlyList<SessionJournalAuditEvent> events = ReadAudit(engine);
-            AssertCounts(events, observations: 3, prepared: 3, started: 4, actions: 3);
+            AssertCounts(events, observations: 3, prepared: 3, started: 0, actions: 3);
             Assert.Equal(frozenObservations, events.Where(item => item.Kind == SessionEventKind.ObservationAccepted)
                 .Select(item => item.Address));
             SessionCompletedTurnProjection resumed = Assert.Single(engine.ReadRecentCompletedTurns().RequireSnapshot().Turns,
@@ -131,12 +118,13 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
                          lab.RootDirectory, configPath)) {
             using HttpClient http = fresh.CreateClient();
             await LoginAsync(http);
-            CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
-                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
-            Assert.Equal("idle", current.Status);
+            await WaitForColdIdleAsync(http, provider);
+            RecentTurnsResponseDto recent = Assert.IsType<RecentTurnsResponseDto>(
+                await http.GetFromJsonAsync<RecentTurnsResponseDto>("/api/v1/characters/alice/recent-turns"));
+            Assert.Equal(EventAddressTextCodec.Format(recoveredHead), recent.RewindLatestToken);
             provider.AssertRecovered();
             provider.AuthorizeFresh();
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
+            using HttpResponseMessage accepted = await GalateaLabAdmission.PostFreshAsync(http,
                 new ChatStreamRequest(GalateaLabRecapResponsesServer.FreshMessage));
             await WaitForTurnAsync(http, accepted);
             provider.AssertComplete();
@@ -150,7 +138,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         Assert.NotEqual(frozenDerived.Autobiography, nextDerived.Autobiography);
         using (var engine = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
             Assert.Equal(SessionExecutionPhase.Idle, engine.InspectExecutionBoundary().Phase);
-            AssertCounts(ReadAudit(engine), observations: 4, prepared: 4, started: 5, actions: 4);
+            AssertCounts(ReadAudit(engine), observations: 4, prepared: 4, started: 0, actions: 4);
             SessionCompletedTurnProjection latest = engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[0];
             Assert.Equal(GalateaLabRecapResponsesServer.FreshAnswer, latest.TerminalAction.Message.GetFlattenedText());
             Assert.Contains(GalateaLabRecapResponsesServer.FreshMessage, GalateaRecapFixture.ReadPlayerText(latest.ObservationContent), StringComparison.Ordinal);
@@ -217,11 +205,32 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         var turn = Assert.IsType<StartTurnResponseDto>(await accepted.Content.ReadFromJsonAsync<StartTurnResponseDto>());
         using HttpResponseMessage stream = await http.GetAsync($"/api/v1/characters/alice/chat/turns/{turn.TurnId}/events");
         Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
+        await WaitForIdleAsync(http);
+    }
+
+    private static async Task WaitForIdleAsync(HttpClient http) {
         using var deadline = new CancellationTokenSource(Deadline);
         while (true) {
             CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
                 await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current", deadline.Token));
-            if (current.Status != "running") { Assert.Equal("idle", current.Status); return; }
+            if (current.Status == "idle") { return; }
+            Assert.Contains(current.Status, new[] { "running", "recovery-required" });
+            await Task.Delay(TimeSpan.FromMilliseconds(10), deadline.Token);
+        }
+    }
+
+    private static async Task WaitForColdIdleAsync(HttpClient http, GalateaLabRecapResponsesServer provider) {
+        using var deadline = new CancellationTokenSource(Deadline);
+        while (true) {
+            CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(await http.GetFromJsonAsync<CurrentTurnDto>(
+                "/api/v1/characters/alice/chat/turns/current", deadline.Token));
+            // A zero-interval startup inspection can hold TurnLock without a
+            // live turn. Do not accept a new/recovered turn as mere startup.
+            Assert.Null(current.TurnId);
+            Assert.Null(current.RecoveryHead);
+            provider.AssertRecovered(); // Cold attach must add zero calls.
+            if (current.Status == "idle") { return; }
+            Assert.Equal("running", current.Status);
             await Task.Delay(TimeSpan.FromMilliseconds(10), deadline.Token);
         }
     }

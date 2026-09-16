@@ -96,6 +96,7 @@ internal sealed class GalateaRecapGridComposition
                 .CatchUpMaintenanceAsync(
                     pendingObservation,
                     cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (caughtUp is not RecapGridOnlinePassResult.Ready
                     and not RecapGridOnlinePassResult.RawHistoryAuthorized) {
                 throw CatchUpFailure(caughtUp);
@@ -167,7 +168,8 @@ internal sealed class GalateaRecapGridComposition
         Func<string, bool> isCurrentConnectionSelectable,
         SessionRuntimeRecoveryRequirements.ToolContinuationRequired frozen,
         GalateaRecapGridTargetExpectation targetExpectation,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        CancellationToken generationStopToken = default
     ) {
         ArgumentNullException.ThrowIfNull(isCurrentConnectionSelectable);
         using RecapGridAgentControlHandle frozenAgentControl =
@@ -203,6 +205,11 @@ internal sealed class GalateaRecapGridComposition
                 break;
             }
         }
+        // All committed tools have settled. Subsequent maintenance is pure
+        // generation, so user Stop can cancel it without interrupting tools.
+        using var generationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, generationStopToken);
+        cancellationToken = generationCancellation.Token;
+        cancellationToken.ThrowIfCancellationRequested();
         if (!isCurrentConnectionSelectable(connectionId)) {
             throw new GalateaTurnException(
                 "当前模型连接不在Galatea可选连接集合中。",
@@ -228,6 +235,7 @@ internal sealed class GalateaRecapGridComposition
                 .CatchUpMaintenanceAsync(
                     pendingObservation: null,
                     cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (caughtUp is not RecapGridOnlinePassResult.Ready
                     and not RecapGridOnlinePassResult.RawHistoryAuthorized) {
                 throw CatchUpFailure(caughtUp);

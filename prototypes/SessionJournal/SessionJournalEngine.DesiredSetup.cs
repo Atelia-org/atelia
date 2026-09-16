@@ -58,7 +58,7 @@ public sealed partial class SessionJournalEngine {
                 recovery.Head,
                 recovery.State.Phase,
                 SessionDesiredSetupUnavailableReason
-                    .FailedTurnMustBeAbandoned
+                    .LegacyFailedTurnBlocked
             );
         }
         if (recovery.State.Phase != SessionExecutionPhase.Idle) {
@@ -148,7 +148,7 @@ public sealed partial class SessionJournalEngine {
             );
             return null;
         }
-        catch {
+        catch when (Volatile.Read(ref _reopenRequired) == 0) {
             EventAddress? observedHead = _journal.GetHead(_branchRefId);
             if (observedHead != expectedHead) {
                 return new SessionDesiredSetupReconciliationResult.Retryable(

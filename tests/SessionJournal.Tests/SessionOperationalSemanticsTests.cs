@@ -62,7 +62,6 @@ public sealed class SessionOperationalSemanticsTests {
             };
         IReadOnlySet<SessionExecutionPhase> preparedOrAttempt =
             new HashSet<SessionExecutionPhase> {
-                SessionExecutionPhase.AwaitingCompletionDispatch,
                 SessionExecutionPhase.AwaitingCompletion
             };
 

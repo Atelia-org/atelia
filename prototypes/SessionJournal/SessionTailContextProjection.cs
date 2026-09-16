@@ -97,6 +97,23 @@ internal static class SessionTailContextProjection {
                     activeCorrelationId = null;
                     phase = SessionExecutionPhase.Idle;
                     break;
+                case SessionEventKind.TurnEnded: {
+                    EnsureNoOpenTool(ev, openAction);
+                    TurnEndedBody endBody = RequireBody<TurnEndedBody>(ev);
+                    if (!SessionOperationalSemantics.CanEndTurn(phase)
+                        || (phase == SessionExecutionPhase.TurnFailed && endBody.Reason != SessionTurnEndReason.Stopped)) {
+                        throw new InvalidDataException("TurnEnded requires a closed-tool completion frontier.");
+                    }
+                    var ended = new SessionTurnEndedMessage(endBody.Reason);
+                    context.Add(ended);
+                    planningUnits?.Add(new SessionHistoryPlanningUnit(ended, ev.Address, ev.Address));
+                    sourcePrepared = null;
+                    sourcePreparedAddress = null;
+                    activeAttemptAddress = null;
+                    activeCorrelationId = null;
+                    phase = SessionExecutionPhase.Idle;
+                    break;
+                }
                 case SessionEventKind.CompletionAttemptFailed: {
                     EnsureNoOpenTool(ev, openAction);
                     _ = RequireBody<CompletionAttemptFailedBody>(ev);
@@ -170,7 +187,7 @@ internal static class SessionTailContextProjection {
                     sourcePreparedAddress = ev.Address;
                     activeAttemptAddress = null;
                     activeCorrelationId = prepared.Origin.CorrelationId;
-                    phase = SessionExecutionPhase.AwaitingCompletionDispatch;
+                    phase = SessionExecutionPhase.AwaitingCompletion;
                     break;
                 }
                 case SessionEventKind.ObservationAccepted:
@@ -243,8 +260,8 @@ internal static class SessionTailContextProjection {
                                 ? null
                                 : sourcePrepared?.ToolSet.RuntimeIdentity;
                         if (sourcePrepared is null
-                            || ev.Parent != activeAttemptAddress
-                            || activeAttemptAddress is null
+                            || ev.Parent != (activeAttemptAddress ?? sourcePreparedAddress)
+                            || (ev.BodySchemaVersion == 1 && activeAttemptAddress is null)
                             || !string.Equals(actionBody.CorrelationId, sourcePrepared.Origin.CorrelationId, StringComparison.Ordinal)
                             || actionBody.Execution != sourcePrepared.Execution) {
                             throw new InvalidDataException(

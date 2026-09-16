@@ -291,7 +291,7 @@ public sealed class SessionJournalAuditScanTests : IDisposable {
 
         Assert.Equal(prepared, result.CapturedHead);
         Assert.Equal(
-            SessionExecutionPhase.AwaitingCompletionDispatch,
+            SessionExecutionPhase.AwaitingCompletion,
             result.ExecutionStateAtCapturedHead.Phase
         );
         Assert.Equal(

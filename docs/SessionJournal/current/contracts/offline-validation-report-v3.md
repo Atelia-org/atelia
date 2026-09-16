@@ -15,6 +15,10 @@ addendum圈定的scope已通过fresh gates/rebuild与final pre-tag review，并�
 > 上述 approval tag 只认证当时的 Text/旧 Prepared 范围，不认证此扩展；新合同见
 > [typed input / Prepared v9](completion-request-prepared-v9.md)。
 
+> 自动重试重构扩展：当前 V3 根字段保持不变，phase 合并为一个 `awaiting-completion`，
+> 新增 `turn-ended` kind 与独立结束语义贡献。历史 approval tag 不认证这些扩展；
+> 当前集成验收状态见 [实施方案](../../../Galatea/completion-auto-retry-refactor-plan.md)。
+
 ## 1. Producer、schema与exact root shape
 
 Production report由
@@ -50,7 +54,7 @@ wrong-type或用旧numeric enum representation均不属于V3：
 | `agentActionCount` | integer | produced与imported agent actions总数 |
 | `importedAgentActionCount` | integer | `agentActionCount`中`ImportedAgentAction`子集数量 |
 | `toolResultHistoryCount` | integer | 已闭合、进入history的tool-result groups数量，不是raw tool-result event总数 |
-| `historyContributionCount` | integer | Observation、Action及已闭合ToolResults写入semantic history commitment的contribution数量 |
+| `historyContributionCount` | integer | Observation、Action、已闭合ToolResults及TurnEnded写入semantic history commitment的contribution数量 |
 | `historySemanticCommitmentCodecId` | string | exact `atelia.session-journal.history-semantic-commitment.v1` |
 | `historySemanticCommitmentSha256` | string | 按lineage order计算的semantic history commitment lowercase SHA-256 hex |
 | `eventKindCounts` | array | 只列实际出现kind的count rows；nested shape见§3 |
@@ -73,19 +77,21 @@ unchanged。
 
 ## 2. Closed phase与event-kind tokens
 
-`executionPhase`只接受/生成下列7个exact lower-kebab strings：
+`executionPhase`只接受/生成下列6个exact lower-kebab strings：
 
 | Token | Typed meaning |
 |:--|:--|
 | `empty` | `SessionExecutionPhase.Empty` |
 | `idle` | `SessionExecutionPhase.Idle` |
 | `awaiting-agent-action` | `SessionExecutionPhase.AwaitingAgentAction` |
-| `awaiting-completion-dispatch` | `SessionExecutionPhase.AwaitingCompletionDispatch` |
 | `awaiting-completion` | `SessionExecutionPhase.AwaitingCompletion` |
 | `awaiting-tool-execution` | `SessionExecutionPhase.AwaitingToolExecution` |
 | `turn-failed` | `SessionExecutionPhase.TurnFailed` |
 
-`headKind`与`eventKindCounts[].kind`共享下列11个exact lower-kebab strings：
+Prepared 与合法历史 Started 尾都使用 `awaiting-completion`；旧 `awaiting-completion-dispatch` token
+不再接受。历史 Failed 保留 `turn-failed`，TurnEnded 则进入 `idle`，但不计为成功 AgentAction。
+
+`headKind`与`eventKindCounts[].kind`共享下列12个exact lower-kebab strings：
 
 | Token | Typed meaning |
 |:--|:--|
@@ -100,6 +106,7 @@ unchanged。
 | `completion-attempt-failed` | `SessionEventKind.CompletionAttemptFailed` |
 | `imported-agent-action` | `SessionEventKind.ImportedAgentAction` |
 | `completion-attempt-started` | `SessionEventKind.CompletionAttemptStarted` |
+| `turn-ended` | `SessionEventKind.TurnEnded` |
 
 Numeric values（包括旧`1`表示Idle）、enum names、wrong-case、unknown/future token与null `executionPhase`均不是V3。
 `headKind`只有empty branch可以为null；future typed enum无法serialize为V3。
@@ -129,6 +136,10 @@ Validator以`SessionJournalEngine.OpenReadOnly`打开selected branch，并消费
 lineage。Scan检查header/codec/parent与body schema，v9 检查持久语义计划，旧 Prepared 重建验证原 commitment；forward fold 与captured-head
 tail execution state和governing setup做differential。成功report只证明这些checks在该次captured head上一致；branch随后
 推进时，旧report不会自动成为current witness。
+
+Action v1 严格要求 Started parent；v2 可接 Prepared 或合法历史 Started 尾。TurnEnded 仅接受完整
+工具批次已闭合的生成边界，历史 Failed 只能以 Stopped 结束。结束原因以 `turn-ended` domain
+纳入既有 semantic commitment codec v1，不修改旧贡献、不伪造 Action、不重写历史地址。
 
 Audit不会append raw、修改branch ref或写derived owners。它会遍历并decode完整selected lineage、保存full fold state与
 semantic contribution hashes，并验证每个Prepared（v9 不生成渲染请求）。Current operation没有header/event/payload/work/memory budget、

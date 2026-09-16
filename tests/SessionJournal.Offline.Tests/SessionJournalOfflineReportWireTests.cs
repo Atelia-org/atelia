@@ -17,8 +17,6 @@ public sealed class SessionJournalOfflineReportWireTests {
             (SessionExecutionPhase.Idle, "idle"),
             (SessionExecutionPhase.AwaitingAgentAction,
                 "awaiting-agent-action"),
-            (SessionExecutionPhase.AwaitingCompletionDispatch,
-                "awaiting-completion-dispatch"),
             (SessionExecutionPhase.AwaitingCompletion,
                 "awaiting-completion"),
             (SessionExecutionPhase.AwaitingToolExecution,
@@ -48,7 +46,8 @@ public sealed class SessionJournalOfflineReportWireTests {
             (SessionEventKind.ImportedAgentAction,
                 "imported-agent-action"),
             (SessionEventKind.CompletionAttemptStarted,
-                "completion-attempt-started")
+                "completion-attempt-started"),
+            (SessionEventKind.TurnEnded, "turn-ended")
         ];
 
     [Fact]
@@ -272,6 +271,7 @@ public sealed class SessionJournalOfflineReportWireTests {
     public void NumericWrongCaseUnknownAndNullTokensFailClosed() {
         AssertRejected(root => root["executionPhase"] = 1);
         AssertRejected(root => root["executionPhase"] = "Idle");
+        AssertRejected(root => root["executionPhase"] = "awaiting-completion-dispatch");
         JsonException phaseError = AssertRejected(root =>
             root["executionPhase"] = "SECRET-future-phase");
         Assert.DoesNotContain(
@@ -311,7 +311,7 @@ public sealed class SessionJournalOfflineReportWireTests {
         Assert.Throws<JsonException>(() => JsonSerializer.Serialize(
             CreateReport(
                 SessionExecutionPhase.Idle,
-                (SessionEventKind)11),
+                (SessionEventKind)uint.MaxValue),
             WebJsonOptions));
         Assert.Throws<JsonException>(() => JsonSerializer.Serialize(
             CreateReport(
@@ -319,7 +319,7 @@ public sealed class SessionJournalOfflineReportWireTests {
                 SessionEventKind.SessionCreated,
                 [
                     new SessionJournalOfflineEventKindCount(
-                        (SessionEventKind)12,
+                        (SessionEventKind)uint.MaxValue,
                         1)
                 ]),
             WebJsonOptions));

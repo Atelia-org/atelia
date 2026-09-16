@@ -23,7 +23,8 @@ internal enum GalateaSseStatusCode {
     Generating,
     NormalizingInput,
     InputNormalizationFinished,
-    UsingTools
+    UsingTools,
+    TransportUnresponsive
 }
 
 internal enum GalateaSseErrorCode {
@@ -58,6 +59,14 @@ internal sealed class GalateaSseFrame {
 }
 
 internal static class GalateaSseFrames {
+    internal static GalateaSseFrame AttemptStart(int attempt, int segment) =>
+        Encode("attempt-start", new { attempt, segment }, terminal: false);
+    internal static GalateaSseFrame AttemptReset(int segment) =>
+        Encode("attempt-reset", new { segment }, terminal: false);
+    internal static GalateaSseFrame RetryWait(int attempt, string code, long nextRetryAtUnixTimeMilliseconds) =>
+        Encode("retry-wait", new { attempt, code, nextRetryAtUnixTimeMilliseconds }, terminal: false);
+    internal static GalateaSseFrame Terminated(string reason, RecentTurnsResponseDto? recent) =>
+        Encode("terminated", new { reason, recent }, terminal: true);
     internal static GalateaSseFrame Status(
         GalateaSseStatusCode code,
         bool? changed = null
@@ -154,6 +163,7 @@ internal static class GalateaSseFrames {
             GalateaSseStatusCode.InputNormalizationFinished =>
                 "input-normalization-finished",
             GalateaSseStatusCode.UsingTools => "using-tools",
+            GalateaSseStatusCode.TransportUnresponsive => "transport-unresponsive",
             _ => throw new ArgumentOutOfRangeException(nameof(code), code, null)
         };
 

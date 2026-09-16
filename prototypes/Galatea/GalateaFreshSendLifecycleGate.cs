@@ -3,7 +3,7 @@ using Atelia.SessionJournal;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Switches user stop to observer-only after a fresh SendAsync operation's
+/// Switches user stop to generation-only cancellation after a fresh SendAsync operation's
 /// successful pre-observation lifecycle pass. Recovery operations require
 /// mode-specific transition points and must not reuse this decorator.
 /// </summary>
@@ -29,8 +29,12 @@ internal sealed class GalateaFreshSendLifecycleGate
         ArgumentNullException.ThrowIfNull(readView);
         ArgumentNullException.ThrowIfNull(request);
 
+        using var generationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _stop.UserStopToken);
+        generationCancellation.Token.ThrowIfCancellationRequested();
+
         SessionContextLifecycleResult result = await _inner
-            .PrepareAsync(readView, request, cancellationToken)
+            .PrepareAsync(readView, request, generationCancellation.Token)
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(result);
 
@@ -44,7 +48,7 @@ internal sealed class GalateaFreshSendLifecycleGate
                 1,
                 0
             ) == 0) {
-            _stop.EnterObserverOnlyOrThrow(cancellationToken);
+            _stop.EnterDispatchOrThrow(cancellationToken);
         }
         return result;
     }

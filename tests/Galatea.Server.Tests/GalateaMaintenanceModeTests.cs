@@ -147,7 +147,6 @@ public sealed class GalateaMaintenanceModeTests {
         Assert.Equal("idle", current!.Status);
         Assert.Null(current.TurnId);
         Assert.Null(current.ConnectionId);
-        Assert.False(current.RestartRequired);
         Assert.Null(current.RecoveryHead);
 
         string page = await client.GetStringAsync("/characters/alice");

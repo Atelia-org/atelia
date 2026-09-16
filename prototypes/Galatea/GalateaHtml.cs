@@ -151,6 +151,7 @@ internal static class GalateaHtml {
           <span id="autonomy-countdown" aria-live="off"></span>
           <span id="autonomy-last-activation" aria-live="off">上次自主激活：尚无</span>
           <button id="retry-admission" type="button" class="hidden">重试未完成处理</button>
+          <button id="stop-admission" type="button" class="hidden">停止本次整理</button>
         </div>
         <div id="mailbox-status" class="mailbox-status" role="status" aria-live="polite">邮箱状态：正在读取…</div>
         <div class="composer-actions">
@@ -160,6 +161,7 @@ internal static class GalateaHtml {
           </div>
           <div class="composer-buttons">
             <button id="resume-turn-button" type="button" class="ghost-button" disabled>恢复待处理轮次</button>
+            <button id="pending-stop-button" type="button" class="ghost-button" disabled>结束待处理轮次</button>
             <button id="undo-last-button" type="button" class="ghost-button"{{maintenanceDisabled}}>撤销上一轮</button>
             <button id="stop-button" type="button" class="ghost-button"{{maintenanceDisabled}}>停止</button>
             <button id="send-button" type="submit"{{maintenanceDisabled}}>发送</button>

@@ -42,8 +42,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         16 * 1024;
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
-    private static readonly TimeSpan DefaultCharacterNoteExtractionDeadline =
-        TimeSpan.FromSeconds(30);
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly IReadOnlyDictionary<string, IOutboundMailExtractor>
         _outboundMailExtractors;
@@ -65,17 +63,31 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaPlayerTurnRecallProviderFactory?
         _playerTurnRecallProviderFactory;
     private readonly TimeProvider _timeProvider;
+    private readonly IReadOnlyDictionary<string, int> _completionAttemptTimeoutSeconds;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
     internal TimeSpan? CharacterNoteExtractionDeadlineForTest { get; set; }
     internal Func<CharacterSessionHost, Task>? SessionAttachedForTest { get; set; }
+    internal Func<string, SessionJournalEngine>? OpenSessionForTest { get; set; }
+    internal Func<double>? ColdRecoveryJitterSampleForTest { get; set; }
+
+    internal async Task DelayColdRecoveryAsync(CancellationToken callerToken) {
+        double sample = ColdRecoveryJitterSampleForTest?.Invoke() ?? Random.Shared.NextDouble();
+        if (!double.IsFinite(sample) || sample is < 0 or > 1) {
+            throw new InvalidOperationException("Cold recovery jitter sample must be in [0,1].");
+        }
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(callerToken, _admissionStopping.Token);
+        await Task.Delay(TimeSpan.FromMilliseconds(250 * sample), _timeProvider, lifetime.Token).ConfigureAwait(false);
+        lifetime.Token.ThrowIfCancellationRequested();
+    }
     internal Func<Task>? BeforeDelegationAttachForTest { get; set; }
     internal TimeSpan? CharacterNoteDerivedInfoDeadlineForTest { get; set; }
     internal Action<string>? CharacterNoteDiagnosticSinkForTest { get; set; }
     internal Action<string>? MemoRecallDiagnosticSinkForTest { get; set; }
     private readonly ConcurrentDictionary<string, Lazy<Task<CharacterSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly object _lifecycleGate = new();
+    private readonly CancellationTokenSource _admissionStopping = new();
     private bool _stopping;
     private GalateaAcceptedTurnRunner? _turnRunner;
     private GalateaCharacterMailRelay? _characterMailRelay;
@@ -132,7 +144,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             completionClientFactory,
             userMessageNormalizerFactory,
             delegateTransport,
-            playerTurnRecallProviderFactory
+            playerTurnRecallProviderFactory,
+            timeProvider
         ),
         timeProvider
     ) { }
@@ -151,6 +164,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _playerTurnRecallProviderFactory =
             components.PlayerTurnRecallProviderFactory;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _completionAttemptTimeoutSeconds = ValidateAttemptTimeouts(config);
         _recapGrid = components.RecapGrid;
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
@@ -215,6 +229,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
         _recapGrid = recapGrid;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _completionAttemptTimeoutSeconds = ValidateAttemptTimeouts(config);
         _playerTurnRecallProviderFactory = playerTurnRecallProviderFactory;
         _completionOwner = null;
         _inputPreprocessor = new GalateaInputPreprocessor(
@@ -284,7 +299,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IGalateaUserMessageNormalizerFactory normalizerFactory,
         IGalateaDurableDelegateTransport? delegateTransportOverride = null,
         GalateaPlayerTurnRecallProviderFactory?
-            playerTurnRecallProviderFactory = null
+            playerTurnRecallProviderFactory = null,
+        TimeProvider? timeProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
@@ -303,7 +319,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         try {
             owner = new GalateaCompletionOwner(
                 config,
-                completionClientFactory
+                completionClientFactory,
+                timeProvider
             );
             IGalateaUserMessageNormalizer normalizer =
                 normalizerFactory.Create(
@@ -779,7 +796,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             )
         ];
         string? rewindLatestToken = snapshot.CapturedHead is { } head
-            && snapshot.Turns.FirstOrDefault()?.TerminalAction.Address
+            && snapshot.Turns.FirstOrDefault()?.Outcome.Address
                 == head
             && PlayerTurnObservationClassifier.TryProject(
                 snapshot.Turns.First().ObservationContent,
@@ -1062,16 +1079,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
             Phase: SessionExecutionPhase.Idle
         } => new CurrentTurnDto("idle"),
         SessionRuntimeRecoveryRequirements
-            .FailedTurnMustBeAbandoned => new CurrentTurnDto("idle"),
+            .LegacyFailedTurnBlocked => RecoveryCurrentTurn(recovery),
         SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
             Phase: SessionExecutionPhase.Empty
         } => new CurrentTurnDto("unprovisioned"),
         SessionRuntimeRecoveryRequirements.NewRequestRequired =>
             RecoveryCurrentTurn(recovery),
-        SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
-            DispatchState:
-                SessionDurableDispatchState.StartedOutcomeUncertain
-        } => RecoveryCurrentTurn(recovery, restartRequired: true),
         SessionRuntimeRecoveryRequirements.FrozenCompletionRequired =>
             RecoveryCurrentTurn(recovery),
         SessionRuntimeRecoveryRequirements.ToolContinuationRequired =>
@@ -1082,14 +1095,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
     };
 
     private static CurrentTurnDto RecoveryCurrentTurn(
-        SessionRuntimeRecoveryRequirements recovery,
-        bool restartRequired = false
+        SessionRuntimeRecoveryRequirements recovery
     ) => new(
         "recovery-required",
         RecoveryHead: EventAddressTextCodec.FormatNullable(
             recovery.CapturedHead
-        ),
-        RestartRequired: restartRequired
+        )
     );
 
     /// <summary>
@@ -1103,6 +1114,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CharacterSessionHost host,
         CancellationToken cancellationToken
     ) {
+        await using var operation = host.BeginAdmission(cancellationToken, _admissionStopping.Token);
+        try {
+            await ReconcileDurableAdmissionCoreAsync(host, operation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (operation.StopRequested
+            && !cancellationToken.IsCancellationRequested && !_admissionStopping.IsCancellationRequested) {
+            throw new GalateaTurnException("本次整理已停止；持久化目标保留供下次续接。", "admission-stopped");
+        }
+    }
+
+    private async ValueTask ReconcileDurableAdmissionCoreAsync(CharacterSessionHost host, CancellationToken cancellationToken) {
         ArgumentNullException.ThrowIfNull(host);
         GalateaDurableReplyLeaseReconcileResult reply =
             ReconcileDurableDeliveries(host, cancellationToken);
@@ -1232,8 +1254,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaTerminalActionExtractionTarget target,
         CancellationToken callerToken
     ) {
-        TimeSpan deadline = RequireCharacterNoteDeadline();
-        using var deadlineCts = new CancellationTokenSource(deadline);
+        using var deadlineCts = CreateCharacterNoteTestDeadline();
         using var mailAbortCts = new CancellationTokenSource();
         using var noteCts = CancellationTokenSource.CreateLinkedTokenSource(
             callerToken,
@@ -1377,15 +1398,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
     }
 
-    private TimeSpan RequireCharacterNoteDeadline() {
-        TimeSpan deadline = CharacterNoteExtractionDeadlineForTest
-            ?? DefaultCharacterNoteExtractionDeadline;
+    private CancellationTokenSource CreateCharacterNoteTestDeadline() {
+        // Production generation attempts own their deadlines in the retry
+        // decorator. Do not deadline the complete logical extraction/retry.
+        if (CharacterNoteExtractionDeadlineForTest is not { } deadline) {
+            return new CancellationTokenSource();
+        }
         if (deadline <= TimeSpan.Zero) {
             throw new InvalidOperationException(
                 "Character Note extraction deadline must be positive."
             );
         }
-        return deadline;
+        return new CancellationTokenSource(deadline);
     }
 
     private TimeSpan RequireCharacterNoteDerivedInfoDeadline() {
@@ -1751,9 +1775,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     /// <summary>
     /// Revalidates the HTTP fresh-turn admission while the caller retains the
-    /// session writer lock. A previously failed turn is abandoned at its
-    /// exact head here so any lease belonging to that failed Observation can
-    /// be rolled back before an ordinary player cutoff is formed.
+    /// session writer lock. Pending work must first be resumed or explicitly
+    /// ended; fresh input never removes its durable history.
     /// </summary>
     internal async ValueTask PrepareFreshTurnAdmissionAsync(
         CharacterSessionHost host,
@@ -1778,22 +1801,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         CapturedHead: { } currentHead
                     }
                 && currentHead == admittedHead:
-                break;
-            case SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned admittedFailed
-                when current is SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned currentFailed
-                && currentFailed.FailedHead == admittedFailed.FailedHead:
-                AbandonFailedTurnAndReconcile(
-                    host,
-                    admittedFailed.FailedHead,
-                    cancellationToken
-                );
-                await ReconcileDurableAdmissionAsync(
-                        host,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
                 break;
             default:
                 throw new GalateaTurnException(
@@ -1952,7 +1959,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             "completed",
             StringComparison.Ordinal
         );
-        if (!completed
+        bool closed = completed || turn.Status == "terminated";
+        if (!closed
             && turn.FreshInput is GalateaFreshInput.InboundMail {
                 InternalDelivery: not null
             }) {
@@ -1968,10 +1976,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         bool settled = host.AutonomyCadence?.SettleMainTurn(
             turn.AutonomyCadenceSettlement,
             turn.FreshInput is GalateaFreshInput.HeartbeatActivation,
-            completed,
+            closed,
             turn.AutonomyCadenceClaim
         ) ?? turn.AutonomyCadenceSettlement.TrySettle();
-        if (settled && completed) {
+        if (settled && closed) {
+            host.GenerationBlocked = false;
             host.AutomaticReplyFailed = false;
             host.AutomaticAdmissionFailed = false;
             host.AutomaticAdmissionFailure = null;
@@ -1980,7 +1989,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             host.AutomaticReplyFailed = true;
         }
         if (settled
-            && !completed
+            && !closed
             && turn.FreshInput
                 is GalateaFreshInput.HeartbeatActivation) {
             DebugUtil.Warning(
@@ -2064,6 +2073,43 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return turn?.RequestStop() == true;
     }
 
+    internal bool EndPendingTurn(CharacterSessionHost host, EventAddress expectedHead, CancellationToken ct) {
+        SessionTurnEndResult result = EndPendingTurnGuarded(host, expectedHead, SessionTurnEndReason.Stopped, ct);
+        if (result is not SessionTurnEndResult.Ended) { return false; }
+        host.GenerationBlocked = false;
+        host.AutomaticAdmissionFailed = false;
+        host.AutomaticReplyFailed = false;
+        host.AutomaticAdmissionFailure = null;
+        host.AutonomyCadence?.ResumeAfterPendingTermination();
+        _ = ReconcileDurableDeliveries(host, ct);
+        host.PublishAutonomyStatus();
+        return true;
+    }
+
+    private async Task EndLiveTurnAsync(CharacterSessionHost host, GalateaLiveTurn turn, SessionTurnEndReason reason, CancellationToken ct) {
+        SessionExecutionBoundaryInspection boundary = host.Engine.InspectExecutionBoundary();
+        if (boundary.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.Empty)) {
+            if (boundary.Head is not { } head || EndPendingTurnGuarded(host, head, reason, ct) is not SessionTurnEndResult.Ended) {
+                host.GenerationBlocked = true;
+                throw new GalateaTurnException("轮次尚未到达安全结束边界。", "recovery-required");
+            }
+        }
+        _ = ReconcileDurableDeliveries(host, ct);
+        RecentTurnsResponseDto? recent = await RefreshRecentTurnsForCompletedStreamAsync(host, ct).ConfigureAwait(false);
+        turn.PublishTerminated(reason.ToString().ToLowerInvariant(), recent);
+    }
+
+    private static SessionTurnEndResult EndPendingTurnGuarded(CharacterSessionHost host, EventAddress head,
+        SessionTurnEndReason reason, CancellationToken ct) {
+        try { return host.Engine.EndPendingTurn(head, reason, ct); }
+        catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception) && !ct.IsCancellationRequested) {
+            // Publication may already have succeeded. Only cold reopen can
+            // decide; this live writer must not be reused by a pulse.
+            host.GenerationBlocked = true;
+            throw;
+        }
+    }
+
     internal async Task RunTurnAsync(
         CharacterSessionHost host,
         GalateaLiveTurn liveTurn,
@@ -2079,6 +2125,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         CancellationToken turnCancellationToken =
             preDispatchCts.Token;
+        if (liveTurn.Options.Mode == GalateaTurnMode.Resume
+            && host.Engine.InspectExecutionBoundary().Phase == SessionExecutionPhase.AwaitingToolExecution) {
+            // Binding a recovered runtime already drains committed tools.
+            // Even a Stop requested before this runner starts cannot cancel them.
+            liveTurn.StopController.ProtectCommittedTools();
+            turnCancellationToken = ct;
+        }
 
         liveTurn.PublishStatus(GalateaSseStatusCode.Generating);
         DebugUtil.Info(
@@ -2088,23 +2141,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
 
         CompletionStreamObserver observer = liveTurn.Observer;
-        var toolLoopStarted = 0;
-        observer.ReceivedReasoningDelta += delta => {
-            if (!string.IsNullOrEmpty(delta)) {
-                liveTurn.PublishReasoningDelta(delta);
-            }
-        };
-        var textFilter = new InlineThinkTextFilter(startInsideThink: false);
-        observer.ReceivedTextDelta += delta => {
-            var visibleText = textFilter.Filter(delta);
-            if (string.IsNullOrEmpty(visibleText)) { return; }
-            liveTurn.PublishTextDelta(visibleText);
-        };
-        observer.ReceivedToolCall += _ => {
-            if (Interlocked.Exchange(ref toolLoopStarted, 1) == 0) {
-                liveTurn.PublishStatus(GalateaSseStatusCode.UsingTools);
-            }
-        };
 
         GalateaCompletedOperation completed;
         try {
@@ -2127,36 +2163,35 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
         catch (OperationCanceledException) when (
             !ct.IsCancellationRequested
-            && liveTurn.StopController.Phase
-                == GalateaTurnStopPhase.PreDispatch
             && liveTurn.StopRequested
         ) {
-            if (liveTurn.Options.Mode == GalateaTurnMode.FreshSend) {
-                ReconcileDurableDeliveriesBestEffort(host, liveTurn);
-            }
-            throw liveTurn.Options.Mode == GalateaTurnMode.FreshSend
-                ? PreDispatchStopped()
-                : RecoveryPreDispatchStopped();
+            await EndLiveTurnAsync(host, liveTurn, SessionTurnEndReason.Stopped, ct).ConfigureAwait(false);
+            return;
         }
         catch (SessionJournalTurnAbortedException ex) {
             DebugUtil.Warning(
                 "Galatea.Session",
                 $"RunTurnAsync completion aborted: character={host.Character.CharacterId}, turnId={liveTurn.TurnId}, termination={ex.Termination.Kind}, providerReason={ex.Termination.ProviderReason ?? "<none>"}, detail={ex.Termination.Detail ?? "<none>"}"
             );
-            if (liveTurn.StopRequested && WasStoppedByObserver(ex.Termination)) {
-                AbandonCurrentFailedTurnAndReconcile(host);
-                throw new GalateaTurnException(
-                    "已停止生成，本轮结果未写入历史。你可以调整开关或修改输入后重试。",
-                    "stopped-by-character"
-                );
+            if (ClassifyBusinessTermination(ex.Termination) is { } reason) {
+                await EndLiveTurnAsync(host, liveTurn, reason, ct).ConfigureAwait(false);
+                return;
             }
-            AbandonCurrentFailedTurnAndReconcile(host);
-            throw new GalateaTurnException(
-                "模型本次输出未正常结束，本轮结果已放弃写入历史。请刷新页面后重试。",
-                ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
-            );
+            host.GenerationBlocked = true;
+            ReconcileDurableDeliveriesBestEffort(host, liveTurn);
+            throw;
         }
         catch {
+            if (!ct.IsCancellationRequested) {
+                try {
+                    host.GenerationBlocked = host.Engine.InspectExecutionBoundary().Phase
+                        is not (SessionExecutionPhase.Idle or SessionExecutionPhase.Empty);
+                }
+                catch (Exception error) when (GalateaExceptionClassifier.IsNonFatal(error)) {
+                    // A poisoned writer must never be redispatched by pulses.
+                    host.GenerationBlocked = true;
+                }
+            }
             ReconcileDurableDeliveriesBestEffort(host, liveTurn);
             throw;
         }
@@ -2181,12 +2216,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "delegation-reply-lease-retained"
             );
         }
-        await ReconcilePostCompletionExtractionsAsync(
-                host,
-                completedHead,
-                ct
-            )
-            .ConfigureAwait(false);
+        using (var extractionCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct, liveTurn.StopController.UserStopToken)) {
+            try {
+                await ReconcilePostCompletionExtractionsAsync(host, completedHead, extractionCancellation.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && liveTurn.StopRequested) {
+                // The Action is already durable. Stop only releases this
+                // process-local extraction attempt; reconciliation retains
+                // its original durable target for the next admission.
+            }
+        }
         RecentTurnsResponseDto? snapshot =
             await RefreshRecentTurnsForCompletedStreamAsync(
                 host,
@@ -2330,9 +2370,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             host.CharacterNoteDerivedInfoPump
         );
 
-        TimeSpan noteDeadline = RequireCharacterNoteDeadline();
-        using var deadlineCts =
-            new CancellationTokenSource(noteDeadline);
+        using var deadlineCts = CreateCharacterNoteTestDeadline();
         using var mailAbortCts = new CancellationTokenSource();
         using var noteCts = CancellationTokenSource.CreateLinkedTokenSource(
             callerToken,
@@ -2886,6 +2924,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             characterMailRelay = _characterMailRelay;
         }
         characterMailRelay?.BeginShutdown();
+        _admissionStopping.Cancel();
         runner?.BeginShutdown();
         _delegationSupervisor.BeginShutdown();
     }
@@ -2961,7 +3000,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             turn,
             online.CandidateSource,
             lifecycle,
-            SessionUncertainCompletionRecoveryPolicy.Refuse));
+            liveTurn));
         IGalateaPlayerTurnRecallProvider recallProvider =
             host.PlayerTurnRecallProvider;
         if (preliminaryPlayerObservation is null) {
@@ -3417,33 +3456,37 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     turn,
                     online.CandidateSource,
                     lifecycle,
-                    SessionUncertainCompletionRecoveryPolicy.Refuse));
+                    liveTurn));
             }
             else if (requirement is SessionRuntimeRecoveryRequirements
                          .FrozenCompletionRequired frozen) {
-                if (frozen.DispatchState
-                        == SessionDurableDispatchState
-                            .StartedOutcomeUncertain
-                    && !liveTurn.Options.RestartUncertainCompletion) {
-                    throw new GalateaTurnException(
-                        "上次模型调用结果不确定；必须明确选择重新调用。",
-                        "uncertain-completion-restart-required");
-                }
                 turn = recapGrid.BindPrepared(host.Engine, frozen);
-                liveTurn.StopController.EnterObserverOnlyOrThrow(
+                liveTurn.StopController.EnterDispatchOrThrow(
                     cancellationToken);
                 host.Engine.UseRuntime(new SessionRuntime(
-                    turn.Client,
+                    CreateRetryClient(turn.Client, liveTurn),
                     turn.AgentControl?.ToolSession,
                     CompletionTarget: frozen.CompletionTarget,
-                    UncertainCompletionRecoveryPolicy:
-                        liveTurn.Options.RestartUncertainCompletion
-                            ? SessionUncertainCompletionRecoveryPolicy
-                                .RestartWithNewAttempt
-                            : SessionUncertainCompletionRecoveryPolicy.Refuse,
                     ToolRuntimeIdentity:
                         turn.AgentControl?.RuntimeIdentity,
                     InputProjector: GalateaInputProjector.Instance));
+                SessionPreparedCompletionBoundaryResult committed = await host.Engine
+                    .ResumePreparedCompletionToBoundaryAsync(capturedHead, observer, cancellationToken)
+                    .ConfigureAwait(false);
+                SessionRuntimeRecoveryRequirements next = host.Engine.InspectRuntimeRecoveryRequirements(cancellationToken);
+                if (next is SessionRuntimeRecoveryRequirements.NoRuntimeRequired { Phase: SessionExecutionPhase.Idle }) {
+                    return new GalateaCompletedOperation(committed.Message, committed.Invocation, committed.Errors);
+                }
+                if (next is not SessionRuntimeRecoveryRequirements.ToolContinuationRequired || next.CapturedHead is not { } nextHead) {
+                    throw new InvalidDataException("A frozen completion must commit either a terminal Action or a pending tool batch.");
+                }
+                // The frozen binding carries no current candidate/maintenance
+                // authority. Release it before rebinding the committed tools
+                // and their successor generation through the normal lifecycle.
+                await turn.DisposeAsync().ConfigureAwait(false);
+                turn = null;
+                return await RunRecapGridRecoveryAsync(host, liveTurn, observer, next, nextHead, cancellationToken)
+                    .ConfigureAwait(false);
             }
             else if (requirement is SessionRuntimeRecoveryRequirements
                          .ToolContinuationRequired toolContinuation) {
@@ -3453,12 +3496,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     id => _connectionCatalog.ContainsKey(id),
                     toolContinuation,
                     host.TargetExpectation,
-                    cancellationToken
+                    cancellationToken,
+                    liveTurn.StopController.UserStopToken
                 ).ConfigureAwait(false);
                 RecapGridOnlineContextHandle online = turn.Online
                     ?? throw new InvalidDataException(
                         "Tool continuation has no Online context."
                     );
+                // Pending tools were already durably committed. User Stop
+                // must not cancel their execution token during recovery.
+                liveTurn.StopController.EnterDispatchOrThrow(cancellationToken);
                 var lifecycle = new GalateaRecoveryLifecycleGate(
                     online.Lifecycle,
                     liveTurn.StopController
@@ -3467,7 +3514,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     turn,
                     online.CandidateSource,
                     lifecycle,
-                    SessionUncertainCompletionRecoveryPolicy.Refuse
+                    liveTurn
                 ));
             }
             else {
@@ -3506,23 +3553,83 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private static SessionRuntime CreateRecapGridRuntime(
+    private SessionRuntime CreateRecapGridRuntime(
         GalateaRecapGridTurn turn,
         ICoherentContextCandidateSource candidates,
         ISessionContextLifecycleCoordinator lifecycle,
-        SessionUncertainCompletionRecoveryPolicy recoveryPolicy
+        GalateaLiveTurn liveTurn
     ) => new(
-        turn.Client,
+        CreateRetryClient(turn.Client, liveTurn),
         turn.AgentControl?.ToolSession,
         CompletionTarget: new SessionCompletionTargetIdentity(
             turn.Identity.ConnectionId,
             turn.Identity.Kind,
             turn.Identity.ConnectionFingerprint),
-        UncertainCompletionRecoveryPolicy: recoveryPolicy,
         ToolRuntimeIdentity: turn.AgentControl?.RuntimeIdentity,
         ContextCandidateSource: candidates,
         ContextLifecycle: lifecycle,
         InputProjector: GalateaInputProjector.Instance);
+
+    private ICompletionClient CreateRetryClient(ICompletionClient inner, GalateaLiveTurn turn) =>
+        new GalateaCompletionRetryClient(inner, new GalateaCompletionRetryOptions {
+            TimeProvider = _timeProvider,
+            AttemptTimeout = TimeSpan.FromSeconds(_completionAttemptTimeoutSeconds.TryGetValue(turn.Options.ConnectionId, out int seconds) ? seconds : 1800),
+            UserStopToken = turn.StopController.UserStopToken,
+            InvocationStarted = () => turn.BeginCompletionInvocation(),
+            CreateAttemptObserver = (attempt, _) => {
+                turn.PublishAttempt(attempt);
+                var observer = new CompletionStreamObserver();
+                var filter = new InlineThinkTextFilter(startInsideThink: false);
+                int tools = 0;
+                observer.ReceivedReasoningDelta += delta => {
+                    if (!string.IsNullOrEmpty(delta)) { turn.PublishReasoningDelta(delta); }
+                };
+                observer.ReceivedTextDelta += delta => {
+                    string visible = filter.Filter(delta);
+                    if (!string.IsNullOrEmpty(visible)) { turn.PublishTextDelta(visible); }
+                };
+                observer.ReceivedToolCall += _ => {
+                    if (Interlocked.Exchange(ref tools, 1) == 0) { turn.PublishStatus(GalateaSseStatusCode.UsingTools); }
+                };
+                return observer;
+            },
+            RetryWaiting = notice => {
+                turn.ResetCompletionPreview();
+                DateTimeOffset now = _timeProvider.GetUtcNow();
+                long next = notice.Delay > DateTimeOffset.MaxValue - now
+                    ? DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()
+                    : (now + notice.Delay).ToUnixTimeMilliseconds();
+                turn.PublishRetry(notice.Attempt, notice.Failure.Kind.ToString(), next);
+            },
+            AttemptTimedOut = _ => {
+                // Cancellation callback may race terminal publication. It is
+                // diagnostics only; the original call retains its ownership.
+                try { turn.PublishStatus(GalateaSseStatusCode.TransportUnresponsive); }
+                catch (InvalidOperationException) { }
+            },
+        });
+
+    internal static SessionTurnEndReason? ClassifyBusinessTermination(CompletionTermination termination) =>
+        termination.Kind == CompletionTerminationKind.Incomplete
+            ? termination.ProviderReason switch {
+                "response.refusal" or "refusal" or "content_filter" or "SAFETY"
+                    or "BLOCKLIST" or "PROHIBITED_CONTENT" or "RECITATION"
+                    => SessionTurnEndReason.Rejected,
+                "length" or "max_tokens" or "max_output_tokens" or "MAX_TOKENS"
+                    => SessionTurnEndReason.Incomplete,
+                _ => null,
+            } : null;
+
+    internal static IReadOnlyDictionary<string, int> ValidateAttemptTimeouts(GalateaConfig config) {
+        var values = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var pair in config.CompletionAttemptTimeoutSeconds ?? new Dictionary<string, int>()) {
+            if (!config.Connections.Any(connection => connection.Id == pair.Key) || pair.Value is < 1 or > 86400) {
+                throw new InvalidOperationException("Completion attempt timeout requires an existing connection and 1..86400 seconds.");
+            }
+            values.Add(pair.Key, pair.Value);
+        }
+        return values;
+    }
 
     private async Task<CharacterSessionHost> CreateSessionAsync(
         GalateaCharacterConfig character,
@@ -3585,7 +3692,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
             engine ??= _maintenanceMode
                 ? SessionJournalEngine.OpenReadOnly(sessionDir)
-                : SessionJournalEngine.Open(sessionDir);
+                : OpenSessionForTest?.Invoke(sessionDir) ?? SessionJournalEngine.Open(sessionDir);
             SessionExecutionBoundaryInspection boundary =
                 engine.InspectExecutionBoundary(ct);
             DebugUtil.Info(
@@ -3679,14 +3786,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 _timeProvider,
                 intent => ResolveInternalMailTarget(character, intent)
             );
+            host.ColdRecoveryJitterHead = boundary.Phase is SessionExecutionPhase.AwaitingAgentAction
+                or SessionExecutionPhase.AwaitingCompletion or SessionExecutionPhase.AwaitingToolExecution
+                    ? boundary.Head : null;
             characterMemory = null;
             delegationHandle = null;
             engine = null;
             if (!_maintenanceMode) {
                 await host.TurnLock.WaitAsync(ct).ConfigureAwait(false);
                 try {
-                    await ReconcileDurableAdmissionAsync(host, ct)
-                        .ConfigureAwait(false);
+                    // Attachment must become visible before any repeatable
+                    // provider work. Pulses and explicit admission own that
+                    // cancellable work under this session's TurnLock.
+                    _ = ReconcileDurableDeliveries(host, ct);
+                    await ReconcileActiveCharacterNoteDerivedInfoPlanAsync(host).ConfigureAwait(false);
                     host.AutonomyCadence?.Arm();
                     host.PublishAutonomyStatus();
                 }
@@ -3785,60 +3898,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private void AbandonCurrentFailedTurnAndReconcile(
-        CharacterSessionHost host
-    ) {
-        SessionExecutionBoundaryInspection boundary =
-            host.Engine.InspectExecutionBoundary();
-        if (boundary.Phase != SessionExecutionPhase.TurnFailed
-            || boundary.Head is not { } failedHead) {
-            throw new GalateaTurnException(
-                "失败轮次的持久化边界需要恢复，请刷新后处理。",
-                "failed-turn-recovery-required"
-            );
-        }
-        AbandonFailedTurnAndReconcile(
-            host,
-            failedHead,
-            CancellationToken.None
-        );
-    }
-
-    private void AbandonFailedTurnAndReconcile(
-        CharacterSessionHost host,
-        EventAddress failedHead,
-        CancellationToken cancellationToken
-    ) {
-        _ = ReconcileDurableDeliveries(
-            host,
-            CancellationToken.None
-        );
-        SessionTurnRetractionResult result =
-            host.Engine.AbandonFailedTurn(
-                failedHead,
-                cancellationToken
-            );
-        if (result is not SessionTurnRetractionResult.Moved) {
-            throw new GalateaTurnException(
-                "失败轮次未能在精确边界安全放弃，请刷新后处理。",
-                "failed-turn-recovery-required"
-            );
-        }
-        GalateaDurableReplyLeaseReconcileResult settled =
-            ReconcileDurableDeliveries(
-                host,
-                CancellationToken.None
-            );
-        if (settled is GalateaDurableReplyLeaseReconcileResult.Retained) {
-            throw new GalateaTurnException(
-                "Abandoned durable reply evidence was not rolled back.",
-                "delegation-reply-abandon-incomplete"
-            );
-        }
-        if (settled is GalateaDurableReplyLeaseReconcileResult.RolledBack) {
-            _ = host.DelegationHandle?.Signal();
-        }
-    }
+    internal void ReconcileAcceptanceCleanup(CharacterSessionHost host) =>
+        _ = ReconcileDurableDeliveries(host, CancellationToken.None);
 
     private GalateaDurableReplyLeaseReconcileResult
         ReconcileDurableDeliveries(
@@ -3918,14 +3979,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         "recovery-required"
     );
 
-    private static bool WasStoppedByObserver(CompletionTermination termination) {
-        ArgumentNullException.ThrowIfNull(termination);
-
-        if (termination.Kind is not CompletionTerminationKind.Incomplete) { return false; }
-
-        return termination.Detail?.Contains("Streaming observer stopped", StringComparison.Ordinal) == true;
-    }
-
     internal static string WrapUserMessageForEngine(
         string userMessage,
         DateTimeOffset externalLocalTimestamp
@@ -3947,19 +4000,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     private static string DescribeTurn(RecentTurnDto? turn) {
         if (turn is null) { return "<null>"; }
-        return $"character={Preview(turn.UserText)}, assistant={Preview(turn.Assistant.Text)}";
+        return $"character={Preview(turn.UserText)}, assistant={Preview(turn.Assistant?.Text)}";
     }
-
-    private static GalateaTurnException PreDispatchStopped() => new(
-        "已停止本轮请求；尚未开始模型生成，也未写入会话历史。",
-        "stopped-before-dispatch"
-    );
-
-    private static GalateaTurnException
-        RecoveryPreDispatchStopped() => new(
-        "已停止本次恢复尝试；原有持久化轮次仍保持待恢复状态。",
-        "recovery-stopped-before-dispatch"
-    );
 
     private static string Preview(string? text) {
         if (string.IsNullOrWhiteSpace(text)) { return "<null>"; }
@@ -4193,6 +4235,40 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
 
     // Written only under TurnLock; HTTP reads the immutable cached projection.
     internal bool AutomaticReplyFailed { get; set; }
+    internal bool GenerationBlocked { get; set; }
+    // Claimed once under TurnLock; never persisted or rearmed by a pulse.
+    internal EventAddress? ColdRecoveryJitterHead { get; set; }
+    private GalateaAdmissionOperation? _admissionOperation;
+
+    internal GalateaAdmissionOperation BeginAdmission(CancellationToken caller, CancellationToken shutdown) {
+        lock (_turnStateGate) {
+            if (_admissionOperation is not null) { throw new InvalidOperationException("Admission already owns this session."); }
+            return _admissionOperation = new GalateaAdmissionOperation(this, caller, shutdown);
+        }
+    }
+
+    internal GalateaAdmissionStatusDto ReadAdmissionStatus() {
+        lock (_turnStateGate) {
+            return _admissionOperation is { } operation
+                ? new(operation.Id, operation.StopRequested ? "stopping" : "running")
+                : new(null, "idle");
+        }
+    }
+
+    internal bool StopAdmission(string id) {
+        lock (_turnStateGate) {
+            if (_admissionOperation is not { } operation || operation.Id != id) { return false; }
+            operation.RequestStop();
+            return true;
+        }
+    }
+
+    internal void FinishAdmission(GalateaAdmissionOperation operation) {
+        lock (_turnStateGate) {
+            if (!ReferenceEquals(_admissionOperation, operation)) { throw new InvalidOperationException("Admission owner changed."); }
+            _admissionOperation = null;
+        }
+    }
     internal bool AutomaticAdmissionFailed { get; set; }
     internal ApiErrorDto? AutomaticAdmissionFailure { get; set; }
 
@@ -4208,6 +4284,10 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
     }
 
     internal void PublishAutonomyStatus() {
+        if (GenerationBlocked) {
+            SetAgentStatus("blocked", "COMPLETION_BLOCKED");
+            return;
+        }
         if (AutomaticAdmissionFailed) {
             SetAgentStatus("blocked", "AUTOMATIC_ADMISSION_FAILED", AutomaticAdmissionFailure);
             return;
@@ -4514,12 +4594,14 @@ internal static class GalateaConfigLoader {
                 configDir
             ),
             MaintenanceMode: rootFile.Runtime.MaintenanceMode,
-            RecapGrid: LoadRecapGridConfig(rootFile.Runtime.RecapGrid, configDir)
+            RecapGrid: LoadRecapGridConfig(rootFile.Runtime.RecapGrid, configDir),
+            CompletionAttemptTimeoutSeconds: rootFile.Runtime.CompletionAttemptTimeoutSeconds
         ) with {
             CharacterRecipientDirectory = characterRecipientDirectory
         };
 
         Validate(config);
+        _ = GalateaHostService.ValidateAttemptTimeouts(config);
         return config;
     }
 

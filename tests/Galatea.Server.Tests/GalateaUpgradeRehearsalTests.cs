@@ -32,7 +32,7 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
     private const string NativeJson = """{"id":"rs_lab","type":"reasoning","encrypted_content":"SYNTHETIC_LAB_REASONING"}""";
 
     [Theory]
-    [InlineData("AfterRequestPreparedCommitted", SessionExecutionPhase.AwaitingCompletionDispatch,
+    [InlineData("AfterRequestPreparedCommitted", SessionExecutionPhase.AwaitingCompletion,
         SessionDurableDispatchState.NotStarted, 2)]
     [InlineData("AfterCompletionAttemptStartedCommitted", SessionExecutionPhase.AwaitingCompletion,
         SessionDurableDispatchState.StartedOutcomeUncertain, 3)]
@@ -86,7 +86,7 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
             (GalateaHostService service, CharacterSessionHost session) = await SessionAsync(lab.Host);
             using HttpResponseMessage accepted = await http.PostAsJsonAsync(
                 "/api/v1/characters/alice/chat/turns/resume", new ResumeTurnRequest(
-                    EventAddressTextCodec.Format(frozenHead), null, RestartUncertainCompletion: true));
+                    EventAddressTextCodec.Format(frozenHead), null));
             GalateaLiveTurn refused = await WaitAsync(accepted, service, session);
             Assert.Equal("failed", refused.Status);
             using GalateaTurnSubscription replay = refused.Subscribe();
@@ -95,7 +95,7 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
             Assert.Equal(frozenHead, session.Engine.ReadCurrentHead());
             var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 session.Engine.InspectRuntimeRecoveryRequirements());
-            Assert.Equal(pendingDispatch, frozen.DispatchState);
+            Assert.NotEqual(default, frozen.SourcePreparedAddress);
             Assert.Equal(previousConnectionFingerprint, frozen.CompletionTarget.ConnectionFingerprint);
             Assert.Single(factory.Requests);
             Assert.Equal(credentialsBeforeRefusal, factory.CredentialReads);

@@ -5,8 +5,8 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Stable origin metadata for one prepared request. Provider-attempt identity is
-/// the address of the CompletionAttemptStarted event and is deliberately absent here.
+/// Stable origin metadata for one prepared request. Provider attempts are transient;
+/// historical Started event addresses are read only as legacy lineage evidence.
 /// </summary>
 internal sealed record SessionRequestOrigin(
     string CorrelationId,

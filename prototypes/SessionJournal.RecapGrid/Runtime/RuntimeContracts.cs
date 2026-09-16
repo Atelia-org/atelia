@@ -49,6 +49,16 @@ public interface IRecapCompletionInvoker {
     );
 }
 
+/// <summary>
+/// A host-owned repeatable-generation invocation. The implementation owns a
+/// positive deadline for every underlying attempt, waits for its cleanup before
+/// retrying, and propagates caller cancellation after draining. The runtime must
+/// not impose a second deadline over this entire logical invocation.
+/// </summary>
+public interface IRecapCompletionAttemptDeadlineInvoker : IRecapCompletionInvoker {
+    TimeSpan AttemptTimeout { get; }
+}
+
 public enum RecapCompletionResourceOwnership {
     Owned,
     Borrowed
@@ -147,6 +157,10 @@ public sealed class RecapCompletionRoute {
         if (dispatchTimeout <= TimeSpan.Zero
             || dispatchTimeout > TimeSpan.FromDays(1)) {
             throw new ArgumentOutOfRangeException(nameof(dispatchTimeout));
+        }
+        if (invoker is IRecapCompletionAttemptDeadlineInvoker deadlineOwner
+            && deadlineOwner.AttemptTimeout != dispatchTimeout) {
+            throw new ArgumentException("The invoker's attempt deadline must equal the exact route dispatch timeout.", nameof(invoker));
         }
         Key = key;
         ConnectionId = connectionId;

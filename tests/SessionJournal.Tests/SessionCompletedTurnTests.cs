@@ -76,6 +76,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             Assert.Equal(secondAction, latest.CapturedHead);
             Assert.Equal(0, latest.DerivedContextNthPrevious);
             Assert.Equal("two", turn.ObservationContent);
+            Assert.NotNull(turn.TerminalAction);
             Assert.Equal(secondAction, turn.TerminalAction.Address);
             Assert.Equal(structured.Blocks, turn.TerminalAction.Message.Blocks);
 
@@ -124,6 +125,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                 )
             ).Turns
         );
+        Assert.NotNull(projected.TerminalAction);
         Assert.Equal(completedAction, projected.TerminalAction.Address);
 
         SessionTurnRetractionResult unavailableAtObservation =
@@ -176,6 +178,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         SessionCompletedTurnProjection projected = Assert.Single(
             Snapshot(engine.ReadRecentCompletedTurnsAt(toolAction, 10)).Turns
         );
+        Assert.NotNull(projected.TerminalAction);
         Assert.Equal(earlierTerminal, projected.TerminalAction.Address);
         var unavailable = Assert.IsType<
             SessionTurnRetractionResult.Unavailable
@@ -243,6 +246,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             Snapshot(engine.ReadRecentCompletedTurnsAt(terminalHead, 10)).Turns
         );
         Assert.Equal("use a tool", projected.ObservationContent);
+        Assert.NotNull(projected.TerminalAction);
         Assert.Equal(terminal.Blocks, projected.TerminalAction.Message.Blocks);
         Assert.DoesNotContain(
             projected.TerminalAction.Message.Blocks,
@@ -255,7 +259,8 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         Assert.Equal(beforeTurn, moved.NewHead);
         Assert.Equal(terminalHead, moved.PreviousHead);
         Assert.Equal("use a tool", moved.Turn.ObservationContent);
-        Assert.Equal(terminalHead, moved.Turn.TerminalAction!.Address);
+        Assert.NotNull(moved.Turn.TerminalAction);
+        Assert.Equal(terminalHead, moved.Turn.TerminalAction.Address);
         Assert.Equal(
             terminal.Blocks,
             moved.Turn.TerminalAction.Message.Blocks
@@ -333,6 +338,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         SessionCompletedTurnProjection projected = Assert.Single(
             Snapshot(engine.ReadRecentCompletedTurns(10)).Turns
         );
+        Assert.NotNull(projected.TerminalAction);
         Assert.Equal(terminalHead, projected.TerminalAction.Address);
         var terminalText = Assert.IsType<ActionBlock.Text>(
             Assert.Single(projected.TerminalAction.Message.Blocks)
@@ -341,7 +347,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
     }
 
     [Fact]
-    public async Task ToolContinuationFailure_AbandonsBackToOriginalObservationPredecessor() {
+    public async Task ToolContinuationFailure_ExplicitStopPreservesAlreadyExecutedToolFacts() {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new QueueCompletionClient();
@@ -397,33 +403,39 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         );
         EventAddress failedHead = engine.ReadCurrentHead()!.Value;
         Assert.Equal(
-            SessionExecutionPhase.TurnFailed,
+            SessionExecutionPhase.AwaitingCompletion,
             engine.InspectExecutionBoundary().Phase
         );
         SessionCompletedTurnProjection earlier = Assert.Single(
             Snapshot(engine.ReadRecentCompletedTurnsAt(failedHead, 10)).Turns
         );
+        Assert.NotNull(earlier.TerminalAction);
         Assert.Equal(earlierTerminal, earlier.TerminalAction.Address);
 
         var rewindUnavailable = Assert.IsType<
             SessionTurnRetractionResult.Unavailable
         >(engine.RewindLatestCompletedTurn(failedHead));
         Assert.Equal(
-            SessionExecutionPhase.TurnFailed,
+            SessionExecutionPhase.AwaitingCompletion,
             rewindUnavailable.Boundary.Phase
         );
 
-        var abandoned = Assert.IsType<SessionTurnRetractionResult.Moved>(
-            engine.AbandonFailedTurn(failedHead)
+        var stopped = Assert.IsType<SessionTurnEndResult.Ended>(
+            engine.EndPendingTurn(failedHead, SessionTurnEndReason.Stopped)
         );
-        Assert.Equal(beforeTurn, abandoned.NewHead);
-        Assert.Equal("will fail", abandoned.Turn.ObservationContent);
-        Assert.Null(abandoned.Turn.TerminalAction);
-        Assert.Equal(
-            earlierTerminal,
-            Assert.Single(Snapshot(engine.ReadRecentCompletedTurns(10)).Turns)
-                .TerminalAction.Address
-        );
+        Assert.NotEqual(beforeTurn, stopped.End.Address);
+        var closed = Snapshot(engine.ReadRecentCompletedTurns(10)).Turns;
+        Assert.Equal(2, closed.Count);
+        Assert.Contains(closed, turn => turn.TerminalAction?.Address == earlierTerminal);
+        var terminated = Assert.Single(closed, turn => turn.Outcome is SessionClosedTurnOutcome.Terminated);
+        Assert.Equal("will fail", terminated.ObservationContent);
+        Assert.Null(terminated.TerminalAction);
+        Assert.Equal(SessionTurnEndReason.Stopped,
+            Assert.IsType<SessionClosedTurnOutcome.Terminated>(terminated.Outcome).End.Reason);
+        var headers = engine.ReadCurrentLineageHeaders().HeadToRoot;
+        Assert.Single(headers, header => header.Kind == SessionEventKind.ToolExecutionStarted);
+        Assert.Single(headers, header => header.Kind == SessionEventKind.ToolResultObserved);
+        Assert.Contains(headers, header => header.Address == failedHead);
         Assert.Equal(
             SessionExecutionPhase.Idle,
             engine.InspectExecutionBoundary().Phase
@@ -443,9 +455,9 @@ public sealed class SessionCompletedTurnTests : IDisposable {
 
         Assert.Equal(
             terminal,
-            Assert.Single(
+            Assert.IsType<SessionClosedTurnOutcome.Completed>(Assert.Single(
                 Snapshot(engine.ReadRecentCompletedTurnsAt(setup, 10)).Turns
-            ).TerminalAction.Address
+            ).Outcome).Action.Address
         );
 
         var unavailable = Assert.IsType<
@@ -515,7 +527,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
     }
 
     [Fact]
-    public async Task Abandon_CasRaceReturnsRetryableWithoutMovingConcurrentHead() {
+    public async Task LegacyAbandon_CasRaceReturnsRetryableWithoutMovingConcurrentHead() {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new QueueCompletionClient();
@@ -546,21 +558,32 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                 concurrentHead = idleHead;
             }
         );
-        using (racing = SessionJournalEngine.CreateForTest(
-            path,
-            Options,
-            Runtime(client, source),
-            hooks
-        )) {
+        using (var preparing = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(path, Options), Runtime(client, source))) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
                 path,
-                racing,
+                preparing,
                 source
             );
-            idleHead = racing.ReadCurrentHead()!.Value;
+            idleHead = preparing.ReadCurrentHead()!.Value;
             await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
-                () => racing.SendAsync("failed", CancellationToken.None)
+                () => preparing.SendAsync("failed", CancellationToken.None)
             );
+        }
+        // Explicit historical fixture: current generation does not write Started/Failed.
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            RefId branch = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+            EventAddress prepared = journal.GetHead(branch)!.Value;
+            EventAddress started = journal.CommitToRef(branch, prepared,
+                SessionEventCodec.Encode(SessionEventKind.CompletionAttemptStarted,
+                    LegacyPreparedV7TestFixture.StartedFor(journal, prepared)),
+                opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted, hint: default).Unwrap().EventAddress;
+            journal.CommitToRef(branch, started,
+                SessionEventCodec.Encode(SessionEventKind.CompletionAttemptFailed,
+                    new CompletionAttemptFailedBody(CompletionTerminationKind.Failed, "known", null, [])),
+                opaqueEventKind: (uint)SessionEventKind.CompletionAttemptFailed, hint: default).Unwrap();
+        }
+        using (racing = SessionJournalEngine.OpenForTest(path, Runtime(client, source), hooks)) {
             EventAddress failedHead = racing.ReadCurrentHead()!.Value;
 
             var retryable = Assert.IsType<

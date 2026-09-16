@@ -432,7 +432,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         RecapCompletionRuntimeOptions? runtimeOptions = null,
         int maximumTelemetryEvents = 1_024,
         IRecapCompletionTelemetry? liveTelemetry = null,
-        ISessionInputProjector? inputProjector = null
+        ISessionInputProjector? inputProjector = null,
+        Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>? maintenanceInvokerFactory = null
     ) => CreateWithRegistry(
         routeManifestLoader,
         registry,
@@ -441,7 +442,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         maximumTelemetryEvents,
         ownsRegistry: false,
         liveTelemetry: liveTelemetry,
-        inputProjector: inputProjector
+        inputProjector: inputProjector,
+        maintenanceInvokerFactory: maintenanceInvokerFactory
     );
 
     /// <summary>
@@ -460,7 +462,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         RecapCompletionRuntimeOptions? runtimeOptions = null,
         int maximumTelemetryEvents = 1_024,
         IRecapCompletionTelemetry? liveTelemetry = null,
-        ISessionInputProjector? inputProjector = null
+        ISessionInputProjector? inputProjector = null,
+        Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>? maintenanceInvokerFactory = null
     ) {
         ArgumentNullException.ThrowIfNull(agentControl);
         return CreateWithRegistry(
@@ -471,7 +474,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             maximumTelemetryEvents,
             ownsRegistry: false,
             liveTelemetry: liveTelemetry,
-            inputProjector: inputProjector
+            inputProjector: inputProjector,
+            maintenanceInvokerFactory: maintenanceInvokerFactory
         );
     }
 
@@ -515,7 +519,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         int maximumTelemetryEvents,
         bool ownsRegistry,
         IRecapCompletionTelemetry? liveTelemetry = null,
-        ISessionInputProjector? inputProjector = null
+        ISessionInputProjector? inputProjector = null,
+        Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>? maintenanceInvokerFactory = null
     ) {
         ArgumentNullException.ThrowIfNull(routeManifestLoader);
         ArgumentNullException.ThrowIfNull(registry);
@@ -523,7 +528,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             maximumTelemetryEvents);
         var resolver = new DeferredSharedRegistryRouteResolver(
             routeManifestLoader,
-            registry);
+            registry,
+            maintenanceInvokerFactory);
         var runtime = new RecapCompletionRuntime(
             resolver, runtimeOptions, new LiveRecapCompletionTelemetry(telemetry, liveTelemetry), inputProjector);
         return new RecapGridCompletionHost(
@@ -660,12 +666,15 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         private readonly Lazy<IReadOnlyDictionary<RecapCompletionRouteKey,
             RecapGridRouteManifestEntry>> _routes;
         private readonly CompletionConnectionRegistry _registry;
+        private readonly Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>? _maintenanceInvokerFactory;
 
         internal DeferredSharedRegistryRouteResolver(
             Func<RecapGridRouteManifest> loader,
-            CompletionConnectionRegistry registry
+            CompletionConnectionRegistry registry,
+            Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>? maintenanceInvokerFactory
         ) {
             _registry = registry;
+            _maintenanceInvokerFactory = maintenanceInvokerFactory;
             _routes = new Lazy<IReadOnlyDictionary<
                 RecapCompletionRouteKey, RecapGridRouteManifestEntry>>(
                 () => loader().Routes.ToDictionary(static route => route.Key),
@@ -707,9 +716,11 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                 );
             }
             try {
-                var invoker = new CompletionClientRecapInvoker(
-                    _registry.GetClient(connection.Id),
-                    RecapCompletionResourceOwnership.Borrowed);
+                ICompletionClient rawClient = _registry.GetClient(connection.Id);
+                IRecapCompletionInvoker invoker = _maintenanceInvokerFactory is null
+                    ? new CompletionClientRecapInvoker(rawClient, RecapCompletionResourceOwnership.Borrowed)
+                    : _maintenanceInvokerFactory(connection.Id, rawClient, route.DispatchTimeout)
+                        ?? throw new InvalidOperationException("The maintenance invocation factory returned null.");
                 return new RecapCompletionRouteResolution.Bound(
                     RecapCompletionRoute.Create(
                         key,

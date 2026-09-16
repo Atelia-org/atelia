@@ -24,7 +24,9 @@ public sealed record GalateaConfig(
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
-    GalateaRecapGridRuntimeConfig? RecapGrid = null
+    GalateaRecapGridRuntimeConfig? RecapGrid = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null
 ) {
     // This directory is derived once from the complete config-file character set.
     // Direct in-process test configurations intentionally leave it unset; the
@@ -196,7 +198,9 @@ internal sealed record GalateaRuntimeFileConfig(
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
-    GalateaRecapGridFileConfig? RecapGrid = null
+    GalateaRecapGridFileConfig? RecapGrid = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null
 );
 
 /// <summary>
@@ -684,7 +688,8 @@ public sealed record GalateaMeDto(
 
 public sealed record RecentTurnDto(
     string UserText,
-    AssistantMessageDto Assistant
+    AssistantMessageDto? Assistant,
+    string? EndReason = null
 );
 
 public sealed record ContextHeaderDto(
@@ -898,7 +903,6 @@ internal sealed record CurrentTurnDto(
     string Status,
     string? TurnId = null,
     string? ConnectionId = null,
-    bool RestartRequired = false,
     string? RecoveryHead = null
 );
 
@@ -906,7 +910,7 @@ internal sealed record ResumeTurnRequest(
     [property: JsonPropertyName("expectedHead")]
     string ExpectedHead,
     [property: JsonPropertyName("connectionId")]
-    string? ConnectionId = null,
-    [property: JsonPropertyName("restartUncertainCompletion")]
-    bool RestartUncertainCompletion = false
+    string? ConnectionId = null
 );
+
+internal sealed record StopPendingTurnRequest(string ExpectedHead);

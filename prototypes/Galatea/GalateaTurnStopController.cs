@@ -4,17 +4,18 @@ namespace Atelia.Galatea.Server;
 
 internal enum GalateaTurnStopPhase {
     PreDispatch = 0,
-    ObserverOnly = 1,
+    Dispatched = 1,
     Completed = 2
 }
 
 /// <summary>
 /// Linearizes user stop against the transition from cancellable preparation
-/// to observer-only provider dispatch for one live turn.
+/// to generation-only cancellation after provider dispatch for one live turn.
 /// </summary>
 internal sealed class GalateaTurnStopController {
     private readonly object _gate = new();
     private readonly CancellationTokenSource _preDispatchStop = new();
+    private readonly CancellationTokenSource _userStop = new();
     private bool _stopRequested;
     private GalateaTurnStopPhase _phase =
         GalateaTurnStopPhase.PreDispatch;
@@ -27,6 +28,9 @@ internal sealed class GalateaTurnStopController {
 
     internal CancellationToken PreDispatchStopToken =>
         _preDispatchStop.Token;
+
+    // Never pass this token to tool execution: it cancels generation only.
+    internal CancellationToken UserStopToken => _userStop.Token;
 
     internal bool StopRequested {
         get {
@@ -54,17 +58,15 @@ internal sealed class GalateaTurnStopController {
             _stopRequested = true;
             cancelPreDispatch =
                 _phase == GalateaTurnStopPhase.PreDispatch;
-            if (!cancelPreDispatch) {
-                Observer.ShouldStop = true;
-            }
         }
+        _userStop.Cancel();
         if (cancelPreDispatch) {
             _preDispatchStop.Cancel();
         }
         return true;
     }
 
-    internal void EnterObserverOnlyOrThrow(
+    internal void EnterDispatchOrThrow(
         CancellationToken cancellationToken
     ) {
         lock (_gate) {
@@ -74,7 +76,7 @@ internal sealed class GalateaTurnStopController {
                     "A completed Galatea turn cannot enter dispatch."
                 );
             }
-            if (_phase == GalateaTurnStopPhase.ObserverOnly) {
+            if (_phase == GalateaTurnStopPhase.Dispatched) {
                 return;
             }
             if (_stopRequested
@@ -85,7 +87,16 @@ internal sealed class GalateaTurnStopController {
                     token: _preDispatchStop.Token
                 );
             }
-            _phase = GalateaTurnStopPhase.ObserverOnly;
+            _phase = GalateaTurnStopPhase.Dispatched;
+        }
+    }
+
+    internal void ProtectCommittedTools() {
+        lock (_gate) {
+            if (_phase == GalateaTurnStopPhase.Completed) {
+                throw new InvalidOperationException("A completed turn cannot continue tools.");
+            }
+            _phase = GalateaTurnStopPhase.Dispatched;
         }
     }
 

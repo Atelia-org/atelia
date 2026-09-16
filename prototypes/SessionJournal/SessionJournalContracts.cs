@@ -22,13 +22,13 @@ public enum SessionEventKind : uint {
     ImportedAgentAction = 10,
     // 11 is retired. It was the opaque CompletionAttemptRestarted event.
     CompletionAttemptStarted = 13,
+    TurnEnded = 14,
 }
 
 public enum SessionExecutionPhase {
     Empty,
     Idle,
     AwaitingAgentAction,
-    AwaitingCompletionDispatch,
     AwaitingCompletion,
     AwaitingToolExecution,
     TurnFailed,
@@ -88,11 +88,6 @@ public sealed record SessionToolRuntimeIdentity(
     string CapabilitySetFingerprint
 );
 
-public enum SessionUncertainCompletionRecoveryPolicy {
-    Refuse,
-    RestartWithNewAttempt,
-}
-
 /// <summary>
 /// Host-owned runtime dependencies for current SessionJournal execution.
 /// </summary>
@@ -106,8 +101,6 @@ public sealed record SessionRuntime(
     ICompletionClient CompletionClient,
     ToolSession? ToolSession = null,
     SessionCompletionTargetIdentity? CompletionTarget = null,
-    SessionUncertainCompletionRecoveryPolicy UncertainCompletionRecoveryPolicy =
-        SessionUncertainCompletionRecoveryPolicy.Refuse,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
     long? MaximumCanonicalRequestBytes = null,
@@ -126,6 +119,14 @@ public sealed record ResumeOutcome(
     ActionMessage? Message = null,
     CompletionDescriptor? Invocation = null,
     IReadOnlyList<string>? Errors = null
+);
+
+/// <summary>The single accepted Action of an exact Prepared recovery. Tools have not executed.</summary>
+public sealed record SessionPreparedCompletionBoundaryResult(
+    EventAddress ActionAddress,
+    ActionMessage Message,
+    CompletionDescriptor Invocation,
+    IReadOnlyList<string>? Errors
 );
 
 /// <summary>
@@ -199,7 +200,6 @@ internal enum SessionJournalFailpoint {
     None,
     AfterObservationCommitted,
     AfterRequestPreparedCommitted,
-    AfterCompletionAttemptStartedCommitted,
     AfterCompletionBeforeActionCommitted,
     AfterActionCommitted,
     AfterToolStartedCommitted,
@@ -232,7 +232,8 @@ internal sealed record SessionJournalTestHooks(
         AfterLifecycleAuditExpectedHeadCaptured = null,
     Action<EventJournal.EventJournal>?
         AfterContextLifecyclePrepared = null,
-    Action? AfterCompletedTurnsBudgetEntered = null
+    Action? AfterCompletedTurnsBudgetEntered = null,
+    Action? AfterTurnRefMoveBeforeReturn = null
 );
 
 internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)

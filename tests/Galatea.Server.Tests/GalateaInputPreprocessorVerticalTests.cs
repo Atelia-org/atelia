@@ -621,11 +621,6 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             new SingleClientFactory(completion),
             normalizer
         );
-        EventAddress failedHead = await GalateaDurableRecoveryVerticalTests
-            .CreateFailedBoundaryAsync(
-                host.SessionDirectory,
-                Connection("test", "model-a")
-            );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -637,13 +632,12 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         SessionExecutionBoundaryInspection initialBoundary = session.Engine
             .InspectExecutionBoundary();
+        EventAddress initialHead = session.Engine.ReadCurrentHead()!.Value;
         GalateaDelegationStateSnapshot initialDelegation = session
             .DelegationHandle!.Store.ReadSnapshot();
-        Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
-        Assert.IsType<SessionRuntimeRecoveryRequirements
-            .FailedTurnMustBeAbandoned>(
-                session.Engine.InspectRuntimeRecoveryRequirements()
-            );
+        Assert.Equal(SessionExecutionPhase.Idle, initialBoundary.Phase);
+        Assert.IsType<SessionRuntimeRecoveryRequirements.NoRuntimeRequired>(
+            session.Engine.InspectRuntimeRecoveryRequirements());
 
         using var cancellation = new CancellationTokenSource();
         Task<HttpResponseMessage> admission = client.PostAsJsonAsync(
@@ -667,14 +661,15 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.True(normalizer.CapturedToken.IsCancellationRequested);
         Assert.Equal(0, completion.DispatchCallCount);
         Assert.Null(session.GetCurrentTurn());
-        Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
         Assert.Equal(initialBoundary, session.Engine.InspectExecutionBoundary());
-        SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned after =
+        SessionRuntimeRecoveryRequirements.NoRuntimeRequired after =
             Assert.IsType<SessionRuntimeRecoveryRequirements
-                .FailedTurnMustBeAbandoned>(
+                .NoRuntimeRequired>(
                     session.Engine.InspectRuntimeRecoveryRequirements()
                 );
-        Assert.Equal(failedHead, after.FailedHead);
+        Assert.Equal(initialHead, after.CapturedHead);
+        Assert.Equal(SessionExecutionPhase.Idle, after.Phase);
         GalateaDelegationStateSnapshot afterDelegation = session
             .DelegationHandle.Store.ReadSnapshot();
         Assert.Equal(

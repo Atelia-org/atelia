@@ -270,7 +270,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         EventAddress terminal = AppendTerminal(fixture.Engine, "terminal");
         var consumed = Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Consumed>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine));
-        Assert.Equal(terminal, consumed.TerminalActionAddress);
+        Assert.Equal(terminal, consumed.TerminalEventAddress);
         Assert.Null(fixture.Store.ReadSnapshot().ActiveLease);
     }
 
@@ -471,7 +471,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             GalateaDurableReplyLeaseReconcileResult.Consumed>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
         );
-        Assert.Equal(terminal, consumed.TerminalActionAddress);
+        Assert.Equal(terminal, consumed.TerminalEventAddress);
         Assert.Null(fixture.Store.ReadSnapshot().ActiveLease);
     }
 
@@ -687,7 +687,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             GalateaDurableReplyLeaseReconcileResult.Consumed>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
         );
-        Assert.Equal(terminal, consumed.TerminalActionAddress);
+        Assert.Equal(terminal, consumed.TerminalEventAddress);
         Assert.Null(fixture.Store.ReadSnapshot().ActiveLease);
         Assert.Equal(
             GalateaReplyNoticeState.Consumed,
@@ -707,13 +707,13 @@ public sealed class GalateaDurableReplyLeaseTests {
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
         );
 
-        Assert.Equal(action, consumed.TerminalActionAddress);
+        Assert.Equal(action, consumed.TerminalEventAddress);
         GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
         Assert.Null(snapshot.ActiveLease);
         Assert.Equal(GalateaReplyNoticeState.Consumed,
             snapshot.Notices.Single().State);
         Assert.Equal(EventAddressTextCodec.Format(action),
-            snapshot.Notices.Single().ConsumedActionAddress);
+            snapshot.Notices.Single().ConsumedTurnEndAddress);
     }
 
     [Fact]
@@ -731,8 +731,42 @@ public sealed class GalateaDurableReplyLeaseTests {
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
         );
 
-        Assert.Equal(action, consumed.TerminalActionAddress);
+        Assert.Equal(action, consumed.TerminalEventAddress);
         Assert.Null(fixture.Store.ReadSnapshot().ActiveLease);
+    }
+
+    [Theory]
+    [InlineData(false, SessionTurnEndReason.Stopped)]
+    [InlineData(false, SessionTurnEndReason.Rejected)]
+    [InlineData(false, SessionTurnEndReason.Incomplete)]
+    [InlineData(true, SessionTurnEndReason.Stopped)]
+    [InlineData(true, SessionTurnEndReason.Rejected)]
+    [InlineData(true, SessionTurnEndReason.Incomplete)]
+    public void ReconcileTerminated_ConsumesAfterColdReopenWithoutReissuing(
+        bool committed, SessionTurnEndReason reason
+    ) {
+        using var fixture = new Fixture();
+        BoundLease bound = CreateBoundLease(fixture);
+        EventAddress observation = fixture.Engine.AppendObservation(bound.Input);
+        if (committed) {
+            Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Retained>(
+                fixture.Reconciler.ReconcileActiveLease(fixture.Engine));
+        }
+        var ended = Assert.IsType<SessionTurnEndResult.Ended>(
+            fixture.Engine.EndPendingTurn(observation, reason));
+        fixture.ReopenEngine();
+        fixture.ReopenStore();
+        var consumed = Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Consumed>(
+            fixture.Reconciler.ReconcileActiveLease(fixture.Engine));
+        Assert.Equal(ended.End.Address, consumed.TerminalEventAddress);
+        fixture.ReopenStore();
+        Assert.Null(fixture.Store.ReadSnapshot().ActiveLease);
+        var notice = Assert.Single(fixture.Store.ReadSnapshot().Notices);
+        Assert.Equal(GalateaReplyNoticeState.Consumed, notice.State);
+        Assert.Equal(EventAddressTextCodec.Format(ended.End.Address), notice.ConsumedTurnEndAddress);
+        Assert.IsType<GalateaDurableReplyLeaseBeginResult.Empty>(fixture.Reconciler.BeginCutoff("next"));
+        Assert.IsType<GalateaTerminalActionExtractionReadResult.NoTerminalActionAtHead>(
+            GalateaTerminalActionExtractionTargetReader.ReadAt(fixture.Engine, ended.End.Address));
     }
 
     [Fact]
@@ -1092,7 +1126,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             Reconciler = new GalateaDurableReplyLeaseReconciler(Store);
         }
 
-        internal SessionJournalEngine Engine { get; }
+        internal SessionJournalEngine Engine { get; private set; }
         internal GalateaDelegationSqliteStore Store { get; private set; }
         internal GalateaDurableReplyLeaseReconciler Reconciler {
             get;
@@ -1108,6 +1142,11 @@ public sealed class GalateaDurableReplyLeaseTests {
 
         internal void ProduceReadyFailure(string body) =>
             ProduceReadyNotice(body, failure: true);
+
+        internal void ReopenEngine() {
+            Engine.Dispose();
+            Engine = SessionJournalEngine.Open(Path.Combine(_root, "session"));
+        }
 
         internal void ReopenStore() {
             Store.Dispose();

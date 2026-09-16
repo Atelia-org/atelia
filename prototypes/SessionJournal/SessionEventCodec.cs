@@ -33,6 +33,7 @@ internal static class SessionEventCodec {
             SessionEventKind.CompletionAttemptFailed => EncodeCompletionAttemptFailed((CompletionAttemptFailedBody)body, bodySchemaVersion),
             SessionEventKind.ImportedAgentAction => EncodeAgentActionProduced((AgentActionProducedBody)body, bodySchemaVersion),
             SessionEventKind.CompletionAttemptStarted => EncodeCompletionAttemptStarted((CompletionAttemptStartedBody)body, bodySchemaVersion),
+            SessionEventKind.TurnEnded => EncodeTurnEnded((TurnEndedBody)body, bodySchemaVersion),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
     }
@@ -64,7 +65,7 @@ internal static class SessionEventCodec {
                     SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5
                     or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7
                     or SessionRequestManifestDefaults.LegacyBodySchemaVersionV8;
-            bool supportedHistoricalInput = bodySchemaVersion == 1 && kind is (SessionEventKind.SystemPromptSetup or SessionEventKind.ObservationAccepted or SessionEventKind.CompletionAttemptStarted);
+            bool supportedHistoricalInput = bodySchemaVersion == 1 && kind is (SessionEventKind.SystemPromptSetup or SessionEventKind.ObservationAccepted or SessionEventKind.CompletionAttemptStarted or SessionEventKind.AgentActionProduced);
             if (bodySchemaVersion != currentBodySchemaVersion
                 && !supportedHistoricalPrepared && !supportedHistoricalInput) {
                 throw new NotSupportedException(
@@ -103,6 +104,7 @@ internal static class SessionEventCodec {
                     SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
                     SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
                     SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body, bodySchemaVersion),
+                    SessionEventKind.TurnEnded => DecodeTurnEnded(body),
                     _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
                 };
             }
@@ -141,7 +143,7 @@ internal static class SessionEventCodec {
             SessionEventKind.SystemPromptSetup => 2,
             SessionEventKind.SessionCreated => 2,
             SessionEventKind.ObservationAccepted => 2,
-            SessionEventKind.AgentActionProduced => 1,
+            SessionEventKind.AgentActionProduced => 2,
             SessionEventKind.ToolExecutionStarted => 1,
             SessionEventKind.ToolResultObserved => 1,
             SessionEventKind.CompletionRequestPrepared =>
@@ -149,6 +151,7 @@ internal static class SessionEventCodec {
             SessionEventKind.CompletionAttemptFailed => 2,
             SessionEventKind.ImportedAgentAction => 1,
             SessionEventKind.CompletionAttemptStarted => 2,
+            SessionEventKind.TurnEnded => 1,
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
 
@@ -409,6 +412,30 @@ internal static class SessionEventCodec {
             writer.WriteEndObject();
         }
         return buffer.WrittenMemory.ToArray();
+    }
+
+    private static byte[] EncodeTurnEnded(TurnEndedBody body, int bodySchemaVersion) {
+        if (!Enum.IsDefined(body.Reason)) { throw new InvalidDataException("Unknown turn end reason."); }
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer, bodySchemaVersion);
+            writer.WriteStartObject("body");
+            writer.WriteString("reason", body.Reason.ToString());
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+        return buffer.WrittenMemory.ToArray();
+    }
+
+    private static TurnEndedBody DecodeTurnEnded(JsonElement body) {
+        RequireExactProperties(body, "TurnEnded body", "reason");
+        string reason = ReadRequiredString(body, "reason");
+        return new TurnEndedBody(reason switch {
+            "Stopped" => SessionTurnEndReason.Stopped,
+            "Rejected" => SessionTurnEndReason.Rejected,
+            "Incomplete" => SessionTurnEndReason.Incomplete,
+            _ => throw new InvalidDataException("Unknown turn end reason.")
+        });
     }
 
     private static byte[] EncodeCompletionAttemptStarted(CompletionAttemptStartedBody body, int bodySchemaVersion) {

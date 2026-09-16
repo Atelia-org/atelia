@@ -29,7 +29,7 @@ public sealed partial class SessionJournalEngine {
                 when recovery.State.HeadKind
                     == SessionEventKind.CompletionAttemptFailed =>
                 new SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned(
+                    .LegacyFailedTurnBlocked(
                         RequireHead(recovery)
                     ),
             SessionExecutionPhase.TurnFailed =>
@@ -45,8 +45,7 @@ public sealed partial class SessionJournalEngine {
                         recovery.State.Phase,
                         recovery.State.HeadKind
                     ),
-            SessionExecutionPhase.AwaitingCompletionDispatch
-                or SessionExecutionPhase.AwaitingCompletion =>
+            SessionExecutionPhase.AwaitingCompletion =>
                 CreateFrozenCompletionRequirement(recovery, cancellationToken),
             SessionExecutionPhase.AwaitingToolExecution =>
                 new SessionRuntimeRecoveryRequirements
@@ -117,11 +116,8 @@ public sealed partial class SessionJournalEngine {
                 snapshot.ApiSpecId,
                 snapshot.VisibleToolSetSha256,
                 snapshot.ToolRuntimeIdentity,
-                recovery.State.Phase
-                    == SessionExecutionPhase.AwaitingCompletion
-                    ? SessionDurableDispatchState
-                        .StartedOutcomeUncertain
-                    : SessionDurableDispatchState.NotStarted
+                recovery.Boundary.SourcePrepared
+                    ?? throw new InvalidDataException("Missing source Prepared.")
             );
     }
 

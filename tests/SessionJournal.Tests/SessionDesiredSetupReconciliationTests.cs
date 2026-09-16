@@ -103,9 +103,13 @@ public sealed class SessionDesiredSetupReconciliationTests : IDisposable {
                 expected,
                 new SessionDesiredSetup("model-b", "surface-b", "prompt-b")
             ));
-            headAfterRuntime = failing.InspectExecutionBoundary().Head!.Value;
+            Assert.Throws<SessionJournalReopenRequiredException>(() => failing.InspectExecutionBoundary());
+        }
+
+        using (var reopened = SessionJournalEngine.OpenReadOnly(path)) {
+            headAfterRuntime = reopened.InspectExecutionBoundary().Head!.Value;
             SessionGoverningSetup partial =
-                failing.ResolveGoverningSetup(headAfterRuntime);
+                reopened.ResolveGoverningSetup(headAfterRuntime);
             Assert.Equal("model-b", partial.RuntimeConfig.ModelId);
             Assert.Equal("prompt-a", partial.SystemPrompt);
         }
@@ -289,7 +293,7 @@ public sealed class SessionDesiredSetupReconciliationTests : IDisposable {
     }
 
     [Fact]
-    public async Task TurnFailed_MustBeAbandonedBeforeDesiredSetupSync() {
+    public async Task FailedGeneration_PreservesActivePreparedBeforeDesiredSetupSync() {
         string path = NewPath();
         var client = new FailingCompletionClient();
         var source = new TestContextCandidateSource();
@@ -327,7 +331,7 @@ public sealed class SessionDesiredSetupReconciliationTests : IDisposable {
         ));
 
         Assert.Equal(
-            SessionDesiredSetupUnavailableReason.FailedTurnMustBeAbandoned,
+            SessionDesiredSetupUnavailableReason.ActiveTurn,
             unavailable.Reason
         );
         Assert.Equal(failedHead, engine.InspectExecutionBoundary().Head);

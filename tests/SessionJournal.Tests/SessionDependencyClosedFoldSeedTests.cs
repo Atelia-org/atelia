@@ -223,7 +223,7 @@ public sealed class SessionDependencyClosedFoldSeedTests {
         SessionEventKind.ToolResultObserved
     )]
     [InlineData(
-        SessionExecutionPhase.AwaitingCompletionDispatch,
+        SessionExecutionPhase.AwaitingCompletion,
         SessionEventKind.CompletionRequestPrepared
     )]
     [InlineData(

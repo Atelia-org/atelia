@@ -20,7 +20,7 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
 
     [Fact]
-    public async Task KilledAfterProviderReceivesRequest_RequiresExplicitRestart_ThenColdReopensIdle() {
+    public async Task KilledAfterProviderReceivesRequest_AutomaticallyResumes_ThenColdReopensIdle() {
         await using var provider = await GalateaLabCrashResponsesServer.StartAsync();
         await using var lab = GalateaScenarioLab.Create("process-crash-started",
             new NeverCreateClientFactory(),
@@ -38,12 +38,11 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
                          lab.RootDirectory, configPath)) {
             using HttpClient http = first.CreateClient();
             await LoginAsync(http);
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-                "/api/v1/characters/alice/chat/turns",
+            using HttpResponseMessage accepted = await GalateaLabAdmission.PostFreshAsync(http,
                 new ChatStreamRequest(GalateaLabCrashResponsesServer.UserMessage));
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             await provider.FirstReceived.WaitAsync(Deadline);
-            // Observing external HTTP establishes that Started was committed;
+            // Observing external HTTP establishes that Prepared was committed;
             // killing here bypasses every production shutdown/Dispose hook.
             await first.KillAsync();
         }
@@ -54,51 +53,25 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
             var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 offline.InspectRuntimeRecoveryRequirements());
             Assert.Equal(SessionExecutionPhase.AwaitingCompletion, frozen.Phase);
-            Assert.Equal(SessionDurableDispatchState.StartedOutcomeUncertain, frozen.DispatchState);
+            Assert.NotEqual(default, frozen.SourcePreparedAddress);
             startedHead = frozen.CapturedHead!.Value;
             var events = new List<SessionJournalAuditEvent>();
             offline.ScanCheckedAuditEvents(events.Add);
             Assert.Single(events, item => item.Kind == SessionEventKind.ObservationAccepted);
-            Assert.Single(events, item => item.Kind == SessionEventKind.CompletionAttemptStarted);
+            Assert.DoesNotContain(events, item => item.Kind == SessionEventKind.CompletionAttemptStarted);
             Assert.DoesNotContain(events, item => item.Kind == SessionEventKind.AgentActionProduced);
         }
 
+        provider.AuthorizeRestart();
         await using (GalateaLabServerProcess restarted = await GalateaLabServerProcess.StartAsync(
                          lab.RootDirectory, configPath)) {
             using HttpClient http = restarted.CreateClient();
             await LoginAsync(http);
-            using (HttpResponseMessage refused = await http.PostAsJsonAsync(
-                       "/api/v1/characters/alice/chat/turns/resume",
-                       new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead)))) {
-                Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-                using JsonDocument problem = JsonDocument.Parse(
-                    await refused.Content.ReadAsStringAsync());
-                Assert.Equal("uncertain-completion-restart-required",
-                    problem.RootElement.GetProperty("code").GetString());
-                Assert.Equal(1, provider.Calls);
-            }
-            CurrentTurnDto uncertain = Assert.IsType<CurrentTurnDto>(
-                await http.GetFromJsonAsync<CurrentTurnDto>("/api/v1/characters/alice/chat/turns/current"));
-            Assert.True(uncertain.RestartRequired);
-            Assert.Equal(EventAddressTextCodec.Format(startedHead), uncertain.RecoveryHead);
-            Assert.Equal(1, provider.Calls);
-
-            provider.AuthorizeRestart();
-            using HttpResponseMessage accepted = await http.PostAsJsonAsync(
-                "/api/v1/characters/alice/chat/turns/resume",
-                new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead),
-                    RestartUncertainCompletion: true));
-            Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
-            var turn = Assert.IsType<StartTurnResponseDto>(
-                await accepted.Content.ReadFromJsonAsync<StartTurnResponseDto>());
-            using HttpResponseMessage stream = await http.GetAsync(
-                $"/api/v1/characters/alice/chat/turns/{turn.TurnId}/events");
-            Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
-            provider.AssertComplete();
             // EOF follows terminal publication, but the runner releases its
             // lock just afterwards. Wait for that final ownership handoff;
             // a single immediate status read could legitimately say running.
             await WaitForIdleAsync(http);
+            provider.AssertComplete();
             await restarted.KillAsync();
         }
 
@@ -111,7 +84,7 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
             var events = new List<SessionJournalAuditEvent>();
             offline.ScanCheckedAuditEvents(events.Add);
             Assert.Single(events, item => item.Kind == SessionEventKind.ObservationAccepted);
-            Assert.Equal(2, events.Count(item => item.Kind == SessionEventKind.CompletionAttemptStarted));
+            Assert.DoesNotContain(events, item => item.Kind == SessionEventKind.CompletionAttemptStarted);
             Assert.Single(events, item => item.Kind == SessionEventKind.CompletionRequestPrepared);
             Assert.Single(events, item => item.Kind == SessionEventKind.AgentActionProduced);
         }
@@ -130,10 +103,8 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
             CurrentTurnDto current = Assert.IsType<CurrentTurnDto>(
                 await http.GetFromJsonAsync<CurrentTurnDto>(
                     "/api/v1/characters/alice/chat/turns/current", deadline.Token));
-            if (current.Status != "running") {
-                Assert.Equal("idle", current.Status);
-                return;
-            }
+            if (current.Status == "idle") { return; }
+            Assert.Contains(current.Status, new[] { "running", "recovery-required" });
             await Task.Delay(TimeSpan.FromMilliseconds(10), deadline.Token);
         }
     }

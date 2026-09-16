@@ -58,22 +58,9 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
             CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
             var required = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 session.Engine.InspectRuntimeRecoveryRequirements());
-            Assert.Equal(started ? SessionDurableDispatchState.StartedOutcomeUncertain
-                : SessionDurableDispatchState.NotStarted, required.DispatchState);
-            if (started) {
-                using HttpResponseMessage refused = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
-                    new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
-                        RestartUncertainCompletion: false));
-                Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-                Assert.Contains("uncertain-completion-restart-required",
-                    await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
-                Assert.Equal(frozenHead, session.Engine.ReadCurrentHead());
-                Assert.Empty(factory.Requests);
-                Assert.Empty(factory.LogicalRequests);
-            }
+            Assert.NotEqual(default, required.SourcePreparedAddress);
             using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/characters/alice/chat/turns/resume",
-                new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
-                    RestartUncertainCompletion: started));
+                new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null));
             GalateaLiveTurn recovered = await GalateaRecapFixture.WaitAsync(accepted, service, session);
             AssertCompleted(recovered);
             Assert.Equal(Answer, Assert.Single(session.Engine.ReadRecentCompletedTurns()

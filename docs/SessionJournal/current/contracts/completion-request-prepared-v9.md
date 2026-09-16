@@ -1,6 +1,6 @@
-# CompletionRequestPrepared v9：语义计划与每次调用证据
+# CompletionRequestPrepared v9：语义计划与完整结果提交
 
-状态：核心实现、定向验收与独立审阅已完成；全域接入仍进行中，通过情况见 [Galatea 实施工作单](../../../Galatea/player-character-implementation-work-order.md)。本页定义新 writer 的合同；[v7/v8 exact 合同](completion-request-prepared-v7.md)继续约束历史记录。
+状态：当前源码合同；自动重试重构的集成验收与部署状态见 [实施方案](../../../Galatea/completion-auto-retry-refactor-plan.md)，本文不宣告最终验收完成。本页定义新 writer 的合同；[v7/v8 exact 合同](completion-request-prepared-v7.md)继续约束历史记录。
 
 ## 输入内容
 
@@ -59,9 +59,9 @@ event kind 不变。v9 body 精确包含八个顶层字段：
 
 v9 不含 Prepared commitment、exactContextInputs、渲染的 ContextSnapshot 或备用 Markdown。recipe ID 为 `atelia.session-journal.semantic-artifact-tail.recipe.v1`。真实工具、来源或内容选择变化是新规划；纯布局变化不改变该计划。
 
-## Started v2 与发送顺序
+## 新发送顺序与历史 Started v2
 
-Started v2 body 精确保存：
+历史 Started v2 body 精确保存（新执行不再写此事件）：
 
 ```json
 {
@@ -77,24 +77,29 @@ Started v2 body 精确保存：
 
 1. 接纳 typed Observation、选择语义上下文与真实执行边界，提交 Prepared。
 2. 从已提交计划读取内容，使用当前 projector 在内存组装最终请求，并核对实际请求限额。
-3. 把这次请求的承诺与 Started 一起提交；Started event address 就是 attempt 身份。
-4. 确认提交后才调用 provider。渲染或限额失败不追加 Started、不调用 provider，保持原 Prepared。
+3. 在内存调用 provider；调用开始、失败与重试不写 Started/Failed，不迁移其摘要到新 Action。
+4. 仅完整且合法的结果提交为 AgentActionProduced v2，再执行其中的工具。渲染、限额或环境失败保持原 Prepared。
 
-Started 提交结果不明确时不调用 provider。必须重开，按真实 head 判断是仍未 Started，还是已产生可能发送的尝试；不能凭异常判 NotDispatched。
+纯生成可按 Host 策略重算，允许重复计费，不证明远端 exactly-once。Action 提交结果不明确则必须
+poison/reopen，按 selected lineage 判断结果是否已提交，不能直接重新生成。业务停止或明确非成功输入
+由安全生成边界上的 TurnEnded 收口；它不删除已提交工具事实，也不代替环境错误的 pending 状态。
 
 ## 恢复版本矩阵
 
 | Prepared | Started | 处理 |
 |:--|:--|:--|
-| v9 | 无 | 验证原计划，再由当前 projector 投影，成功后首次 Started v2 |
-| v9 | v2 | 先验证持久内容及尝试链，再按既有 uncertain 决策；没有重试授权不能重新发送 |
+| v9 | 无 | 验证原计划，由当前 projector 投影；生成成功后 Action v2 直接接 Prepared |
+| v9 | v2 | 严格验证历史内容及尝试链，恢复同一语义计划；成功后 Action v2 接当前历史 Started 尾 |
 | v9 | v1 | 拒绝：缺失新格式要求的发送证据 |
-| v7/v8 | v1 | 按旧 recipe 逐字重建并验证原 Prepared commitment；历史恢复继续写 v1 |
+| v7/v8 | 无或 v1 | 按旧 recipe 逐字重建并验证原 Prepared commitment；不写新 Started，提交 Action v2 |
 | v7/v8 | v2 | 若读取到这种组合，Started 的 canonical codec 和 commitment 都必须等于旧 Prepared；仍走旧 exact 恢复 |
 | v5 | v1 | 只做原格式审计，不能 dispatch |
 | v5 | v2 | 拒绝：不能将 canonical-v1 证据误标为 canonical-v2，即使摘要/长度相同 |
 
-明确允许 v9 的 uncertain 新尝试时，在同一 Prepared 下追加另一个 Started v2，可保存不同的本次摘要；旧未知尝试仍存在，不伪造 NotDispatched。旧 v7/v8 仍按上表保留 exact 恢复。Refuse 先做完整性验证，再拒绝重发，不调用 projector。
+Prepared 与合法历史 Started 尾统一为 AwaitingCompletion，不再有 Refuse/RestartWithNewAttempt。
+历史 Started 的字节、地址与摘要保留，新调用不追加尝试事件。旧 v7/v8 仍按上表 exact 恢复。
+历史 Action v1 必须接合法 Started；新 Action v2 可接 Prepared 或合法历史 Started 尾，不能接 Failed。
+旧 Failed 不自动生成；验证完整工具批次与来源后，仅允许显式 TurnEnded(Stopped) 收口。
 
 新格式审计检查 schema、raw hash、setup 引用、工具顺序、内容来源和 Prepared/Started/Action 归属。它验证摘要的格式与归属，不能仅凭摘要重建或证明历史 renderer 的全文输出。旧版本的 exact 验证能力与执行权限保持原合同。
 
@@ -105,7 +110,8 @@ schemaId。一个核心格式合法但业务 schema 未知的输入仍可被核�
 
 `SessionHistorySemanticCommitment` 保留既有 aggregate codec ID；Text Observation 使用原 history-message
 算法，structured Observation 使用独立 `structured-observation` domain 加固定 content envelope，均不调用
-projector。离线 report 的输入摘要区分 Text UTF-8 与 structured 机读 envelope，见
+projector。TurnEnded 使用独立 `turn-ended` domain 保存结束原因的语义贡献，不伪造 Action。
+离线 report 的输入摘要区分 Text UTF-8 与 structured 机读 envelope，见
 [offline validation report](offline-validation-report-v3.md)；摘要不宣称记录了历史 LLM 提示全文。
 
 ## 验收入口

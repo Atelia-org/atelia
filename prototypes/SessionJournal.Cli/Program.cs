@@ -371,7 +371,6 @@ internal static class Program {
             + "--connections <path> "
             + "[--message <text>] [--connection <id>] "
             + "[--maximum-canonical-request-bytes <n>] "
-            + "[--uncertain-recovery refuse|restart-new-attempt]"
         );
     }
 }

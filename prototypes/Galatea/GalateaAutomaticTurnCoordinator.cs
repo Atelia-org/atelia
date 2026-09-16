@@ -31,6 +31,10 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         if (_attachFailures.TryGetValue(characterId, out string? code)) {
             return new("blocked", connection, null, null, code);
         }
+        GalateaAdmissionStatusDto? admission = host.ReadAttachedSession(characterId)?.ReadAdmissionStatus();
+        if (admission?.OperationId is not null) {
+            return new("running", connection, null, null, admission.State == "stopping" ? "ADMISSION_STOPPING" : "ADMISSION_RUNNING");
+        }
         return host.ReadAttachedSession(characterId)?.ReadAgentStatus()
             ?? new(
                 character.AutonomyIntervalMinutes == 0 ? "waiting" : "starting",
@@ -56,7 +60,10 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         ct.ThrowIfCancellationRequested();
         bool replyOnly = IsReplyOnlyCharacter(characterId);
         if (replyOnly && host.DelegationSupervisor.ReadAutomaticWakeReason(characterId)
-            == GalateaAutomaticWakeReason.None) {
+            == GalateaAutomaticWakeReason.None
+            && host.ReadAttachedSession(characterId) is null
+            && (!host.TryGetCharacter(characterId, out GalateaCharacterConfig? existingCharacter)
+                || (!Directory.Exists(existingCharacter.SessionDir) && !File.Exists(existingCharacter.SessionDir)))) {
             return new GalateaAutomaticTurnResult.Status(status);
         }
         CharacterSessionHost? session = host.ReadAttachedSession(characterId);
@@ -99,6 +106,9 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             session.AutomaticAdmissionFailed = false;
             session.AutomaticAdmissionFailure = null;
             session.PublishAutonomyStatus();
+            return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+        }
+        catch (GalateaTurnException exception) when (exception.FailureReason == "admission-stopped") {
             return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
         }
         catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)
@@ -147,7 +157,10 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         ct.ThrowIfCancellationRequested();
         bool replyOnly = IsReplyOnlyCharacter(characterId);
         if (replyOnly && host.DelegationSupervisor.ReadAutomaticWakeReason(characterId)
-            == GalateaAutomaticWakeReason.None) {
+            == GalateaAutomaticWakeReason.None
+            && host.ReadAttachedSession(characterId) is null
+            && (!host.TryGetCharacter(characterId, out GalateaCharacterConfig? existingCharacter)
+                || (!Directory.Exists(existingCharacter.SessionDir) && !File.Exists(existingCharacter.SessionDir)))) {
             return new GalateaAutomaticTurnResult.Status(status);
         }
         CharacterSessionHost session = await host.GetSessionAsync(characterId, ct).ConfigureAwait(false);
@@ -160,6 +173,34 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         try {
             ct.ThrowIfCancellationRequested();
             if (host.IsStopping) { return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId)); }
+            if (session.GenerationBlocked) {
+                session.PublishAutonomyStatus();
+                return new GalateaAutomaticTurnResult.Blocked("completion-blocked", "原生成任务需要恢复或显式结束。");
+            }
+            SessionRuntimeRecoveryRequirements pending = session.Engine.InspectRuntimeRecoveryRequirements(ct);
+            if (pending is SessionRuntimeRecoveryRequirements.NewRequestRequired
+                or SessionRuntimeRecoveryRequirements.FrozenCompletionRequired
+                or SessionRuntimeRecoveryRequirements.ToolContinuationRequired) {
+                if (session.ColdRecoveryJitterHead is { } coldHead) {
+                    session.ColdRecoveryJitterHead = null;
+                    if (coldHead == pending.CapturedHead) {
+                        await host.DelayColdRecoveryAsync(ct).ConfigureAwait(false);
+                        host.RequireRunning();
+                    }
+                }
+                string pendingConnection = pending is SessionRuntimeRecoveryRequirements.FrozenCompletionRequired frozen
+                    ? frozen.CompletionTarget.ConnectionId : session.Character.DefaultConnectionId;
+                liveTurn = host.StartRecovery(session, new GalateaTurnOptions(
+                    pendingConnection, GalateaTurnMode.Resume, pending.CapturedHead));
+                _ = runner.Start(session, liveTurn);
+                transferred = true;
+                return new GalateaAutomaticTurnResult.Started(liveTurn, "recovery");
+            }
+            if (pending is SessionRuntimeRecoveryRequirements.LegacyFailedTurnBlocked) {
+                session.GenerationBlocked = true;
+                session.PublishAutonomyStatus();
+                return new GalateaAutomaticTurnResult.Blocked("legacy-completion-failed", "旧失败轮次只能显式结束。");
+            }
             if (session.AutomaticReplyFailed || session.AutomaticAdmissionFailed) {
                 // A settlement retry may have established a more specific
                 // recovery boundary. Keep that diagnosis until explicit turn
@@ -220,13 +261,16 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             transferred = true;
             return new GalateaAutomaticTurnResult.Started(liveTurn, origin);
         }
+        catch (GalateaTurnException exception) when (!transferred && exception.FailureReason == "admission-stopped") {
+            return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+        }
         catch (Exception original) when (!transferred) {
             if (GalateaExceptionClassifier.IsNonFatal(original)
                 && !ct.IsCancellationRequested && !host.IsStopping) {
                 RecordAdmissionFailure(session, original);
             }
             if (liveTurn is null) { throw; }
-            try { await host.ReconcileDurableAdmissionAsync(session, CancellationToken.None).ConfigureAwait(false); }
+            try { host.ReconcileAcceptanceCleanup(session); }
             catch (Exception cleanup) when (GalateaExceptionClassifier.IsNonFatal(cleanup)) {
                 if (!GalateaExceptionClassifier.IsNonFatal(original)) { ExceptionDispatchInfo.Capture(original).Throw(); }
                 throw new AggregateException("Automatic turn acceptance and durable cleanup both failed.", original, cleanup);

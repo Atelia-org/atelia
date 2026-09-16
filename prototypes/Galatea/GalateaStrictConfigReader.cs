@@ -345,6 +345,19 @@ internal static class GalateaStrictConfigReader {
                 case "maintenanceMode":
                     RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
                     break;
+                case "completionAttemptTimeoutSeconds":
+                    RequireToken(reader.TokenType, JsonTokenType.StartObject, property);
+                    var timeoutKeys = NewPropertySet();
+                    while (ReadProperty(ref reader, timeoutKeys, property, out string connection)) {
+                        RequireReadValue(ref reader, connection);
+                        if (string.IsNullOrWhiteSpace(connection)
+                            || reader.TokenType != JsonTokenType.Number
+                            || !reader.TryGetInt32(out int seconds)
+                            || seconds is < 1 or > 86400) {
+                            throw new InvalidDataException("Completion attempt timeout must be 1..86400 seconds per exact connection id.");
+                        }
+                    }
+                    break;
                 case "recapGrid":
                     RequireToken(reader.TokenType, JsonTokenType.StartObject, property);
                     ValidateRecapGridObject(ref reader);

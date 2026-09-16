@@ -38,10 +38,10 @@ internal static class GalateaNoteReceiptFixture {
         var host = services.GetRequiredService<GalateaHostService>();
         var coordinator = services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         var loop = Assert.Single(services.GetServices<IHostedService>().OfType<GalateaServerAgentHostedService>());
-        await UntilAsync(_ => Task.FromResult(coordinator.ReadStatus("alice").State == "waiting"));
+        GalateaAgentStatusDto waiting = await ReadWaitingStatusAsync(coordinator);
         CharacterSessionHost session = Assert.IsType<CharacterSessionHost>(host.ReadAttachedSession("alice"));
         Assert.Equal(clock.GetUtcNow().AddMinutes(10).ToUnixTimeMilliseconds(),
-            coordinator.ReadStatus("alice").NextActivationAtUnixTimeMilliseconds);
+            waiting.NextActivationAtUnixTimeMilliseconds);
         Assert.Equal(0, completion.TotalCalls);
         return new(session, coordinator, loop, clock, completion);
     }
@@ -59,7 +59,9 @@ internal static class GalateaNoteReceiptFixture {
         epoch.Completion.ReleaseMain.TrySetResult();
         await Assert.IsAssignableFrom<Task>(turn.RunTask).WaitAsync(Deadline);
         Assert.Equal("completed", turn.Status);
-        Assert.Equal("waiting", epoch.Coordinator.ReadStatus("alice").State);
+        GalateaAgentStatusDto waiting = await ReadWaitingStatusAsync(epoch.Coordinator);
+        Assert.Equal(epoch.Clock.GetUtcNow().AddMinutes(10).ToUnixTimeMilliseconds(),
+            waiting.NextActivationAtUnixTimeMilliseconds);
         // Finish background enrichment before taking the first cold snapshot.
         // This prevents the next epoch from inheriting pending helper work.
         await UntilAsync(async cancellationToken => {
@@ -88,6 +90,17 @@ internal static class GalateaNoteReceiptFixture {
                 turns);
         }
         finally { epoch.Session.TurnLock.Release(); }
+    }
+
+    private static async Task<GalateaAgentStatusDto> ReadWaitingStatusAsync(GalateaAutomaticTurnCoordinator coordinator) {
+        GalateaAgentStatusDto? observed = null;
+        await UntilAsync(_ => {
+            observed = coordinator.ReadStatus("alice");
+            return Task.FromResult(observed.State == "waiting");
+        });
+        // Admission may change the live status immediately after this read.
+        // Validate cadence on this exact waiting snapshot, never a second read.
+        return Assert.IsType<GalateaAgentStatusDto>(observed);
     }
 
     private static async Task UntilAsync(Func<CancellationToken, Task<bool>> condition) {

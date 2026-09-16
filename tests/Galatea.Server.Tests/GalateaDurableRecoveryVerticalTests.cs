@@ -7,6 +7,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
+using Atelia.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -23,8 +24,10 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         await using var fixture = GalateaTestHost.Create(
             completionFactory,
-            DisabledGalateaUserMessageNormalizer.Instance
+            DisabledGalateaUserMessageNormalizer.Instance,
+            delegateTransport: NoDispatchTransport.Instance
         );
+        SeedReadyReplyOffline(fixture, "durable reply");
         GalateaHostService service = fixture.Factory.Services
             .GetRequiredService<GalateaHostService>();
         GalateaAutomaticTurnCoordinator coordinator = fixture.Factory.Services
@@ -33,7 +36,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "alice", CancellationToken.None
         );
         Assert.Null(session.AutonomyCadence);
-        SeedReadyReply(session.DelegationHandle!.Store, "durable reply");
 
         GalateaAutomaticTurnResult.Started started = Assert.IsType<
             GalateaAutomaticTurnResult.Started>(
@@ -51,7 +53,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
-    public async Task ZeroIntervalActiveLease_ColdRestartAttachesButDoesNotReplayRecoveryBoundary() {
+    public async Task ZeroIntervalActiveLease_ColdRestartRecoversOriginalInputAndConsumesLeaseOnce() {
         var firstFactory = new TrackingCompletionClientFactory();
         GalateaTestHost first = GalateaTestHost.Create(
             firstFactory,
@@ -61,27 +63,30 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         GalateaTestHost? restarted = null;
         try {
+            GalateaReplyNoticeSnapshot uncertain = SeedReadyReplyOffline(
+                first, "unconfirmed reply", resultUnconfirmed: true);
             GalateaHostService firstService = first.Factory.Services
                 .GetRequiredService<GalateaHostService>();
             CharacterSessionHost firstSession = await firstService.GetSessionAsync(
                 "alice", CancellationToken.None
             );
-            GalateaReplyNoticeSnapshot uncertain = SeedReadyReply(
-                firstSession.DelegationHandle!.Store,
-                "unconfirmed reply",
-                resultUnconfirmed: true
-            );
-            _ = firstSession.DelegationHandle.Store.BeginReplyLeaseMembership(
+            GalateaReplyLeaseSnapshot membership = firstSession.DelegationHandle.Store.BeginReplyLeaseMembership(
                 "cold-active-lease",
                 PlayerTurnObservationEnvelope
                     .DelegateReplyLeasePlayerTextDiscriminator,
                 [new(uncertain.NoticeId, uncertain.Revision)]
             );
             await firstSession.TurnLock.WaitAsync();
+            EventAddress observation;
             try {
-                firstSession.Engine.AppendObservation(
-                    GalateaUserMessageEnvelope.Wrap("pending recovery")
+                var lease = new GalateaDurableReplyLease(firstSession.DelegationHandle.Store,
+                    membership.LeaseId, membership.Revision);
+                SessionInputContent input = GalateaObservationContent.Create(
+                    new GalateaFreshInput.DelegateReply(lease.ReadNotices()), DateTimeOffset.UnixEpoch,
+                    GalateaDelegationTestInputs.Sender(firstSession.DelegationHandle.Store, "Galatea")
                 );
+                lease.BindObservationBase(firstSession.Engine, firstSession.Engine.ReadCurrentHead()!.Value, input);
+                observation = firstSession.Engine.AppendObservation(input);
             }
             finally { firstSession.TurnLock.Release(); }
             Assert.Equal(
@@ -110,21 +115,30 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                 )
             );
 
-            GalateaAutomaticTurnResult.Blocked blocked = Assert.IsType<
-                GalateaAutomaticTurnResult.Blocked>(
+            GalateaAutomaticTurnResult.Started recovery = Assert.IsType<
+                GalateaAutomaticTurnResult.Started>(
                     await coordinator.TryPulseAsync("alice", CancellationToken.None)
                 );
 
-            Assert.Equal("recovery-required", blocked.Code);
+            Assert.Equal("recovery", recovery.Origin);
+            await recovery.Turn.RunTask!.WaitAsync(CompletionDeadline);
+            Assert.Equal("completed", recovery.Turn.Status);
             CharacterSessionHost restartedSession = Assert.IsType<
                 CharacterSessionHost>(restartedService.ReadAttachedSession("alice"));
             GalateaDelegationStateSnapshot durable = restartedSession
                 .DelegationHandle!.Store.ReadSnapshot();
             Assert.Null(durable.ActiveLease);
             GalateaReplyNoticeSnapshot retained = Assert.Single(durable.Notices);
-            Assert.Equal(GalateaReplyNoticeState.Ready, retained.State);
+            Assert.Equal(GalateaReplyNoticeState.Consumed, retained.State);
             Assert.Equal("RESULT_UNCONFIRMED", retained.Code);
-            Assert.Equal(0, restartFactory.Client.DispatchCallCount);
+            Assert.Equal(1, restartFactory.Client.DispatchCallCount);
+            var completed = Assert.Single(restartedSession.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns);
+            Assert.Equal(observation, completed.ObservationAddress);
+            Assert.Equal(EventAddressTextCodec.Format(completed.Outcome.Address), retained.ConsumedTurnEndAddress);
+            Assert.IsType<GalateaAutomaticTurnResult.Status>(
+                await coordinator.TryPulseAsync("alice", CancellationToken.None));
+            Assert.Equal(1, restartFactory.Client.DispatchCallCount);
+            Assert.Single(restartedSession.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns);
             Assert.Null(restartedSession.GetCurrentTurn());
         }
         finally {
@@ -142,8 +156,10 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         var completionFactory = new TrackingCompletionClientFactory();
         await using var fixture = GalateaTestHost.Create(
             completionFactory,
-            DisabledGalateaUserMessageNormalizer.Instance
+            DisabledGalateaUserMessageNormalizer.Instance,
+            delegateTransport: NoDispatchTransport.Instance
         );
+        SeedReadyReplyOffline(fixture, "raced reply");
         GalateaHostService service = fixture.Factory.Services
             .GetRequiredService<GalateaHostService>();
         GalateaAutomaticTurnCoordinator coordinator = fixture.Factory.Services
@@ -151,7 +167,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         CharacterSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None
         );
-        SeedReadyReply(session.DelegationHandle!.Store, "raced reply");
         Assert.Equal(
             GalateaAutomaticWakeReason.ReadyNotice,
             service.DelegationSupervisor.ReadAutomaticWakeReason("alice")
@@ -191,13 +206,16 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await using var host = GalateaTestHost.Create(
             completionFactory,
             normalizer,
+            delegateTransport: NoDispatchTransport.Instance,
             autonomyCharacterIds: ["alice"]
         );
-        CompletionConnectionConfig connection = GetConnection(host);
+        CompletionConnectionConfig connection = GalateaConfigLoader.Load(host.ConfigPath)
+            .Connections.Single(value => value.Id == "test");
         EventAddress failedHead = await CreateFailedBoundaryAsync(
             host.SessionDirectory,
             connection
         );
+        SeedReadyReplyOffline(host, "reply must remain ready");
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
         GalateaHostService service = host.Factory.Services
@@ -205,10 +223,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
-        );
-        SeedReadyReply(
-            session.DelegationHandle!.Store,
-            "reply must remain ready"
         );
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
@@ -219,12 +233,12 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         using JsonDocument body = await ReadJsonAsync(response);
         Assert.Equal(
-            "recovery-required",
+            "legacy-completion-failed",
             body.RootElement.GetProperty("code").GetString()
         );
-        SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned after =
+        SessionRuntimeRecoveryRequirements.LegacyFailedTurnBlocked after =
             Assert.IsType<SessionRuntimeRecoveryRequirements
-                .FailedTurnMustBeAbandoned>(
+                .LegacyFailedTurnBlocked>(
                     session.Engine.InspectRuntimeRecoveryRequirements()
                 );
         Assert.Equal(failedHead, after.FailedHead);
@@ -292,7 +306,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
-    public async Task NewMessage_WhenTurnFailed_AbandonsExactHeadBeforeSend() {
+    public async Task NewMessage_WhenLegacyTurnFailed_RequiresExplicitEndBeforeSend() {
         var completionFactory = new TrackingCompletionClientFactory(
             "answer after abandon"
         );
@@ -314,11 +328,19 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             CurrentTurnDto
         >("/api/v1/characters/alice/chat/turns/current");
         Assert.NotNull(before);
-        Assert.Equal("idle", before!.Status);
+        Assert.Equal("recovery-required", before!.Status);
         Assert.Null(before.TurnId);
         Assert.Null(before.ConnectionId);
-        Assert.False(before.RestartRequired);
-        Assert.Null(before.RecoveryHead);
+        Assert.Equal(EventAddressTextCodec.Format(failedHead), before.RecoveryHead);
+        using (HttpResponseMessage blocked = await client.PostAsJsonAsync(
+            "/api/v1/characters/alice/chat/turns", new ChatStreamRequest("must not replace failed input", "test"))) {
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+        }
+        using (HttpResponseMessage stopped = await client.PostAsJsonAsync(
+            "/api/v1/characters/alice/chat/turns/pending/stop",
+            new StopPendingTurnRequest(EventAddressTextCodec.Format(failedHead)))) {
+            Assert.True(stopped.IsSuccessStatusCode);
+        }
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns",
@@ -354,7 +376,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         Assert.NotEqual(failedHead, session.Engine.ReadCurrentHead());
         SessionCompletedTurnProjection completed =
-            session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[^1];
+            session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[0];
         Assert.True(completed.ObservationContent.IsStructured);
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(completed.ObservationContent);
         Assert.Equal("continue after failure", observation.PlayerText);
@@ -394,7 +416,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         SessionExecutionBoundaryInspection before = session.Engine
             .InspectExecutionBoundary();
         Assert.IsType<SessionRuntimeRecoveryRequirements
-            .FailedTurnMustBeAbandoned>(
+            .LegacyFailedTurnBlocked>(
                 session.Engine.InspectRuntimeRecoveryRequirements()
             );
         GalateaLiveTurn turn = service.StartTurn(
@@ -420,9 +442,9 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             Assert.Equal(0, completionFactory.Client.DispatchCallCount);
             Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
             Assert.Equal(before, session.Engine.InspectExecutionBoundary());
-            SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned
+            SessionRuntimeRecoveryRequirements.LegacyFailedTurnBlocked
                 after = Assert.IsType<SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned>(
+                    .LegacyFailedTurnBlocked>(
                         session.Engine.InspectRuntimeRecoveryRequirements()
                     );
             Assert.Equal(failedHead, after.FailedHead);
@@ -433,7 +455,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
-    public async Task FreshTypedNoDispatchRejection_SettlesIdleAndNextFreshTurnSucceeds() {
+    public async Task FreshTypedNoDispatchRejection_RetainsPreparedUntilExplicitStop() {
         var completion = new SequencedCompletionClient();
         completion.Enqueue(_ => throw new CompletionRequestRejectedException(
             CompletionTermination.Failed(
@@ -477,16 +499,20 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         Assert.Equal("failed", firstTurn.Status);
         Assert.Equal(
-            SessionExecutionPhase.Idle,
+            SessionExecutionPhase.AwaitingCompletion,
             session.Engine.InspectExecutionBoundary().Phase
         );
         CurrentTurnDto? settled = await client.GetFromJsonAsync<
             CurrentTurnDto
         >("/api/v1/characters/alice/chat/turns/current");
         Assert.NotNull(settled);
-        Assert.Equal("idle", settled!.Status);
-        Assert.False(settled.RestartRequired);
-        Assert.Null(settled.RecoveryHead);
+        Assert.Equal("recovery-required", settled!.Status);
+        Assert.NotNull(settled.RecoveryHead);
+        using (HttpResponseMessage stopped = await client.PostAsJsonAsync(
+            "/api/v1/characters/alice/chat/turns/pending/stop",
+            new StopPendingTurnRequest(settled.RecoveryHead!))) {
+            Assert.True(stopped.IsSuccessStatusCode);
+        }
 
         StartTurnResponseDto second = await StartFreshAsync(
             client,
@@ -504,9 +530,10 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             SessionExecutionPhase.Idle,
             session.Engine.InspectExecutionBoundary().Phase
         );
-        SessionCompletedTurnProjection completed = Assert.Single(
-            session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns
-        );
+        var turns = session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
+        Assert.Equal(2, turns.Count);
+        Assert.IsType<SessionClosedTurnOutcome.Terminated>(turns[1].Outcome);
+        SessionCompletedTurnProjection completed = turns[0];
         Assert.Equal(
             "answer after rejection",
             completed.TerminalAction.Message.GetFlattenedText()
@@ -514,7 +541,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
-    public async Task FreshHttp5xxException_RemainsRecoveryRequired() {
+    public async Task FreshUnclassifiedHttpException_RemainsRecoveryRequired() {
         var completion = new SequencedCompletionClient();
         completion.Enqueue(_ => throw new HttpRequestException(
             "simulated backend failure",
@@ -556,9 +583,41 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         >("/api/v1/characters/alice/chat/turns/current");
         Assert.NotNull(current);
         Assert.Equal("recovery-required", current!.Status);
-        Assert.True(current.RestartRequired);
         Assert.NotNull(current.RecoveryHead);
         Assert.Equal(1, completion.DispatchCallCount);
+    }
+
+    [Fact]
+    public async Task FreshStructuredHttp5xx_RetriesSamePreparedWithoutAnotherObservation() {
+        var completion = new SequencedCompletionClient();
+        completion.Enqueue(_ => throw new CompletionFailureException(
+            new CompletionFailureInfo(CompletionFailureKind.Http, 503), "temporary"));
+        completion.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("retried answer")]),
+            new CompletionDescriptor(completion.Name, completion.ApiSpecId, request.ModelId)));
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(new SingleCompletionClientFactory(completion), normalizer,
+            deleteFilesOnDispose: false);
+        using HttpClient http = host.CreateClient();
+        await LoginAsync(http);
+        GalateaHostService service = host.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        StartTurnResponseDto started = await StartFreshAsync(http, "one logical input");
+        GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(service.FindTurn(session, started.TurnId));
+        await Assert.IsAssignableFrom<Task>(turn.RunTask).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal("completed", turn.Status);
+        Assert.Equal(2, completion.DispatchCallCount);
+        Assert.Equal(1, normalizer.NormalizeCallCount);
+        await host.DisposeAsync();
+        var events = new List<SessionJournalAuditEvent>();
+        using (var cold = SessionJournalEngine.OpenReadOnly(host.SessionDirectory)) {
+            cold.ScanCheckedAuditEvents(events.Add);
+        }
+        Assert.Single(events, item => item.Kind == SessionEventKind.ObservationAccepted);
+        Assert.Single(events, item => item.Kind == SessionEventKind.CompletionRequestPrepared);
+        Assert.Single(events, item => item.Kind == SessionEventKind.AgentActionProduced);
+        Assert.DoesNotContain(events, item => item.Kind is SessionEventKind.CompletionAttemptStarted or SessionEventKind.CompletionAttemptFailed);
+        TestDirectorySafety.DeleteOwnedTreeNoFollow(host.RootDirectory);
     }
 
     [Fact]
@@ -583,8 +642,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(failedHead),
-                ConnectionId: null,
-                RestartUncertainCompletion: false
+                ConnectionId: null
             )
         );
 
@@ -792,7 +850,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             connection,
             completionFactory.Client,
             "AfterRequestPreparedCommitted",
-            SessionExecutionPhase.AwaitingCompletionDispatch
+            SessionExecutionPhase.AwaitingCompletion
         );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
@@ -852,7 +910,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             historical,
             completionFactory.Client,
             "AfterRequestPreparedCommitted",
-            SessionExecutionPhase.AwaitingCompletionDispatch
+            SessionExecutionPhase.AwaitingCompletion
         );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
@@ -886,7 +944,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
-    public async Task ResumeStarted_DefaultRefusesBeforeClientCreation() {
+    public async Task ResumeLegacyStarted_StaleHeadRefusesBeforeClientCreation() {
         var completionFactory = new TrackingCompletionClientFactory(
             "must not dispatch"
         );
@@ -910,16 +968,15 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
-                EventAddressTextCodec.Format(startedHead),
-                ConnectionId: null,
-                RestartUncertainCompletion: false
+                "ej1:00000000000000010000000100000000",
+                ConnectionId: null
             )
         );
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         using JsonDocument body = await ReadJsonAsync(response);
         Assert.Equal(
-            "uncertain-completion-restart-required",
+            "stale-session-head",
             body.RootElement.GetProperty("code").GetString()
         );
         Assert.Equal(
@@ -946,7 +1003,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             );
         Assert.NotNull(current);
         Assert.Equal("recovery-required", current!.Status);
-        Assert.True(current.RestartRequired);
         Assert.Equal(
             EventAddressTextCodec.Format(startedHead),
             current.RecoveryHead
@@ -979,8 +1035,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(startedHead),
-                ConnectionId: null,
-                RestartUncertainCompletion: true
+                ConnectionId: null
             )
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -1037,6 +1092,27 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         "http://localhost:8000/",
         ApiKey: "test-key"
     );
+
+    private static GalateaReplyNoticeSnapshot SeedReadyReplyOffline(
+        GalateaTestHost fixture,
+        string reply,
+        bool resultUnconfirmed = false
+    ) {
+        // Seed every CAS transition before Factory.Services starts the active
+        // supervisor. A live driver must never race a synthetic intermediate mail.
+        GalateaConfig config = GalateaConfigLoader.Load(fixture.ConfigPath);
+        GalateaCharacterConfig character = config.Characters.Single();
+        using var engine = SessionJournalEngine.OpenReadOnly(fixture.SessionDirectory);
+        Directory.CreateDirectory(Path.GetDirectoryName(character.DelegationStateDir)!);
+        using var store = GalateaDelegationSqliteStore.CreateNew(
+            character.DelegationStateDir,
+            new GalateaDelegationStoreOwner(character.CharacterId,
+                GalateaDelegationSupervisor.CreateSessionRepositoryId(character.SessionDir)),
+            new GalateaDelegationStoreBaseline(engine.ReadView.ReadPhysicalAppendFrontier(),
+                EventAddressTextCodec.FormatNullable(engine.ReadCurrentHead())),
+            GalateaDelegationSupervisor.CreateLimits(config.Delegates.CodexRoute));
+        return SeedReadyReply(store, reply, resultUnconfirmed);
+    }
 
     private static GalateaReplyNoticeSnapshot SeedReadyReply(
         GalateaDelegationSqliteStore store,
@@ -1173,7 +1249,9 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "Atelia.SessionJournal.SessionJournalTestHooks",
             throwOnError: true
         )!;
-        object failpoint = Enum.Parse(failpointType, failpointName);
+        bool legacyStarted = failpointName == "AfterCompletionAttemptStartedCommitted";
+        object failpoint = Enum.Parse(failpointType,
+            legacyStarted ? "AfterRequestPreparedCommitted" : failpointName);
         ConstructorInfo hooksConstructor = Assert.Single(
             hooksType.GetConstructors(
                 BindingFlags.Instance
@@ -1202,28 +1280,32 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                     && parameters[2].ParameterType == hooksType;
             }
         );
-        using var engine = Assert.IsType<SessionJournalEngine>(
-            openForTest.Invoke(null, [sessionPath, runtime, hooks])
-        );
-        await using IAsyncDisposable? runtimeBinding = bindRuntime is null
-            ? null
-            : await bindRuntime(engine, runtime);
+        EventAddress head;
+        {
+            using var engine = Assert.IsType<SessionJournalEngine>(
+                openForTest.Invoke(null, [sessionPath, runtime, hooks])
+            );
+            await using IAsyncDisposable? runtimeBinding = bindRuntime is null
+                ? null
+                : await bindRuntime(engine, runtime);
 
-        Exception exception = await Assert.ThrowsAnyAsync<Exception>(
-            () => engine.SendAsync(
-                GalateaUserMessageEnvelope.Wrap("fixture observation"),
-                CancellationToken.None
-            )
-        );
-        Assert.Equal(
-            "Atelia.SessionJournal.SessionJournalFailpointException",
-            exception.GetType().FullName
-        );
-        SessionExecutionBoundaryInspection boundary =
-            engine.InspectExecutionBoundary();
-        Assert.Equal(expectedPhase, boundary.Phase);
-        Assert.NotNull(boundary.Head);
-        return boundary.Head!.Value;
+            Exception exception = await Assert.ThrowsAnyAsync<Exception>(
+                () => engine.SendAsync(
+                    GalateaUserMessageEnvelope.Wrap("fixture observation"),
+                    CancellationToken.None
+                )
+            );
+            Assert.Equal(
+                "Atelia.SessionJournal.SessionJournalFailpointException",
+                exception.GetType().FullName
+            );
+            SessionExecutionBoundaryInspection boundary =
+                engine.InspectExecutionBoundary();
+            Assert.Equal(expectedPhase, boundary.Phase);
+            Assert.NotNull(boundary.Head);
+            head = boundary.Head!.Value;
+        }
+        return legacyStarted ? LegacyPreparedV7Fixture.AppendStarted(sessionPath, head) : head;
     }
 
     internal static async Task<EventAddress> CreateFailedBoundaryAsync(
@@ -1231,21 +1313,10 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         CompletionConnectionConfig connection
     ) {
         var client = new KnownFailureClient();
-        using var engine = SessionJournalEngine.Open(sessionPath);
-        engine.UseRuntime(CreateFixtureRuntime(connection, client));
-        await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
-            () => engine.SendAsync(
-                GalateaUserMessageEnvelope.Wrap("failed fixture turn"),
-                CancellationToken.None
-            )
-        );
-        SessionRuntimeRecoveryRequirements
-            .FailedTurnMustBeAbandoned requirement = Assert.IsType<
-                SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned
-            >(engine.InspectRuntimeRecoveryRequirements());
-        Assert.Equal(1, client.DispatchCallCount);
-        return requirement.FailedHead;
+        EventAddress prepared = await CreateRecoveryBoundaryAsync(sessionPath, connection, client,
+            "AfterRequestPreparedCommitted", SessionExecutionPhase.AwaitingCompletion);
+        Assert.Equal(0, client.DispatchCallCount);
+        return LegacyPreparedV7Fixture.AppendFailed(sessionPath, prepared);
     }
 
     internal static SessionRuntime CreateFixtureRuntime(

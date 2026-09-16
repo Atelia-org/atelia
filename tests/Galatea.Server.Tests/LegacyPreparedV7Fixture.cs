@@ -13,6 +13,29 @@ namespace Atelia.Galatea.Server.Tests;
 /// <summary>Builds synthetic old-format events in a stopped, test-owned journal.
 /// It appends a replacement lineage; existing event bytes are never rewritten.</summary>
 internal static class LegacyPreparedV7Fixture {
+    /// <summary>Appends historical dispatch evidence explicitly; new execution never emits it.</summary>
+    internal static EventAddress AppendStarted(string repository, EventAddress prepared) {
+        using Journal journal = Journal.OpenExisting(repository);
+        var request = SessionPreparedRequestReconstructor.Reconstruct(
+            new SessionJournalEventReader(journal), prepared, projector: GalateaInputProjector.Instance);
+        RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+        return journal.CommitToRef(main, prepared,
+            SessionEventCodec.Encode(SessionEventKind.CompletionAttemptStarted,
+                new CompletionAttemptStartedBody(SessionRequestManifestDefaults.CanonicalRequestCodecId,
+                    SessionRequestCanonicalizer.CreateCommitment(request.Request))),
+            opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted, hint: default).Unwrap().EventAddress;
+    }
+
+    internal static EventAddress AppendFailed(string repository, EventAddress prepared) {
+        EventAddress started = AppendStarted(repository, prepared);
+        using Journal journal = Journal.OpenExisting(repository);
+        RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+        return journal.CommitToRef(main, started,
+            SessionEventCodec.Encode(SessionEventKind.CompletionAttemptFailed,
+                new CompletionAttemptFailedBody(CompletionTerminationKind.Failed, "legacy-fixture", null, [])),
+            opaqueEventKind: (uint)SessionEventKind.CompletionAttemptFailed, hint: default).Unwrap().EventAddress;
+    }
+
     /// <summary>Seeds an empty test repository with actual v1 raw inputs and a nonempty v7 exact request.</summary>
     internal static EventAddress CreatePending(string repository, CompletionConnectionConfig connection,
         ICompletionClient client, bool started, string adapterLabel) {

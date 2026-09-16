@@ -906,7 +906,11 @@ internal sealed class GalateaWebApplicationFactory(
                         delegateTransport,
                         playerTurnRecallProviderFactory,
                         timeProvider
-                    ));
+                    ) {
+                        // Jitter-specific tests override this sample. Other
+                        // injected-clock tests avoid unrelated random timers.
+                        ColdRecoveryJitterSampleForTest = timeProvider is null ? null : () => 0,
+                    });
             }
         });
     }

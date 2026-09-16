@@ -48,6 +48,7 @@ matched V1 endpoint 的 failure 只有 `turn-busy` 使用 `{code,error,turnId}`�
 | POST | `/api/v1/characters/{characterId}/mailbox/ready-turn` | strict `{}` one-shot；200 状态或 202 `{turnId,origin}` |
 | POST | `/api/v1/characters/{characterId}/chat/turns/pop-latest` | 200 `{poppedUserText}`；按 rewind token 取出最近一轮 |
 | POST | `/api/v1/characters/{characterId}/chat/turns/{turnId}/stop` | 204 empty |
+| POST | `/api/v1/characters/{characterId}/chat/turns/pending/stop` | exact-head 安全结束，没有 provider 调用 |
 | GET | `/api/v1/characters/{characterId}/chat/turns/{turnId}/events` | 200 `text/event-stream`；SSE V1 stream |
 
 两个全局 GET 之外，表内其余 13 条 route 都属于 `/characters/{characterId}`。未知角色在 attach/session mutation 前返回
@@ -73,12 +74,11 @@ Resume：
 ```json
 {
   "expectedHead":"canonical-event-address-from-current",
-  "connectionId":"optional-connection-id",
-  "restartUncertainCompletion":false
+  "connectionId":"optional-connection-id"
 }
 ```
 
-`expectedHead` required，必须逐字使用 current response 的 `recoveryHead`。`connectionId` optional；它只在 current recovery 类型允许选择 current connection 时生效。`restartUncertainCompletion` 默认为 false；若 current 表示 uncertain completion 且 `restartRequired=true`，调用方必须取得用户明确授权后传 true。
+`expectedHead` required，必须逐字使用 current response 的 `recoveryHead`。`connectionId` optional；它只在 current recovery 类型允许选择 current connection 时生效。冻结生成使用 Prepared 的原连接；没有人工 uncertain-restart 开关。重复计算可能重复计费，但不会重放已提交 Action 的工具。
 
 Inbound mail：
 
@@ -119,19 +119,30 @@ recent/cadence 查询与后台检查也短暂持有会话锁。没有已发布 l
 
 Stop 没有 request body。`turnId` 必须使用接纳响应或 current 返回的 canonical id；成功返回 204，未知或已经完成返回 404 `turn-not-found`。
 
+204 只确认停止请求已接受；`terminated` terminal 或后续 recent 才证明安全结束已经落盘。
+没有 live turn 的 blocked 任务使用 `pending/stop`，body 为 `{"expectedHead":"exact-head"}`；
+维护模式、活动写者、head 已变或工具批次未闭合时拒绝。结束保留输入与已执行工具，不是 Undo。
+
 ## 只读状态与 browser 读取策略
+
+后台输入整理/Note/邮件提取可能独立于主轮进行。`GET /api/v1/characters/{characterId}/agent/admission`
+返回 `{operationId,state}`，state 为 idle/running/stopping，idle 的 operationId 为 null。
+`POST /api/v1/characters/{characterId}/agent/admission/{operationId}/stop` 按精确 id 请求停止本次整理，
+202 只表示接受；它不等待 TurnLock，也不创建 Observation/TurnEnded。旧 id 不得取消后继操作。
+实际调用退出和资源清理后才释放写权；已提交 Action 和待结算提取目标保留，后续 pulse 可继续原目标。
+session attach 本身不执行 provider 整理调用，关机信号同时取消并清理这些非主轮操作。
 
 `GET /api/v1/characters/{characterId}/chat/turns/current` 返回 exact object：
 
 ```text
-{status,turnId,connectionId,restartRequired,recoveryHead}
+{status,turnId,connectionId,recoveryHead}
 ```
 
 | `status` | 字段约束 |
 |:--|:--|
-| `idle` / `unprovisioned` | `turnId`、`connectionId`、`recoveryHead` 均为 null，`restartRequired=false` |
-| `running` | `turnId` 与 `connectionId` 同时为 null（接纳尚未发布）或同时有值；有值时 turnId 为 32-lowerhex。`recoveryHead=null`，`restartRequired=false` |
-| `recovery-required` | `turnId`、`connectionId` 均为 null；`recoveryHead` 为非空 exact head；`restartRequired` 表示是否涉及 uncertain completion 重启 |
+| `idle` / `unprovisioned` | `turnId`、`connectionId`、`recoveryHead` 均为 null |
+| `running` | `turnId` 与 `connectionId` 同时为 null（接纳尚未发布）或同时有值；有值时 turnId 为 32-lowerhex。`recoveryHead=null` |
+| `recovery-required` | `turnId`、`connectionId` 均为 null；`recoveryHead` 为非空 exact head |
 
 这些字段始终存在；`running` 尚无 turnId 时继续查询 current，不能猜测 SSE 地址。该 GET 也会先通过 `GetSessionAsync` attach session，服从其 provisioning 策略。
 
@@ -184,7 +195,7 @@ current/recent 读取失败不会覆盖同次轮询已经成功读取的 Agent s
 
 ```text
 {
-  turns: [{userText, assistant: {text, reasoningText}}],
+  turns: [{userText, assistant: {text, reasoningText} | null, endReason: null | "stopped" | "rejected" | "incomplete"}],
   rewindLatestToken,
   contextHeader: {observation, action},
   recapGridReadiness
@@ -206,6 +217,10 @@ limited | cancelled | unavailable | stale | busy | unprovisioned
 ```
 
 response 可携带 `authority`、bounded `metrics`、`orderedMissing`、`code`、`detail` 与 `reserveBootstrap` evidence。`ready` 时同一 Getter handle 按该 raw head 的 governing `derivedContext.nthPrevious` 只读 resolve/materialize `contextHeader`，并在最终 raw-head fence 后与 readiness 一起发布。该读取不 dispatch provider、不 build、不写。
+
+Terminated 轮次保留 `userText`，`assistant` 为 null、`endReason` 为明确原因；此时不存在
+`assistant.text` 或 `assistant.reasoningText`，不得合成成功回答。普通 Completed 轮次的
+`endReason` 为 null，assistant 子对象沿用上述字符串合同。
 
 ## Cadence telemetry
 
@@ -243,9 +258,17 @@ reasoning-delta { delta }
 text-delta      { delta }
 done            { recent: RecentTurnsResponseV1 | null }
 error           { code, message }
+attempt-start   { attempt, segment }
+attempt-reset   { segment }
+retry-wait      { attempt, code, nextRetryAtUnixTimeMilliseconds }
+terminated      { reason, recent: RecentTurnsResponseV1 | null }
 ```
 
-`status.code` 为 `generating|normalizing-input|input-normalization-finished|using-tools`；只有 `input-normalization-finished` 携带 required `changed:boolean`。`error.code` 为 `operator-stop|server-shutdown|completion-failed|memo-recall-failed|turn-unavailable|internal-failure`。`memo-recall-failed` 表示记忆召回阶段失败、主模型尚未开始生成；具体异常写入 `Galatea.TurnRunner` 日志。该错误码是 Stable V1 基线之后的扩展，server 与 first-party browser 必须同步更新。
+`status.code` 为 `generating|normalizing-input|input-normalization-finished|using-tools|transport-unresponsive`；只有 `input-normalization-finished` 携带 required `changed:boolean`。`error.code` 为 `operator-stop|server-shutdown|completion-failed|memo-recall-failed|turn-unavailable|internal-failure`。`memo-recall-failed` 表示记忆召回阶段失败、主模型尚未开始生成；具体异常写入 `Galatea.TurnRunner` 日志。server 与 first-party browser 必须同步更新。
+
+`attempt-reset` 只清除当前未提交生成段，不删除先前已提交的工具/Action 展示；服务端 replay buffer 同步清除失败 partial。
+`retry-wait` 为瞬态诊断，不是持久化 attempt。`transport-unresponsive` 表示期限已到、仍等待旧调用退出；不得发起重叠补偿。
+`terminated` 是与 done/error 互斥的 terminal，reason 为 stopped/rejected/incomplete；它不表示成功 Action。
 
 frame 使用 strict UTF-8 与 LF：exact 一个 `event:` 行、一个单行 `data:` JSON 和终止空行。id、retry、comment、multi-data 与 CRLF 均不属于 V1 grammar。
 

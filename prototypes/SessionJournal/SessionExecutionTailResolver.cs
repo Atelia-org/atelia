@@ -71,6 +71,7 @@ internal static class SessionExecutionTailResolver {
                     or SessionEventKind.CompletionAttemptStarted =>
                     ResolvePrepared(head, kind),
                 SessionEventKind.CompletionAttemptFailed => ResolveFailure(head),
+                SessionEventKind.TurnEnded => ResolveEnded(head),
                 _ when SessionOperationalSemantics.IsActionKind(kind) =>
                     ResolveAction(head, kind, validateSource: true),
                 _ when SessionOperationalSemantics.IsToolSegmentKind(
@@ -242,9 +243,7 @@ internal static class SessionExecutionTailResolver {
             return Recovery(
                 head,
                 new SessionExecutionState(
-                    headKind == SessionEventKind.CompletionRequestPrepared
-                        ? SessionExecutionPhase.AwaitingCompletionDispatch
-                        : SessionExecutionPhase.AwaitingCompletion,
+                    SessionExecutionPhase.AwaitingCompletion,
                     headKind,
                     ToolExecutionSequenceCheckpoint:
                         chain.SourceManifest.Execution
@@ -272,6 +271,20 @@ internal static class SessionExecutionTailResolver {
                     chain.SourceManifest.ToolSet.RuntimeIdentity
                 )
             );
+        }
+
+        private SessionExecutionRecovery ResolveEnded(EventAddress head) {
+            DecodedSessionEvent ended = ReadDecoded(head, SessionEventKind.TurnEnded);
+            TurnEndedBody body = RequireBody<TurnEndedBody>(ended);
+            EventAddress parent = ended.Parent ?? throw new InvalidDataException("TurnEnded requires a pending turn parent.");
+            SessionExecutionRecovery prior = ResolveHead(parent);
+            if (!SessionOperationalSemantics.CanEndTurn(prior.State.Phase)
+                || (prior.State.Phase == SessionExecutionPhase.TurnFailed && body.Reason != SessionTurnEndReason.Stopped)) {
+                throw new InvalidDataException("TurnEnded requires a closed-tool completion frontier.");
+            }
+            return Recovery(head, new SessionExecutionState(SessionExecutionPhase.Idle,
+                SessionEventKind.TurnEnded, ToolExecutionSequenceCheckpoint: prior.State.ToolExecutionSequenceCheckpoint),
+                prior.Boundary);
         }
 
         private SessionExecutionRecovery ResolveFailure(EventAddress head) {
@@ -649,8 +662,15 @@ internal static class SessionExecutionTailResolver {
                             $"CompletionRequestPrepared at {chain.SourcePreparedAddress} checkpoint does not match its direct ToolResultObserved source."
                         );
                     }
+                    // A result is not necessarily the last result of its Action's tool batch.
+                    // Resolve the entire local batch without recursively walking older requests.
+                    SessionExecutionRecovery batch = ResolveToolSegment(sourceAddress, validateActionSource: false);
+                    if (batch.State.Phase != SessionExecutionPhase.AwaitingAgentAction
+                        || !string.Equals(batch.State.ActiveCorrelationId, chain.SourceManifest.Origin.CorrelationId, StringComparison.Ordinal)) {
+                        throw new InvalidDataException("Prepared tool continuation requires the complete matching tool batch.");
+                    }
                     return new SourceBoundary(
-                        SourceAction: null,
+                        SourceAction: batch.Boundary.SourceAction,
                         SourceObservation: null
                     );
                 }
@@ -672,7 +692,7 @@ internal static class SessionExecutionTailResolver {
             if (actionEvent.Kind == SessionEventKind.AgentActionProduced) {
                 PreparedAttemptChain chain =
                     ResolvePreparedAttemptChain(parent);
-                if (chain.ActiveAttemptAddress != parent) {
+                if (actionEvent.BodySchemaVersion == 1 && chain.ActiveAttemptAddress != parent) {
                     throw new InvalidDataException(
                         $"{actionEvent.Kind} at {actionEvent.Address} must directly descend from CompletionAttemptStarted."
                     );

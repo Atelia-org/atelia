@@ -7,6 +7,25 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRecentTurnDisplayAdapterTests {
+    [Theory]
+    [InlineData(SessionTurnEndReason.Stopped, "stopped")]
+    [InlineData(SessionTurnEndReason.Rejected, "rejected")]
+    [InlineData(SessionTurnEndReason.Incomplete, "incomplete")]
+    public void Project_TerminatedHasReasonWithoutInventingAssistant(
+        SessionTurnEndReason reason, string expected
+    ) {
+        var end = new SessionTurnEndProjection(default, reason);
+        var turn = new SessionCompletedTurnProjection(
+            default, SessionInputContent.Text("user"),
+            new SessionClosedTurnOutcome.Terminated(end));
+        RecentTurnDto projected = GalateaRecentTurnDisplayAdapter.Project(turn);
+        Assert.Equal("user", projected.UserText);
+        Assert.Null(projected.Assistant);
+        Assert.Equal(expected, projected.EndReason);
+        Assert.Equal(projected, GalateaRecentTurnDisplayAdapter.Project(
+            new SessionRetractedTurnProjection(default, turn.ObservationContent, null, end)));
+    }
+
     private static readonly CompletionDescriptor Invocation = new(
         "test",
         "test-api-v1",

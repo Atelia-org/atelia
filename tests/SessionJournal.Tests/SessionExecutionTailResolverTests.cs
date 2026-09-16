@@ -313,7 +313,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 "prepared",
                 created,
                 prepared,
-                SessionExecutionPhase.AwaitingCompletionDispatch,
+                SessionExecutionPhase.AwaitingCompletion,
                 SessionEventKind.CompletionRequestPrepared,
                 foldable: true
             ),
@@ -377,7 +377,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 "settled-continuation-prepared",
                 created,
                 continuationPrepared,
-                SessionExecutionPhase.AwaitingCompletionDispatch,
+                SessionExecutionPhase.AwaitingCompletion,
                 SessionEventKind.CompletionRequestPrepared,
                 foldable: true
             ),
@@ -535,7 +535,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             SessionExecutionTailResolver.Resolve(reader, prepared);
 
         Assert.Equal(
-            SessionExecutionPhase.AwaitingCompletionDispatch,
+            SessionExecutionPhase.AwaitingCompletion,
             recovery.State.Phase
         );
         Assert.Equal(2, recovery.Diagnostics.PayloadReadCount);
@@ -909,10 +909,11 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             return;
         }
         if (mutation == "wrong-attempt") {
-            EventAddress wrongAttemptHead = Commit(
-                journal,
+            // Historical Action v1 requires Started even though new Action v2 accepts Prepared.
+            EventAddress wrongAttemptHead = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
                 prepared,
-                SessionEventKind.AgentActionProduced,
+                SessionEventCodec.Encode(SessionEventKind.ImportedAgentAction,
                 new AgentActionProducedBody(
                     new ActionMessage([
                         new ActionBlock.Text("skipped attempt")
@@ -921,8 +922,10 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                     correlation,
                     new SessionExecutionCheckpoint(0),
                     ToolRuntimeIdentity: null
-                )
-            );
+                )),
+                opaqueEventKind: (uint)SessionEventKind.AgentActionProduced,
+                hint: default
+            ).Unwrap().EventAddress;
             AssertMalformedConsumerMatrix(
                 journal,
                 runtime,

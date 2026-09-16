@@ -1,6 +1,7 @@
 using System.Runtime.ExceptionServices;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Diagnostics;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 
 namespace Atelia.Galatea.Server;
@@ -21,15 +22,20 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         "galatea.memo-recall";
 
     private readonly CompletionConnectionRegistry _registry;
+    private readonly IReadOnlyDictionary<string, int> _attemptTimeoutSeconds;
+    private readonly TimeProvider _timeProvider;
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
 
     internal GalateaCompletionOwner(
         GalateaConfig config,
-        ICompletionClientFactory completionClientFactory
+        ICompletionClientFactory completionClientFactory,
+        TimeProvider? timeProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
+        _attemptTimeoutSeconds = GalateaHostService.ValidateAttemptTimeouts(config);
+        _timeProvider = timeProvider ?? TimeProvider.System;
         GalateaRecapGridRuntimeConfig recapGrid = config.RecapGrid
             ?? throw new InvalidOperationException(
                 "Galatea requires strict RecapGrid runtime configuration."
@@ -74,7 +80,9 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                     ),
                     _registry,
                     recapGrid.AgentControlProfiles,
-                    inputProjector: GalateaInputProjector.Instance
+                    inputProjector: GalateaInputProjector.Instance,
+                    maintenanceInvokerFactory: (connectionId, inner, attemptTimeout) =>
+                        new GalateaRecapCompletionRetryInvoker(connectionId, inner, attemptTimeout, _timeProvider)
                 );
             RecapGrid = new GalateaRecapGridComposition(
                 recapGridHost,
@@ -126,7 +134,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea input normalization is disabled."
             )
-            : _registry.GetClient(InputNormalizerConnectionId);
+            : GetRepeatableFeatureClient(InputNormalizerConnectionId);
 
     internal string? OutboundMailExtractorConnectionId { get; }
 
@@ -140,7 +148,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea outbound mail extraction is disabled."
             )
-            : _registry.GetClient(OutboundMailExtractorConnectionId);
+            : GetRepeatableFeatureClient(OutboundMailExtractorConnectionId);
 
     internal string? CharacterNoteExtractorConnectionId { get; }
 
@@ -154,7 +162,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea character note extraction is disabled."
             )
-            : _registry.GetClient(CharacterNoteExtractorConnectionId);
+            : GetRepeatableFeatureClient(CharacterNoteExtractorConnectionId);
 
     internal string? MemoRecallConnectionId { get; }
 
@@ -168,7 +176,23 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea Memo recall is disabled."
             )
-            : _registry.GetClient(MemoRecallConnectionId);
+            : GetRepeatableFeatureClient(MemoRecallConnectionId);
+
+    // Only the provider generation is repeated. Each feature retains ownership
+    // of its admission, extraction validation and durable settlement afterwards.
+    // The borrowed registry client is never disposed by this decorator.
+    private ICompletionClient GetRepeatableFeatureClient(string connectionId) =>
+        new GalateaCompletionRetryClient(_registry.GetClient(connectionId), new() {
+            TimeProvider = _timeProvider,
+            AttemptTimeout = TimeSpan.FromSeconds(
+                _attemptTimeoutSeconds.TryGetValue(connectionId, out int seconds) ? seconds : 1800),
+            RetryWaiting = notice => DebugUtil.Warning(
+                "Galatea.Completion",
+                $"Feature generation retry: connection={connectionId}, attempt={notice.Attempt}, kind={notice.Failure.Kind}, delay={notice.Delay}."),
+            AttemptTimedOut = attempt => DebugUtil.Warning(
+                "Galatea.Completion",
+                $"Feature generation deadline reached; waiting for call cleanup: connection={connectionId}, attempt={attempt}."),
+        });
 
     private CompletionConnectionConfig TryGetConnectionExact(string id) =>
         _registry.TryGet(id, out CompletionConnectionConfig connection)

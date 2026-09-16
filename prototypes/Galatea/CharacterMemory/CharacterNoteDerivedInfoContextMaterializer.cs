@@ -47,14 +47,14 @@ internal static class CharacterNoteDerivedInfoContextMaterializer {
         }
         SessionCompletedTurnProjection? turn = snapshot.Turns
             .SingleOrDefault();
-        if (turn is null || turn.TerminalAction.Address != source) {
+        if (turn?.TerminalAction is not { } terminal || terminal.Address != source) {
             throw Mismatch(
                 "completed-turn projection did not end at the source Action"
             );
         }
 
         string visibleActionText = GalateaVisibleActionTextRenderer.Render(
-            turn.TerminalAction.Message
+            terminal.Message
         );
         GalateaVisibleActionFingerprint fingerprint =
             GalateaVisibleActionFingerprint.Derive(visibleActionText);

@@ -1045,9 +1045,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
             && (notice.State switch {
                 GalateaReplyNoticeState.Ready
                     or GalateaReplyNoticeState.Leased =>
-                    notice.ConsumedActionAddress is null,
+                    notice.ConsumedTurnEndAddress is null,
                 GalateaReplyNoticeState.Consumed =>
-                    IsCanonicalAddress(notice.ConsumedActionAddress),
+                    IsCanonicalAddress(notice.ConsumedTurnEndAddress),
                 _ => false
             })
             && notice.Kind switch {

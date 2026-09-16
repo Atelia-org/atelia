@@ -43,7 +43,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
 
         OperationCanceledException exception = Assert.Throws<
             OperationCanceledException
-        >(() => controller.EnterObserverOnlyOrThrow(
+        >(() => controller.EnterDispatchOrThrow(
             CancellationToken.None
         ));
 
@@ -62,19 +62,20 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
     }
 
     [Fact]
-    public void TransitionWinsStop_UsesOnlyObserver() {
+    public void TransitionWinsStop_CancelsGenerationButNotToolLifetime() {
         var controller = new GalateaTurnStopController();
-        controller.EnterObserverOnlyOrThrow(CancellationToken.None);
+        controller.EnterDispatchOrThrow(CancellationToken.None);
 
         Assert.True(controller.RequestStop());
 
         Assert.True(controller.StopRequested);
-        Assert.True(controller.Observer.ShouldStop);
+        Assert.True(controller.UserStopToken.IsCancellationRequested);
+        Assert.False(controller.Observer.ShouldStop);
         Assert.False(
             controller.PreDispatchStopToken.IsCancellationRequested
         );
         Assert.Equal(
-            GalateaTurnStopPhase.ObserverOnly,
+            GalateaTurnStopPhase.Dispatched,
             controller.Phase
         );
     }
@@ -97,14 +98,24 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
     }
 
     [Fact]
-    public void StreamObserverStopFlagIsMonotonic() {
+    public void AlreadyRequestedStopDoesNotPreventCommittedToolRecovery() {
         var controller = new GalateaTurnStopController();
-        controller.EnterObserverOnlyOrThrow(CancellationToken.None);
+        controller.RequestStop();
+        controller.ProtectCommittedTools();
+        controller.EnterDispatchOrThrow(CancellationToken.None);
+        Assert.True(controller.UserStopToken.IsCancellationRequested);
+        Assert.Equal(GalateaTurnStopPhase.Dispatched, controller.Phase);
+    }
+
+    [Fact]
+    public void UserStopTokenCannotBeResetByObserver() {
+        var controller = new GalateaTurnStopController();
+        controller.EnterDispatchOrThrow(CancellationToken.None);
         Assert.True(controller.RequestStop());
 
         controller.Observer.ShouldStop = false;
 
-        Assert.True(controller.Observer.ShouldStop);
+        Assert.True(controller.UserStopToken.IsCancellationRequested);
     }
 
     [Theory]
@@ -134,7 +145,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         Assert.Equal(status, result.Status);
         Assert.Equal(1, inner.CallCount);
         Assert.Equal(
-            GalateaTurnStopPhase.ObserverOnly,
+            GalateaTurnStopPhase.Dispatched,
             controller.Phase
         );
     }
@@ -287,7 +298,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
     }
 
     [Fact]
-    public async Task LifecycleGate_PostAppendWorkRemainsObserverOnly() {
+    public async Task LifecycleGate_PostAppendGenerationStopsWithoutCancellingToolLifetime() {
         using SessionJournalEngine engine = CreateEngine();
         var controller = new GalateaTurnStopController();
         var postAppendEntered = new TaskCompletionSource(
@@ -329,11 +340,11 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         await postAppendEntered.Task;
 
         Assert.True(controller.RequestStop());
-        Assert.True(controller.Observer.ShouldStop);
+        Assert.True(controller.UserStopToken.IsCancellationRequested);
         Assert.False(
             controller.PreDispatchStopToken.IsCancellationRequested
         );
-        Assert.False(observedPostAppendToken.IsCancellationRequested);
+        Assert.True(observedPostAppendToken.IsCancellationRequested);
 
         releasePostAppend.TrySetResult();
         _ = await postAppend;

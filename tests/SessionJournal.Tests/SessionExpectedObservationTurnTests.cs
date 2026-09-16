@@ -85,13 +85,9 @@ public sealed class SessionExpectedObservationTurnTests : IDisposable {
         SessionEventKind.ObservationAccepted)]
     [InlineData(
         (int)SessionJournalFailpoint.AfterRequestPreparedCommitted,
-        SessionExecutionPhase.AwaitingCompletionDispatch,
-        SessionEventKind.CompletionRequestPrepared)]
-    [InlineData(
-        (int)SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted,
         SessionExecutionPhase.AwaitingCompletion,
-        SessionEventKind.CompletionAttemptStarted)]
-    public async Task ObservationPreparedAndStarted_ReturnInProgress(
+        SessionEventKind.CompletionRequestPrepared)]
+    public async Task ObservationAndPrepared_ReturnInProgress(
         int failpointValue,
         SessionExecutionPhase expectedPhase,
         SessionEventKind expectedKind
@@ -177,7 +173,7 @@ public sealed class SessionExpectedObservationTurnTests : IDisposable {
     }
 
     [Fact]
-    public async Task TurnFailed_ReturnsInProgressWithoutTerminalAction() {
+    public async Task CompletionFailure_PreservesPreparedInProgressWithoutTerminalAction() {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new QueueCompletionClient();
@@ -210,9 +206,9 @@ public sealed class SessionExpectedObservationTurnTests : IDisposable {
         var inProgress = Assert.IsType<
             SessionExpectedObservationTurnReadResult.InProgress
         >(Prove(engine, failedHead, baseHead, observation));
-        Assert.Equal(SessionExecutionPhase.TurnFailed,
+        Assert.Equal(SessionExecutionPhase.AwaitingCompletion,
             inProgress.Evidence.Boundary.Phase);
-        Assert.Equal(SessionEventKind.CompletionAttemptFailed,
+        Assert.Equal(SessionEventKind.CompletionRequestPrepared,
             inProgress.Evidence.Boundary.HeadKind);
     }
 

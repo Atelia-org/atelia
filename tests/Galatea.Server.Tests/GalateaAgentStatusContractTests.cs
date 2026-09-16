@@ -56,7 +56,7 @@ public sealed class GalateaAgentStatusContractTests {
     }
 
     [Fact]
-    public async Task ZeroIntervalOneShotNeverAttachesAndRejectsConnectionOverride() {
+    public async Task ZeroIntervalOneShotInspectsExistingSessionWithoutGenerationAndRejectsConnectionOverride() {
         var factory = new RejectProviderFactory();
         await using var fixture = GalateaTestHost.Create(
             factory,
@@ -88,7 +88,7 @@ public sealed class GalateaAgentStatusContractTests {
             using HttpResponseMessage rejected = await client.PostAsync("/api/v1/characters/alice/mailbox/ready-turn", Json(body));
             Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         }
-        Assert.Null(fixture.Factory.Services.GetRequiredService<GalateaHostService>().ReadAttachedSession("alice"));
+        Assert.NotNull(fixture.Factory.Services.GetRequiredService<GalateaHostService>().ReadAttachedSession("alice"));
         Assert.Equal(0, factory.CreateCount);
     }
 

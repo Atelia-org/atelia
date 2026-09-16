@@ -7,7 +7,7 @@ projection 都不能反向修改 raw history。
 ## Public lifecycle
 
 普通消费者通过 `SessionJournalEngine.Create/Open/OpenReadOnly` 获得 owner-bound handle。
-writer operation 必须提交 exact expected raw head；Prepared、Started、ToolContinuation 与
+writer operation 必须提交 exact expected raw head；Prepared（含历史 Started 尾）、ToolContinuation 与
 ToolResult recovery 都由 `InspectRuntimeRecoveryRequirements` 返回 closed typed shape。
 
 一次新请求的 durable phases 为：
@@ -15,12 +15,25 @@ ToolResult recovery 都由 `InspectRuntimeRecoveryRequirements` 返回 closed ty
 1. Idle + pending observation
 2. ObservationAccepted
 3. CompletionRequestPrepared
-4. CompletionAttemptStarted
-5. ToolExecutionStarted / ToolResultObserved（若有 tool）
-6. terminal AgentAction 或 TurnFailed
+4. 完整结果校验后提交 AgentActionProduced v2
+5. ToolExecutionStarted / ToolResultObserved（若有 tool），整个工具批次结算后可准备后继生成
+6. 无工具的 terminal AgentAction，或安全生成边界上的 TurnEnded
 
-Started 表示外部 effect 可能已经发生，不能被自动重试伪装成 exactly-once。调用方只能
-Refuse，或在明确 operator/user 决策后按 exact frozen identity 开始新 attempt。
+新执行不写 CompletionAttemptStarted / CompletionAttemptFailed；调用和退避是 Host 瞬态状态。
+Prepared 与合法历史 Started 尾统一为 AwaitingCompletion，按原计划及 runtime identity 恢复。
+纯生成可以重复计算（可能重复计费），不宣称远端 exactly-once；完整 Action 落盘后才执行工具。
+历史 Action v1 仍要求 Started parent；新 Action v2 可接 Prepared 或合法历史 Started 尾。
+
+`EndPendingTurn(expectedHead, reason)` 在完整工具批次已闭合的生成边界追加 TurnEnded，原因限于
+Stopped / Rejected / Incomplete；保留 Observation 与已提交工具事实，不 rewind。旧 Failed 不自动
+生成，只允许显式 Stopped 收口；环境/协议错误保留 pending，不能伪装业务结束。
+TurnEnded 与 terminal Action 都是 closed turn，前者不伪造成功 Action。
+
+可能已发布 ref 的写入异常使 engine 进入 reopen-required；必须 dispose/reopen 后以 selected lineage
+确认提交事实，不能直接重试生成。工具仍按其独立 durable operation/sequence 合同恢复，详见
+[外部效果与恢复边界](../../docs/SessionJournal/current/recovery/uncertain-external-effects.md)。
+本节描述当前源码合同；集成验收与真实部署状态见
+[实施方案](../../docs/Galatea/completion-auto-retry-refactor-plan.md)，不以本文宣告全部验收完成。
 
 ## Context extension points
 

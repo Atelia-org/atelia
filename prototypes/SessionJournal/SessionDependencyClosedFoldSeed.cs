@@ -114,6 +114,7 @@ internal sealed record SessionDependencyClosedFoldSeed {
                 or SessionEventKind.SystemPromptSetup
                 or SessionEventKind.AgentActionProduced
                 or SessionEventKind.ImportedAgentAction
+                or SessionEventKind.TurnEnded
             ),
         SessionExecutionPhase.AwaitingAgentAction =>
             headKind is (

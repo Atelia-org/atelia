@@ -95,7 +95,8 @@ public sealed class SessionStructuredInputTests : IDisposable {
         var events = new List<DecodedSessionEvent>();
         events.AddRange(ReadEvents(reopened));
         Assert.Equal(9, events.Single(e => e.Kind == SessionEventKind.CompletionRequestPrepared).BodySchemaVersion);
-        Assert.Equal(2, events.Single(e => e.Kind == SessionEventKind.CompletionAttemptStarted).BodySchemaVersion);
+        Assert.DoesNotContain(events, e => e.Kind == SessionEventKind.CompletionAttemptStarted);
+        Assert.Equal(2, events.Single(e => e.Kind == SessionEventKind.AgentActionProduced).BodySchemaVersion);
         var snapshot = Assert.IsType<SessionCompletedTurnsReadResult.Snapshot>(reopened.ReadRecentCompletedTurns(1)).Value;
         Assert.Equal(observation, snapshot.Turns.Single().ObservationContent);
         EventAddress observationAddress = snapshot.Turns.Single().ObservationAddress;
@@ -127,46 +128,44 @@ public sealed class SessionStructuredInputTests : IDisposable {
         Assert.Contains("layout-B", client.Requests.Single().PromptPrefix.SystemPrompt);
         var events = ReadEvents(reopened);
         Assert.Single(events, e => e.Kind == SessionEventKind.CompletionRequestPrepared);
-        var started = events.Single(e => e.Kind == SessionEventKind.CompletionAttemptStarted);
-        var body = Assert.IsType<CompletionAttemptStartedBody>(SessionEventCodec.Decode(started.Kind, reopened.ReadPayloadBytes(started.Address), out _));
-        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(client.Requests.Single()), body.Commitment);
+        Assert.DoesNotContain(events, e => e.Kind == SessionEventKind.CompletionAttemptStarted);
+        Assert.Equal(prepared, events.Single(e => e.Kind == SessionEventKind.AgentActionProduced).Parent);
     }
 
     [Fact]
-    public async Task UncertainRefusesBeforeProjectionAndExplicitRetryKeepsBothEvidenceRecords() {
+    public async Task PreparedProjectionFailureCanRecoverWithoutNewPreparedOrAttemptEvidence() {
         var client = new Client();
-        using (var engine = Create(client, new Projector("layout-A"), new(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted))) {
+        using (var engine = Create(client, new Projector("layout-A"), new(SessionJournalFailpoint.AfterRequestPreparedCommitted))) {
             await Assert.ThrowsAsync<SessionJournalFailpointException>(() => engine.SendAsync(Input("body"), CancellationToken.None));
         }
-        EventAddress started;
-        byte[] evidence;
-        using (var refused = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(_path), Runtime(client, new Projector("throw", true)))) {
-            started = refused.ReadCurrentHead()!.Value;
-            evidence = refused.ReadPayloadBytes(started);
-            _ = ReadEvents(refused);
-            refused.InspectRuntimeRecoveryRequirements();
-            await Assert.ThrowsAsync<InvalidOperationException>(() => refused.ResumeAsync(CancellationToken.None));
-            Assert.Equal(started, refused.ReadCurrentHead());
+        EventAddress prepared;
+        byte[] plan;
+        using (var blocked = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(_path), Runtime(client, new Projector("throw", true)))) {
+            prepared = blocked.ReadCurrentHead()!.Value;
+            plan = blocked.ReadPayloadBytes(prepared);
+            _ = ReadEvents(blocked);
+            blocked.InspectRuntimeRecoveryRequirements();
+            await Assert.ThrowsAsync<NotSupportedException>(() => blocked.ResumeAsync(CancellationToken.None));
+            Assert.Equal(prepared, blocked.ReadCurrentHead());
         }
-        using var retried = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(_path), Runtime(client, new Projector("layout-B")) with {
-            UncertainCompletionRecoveryPolicy = SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
-        });
+        using var retried = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(_path), Runtime(client, new Projector("layout-B")));
         await retried.ResumeAsync(CancellationToken.None);
         Assert.Single(client.Requests);
-        Assert.Equal(evidence, retried.ReadPayloadBytes(started));
-        var attempts = ReadEvents(retried).Where(e => e.Kind == SessionEventKind.CompletionAttemptStarted).ToArray();
-        Assert.Equal(2, attempts.Length);
-        var commitments = attempts.Select(e => Assert.IsType<CompletionAttemptStartedBody>(SessionEventCodec.Decode(e.Kind, retried.ReadPayloadBytes(e.Address), out _)).Commitment).ToArray();
-        Assert.NotEqual(commitments[0], commitments[1]);
+        Assert.Equal(plan, retried.ReadPayloadBytes(prepared));
+        var events = ReadEvents(retried);
+        Assert.DoesNotContain(events, e => e.Kind == SessionEventKind.CompletionAttemptStarted);
+        Assert.Single(events, e => e.Kind == SessionEventKind.CompletionRequestPrepared);
+        Assert.Single(events, e => e.Kind == SessionEventKind.AgentActionProduced);
+        Assert.Contains("layout-B", client.Requests.Single().PromptPrefix.SystemPrompt);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task StartedCommitExceptionNeverCallsProviderAndReopenUsesDurableHead(bool afterCommit) {
+    public async Task PreparedCommitExceptionNeverCallsProviderAndReopenUsesDurableHead(bool afterCommit) {
         var client = new Client();
         Action<SessionEventKind, EventJournal.EventJournal> fail = (kind, _) => {
-            if (kind == SessionEventKind.CompletionAttemptStarted) { throw new IOException("commit outcome unavailable"); }
+            if (kind == SessionEventKind.CompletionRequestPrepared) { throw new IOException("commit outcome unavailable"); }
         };
         var hooks = afterCommit ? new SessionJournalTestHooks(AfterCommitBeforeReturn: fail) : new SessionJournalTestHooks(BeforeCommit: fail);
         using (var engine = Create(client, new Projector("layout-A"), hooks)) {
@@ -174,7 +173,7 @@ public sealed class SessionStructuredInputTests : IDisposable {
         }
         Assert.Empty(client.Requests);
         using var reopened = SessionJournalEngine.OpenReadOnly(_path);
-        Assert.Equal(afterCommit ? SessionExecutionPhase.AwaitingCompletion : SessionExecutionPhase.AwaitingCompletionDispatch,
+        Assert.Equal(afterCommit ? SessionExecutionPhase.AwaitingCompletion : SessionExecutionPhase.AwaitingAgentAction,
             reopened.InspectExecutionBoundary().Phase);
         reopened.ScanCheckedAuditEvents(_ => { });
     }
@@ -241,7 +240,7 @@ public sealed class SessionStructuredInputTests : IDisposable {
             if (kind == SessionEventKind.CompletionRequestPrepared) { projector.Fails = true; }
         }));
         await Assert.ThrowsAsync<NotSupportedException>(() => engine.SendAsync(Input("body"), CancellationToken.None));
-        Assert.Equal(SessionExecutionPhase.AwaitingCompletionDispatch, engine.InspectExecutionBoundary().Phase);
+        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, engine.InspectExecutionBoundary().Phase);
         var events = ReadEvents(engine);
         Assert.Single(events, e => e.Kind == SessionEventKind.CompletionRequestPrepared);
         Assert.DoesNotContain(events, e => e.Kind == SessionEventKind.CompletionAttemptStarted);
@@ -266,18 +265,16 @@ public sealed class SessionStructuredInputTests : IDisposable {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RefuseStillRejectsCorruptSemanticPlan(bool wrongSetup) {
+    public async Task AutomaticRecoveryRejectsCorruptSemanticPlanBeforeProjection(bool wrongSetup) {
         var client = new Client();
         CompletionRequestPreparedBody manifest;
-        CompletionAttemptStartedBody evidence;
         EventAddress head;
         EventAddress rawEnd;
-        using (var engine = Create(client, new Projector("layout-A"), new(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted))) {
+        using (var engine = Create(client, new Projector("layout-A"), new(SessionJournalFailpoint.AfterRequestPreparedCommitted))) {
             await Assert.ThrowsAsync<SessionJournalFailpointException>(() => engine.SendAsync(Input("body"), CancellationToken.None));
             var events = ReadEvents(engine);
             var prepared = events.Single(e => e.Kind == SessionEventKind.CompletionRequestPrepared);
             manifest = Assert.IsType<CompletionRequestPreparedBody>(prepared.Body);
-            evidence = Assert.IsType<CompletionAttemptStartedBody>(events.Single(e => e.Kind == SessionEventKind.CompletionAttemptStarted).Body);
             rawEnd = prepared.Parent!.Value;
             head = engine.ReadCurrentHead()!.Value;
         }
@@ -289,8 +286,6 @@ public sealed class SessionStructuredInputTests : IDisposable {
             Assert.True(journal.MoveRef(branch, head, rawEnd).Unwrap());
             var prepared = journal.CommitToRef(branch, rawEnd, SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, manifest),
                 opaqueEventKind: (uint)SessionEventKind.CompletionRequestPrepared, hint: default).Unwrap().EventAddress;
-            journal.CommitToRef(branch, prepared, SessionEventCodec.Encode(SessionEventKind.CompletionAttemptStarted, evidence),
-                opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted, hint: default).Unwrap();
         }
         using var reopened = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(_path), Runtime(client, new Projector("disabled", true)));
         await Assert.ThrowsAsync<InvalidDataException>(() => reopened.ResumeAsync(CancellationToken.None));
@@ -363,8 +358,7 @@ public sealed class SessionStructuredInputTests : IDisposable {
         }
         var recoverySource = new TestContextCandidateSource { ForcedStatus = SessionContextCandidateSelectionStatus.StoreUnavailable };
         using (var reopened = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(_path), Runtime(client, new Projector("disabled", true)) with {
-            ContextCandidateSource = recoverySource,
-            UncertainCompletionRecoveryPolicy = SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+            ContextCandidateSource = recoverySource
         })) {
             reopened.InspectRuntimeRecoveryRequirements();
             await reopened.ResumeAsync(CancellationToken.None);

@@ -104,14 +104,11 @@ public sealed partial class ProgramRecapGridCommandTests {
         SessionPreparedRequestReconstruction reconstruction = ReconstructReceiptRequest(prepared.Address);
         Assert.Equal(SessionRequestCanonicalizer.Canonicalize(request), reconstruction.CanonicalBytes);
         Assert.Null(reconstruction.Manifest.Commitment);
-        SessionJournalAuditEvent started = Assert.Single(after, value =>
-            value.Kind == SessionEventKind.CompletionAttemptStarted && value.Parent == prepared.Address);
-        CompletionAttemptStartedBody evidence = Assert.IsType<CompletionAttemptStartedBody>(
-            SessionEventCodec.Decode(SessionEventKind.CompletionAttemptStarted,
-                ReadReceiptEventPayload(started.Address), out int startedVersion));
-        Assert.Equal(2, startedVersion);
-        Assert.Equal(SessionRequestManifestDefaults.CanonicalRequestCodecId, evidence.CanonicalRequestCodecId);
-        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), evidence.Commitment);
+        Assert.Equal(before.Count(static value => value.Kind == SessionEventKind.CompletionAttemptStarted),
+            after.Count(static value => value.Kind == SessionEventKind.CompletionAttemptStarted));
+        SessionJournalAuditEvent action = Assert.Single(after, value =>
+            value.Kind == SessionEventKind.AgentActionProduced && value.Parent == prepared.Address);
+        Assert.Equal(2, action.BodySchemaVersion);
     }
 
     [Fact]

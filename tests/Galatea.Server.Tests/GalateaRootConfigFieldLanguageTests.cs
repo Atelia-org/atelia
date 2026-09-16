@@ -13,6 +13,45 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
+    public void RuntimePolicySerializerRoundTripsDefaultBootstrapShapeWithoutNullOverride() {
+        GalateaRootFileConfig root = JsonSerializer.Deserialize<GalateaRootFileConfig>(MinimalV11, GalateaJson.Options)!;
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(root, GalateaJson.Options);
+        GalateaStrictConfigReader.ValidateRoot(bytes);
+        using JsonDocument document = JsonDocument.Parse(bytes);
+        Assert.False(document.RootElement.GetProperty("runtime").TryGetProperty("completionAttemptTimeoutSeconds", out _));
+        root = root with { Runtime = root.Runtime with { CompletionAttemptTimeoutSeconds = new Dictionary<string, int> { ["test"] = 60 } } };
+        byte[] configured = JsonSerializer.SerializeToUtf8Bytes(root, GalateaJson.Options);
+        GalateaStrictConfigReader.ValidateRoot(configured);
+        Assert.Equal(60, JsonSerializer.Deserialize<GalateaRootFileConfig>(configured, GalateaJson.Options)!.Runtime.CompletionAttemptTimeoutSeconds!["test"]);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(1800)]
+    [InlineData(86400)]
+    public void CompletionDeadlineIsHostOwnedPerExactConnection(int seconds) {
+        using var fixture = new RootConfigFixture();
+        JsonObject root = ParseRoot(MinimalV11);
+        root["runtime"]!["completionAttemptTimeoutSeconds"] = new JsonObject { ["test"] = seconds };
+        GalateaConfig config = fixture.Load(root.ToJsonString());
+        Assert.Equal(seconds, config.CompletionAttemptTimeoutSeconds!["test"]);
+        root["runtime"]!["completionAttemptTimeoutSeconds"] = new JsonObject { ["missing"] = seconds };
+        Assert.Throws<InvalidOperationException>(() => fixture.Load(root.ToJsonString()));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("{\"test\":0}")]
+    [InlineData("{\"test\":86401}")]
+    [InlineData("{\"test\":1.5}")]
+    [InlineData("{\"test\":1,\"test\":2}")]
+    public void CompletionDeadlineRejectsInvalidPolicy(string value) {
+        string root = MinimalV11.Replace("\"runtime\":{", "\"runtime\":{\"completionAttemptTimeoutSeconds\":" + value + ",", StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(root)));
+    }
+
+    [Fact]
     public void AutonomyEnrollmentComesOnlyFromCharactersAndAllowsZeroPlayers() {
         using var fixture = new RootConfigFixture();
         JsonObject root = ParseRoot(MinimalV11);

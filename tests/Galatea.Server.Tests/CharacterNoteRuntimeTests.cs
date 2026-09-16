@@ -1376,6 +1376,12 @@ public sealed class CharacterNoteRuntimeTests {
             await GetRuntimeAsync(host);
 
         Assert.Equal(0, noteClient.DispatchCount);
+        Assert.NotNull(session.CharacterMemoryReconciler!.ReadStatusSnapshot().ActiveCapture);
+        await session.TurnLock.WaitAsync();
+        try {
+            await service.ReconcileDurableAdmissionAsync(session, CancellationToken.None);
+        }
+        finally { session.TurnLock.Release(); }
         Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
         Assert.Null(session.CharacterMemoryReconciler!
             .ReadStatusSnapshot().ActiveCapture);

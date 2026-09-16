@@ -16,6 +16,39 @@ internal sealed class GalateaLiveTurn {
     private bool _transportAborted;
     private string _status = "running";
     private string? _phase;
+    private int _segment;
+    private int _segmentStart;
+
+    internal int BeginCompletionInvocation() {
+        lock (_gate) {
+            _segmentStart = _replayFrames.Count;
+            return ++_segment;
+        }
+    }
+
+    internal void ResetCompletionPreview() {
+        List<Channel<GalateaSseFrame>> disconnected = [];
+        lock (_gate) {
+            ThrowIfPublicationClosed();
+            _replayFrames.RemoveRange(_segmentStart, _replayFrames.Count - _segmentStart);
+            _previewEventCount = _replayFrames.Count;
+            _previewUtf8Bytes = _replayFrames.Sum(frame => frame.Utf8Length);
+            _previewSuppressed = false;
+            // The reset is a control message, not retained failed preview.
+            WriteSubscribersLocked(GalateaSseFrames.AttemptReset(_segment), disconnected);
+        }
+        CompleteDisconnected(disconnected);
+    }
+
+    internal void PublishAttempt(int attempt) => PublishPreview(maximum => {
+        var frame = GalateaSseFrames.AttemptStart(attempt, _segment);
+        return frame.Utf8Length <= maximum ? frame : null;
+    });
+
+    internal void PublishRetry(int attempt, string code, long nextRetryAt) => PublishPreview(maximum => {
+        var frame = GalateaSseFrames.RetryWait(attempt, code, nextRetryAt);
+        return frame.Utf8Length <= maximum ? frame : null;
+    }, "retry-wait");
 
     public GalateaLiveTurn(
         string userMessage,
@@ -196,6 +229,9 @@ internal sealed class GalateaLiveTurn {
             GalateaSseFrames.Done(recent),
             status: "completed"
         );
+
+    internal void PublishTerminated(string reason, RecentTurnsResponseDto? recent) =>
+        PublishTerminal(GalateaSseFrames.Terminated(reason, recent), "terminated");
 
     internal void PublishError(GalateaSseErrorCode code) =>
         PublishTerminal(

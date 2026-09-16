@@ -21,6 +21,9 @@ internal enum SessionOperationalViolation {
 /// replay consumers. This layer performs no IO, traversal, or materialization.
 /// </summary>
 internal static class SessionOperationalSemantics {
+    internal static bool CanEndTurn(SessionExecutionPhase phase) => phase is
+        SessionExecutionPhase.AwaitingAgentAction or SessionExecutionPhase.AwaitingCompletion or SessionExecutionPhase.TurnFailed;
+
     internal static bool IsSetupKind(SessionEventKind kind) =>
         kind is (
             SessionEventKind.RuntimeConfigSetup
@@ -50,10 +53,7 @@ internal static class SessionOperationalSemantics {
     internal static bool IsPreparedOrAttemptPhase(
         SessionExecutionPhase phase
     ) =>
-        phase is (
-            SessionExecutionPhase.AwaitingCompletionDispatch
-            or SessionExecutionPhase.AwaitingCompletion
-        );
+        phase == SessionExecutionPhase.AwaitingCompletion;
 
     internal static string BuildObservationCorrelationId(
         EventAddress observationAddress

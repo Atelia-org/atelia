@@ -76,6 +76,9 @@ internal static class RuntimeRenderer {
                     // record only at the individual completion boundary.
                     visible.Add(observation);
                     break;
+                case SessionTurnEndedMessage ended:
+                    visible.Add(ended);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"History message subtype '{unit.Message?.GetType().FullName}' is unsupported."
@@ -89,8 +92,8 @@ internal static class RuntimeRenderer {
         CompletionRequest semanticRequest,
         ISessionInputProjector? projector
     ) {
-        if (!semanticRequest.PromptPrefix.SharedContextMessages.Any(static message => message is SessionInputObservationMessage)
-            && !semanticRequest.TailMessages.Any(static message => message is SessionInputObservationMessage)) {
+        if (!semanticRequest.PromptPrefix.SharedContextMessages.Any(static message => message is SessionInputObservationMessage or SessionTurnEndedMessage)
+            && !semanticRequest.TailMessages.Any(static message => message is SessionInputObservationMessage or SessionTurnEndedMessage)) {
             return semanticRequest;
         }
         return new(
@@ -109,13 +112,15 @@ internal static class RuntimeRenderer {
     private static IHistoryMessage ProjectInput(
         IHistoryMessage message,
         ISessionInputProjector? projector
-    ) => message is SessionInputObservationMessage observation
-        ? new ObservationMessage(observation.Content.IsStructured
+    ) => message switch {
+        SessionInputObservationMessage observation => new ObservationMessage(observation.Content.IsStructured
             ? (projector ?? throw new NotSupportedException(
                 "Structured recap history requires a host input projector."
             )).Project(observation.Content)
-            : observation.Content.TextValue)
-        : message;
+            : observation.Content.TextValue),
+        SessionTurnEndedMessage ended => new ObservationMessage(ended.Render()),
+        _ => message
+    };
 
     internal static IHistoryMessage RenderWorkTail(FrozenRecapCellWork work) {
         var buffer = new ArrayBufferWriter<byte>();

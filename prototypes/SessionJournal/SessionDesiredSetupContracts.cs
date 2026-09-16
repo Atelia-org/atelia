@@ -14,7 +14,7 @@ public sealed record SessionDesiredSetup(
 
 public enum SessionDesiredSetupUnavailableReason {
     Unprovisioned,
-    FailedTurnMustBeAbandoned,
+    LegacyFailedTurnBlocked,
     ActiveTurn,
 }
 

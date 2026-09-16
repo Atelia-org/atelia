@@ -17,10 +17,13 @@
 | root | `v`；`characters` array（1..256）；`players` array（0..256）；`runtime` object | 无 |
 | Character | string `id`、`name`、`sessionDir`、`delegationStateDir`、`characterMemoryStateDir`、`homeDir`、`defaultConnectionId`；`sessionProvisioning`；integer `autonomyIntervalMinutes` | string `characterContextTemplate` 默认空串；string/null `characterContextTemplateFile` 默认 null |
 | Player | string `id`、`name`、`password` | 无 |
-| Runtime | `recapGrid` object | string-array/null `listenUrls` 默认 null（数组最多 256 项）；string/null `callLogDir` 默认 null；bool `maintenanceMode` 默认 false |
+| Runtime | `recapGrid` object | string-array/null `listenUrls` 默认 null（数组最多 256 项）；string/null `callLogDir` 默认 null；bool `maintenanceMode` 默认 false；object `completionAttemptTimeoutSeconds` 可选 |
 | RecapGrid | string `routeManifestPath`、`currentAgentControlProfileId`；string-array `agentControlProfileFiles`（1..256） | 无 |
 
 `autonomyIntervalMinutes` 是必填 JSON integer，合法闭区间为 `0..525_600`。`0` 不是缺字段默认值；负数、浮点、指数、overflow 与超过上界的值均拒绝。V11 已删除 `heartbeatEnabled`，它是 unknown field，不保留兼容或优先级规则。
+
+`completionAttemptTimeoutSeconds` 按现有 connection id 映射 1..86400 的整数秒数，未列出的连接使用
+1800 秒默认单次期限。未知连接、重复键或无效数字拒绝；这是宿主运行策略，不进入 provider fingerprint。
 
 角色 context 的最终 source 仍必须有效；可选字段只在表中明确列出 null 时接受 null。`sessionProvisioning` 只接受 `existing-only` 或 `create-if-missing`。其余身份、路径、prompt 和 RecapGrid 资源约束延续现有 owner 规则，见[配置参考](../../../Galatea/configuration.md)。
 
@@ -30,7 +33,8 @@
 
 - 正整数：Character 以该分钟数的 process-local monotonic cadence 等待；10 秒 probe 只带来发现延迟。成功的主线回合重新计时，重启重新 arm 且不补停机任务，autonomous 非完成回合只暂停空激活。
 - `0`：不创建/arm cadence，绝不因空 tick 创建 `HeartbeatActivation`；它不关闭 delegation、character-mail relay 或人工交互。
-- 已 durable 的 Ready reply 或 active reply lease 是独立的外部工作证据。即使 interval 为 `0`，10 秒 fallback 仍先做只读 wake probe，存在该证据才 attach 并沿 `TurnLock → reconcile → exact Idle → PrepareFreshTurnAdmissionAsync → BeginCutoff` 领取或恢复 `DelegateReply`。无证据、uninitialized/unavailable/quarantined/backoff store 都 fail closed，不 attach、不 provision、不调用 provider。
+- 已存在 session 的未完成生成是独立恢复证据，不受 interval 限制；启动检查先恢复原 Prepared，不创建新输入。
+- 已 durable 的 Ready reply 或 active reply lease 是独立的外部工作证据。即使 interval 为 `0`，10 秒 fallback 也可沿 `TurnLock → reconcile → exact Idle → PrepareFreshTurnAdmissionAsync → BeginCutoff` 领取或恢复 `DelegateReply`。没有 session 且无其他 wake 的角色不会仅因检查被 provision；旧 Failed 或工具结果不明仍按各自恢复边界阻断。
 
 因此 `0` 的 Agent status 是 `waiting`，`nextActivationAtUnixTimeMilliseconds=null` 表示没有自主 deadline、仍可监视 durable reply；`disabled` 只表示不存在的 Character。Ready preflight 不是 lease claim；最终 cutoff 的 Empty/busy/race 不得退化为 heartbeat activation。
 

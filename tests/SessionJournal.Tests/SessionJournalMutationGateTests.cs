@@ -222,7 +222,7 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
     }
 
     [Fact]
-    public async Task KnownProviderFailureReleasesLeaseForExactAbandon() {
+    public async Task KnownProviderFailureReleasesLeaseForExplicitStop() {
         var client = new KnownFailureCompletionClient();
         var candidates = new TestContextCandidateSource();
         using SessionJournalEngine engine =
@@ -245,8 +245,8 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
         );
         EventAddress failedHead = engine.ReadCurrentHead()!.Value;
 
-        Assert.IsType<SessionTurnRetractionResult.Moved>(
-            engine.AbandonFailedTurn(failedHead)
+        Assert.IsType<SessionTurnEndResult.Ended>(
+            engine.EndPendingTurn(failedHead, SessionTurnEndReason.Stopped)
         );
         Assert.Equal(SessionExecutionPhase.Idle,
             engine.InspectExecutionBoundary().Phase);
@@ -285,7 +285,7 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
     }
 
     [Fact]
-    public void ReentrantDirectMutationIsTypedBeforeCommitAndReleases() {
+    public void ReentrantDirectMutationIsTypedBeforeCommitAndColdReopenReleasesOwnership() {
         SessionJournalEngine? engine = null;
         bool reenter = true;
         var hooks = new SessionJournalTestHooks(
@@ -309,9 +309,8 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
             ),
             hooks
         );
+        EventAddress originalHead = engine.ReadCurrentHead()!.Value;
         using (engine) {
-            EventAddress originalHead =
-                engine.ReadCurrentHead()!.Value;
 
             SessionJournalConcurrentMutationException error =
                 Assert.Throws<SessionJournalConcurrentMutationException>(
@@ -323,11 +322,12 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
                 attempted: "AppendSystemPromptSetup",
                 active: "AppendObservation"
             );
-            Assert.Equal(originalHead, engine.ReadCurrentHead());
-
-            reenter = false;
-            EventAddress appended = engine.AppendObservation("allowed");
-            Assert.Equal(appended, engine.ReadCurrentHead());
+            Assert.Throws<SessionJournalReopenRequiredException>(() => engine.ReadCurrentHead());
+        }
+        using (var reopened = SessionJournalEngine.Open(_root)) {
+            Assert.Equal(originalHead, reopened.ReadCurrentHead());
+            EventAddress appended = reopened.AppendObservation("allowed");
+            Assert.Equal(appended, reopened.ReadCurrentHead());
         }
     }
 

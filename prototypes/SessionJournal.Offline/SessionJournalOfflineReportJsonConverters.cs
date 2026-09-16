@@ -25,8 +25,6 @@ internal sealed class SessionJournalOfflineExecutionPhaseJsonConverter
             "idle" => SessionExecutionPhase.Idle,
             "awaiting-agent-action" =>
                 SessionExecutionPhase.AwaitingAgentAction,
-            "awaiting-completion-dispatch" =>
-                SessionExecutionPhase.AwaitingCompletionDispatch,
             "awaiting-completion" =>
                 SessionExecutionPhase.AwaitingCompletion,
             "awaiting-tool-execution" =>
@@ -49,8 +47,6 @@ internal sealed class SessionJournalOfflineExecutionPhaseJsonConverter
             SessionExecutionPhase.Idle => "idle",
             SessionExecutionPhase.AwaitingAgentAction =>
                 "awaiting-agent-action",
-            SessionExecutionPhase.AwaitingCompletionDispatch =>
-                "awaiting-completion-dispatch",
             SessionExecutionPhase.AwaitingCompletion =>
                 "awaiting-completion",
             SessionExecutionPhase.AwaitingToolExecution =>
@@ -102,6 +98,7 @@ internal sealed class SessionJournalOfflineEventKindJsonConverter
                 SessionEventKind.ImportedAgentAction,
             "completion-attempt-started" =>
                 SessionEventKind.CompletionAttemptStarted,
+            "turn-ended" => SessionEventKind.TurnEnded,
             _ => throw new JsonException(
                 "Offline validation event kind is unsupported."
             )
@@ -136,6 +133,7 @@ internal sealed class SessionJournalOfflineEventKindJsonConverter
                 "imported-agent-action",
             SessionEventKind.CompletionAttemptStarted =>
                 "completion-attempt-started",
+            SessionEventKind.TurnEnded => "turn-ended",
             _ => throw new JsonException(
                 "Offline validation event kind is unsupported."
             )

@@ -38,6 +38,8 @@ docs/Galatea/e2e-testing.md
 docs/Galatea/e2e-20260914-refactor-acceptance.md
 docs/Galatea/codex-delegation-verification.md
 docs/Galatea/codex-delegation-recovery-refactor-plan.md
+docs/Galatea/completion-auto-retry-refactor-plan.md
+docs/Galatea/completion-auto-retry-implementation.md
 docs/Galatea/user-home-design.md
 docs/Galatea/identity-simplification-design.md
 docs/Galatea/control-receipt-simplification-plan.md
@@ -54,6 +56,7 @@ docs/Galatea/prompt/recap-maintainer-family/system-zh-cn.md
 docs/SessionJournal/current/contracts/galatea-root-config-v9.md
 docs/SessionJournal/current/contracts/galatea-root-config-v10.md
 docs/SessionJournal/current/contracts/galatea-root-config-v11.md
+docs/SessionJournal/current/contracts/recap-grid-route-manifest-v2.md
 
 # Evidence/archive records are intentionally not default-scanned. Their links
 # remain observable with:

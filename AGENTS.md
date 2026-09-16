@@ -83,7 +83,7 @@ StateJournal 与其 Generator 已从 Atelia 活跃构建图迁出为封存源码
 
 ## atelia-completion 拆仓任务入口
 
-Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至独立仓并发布 `0.1.0-preview.1`；本仓默认从 nuget.org restore，显式源码联调使用 `UseCompletionSources` / `CompletionSourceRoot`。日常入口见 [Completion 依赖](docs/completion-dependency.md)，版本与来源以 `eng/CompletionDependency.props` 为准。拆仓范围见 [实施方案](docs/plans/atelia-completion-extraction-plan.md)，阶段证据见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)；DramaBoard 的 P4 接入尚未实施。
+Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至独立仓；历史公开版本为 `0.1.0-preview.1`。自动重试重构现使用未公开发布的唯一开发包，先本地试运行：restore 必须显式使用 `eng/NuGet.Completion.Local.config`，后续 build/run 使用 `--no-restore`；冻结 feed 不随 Git clone 搬运，准备方式见 [Completion 依赖](docs/completion-dependency.md)。不要降回旧包或自动探测兄弟仓。显式源码联调仍使用 `UseCompletionSources` / `CompletionSourceRoot`，版本与来源以 `eng/CompletionDependency.props` 为准。拆仓范围见 [实施方案](docs/plans/atelia-completion-extraction-plan.md)，阶段证据见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)；DramaBoard 的 P4 接入尚未实施。
 
 ---
 

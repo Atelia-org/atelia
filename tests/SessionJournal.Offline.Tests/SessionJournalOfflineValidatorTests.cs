@@ -42,6 +42,26 @@ public sealed class SessionJournalOfflineValidatorTests
     }
 
     [Fact]
+    public async Task TurnEnded_RoundTripsThroughRawAuditAndOfflineFold() {
+        string path = NewPath();
+        using (var engine = SessionJournalEngine.Create(path,
+                   new SessionCreateOptions("model-A", "system-A", "surface-A"))) {
+            engine.AppendObservation("stop this input");
+            Assert.IsType<SessionTurnEndResult.Ended>(engine.EndPendingTurn(
+                engine.ReadCurrentHead()!.Value, SessionTurnEndReason.Stopped));
+        }
+        SessionJournalOfflineValidationReport report =
+            await SessionJournalOfflineValidator.ValidateAsync(path);
+        Assert.Equal(SessionExecutionPhase.Idle, report.ExecutionPhase);
+        Assert.Equal(SessionEventKind.TurnEnded, report.HeadKind);
+        Assert.Equal(1, report.ObservationCount);
+        Assert.Equal(0, report.AgentActionCount);
+        Assert.Equal(2, report.HistoryContributionCount);
+        Assert.Contains(report.EventKindCounts,
+            entry => entry.Kind == SessionEventKind.TurnEnded && entry.Count == 1);
+    }
+
+    [Fact]
     public async Task SelectedBranch_ReportsExactRefHeadAndHistory() {
         string path = NewPath();
         EventAddress forkPoint;

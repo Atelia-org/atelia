@@ -8,6 +8,32 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaSseV1Tests {
     [Fact]
+    public void RetryResetDiscardsOnlyCurrentSegmentFromReplayAndLive() {
+        GalateaLiveTurn turn = Turn();
+        turn.BeginCompletionInvocation();
+        turn.PublishAttempt(1);
+        turn.PublishTextDelta("committed prefix");
+        turn.BeginCompletionInvocation();
+        turn.PublishAttempt(1);
+        turn.PublishTextDelta("failed partial");
+        using var live = turn.Subscribe();
+        turn.ResetCompletionPreview();
+        Assert.True(live.Reader.TryRead(out var reset));
+        Assert.Equal("attempt-reset", reset.EventName);
+        turn.PublishRetry(1, "Transport", 1234);
+        turn.PublishAttempt(2);
+        turn.PublishTextDelta("new result");
+        using var replay = turn.Subscribe();
+        string frames = string.Join("", replay.ReplayFrames.Select(FrameText));
+        Assert.Contains("committed prefix", frames);
+        Assert.DoesNotContain("failed partial", frames);
+        Assert.Contains("new result", frames);
+        turn.PublishTerminated("stopped", null);
+        Assert.Equal("terminated", turn.Status);
+        turn.Complete();
+    }
+
+    [Fact]
     public void Frames_AreExactUtf8LfAndClosedTypedPayloads() {
         AssertFrame(
             GalateaSseFrames.Status(GalateaSseStatusCode.Generating),

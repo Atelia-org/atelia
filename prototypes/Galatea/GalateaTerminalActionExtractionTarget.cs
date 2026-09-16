@@ -97,17 +97,18 @@ internal static class GalateaTerminalActionExtractionTargetReader {
         }
         SessionCompletedTurnProjection? latest = completed.Turns
             .SingleOrDefault();
-        if (latest is null
-            || latest.TerminalAction.Address != selectedHead) {
+        SessionTerminalActionProjection? terminal = latest?.TerminalAction;
+        if (terminal is null
+            || terminal.Address != selectedHead) {
             return new GalateaTerminalActionExtractionReadResult
                 .NoTerminalActionAtHead(
                     selectedHead,
-                    latest?.TerminalAction.Address
+                    terminal?.Address
                 );
         }
 
         string visibleText = GalateaVisibleActionTextRenderer.Render(
-            latest.TerminalAction.Message
+            terminal.Message
         );
         return new GalateaTerminalActionExtractionReadResult.Available(
             new GalateaTerminalActionExtractionTarget(

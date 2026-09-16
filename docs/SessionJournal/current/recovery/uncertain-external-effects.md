@@ -1,93 +1,75 @@
-# SessionJournal uncertain external effects safety contract
+# SessionJournal 外部效果与恢复安全合同
 
-状态：Current safety contract
+状态：当前源码合同，随 Completion 自动重试重构更新；最终集成验收与部署状态见
+[实施方案](../../../Galatea/completion-auto-retry-refactor-plan.md)。旧 `9860bc33` 基线记录的是
+Started/Refuse 模型，不证明本次变更已验收。本文区分纯生成、真正工具效果与本地提交不确定。
 
-实现起点：`9860bc33`；append-failure reopen-required语义由本文列出的owning code/tests锁定。
+## 纯生成：保留 Prepared，允许重新计算
 
-基线只证明下列 current code/tests 在该 checkout 上的行为；后续 HEAD 不自动继承本文判断。
-本文拥有 provider/tool external-effect recovery 的当前安全边界，不取代 raw wire、Prepared manifest、
-runtime identity 或 Host domain policy 的 owning code。
+新执行先提交 `CompletionRequestPrepared`，再在内存调用 Completion；完整结果校验通过后才提交
+`AgentActionProduced` v2。不再写新的 `CompletionAttemptStarted` 或 `CompletionAttemptFailed`，
+也不再要求 `Refuse` / `RestartWithNewAttempt` 策略。Prepared 与合法历史 Started 尾统一为
+`AwaitingCompletion`，`FrozenCompletionRequired` 绑定原 source Prepared 与 runtime identity。
 
-## Provider Started：默认停止，显式重启是新 attempt
+纯生成断流后可重算，但可能重复计算或计费，不保证远端 exactly-once。Core 不提供 provider
+结果找回、跨进程 lease 或通用 retry loop；Host 决定退避、期限及错误分类。调用退出并完成资源
+清理后才能开始下一次调用；不以共享 client 的全局连接状态判断，也不放弃旧调用后重叠补偿。
+partial 结果不能作为成功 Action，工具只在完整 Action 已提交之后执行。
 
-`CompletionAttemptStarted` 已提交而 Action/Failed 尚未提交时，provider outcome 是 uncertain。
-`SessionUncertainCompletionRecoveryPolicy.Refuse` 是默认策略：`ResumeAsync` 不调用 provider，也不写 journal。
-只有 Host 明确接受潜在重复 external effect 时，才可选择 `RestartWithNewAttempt`；它会在同一
-Prepared 下创建新的 attempt，而不是证明或继续旧 attempt。因此显式 restart 路径的 provider
-调用语义是 **at-least-once**：provider 可能已经完成旧调用，restart 可能产生重复调用或重复计费。
+### 当前语义计划与旧 exact 请求
 
-当前 Core 没有 provider request/result lookup、reconciliation、capability discovery，也没有跨进程
-lease/single-flight。Host 不得把 idempotency key、provider handle 或 operator 推测当成 Core 已提供的
-exactly-once proof。
+[Prepared v9](../contracts/completion-request-prepared-v9.md)冻结内容选择和执行边界，使用当前
+projector 在内存生成请求。投影、限额或环境错误保留原 Prepared；重试不能重新接纳输入、
+重新选择上下文或换连接。[v7/v8](../contracts/completion-request-prepared-v7.md)继续按原
+commitment exact 重构；v5 仅验证，不开放执行。
 
-### 新语义计划与旧 exact 请求
+历史 Started/Failed 原字节和地址不改写，Started 的版本、摘要及 parent 归属仍严格验证。
+Action v1 只接 Started；新 v2 接 Prepared 或合法历史 Started 尾，不接 Failed。
+旧 Failed 尾保持 blocked，不自动生成；完整验证来源与工具批次后可显式结束为 Stopped。
 
-[Prepared v9](../contracts/completion-request-prepared-v9.md)冻结所选内容和执行边界，Started v2 才记录
-本次临时投影请求的 canonical codec、字节数和摘要。首次发送先提交 Prepared，再从持久计划投影、检查
-限额、提交 Started，最后调用 provider。投影或限额失败保持原 Prepared，无 Started、无 provider 调用。
+### 非成功结果与业务结束
 
-Refuse 前仍验证持久计划、raw/setup/工具及尝试归属；拒绝重发不要求可用 projector。明确授权新 attempt
-后可用当前 projector 表达同一语义计划，旧未知 attempt 及其摘要保留。renderer 变更、缓存失效或投影
-失败均不证明旧调用 NotDispatched，不授权重选内容或自动重发。Started 提交不确定时，本次不调用 provider，
-dispose/reopen 后按实际 Prepared/Started head 决定恢复阶段。
+`CompletionRequestRejectedException` 或非成功 `CompletionResult` 可由 Core 转成
+`SessionJournalTurnAbortedException` 交给 Host 分类，但不持久化逐次失败。
+环境/认证/协议错误保持 pending；它们不是“用户任务已经结束”的事实。
+明确拒绝、完整 terminal 的输出上限及用户 Stop 可在安全边界调用
+`EndPendingTurn(expectedHead, reason)`，追加 `TurnEnded(Rejected/Incomplete/Stopped)`。
+历史 Failed 只能以 Stopped 显式收口。
 
-[旧 Prepared v7/v8](../contracts/completion-request-prepared-v7.md)保持原 commitment 的 exact 重构，
-不调用 structured projector；其正常恢复继续写 Started v1。v5 只验证历史记录，不可恢复 provider 调用。
-版本组合的精确接受规则由 v9 合同的恢复矩阵约束，不因本节的 retry 策略扩大。
+TurnEnded 不回退输入或已提交工具事实。`AwaitingToolExecution` 不能结束，即使 head 已是一个
+ToolResult，也须确认同一 Action 的整个工具批次已闭合。业务结束通过 typed history marker
+进入 planning 与 closed-turn projection；Terminated 不等于 Completed(Action)。
+服务 shutdown 不等于用户 Stop，不应把待恢复任务记为 Stopped。
 
-### 明确的 no-dispatch / pre-stream rejection：Started 后可持久化 Failed
+## 本地提交不确定：poison 与 reopen
 
-`CompletionAttemptStarted` 是 fail-closed 的默认分界，不代表所有调用异常都永久 uncertain。provider adapter 只有在
-证明以下二者之一时才可抛出窄义 `CompletionRequestRejectedException`：（a）deterministic local validation 在 credential /
-network dispatch 前拒绝 request；（b）远端在任何 observer delta 前权威地明确拒绝 request。两种情况都必须证明该 request
-不可能再产生 Action。Core 只 catch 这个 exact provider-neutral 类型，把其中
-`CompletionTerminationKind.Failed`、稳定 `ProviderReason` 与 caller 提供的 bounded/content-free diagnostics 追加为现有
-`CompletionAttemptFailed`，随后以 `SessionJournalTurnAbortedException` 结束本轮。事件 kind、body schema 与恢复 phase
-均不新增：reopen 后仍是既有 `TurnFailed`，由 Host 按 exact failed-head policy 处理。
+Action、TurnEnded 或其他 ref 发布路径异常时，物理 ref 可能已经发布，即使内存 cache 仍显示
+旧 head。可能已发布的写入异常立即令 engine 进入 reopen-required；同一实例不可继续
+repository-bound 读取、恢复或写入，dispose 仍允许。已物化且不再访问 repository 的快照不受影响。
 
-local 分支必须按 exact validation case 分类；不能 catch 普通 converter / serialization exception 后泛化为 known rejection。
-这条翻译也不适用于 caller cancellation、transport failure、redirect、5xx、未验证的 4xx、2xx non-SSE、SSE
-malformed/EOF/protocol failure，或已经产生任意 observer delta 的调用；它们继续停在 Started uncertain。若
-`CompletionAttemptFailed` 的 append 本身抛错，Core传播原始append failure，不能声称known outcome已持久化，并立即把当前
-`SessionJournalEngine` 标记为reopen-required：同一实例不再允许任何repository-bound读取、恢复或写入；dispose仍允许，纯metadata
-getter与失败前已经物化、后续不再触碰repository的immutable snapshot不受此限制。因为EventJournal的Ref move
-是append后再`DurableFlush`，异常后的物理head可能仍是Started，也可能已是exact `CompletionAttemptFailed`；当前实例的内存Ref
-cache不能裁决该结果。Host必须dispose/reopen，让repository recovery读取物理Ref，然后按reopen后观察到的`AwaitingCompletion`
-或`TurnFailed`处理。adapter也不得把raw response body/message、token、account、prompt、generated output或`InnerException`
-放入该typed rejection。
+Host 必须 dispose/reopen，由 selected lineage 裁决：若 Action 已提交，就不能再次生成该 Action；
+若仍为 Prepared，才按 pending 恢复。孤立事件、日志和 global scan 不能提升为 selected authority。
+明确的提交前 CAS 冲突只失效相关 head-bound 状态并重新读取，不声称发生网络失败或 ref 发布不确定。
 
-## ToolExecutionStarted：durable continuation，不等于 provider policy
+## ToolExecutionStarted：独立的副作用恢复义务
 
-`ToolExecutionStarted` 与 provider Started 使用不同证明义务。它持久化 exact
-`SessionToolRuntimeIdentity`、`operationId` 与 `executionSequence`；恢复时 runtime identity 必须 exact
-匹配，并以同一 operation id、同一 reserved sequence 再次调用 tool。Core 不创建第二个 Started
-reservation，也不把 provider 的 `UncertainCompletionRecoveryPolicy` 应用到 tool continuation。
+`ToolExecutionStarted` 持久化 exact `SessionToolRuntimeIdentity`、`operationId` 与
+`executionSequence`；恢复要求 runtime identity 匹配，并使用同一 operation id 和 reserved sequence。
+Core 不创建第二个 Started reservation，也不把纯生成重试政策应用到工具。
 
-这只提供稳定的去重/查询关联，不证明 tool side effect 恰好一次。Host 只应让以下工具进入自动恢复：
-
-- tool 天然幂等；或
-- Host/tool backend 能按 durable `operationId` 去重，或查询并返回既有结果。
-
-非幂等且结果不可查询的工具不得进入自动恢复路径。当前 Core 尚无按 side-effect capability 自动选择
-resume/pause 的策略层；`CapabilitySetFingerprint` 只绑定 Host 声明的 capability set identity，不能替代
-该 admission 决策或结果证明。
-
-## 未实现的 future target
-
-provider/tool result lookup、reconcile、capability-aware retry，以及 durable paused/uncertain 状态都尚未
-实现。`ToolExecutionUncertain`、`TurnPaused` 或相似事件/phase 不能被文档或 Host 当成 current surface。
-历史设计理由见 [architecture roadmap §8.4](../../archive/studies/event-sourced-session-architecture-roadmap.md#84-future-hardeninguncertain-与-capability-aware-recovery)；
-该归档文档不拥有 current status。
+这只提供稳定的去重/查询关联，不证明工具副作用 exactly-once。自动恢复的工具必须天然幂等，
+或由 Host/tool backend 按 durable operationId 去重、查询既有结果。不可查询的非幂等未知效果
+仍须阻断；`CapabilitySetFingerprint` 是身份绑定，不是结果证明。
 
 ## Current owners 与复核入口
 
-| Concern | Owning code | Focused evidence |
-|---|---|---|
-| known no-dispatch / pre-stream rejection | [`CompletionRequestRejectedException.cs`](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Completion.Abstractions/CompletionRequestRejectedException.cs)、[`SessionJournalEngine.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.cs) | [`CompletionRequestRejectedExceptionTests.cs`](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/tests/Completion.Tests/CompletionRequestRejectedExceptionTests.cs)、[`SessionJournalEngineTests.cs`](../../../../tests/SessionJournal.Tests/SessionJournalEngineTests.cs) |
-| provider policy/default | [`SessionJournalContracts.cs`](../../../../prototypes/SessionJournal/SessionJournalContracts.cs)、[`SessionJournalEngine.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.cs) | [`SessionPreparedCompletionRecoveryEngineTests.cs`](../../../../tests/SessionJournal.Tests/SessionPreparedCompletionRecoveryEngineTests.cs) |
-| recovery inspection | [`SessionRuntimeRecoveryRequirements.cs`](../../../../prototypes/SessionJournal/SessionRuntimeRecoveryRequirements.cs)、[`SessionJournalEngine.RuntimeRecovery.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) | [`SessionRuntimeRecoveryRequirementsTests.cs`](../../../../tests/SessionJournal.Tests/SessionRuntimeRecoveryRequirementsTests.cs) |
-| tool reservation/continuation | [`SessionJournalEngine.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.cs)、[`SessionExecutionTailResolver.cs`](../../../../prototypes/SessionJournal/SessionExecutionTailResolver.cs) | [`SessionJournalEngineTests.cs`](../../../../tests/SessionJournal.Tests/SessionJournalEngineTests.cs)、[`SessionExecutionTailResolverTests.cs`](../../../../tests/SessionJournal.Tests/SessionExecutionTailResolverTests.cs) |
+| Concern | Owning code / focused tests |
+|:--|:--|
+| Prepared、Action 与 poison | [`SessionJournalEngine.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.cs)、[`SessionPreparedCompletionRecoveryEngineTests.cs`](../../../../tests/SessionJournal.Tests/SessionPreparedCompletionRecoveryEngineTests.cs) |
+| 严格 lineage 与完整工具批次 | [`SessionExecutionTailResolver.cs`](../../../../prototypes/SessionJournal/SessionExecutionTailResolver.cs)、[`SessionExecutionTailResolverTests.cs`](../../../../tests/SessionJournal.Tests/SessionExecutionTailResolverTests.cs) |
+| 业务结束 | [`SessionJournalEngine.TurnEnded.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.TurnEnded.cs)、[`SessionTurnEndContracts.cs`](../../../../prototypes/SessionJournal/SessionTurnEndContracts.cs) |
+| 原计划 runtime 绑定 | [`SessionRuntimeRecoveryRequirements.cs`](../../../../prototypes/SessionJournal/SessionRuntimeRecoveryRequirements.cs)、[`SessionJournalEngine.RuntimeRecovery.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) |
 
-Host 使用顺序与 exact-head binding 见 [Core README §Send 与 recovery](../../../../prototypes/SessionJournal/README.md#send-与-recovery)。
-修改上述边界时，必须同时复核 owning contracts/engine、provider uncertain tests、tool continuation tests，
-并明确区分“新 attempt 可能重复”与“同一 durable tool reservation 再执行”。
+上游失败事实、transport 清理及 terminal 收口的源码基线为 atelia-completion `0847bf3`，
+不是已发布 preview.1 的行为保证；包消费身份以仓内 `eng/CompletionDependency.props` 为准。
+provider/tool result lookup、自动认证修复和通用 capability-aware 工具恢复不由本次重构提供。

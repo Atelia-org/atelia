@@ -34,7 +34,7 @@ internal abstract record GalateaDurableReplyLeaseReconcileResult {
 
     internal sealed record Consumed(
         string LeaseId,
-        EventAddress TerminalActionAddress
+        EventAddress TerminalEventAddress
     ) : GalateaDurableReplyLeaseReconcileResult;
 
     internal sealed record Quarantined(
@@ -148,7 +148,7 @@ internal sealed class GalateaDurableReplyLease {
         return committed;
     }
 
-    internal void Consume(EventAddress terminalActionAddress) {
+    internal void Consume(EventAddress terminalEventAddress) {
         GalateaReplyLeaseSnapshot current = RequireCurrent(
             _store.ReadSnapshot(),
             GalateaReplyLeaseState.ObservationCommitted
@@ -156,7 +156,7 @@ internal sealed class GalateaDurableReplyLease {
         _store.ConsumeReplyLease(
             LeaseId,
             current.Revision,
-            EventAddressTextCodec.Format(terminalActionAddress)
+            EventAddressTextCodec.Format(terminalEventAddress)
         );
     }
 
@@ -424,6 +424,12 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
             when snapshot.State
                 == GalateaReplyLeaseState.ObservationCommitted =>
             ConsumeCommitted(lease, terminal),
+        SessionExpectedObservationTurnReadResult.Terminated terminated
+            when snapshot.State == GalateaReplyLeaseState.ObservationBound =>
+            RecordAndConsume(lease, terminated),
+        SessionExpectedObservationTurnReadResult.Terminated terminated
+            when snapshot.State == GalateaReplyLeaseState.ObservationCommitted =>
+            ConsumeCommitted(lease, terminated.End.Address),
         SessionExpectedObservationTurnReadResult.Abandoned abandoned
             when snapshot.State
                 == GalateaReplyLeaseState.ObservationCommitted =>
@@ -492,12 +498,25 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
     private static GalateaDurableReplyLeaseReconcileResult ConsumeCommitted(
         GalateaDurableReplyLease lease,
         SessionExpectedObservationTurnReadResult.Terminal terminal
+    ) => ConsumeCommitted(lease, terminal.TerminalAction.Address);
+
+    private static GalateaDurableReplyLeaseReconcileResult RecordAndConsume(
+        GalateaDurableReplyLease lease,
+        SessionExpectedObservationTurnReadResult.Terminated terminated
+    ) {
+        lease.RecordObservationCommitted(terminated.Evidence.ObservationAddress);
+        return ConsumeCommitted(lease, terminated.End.Address);
+    }
+
+    private static GalateaDurableReplyLeaseReconcileResult ConsumeCommitted(
+        GalateaDurableReplyLease lease,
+        EventAddress terminalEventAddress
     ) {
         string leaseId = lease.LeaseId;
-        lease.Consume(terminal.TerminalAction.Address);
+        lease.Consume(terminalEventAddress);
         return new GalateaDurableReplyLeaseReconcileResult.Consumed(
             leaseId,
-            terminal.TerminalAction.Address
+            terminalEventAddress
         );
     }
 

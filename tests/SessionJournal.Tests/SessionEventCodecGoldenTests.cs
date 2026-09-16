@@ -30,11 +30,11 @@ public sealed class SessionEventCodecGoldenTests {
     }
 
     [Theory]
-    [InlineData(SessionEventKind.AgentActionProduced)]
-    [InlineData(SessionEventKind.ImportedAgentAction)]
-    public void AgentActionKinds_HaveExactSharedV1Utf8BodyShape(SessionEventKind kind) {
-        ReadOnlySpan<byte> expected =
-            """{"v":1,"body":{"action":[{"kind":"text","content":"hello"}],"invocation":{"providerId":"provider-A","apiSpecId":"api-A","model":"model-A"},"correlationId":"correlation-A","execution":{"lastIssuedToolExecutionSequence":0},"toolRuntimeIdentity":null}}"""u8;
+    [InlineData(SessionEventKind.AgentActionProduced, 2)]
+    [InlineData(SessionEventKind.ImportedAgentAction, 1)]
+    public void AgentActionKinds_HaveExactUtf8BodyShape(SessionEventKind kind, int version) {
+        byte[] expected = System.Text.Encoding.UTF8.GetBytes(
+            """{"v":VERSION,"body":{"action":[{"kind":"text","content":"hello"}],"invocation":{"providerId":"provider-A","apiSpecId":"api-A","model":"model-A"},"correlationId":"correlation-A","execution":{"lastIssuedToolExecutionSequence":0},"toolRuntimeIdentity":null}}""".Replace("VERSION", version.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         var body = new AgentActionProducedBody(
             new ActionMessage([new ActionBlock.Text("hello")]),
             new CompletionDescriptor("provider-A", "api-A", "model-A"),
@@ -43,7 +43,17 @@ public sealed class SessionEventCodecGoldenTests {
             null
         );
 
-        AssertExactUtf8WriterAndLiteralRoundtrip(kind, body, expected, expectedVersion: 1);
+        AssertExactUtf8WriterAndLiteralRoundtrip(kind, body, expected, expectedVersion: version);
+    }
+
+    [Fact]
+    public void HistoricalProducedActionV1_RemainsReadableWithoutRewritingItsEnvelope() {
+        ReadOnlySpan<byte> legacy =
+            """{"v":1,"body":{"action":[{"kind":"text","content":"historic"}],"invocation":{"providerId":"provider-A","apiSpecId":"api-A","model":"model-A"},"correlationId":"correlation-A","execution":{"lastIssuedToolExecutionSequence":0},"toolRuntimeIdentity":null}}"""u8;
+        var body = Assert.IsType<AgentActionProducedBody>(SessionEventCodec.Decode(
+            SessionEventKind.AgentActionProduced, legacy, out int version));
+        Assert.Equal(1, version);
+        Assert.Equal("historic", body.Action.GetFlattenedText());
     }
 
     [Fact]

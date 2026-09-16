@@ -11,9 +11,24 @@ internal static class GalateaRecentTurnDisplayAdapter {
     ) {
         ArgumentNullException.ThrowIfNull(source);
 
+        if (source.Outcome is SessionClosedTurnOutcome.Terminated terminated) {
+            return new RecentTurnDto(
+                GalateaObservationDisplay.Project(source.ObservationContent),
+                null,
+                terminated.End.Reason switch {
+                    SessionTurnEndReason.Stopped => "stopped",
+                    SessionTurnEndReason.Rejected => "rejected",
+                    SessionTurnEndReason.Incomplete => "incomplete",
+                    _ => throw new InvalidDataException("Unknown turn end reason.")
+                }
+            );
+        }
+        SessionTerminalActionProjection terminal = source.TerminalAction
+            ?? throw new InvalidDataException("A completed turn requires a terminal Action.");
+
         var reasoning = new StringBuilder();
         foreach (ActionBlock block in
-                 source.TerminalAction.Message.Blocks) {
+                 terminal.Message.Blocks) {
             switch (block) {
                 case ActionBlock.ReasoningBlock reasoningBlock when reasoningBlock.PlainText is not null:
                     reasoning.Append(reasoningBlock.PlainText);
@@ -26,7 +41,7 @@ internal static class GalateaRecentTurnDisplayAdapter {
             GalateaObservationDisplay.Project(source.ObservationContent),
             new AssistantMessageDto(
                 GalateaVisibleActionTextRenderer.Render(
-                    source.TerminalAction.Message
+                    terminal.Message
                 ),
                 reasoningText.Length == 0 ? null : reasoningText
             )
@@ -37,6 +52,13 @@ internal static class GalateaRecentTurnDisplayAdapter {
         SessionRetractedTurnProjection source
     ) {
         ArgumentNullException.ThrowIfNull(source);
+        if (source.End is { } end) {
+            return Project(new SessionCompletedTurnProjection(
+                source.ObservationAddress,
+                source.ObservationContent,
+                new SessionClosedTurnOutcome.Terminated(end)
+            ));
+        }
         SessionTerminalActionProjection terminal =
             source.TerminalAction
             ?? throw new ArgumentException(

@@ -15,6 +15,11 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
 
     [Fact]
     public void SessionRuntimeHasNoCallerSelectedOutputLimitSurface() {
+        Assert.Null(typeof(SessionRuntime).GetProperty("UncertainCompletionRecoveryPolicy"));
+        Assert.Null(typeof(SessionRuntimeRecoveryRequirements.FrozenCompletionRequired).GetProperty("DispatchState"));
+        Assert.NotNull(typeof(SessionRuntimeRecoveryRequirements.FrozenCompletionRequired).GetProperty("SourcePreparedAddress"));
+        Assert.Equal(typeof(Task<SessionPreparedCompletionBoundaryResult>),
+            typeof(SessionJournalEngine).GetMethod(nameof(SessionJournalEngine.ResumePreparedCompletionToBoundaryAsync))!.ReturnType);
         Assert.DoesNotContain(
             typeof(SessionRuntime).GetProperties(),
             static property => property.Name.Contains(
@@ -192,6 +197,7 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
             CancellationToken.None
         );
         Assert.False(idleResume.Advanced);
+        Assert.IsType<SessionTurnEndResult.Unavailable>(engine.EndPendingTurn(head, SessionTurnEndReason.Stopped));
         Assert.IsType<SessionTurnRetractionResult.Unavailable>(
             engine.AbandonFailedTurn(head)
         );

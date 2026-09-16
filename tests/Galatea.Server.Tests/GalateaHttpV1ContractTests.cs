@@ -683,7 +683,7 @@ public sealed class GalateaHttpV1ContractTests {
     }
 
     [Fact]
-    public async Task CurrentResponse_HasExactFiveFieldEnvelope() {
+    public async Task CurrentResponse_HasExactFourFieldEnvelopeWithoutRestartConfirmation() {
         await using var host = CreateHost();
         using HttpClient client = host.CreateClient();
         _ = await GalateaTestHost.LoginAsync(client);
@@ -699,7 +699,6 @@ public sealed class GalateaHttpV1ContractTests {
             [
                 "connectionId",
                 "recoveryHead",
-                "restartRequired",
                 "status",
                 "turnId",
             ],

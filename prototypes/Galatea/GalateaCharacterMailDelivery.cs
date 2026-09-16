@@ -123,6 +123,9 @@ internal static class GalateaCharacterMailDeliveryReconciler {
             case SessionExpectedObservationTurnReadResult.Terminal terminal:
                 Complete(source, outbox, terminal.Evidence.ObservationAddress);
                 return;
+            case SessionExpectedObservationTurnReadResult.Terminated terminated:
+                Complete(source, outbox, terminated.Evidence.ObservationAddress);
+                return;
             case SessionExpectedObservationTurnReadResult.Retryable:
                 throw Blocked("character-mail-proof-retryable",
                     "Character mail Journal head changed during proof.");

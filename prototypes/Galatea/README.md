@@ -6,16 +6,17 @@ Galatea.Server 是基于 SessionJournal 的Player 与 Character 分离的 Role-P
 
 ## 启动服务
 
-需要 Linux、.NET 10 SDK，以及已配置的 Completion connection。以下命令在仓库根目录执行：
+需要 Linux、仓库固定的 .NET 10 SDK，以及已配置的 Completion connection。当前 Completion 使用未公开发布的本地开发包，先按[依赖指南](../../docs/completion-dependency.md)准备冻结 feed。以下命令在仓库根目录执行：
 
 ```bash
-dotnet run --project prototypes/Galatea/Galatea.Server.csproj
+dotnet restore prototypes/Galatea/Galatea.Server.csproj --configfile eng/NuGet.Completion.Local.config
+dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
 默认读取项目 ContentRoot 下的 `.atelia/galatea/config.json`；使用上述命令时通常为 `prototypes/Galatea/.atelia/galatea/config.json`。也可以显式指定配置文件：
 
 ```bash
-dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
+dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.csproj -- \
   --Galatea:ConfigPath=/absolute/path/to/config.json
 ```
 
@@ -49,10 +50,10 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 字段不可省略，负数与 `heartbeatEnabled` 都被 strict parser 拒绝。修改后重启生效；没有运行时 enrollment
 开关。它不关闭独立的角色信 relay、durable delegation 或人工交互。`players: []` 是合法配置：无人登录，角色仍可收发信及运行委派。
 
-- 服务端每个 Character 每 10 秒检查一次。`0` 角色先作纯 durable wake probe；无 Ready reply/active reply lease 时不 attach、provision 或调用 provider。
+- 服务端每个 Character 每 10 秒检查一次。已有 session 的待处理生成优先恢复，包括 interval 为 `0`；缺失且没有其他 wake 的 `0` 角色不会因此 provision。
 - 有 durable Ready reply 或 active reply lease 时，任意 interval 都可按既有 recovery/lease 规则续接 `DelegateReply`；它不是空闲自主激活。
 - 正 interval 角色在没有 Ready reply 时，完整空闲该分钟数后可启动一次自主轮次。成功完成主线轮次会重新计时；重启重新 arm，不补跑停机期间的轮次。
-- 自动轮次使用该角色的 `defaultConnectionId`。网页模型选择只影响人工请求。
+- 新自动轮次使用该角色的 `defaultConnectionId`；恢复已有 Prepared 使用其绑定连接与原计划。网页模型选择只影响允许选择连接的人工请求。
 - 关闭或休眠网页不会停止后台 Agent。重启重新计时，不补跑停机期间的轮次。
 
 自主轮次会正常调用模型；启用的 recall、邮件和笔记处理也会照常执行。当前服务需要由你启动和管理，尚未提供开机启动或进程崩溃后的自动重启部署。
@@ -66,10 +67,16 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 | 选择模型并发送 | 为本次人工请求选择连接，提交输入框内容 |
 | 停止 | 请求停止当前轮次，等待收尾；它不是关闭后台 Agent 的总开关 |
 | 撤销上一轮 | 回退最近完成的一轮，并把输入放回编辑区；可以继续撤销 |
-| 恢复待处理轮次 | 显式恢复持久化的未完成轮次；结果不确定时按页面提示确认 |
+| 恢复待处理轮次 | 显式重试 blocked 的原任务；纯生成无需人工确认“结果不确定” |
+| 结束待处理轮次 | 在安全边界追加结束事实，保留输入与已执行工具，不回退历史 |
 | 重试未完成处理 | 重试阻塞自主活动的旧Note/发信提取或保存处理，不创建新的角色轮次 |
 
-网页不会自动恢复未完成轮次。观察到的后台轮次不会改变模型选择或清空草稿；本页亲自发送的人工轮次成功后才清空输入。
+恢复由服务端驱动，不依赖网页在线。观察到的后台轮次不会改变模型选择或清空草稿；本页亲自发送的人工轮次成功后才清空输入。
+
+主生成的暂时网络故障会清理调用后退避重试同一 Prepared，不重复接收输入或执行已提交工具。
+默认单次期限为 30 分钟；`runtime.completionAttemptTimeoutSeconds` 可按 connection id 覆盖（1..86400 秒）。
+未知协议错误、认证或永久配额错误保留任务并 blocked，不按 pulse 不断重发。重复计算可能重复计费。
+Stop 接受不等于已停止；完整工具批次结算后才能持久化结束。关机取消则保留任务供启动恢复。
 
 页面可见时会约每5秒读取 Agent 状态，并根据当前情况刷新 recent 或接入生成流。轮询期间已经完成的后台轮次会从 recent 补看；recent 是最近6轮的视图，不是完整历史浏览器。
 
@@ -110,7 +117,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 ```bash
 ATELIA_DEBUG_CATEGORIES='Galatea.Autonomy,Galatea.Api,Galatea.Mailbox,Galatea.TextExtractor,Galatea.CharacterMemory,Galatea.Delegation,Galatea.Delegation.Supervisor,Galatea.DelegateSidecar' \
-dotnet run --project prototypes/Galatea/Galatea.Server.csproj
+dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
 `Trace/Info` 在 Release 中不编译调用；控制台类别主要控制低级别日志，`Warning/Error` 达到控制台级别阈值后不依赖类别开关。Debug 文件日志默认写入进程工作目录下 `.atelia/debug-logs/`，不可用时回退到 `gitignore/debug-logs/`。可用 `ATELIA_DEBUG_FILE_LEVEL`、`ATELIA_DEBUG_CONSOLE_LEVEL` 调整级别。
@@ -119,7 +126,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 |:--|:--|
 | 启动后生成模板并退出 | 按提示检查模板，准备有效 delegates 路径及 Agent Control profile |
 | Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和服务端异常日志 |
-| interval 为 `0` 但期待自主活动 | 将 `autonomyIntervalMinutes` 设为正整数后重启；`0` 只会自动续接 durable reply |
+| interval 为 `0` 但期待自主活动 | 将 `autonomyIntervalMinutes` 设为正整数后重启；`0` 仍恢复已有任务和 durable reply，但不创建空闲 heartbeat |
 | `blocked` 或需要恢复 | 页面原因码、当前轮次、`Galatea.Autonomy` 与相关服务端错误日志 |
 | 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 先核对当前异常与已绑定的 connection/client/API、原生载荷；旧 adapter 标签已不再作为执行身份。未完成轮次只按实际恢复状态显式处理。不要修改 Origin、清空历史或反复重试；详见[模型切换排障与升级边界](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |
 | 主回复已有内容但轮次未结束 | 邮件/笔记后处理可能仍在执行；检查对应日志 |

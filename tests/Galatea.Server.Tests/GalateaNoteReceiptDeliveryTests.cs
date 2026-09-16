@@ -98,6 +98,28 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         Assert.Equal(1, fixture.Extractor.Calls);
     }
 
+    [Theory]
+    [InlineData(SessionTurnEndReason.Stopped)]
+    [InlineData(SessionTurnEndReason.Rejected)]
+    [InlineData(SessionTurnEndReason.Incomplete)]
+    public async Task TerminatedObservation_ColdReopenDeliversWithoutReextracting(SessionTurnEndReason reason) {
+        using var fixture = await Fixture.CreateAsync();
+        EventAddress observation = fixture.Engine.AppendObservation(fixture.Bind());
+        var ended = Assert.IsType<SessionTurnEndResult.Ended>(
+            fixture.Engine.EndPendingTurn(observation, reason));
+        await fixture.ColdReopenAsync();
+        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        var delivered = fixture.Exact;
+        Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, delivered.State);
+        Assert.Equal(EventAddressTextCodec.Format(observation), delivered.ObservationAddress);
+        await fixture.ColdReopenAsync();
+        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        Assert.Equal(delivered, fixture.Exact);
+        Assert.Null(fixture.Memory.ReadPendingReceiptDelivery());
+        Assert.Equal(ended.End.Address, fixture.Engine.ReadCurrentHead());
+        Assert.Equal(1, fixture.Extractor.Calls);
+    }
+
     [Fact]
     public async Task DifferentAppendedObservation_FailsClosedAndKeepsBindingAcrossReopen() {
         using var fixture = await Fixture.CreateAsync();

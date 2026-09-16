@@ -4,7 +4,7 @@ namespace Atelia.Galatea.Server;
 
 /// <summary>
 /// AwaitingAgentAction recovery has no pending Observation argument. Stop may
-/// switch to observer-only only after the recovery lifecycle has succeeded.
+/// switch to generation-only cancellation only after the recovery lifecycle has succeeded.
 /// Prepared/Started recovery does not run this lifecycle and transitions at
 /// its separate frozen-runtime binding fence.
 /// </summary>
@@ -27,8 +27,11 @@ internal sealed class GalateaRecoveryLifecycleGate
         SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {
+        using var generationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _stop.UserStopToken);
+        generationCancellation.Token.ThrowIfCancellationRequested();
         SessionContextLifecycleResult result = await _inner
-            .PrepareAsync(readView, request, cancellationToken)
+            .PrepareAsync(readView, request, generationCancellation.Token)
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(result);
         if (result.Status is (
@@ -40,7 +43,7 @@ internal sealed class GalateaRecoveryLifecycleGate
                 1,
                 0
             ) == 0) {
-            _stop.EnterObserverOnlyOrThrow(cancellationToken);
+            _stop.EnterDispatchOrThrow(cancellationToken);
         }
         return result;
     }

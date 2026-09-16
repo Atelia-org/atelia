@@ -454,7 +454,6 @@ public sealed class GalateaEndpointLockTopologyTests {
             Assert.Equal("running", current!.Status);
             Assert.Equal(liveTurn.TurnId, current.TurnId);
             Assert.Equal("test", current.ConnectionId);
-            Assert.False(current.RestartRequired);
             Assert.Null(current.RecoveryHead);
 
             using HttpResponseMessage activeRecent = await client
@@ -557,7 +556,6 @@ public sealed class GalateaEndpointLockTopologyTests {
             Assert.Equal("running", current!.Status);
             Assert.Null(current.TurnId);
             Assert.Null(current.ConnectionId);
-            Assert.False(current.RestartRequired);
             Assert.Null(current.RecoveryHead);
             Assert.Equal(
                 before,

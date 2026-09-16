@@ -50,6 +50,28 @@ public sealed class GalateaCharacterMailDeliveryTests {
         Assert.Equal(delivered, fixture.Source.Outbox);
     }
 
+    [Theory]
+    [InlineData(SessionTurnEndReason.Stopped)]
+    [InlineData(SessionTurnEndReason.Rejected)]
+    [InlineData(SessionTurnEndReason.Incomplete)]
+    public async Task TerminatedObservation_DeliversWithoutReissuing(SessionTurnEndReason reason) {
+        await using var fixture = await Fixture.CreateAsync();
+        var source = fixture.Source;
+        SessionInputContent input = Observation(source);
+        _ = source.Store.BindInternalMailObservation(
+            source.Outbox.DispatchId, source.Outbox.Revision,
+            EventAddressTextCodec.Format(fixture.Target.Engine.ReadCurrentHead()!.Value), input);
+        EventAddress observation = fixture.Target.Engine.AppendObservation(input);
+        _ = Assert.IsType<SessionTurnEndResult.Ended>(
+            fixture.Target.Engine.EndPendingTurn(observation, reason));
+        GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target);
+        var delivered = fixture.Source.Outbox;
+        Assert.Equal(GalateaInternalMailState.Delivered, delivered.State);
+        Assert.Equal(EventAddressTextCodec.Format(observation), delivered.ObservationAddress);
+        GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target);
+        Assert.Equal(delivered, fixture.Source.Outbox);
+    }
+
     [Fact]
     public void HttpInboundShape_CarriesNoInternalDeliveryCapability() {
         MailboxMessage message = MailboxMessage.CreateInbound(

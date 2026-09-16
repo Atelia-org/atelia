@@ -1,7 +1,7 @@
 # CompletionRequestPrepared v7/v8 — 历史 exact 恢复合同
 
 状态：历史 v7/v8 exact reader/recovery 合同；v5 audit-only，撤回的 v6 unsupported。新请求 writer 已改为
-[Prepared v9](completion-request-prepared-v9.md)，同时写入 Observation/Setup v2 与 Started v2。本文保留旧请求
+[Prepared v9](completion-request-prepared-v9.md)，同时写入 Observation/Setup v2 与 Action v2，不写新 Started/Failed。本文保留旧请求
 的接受语言和执行权限，不要求 v9 重建历史渲染文本，也不把旧验证证据转授给新版。
 
 本文记录 [SessionJournal Contract R2](session-journal-contract-r2.md) 之后、v9 之前的 raw/recovery 变化。
@@ -78,7 +78,8 @@ v7/v8 解码为同一个当前 body，保留真实来源 schema version，共用
 这个变化只影响 target 元数据，逻辑请求 canonical-json-v2、recipe、已存 commitment 和原始 Journal 字节不变。
 恢复仍使用持久的 model/prompt/history/tools，并检查连接、client/API、工具权限与原生 reasoning 载荷；
 能力查询和 provider 投影使用当前 adapter。最终 commitment 证明逻辑请求重构一致，不承诺 HTTP wire 逐字不变。
-已 Started 的结果不确定请求仍需明确重试授权，不因 adapter 字段删除而自动重发。
+当前纯生成恢复允许按 Host 策略重新计算合法的历史 Started 尾，不再要求 uncertain-restart 授权；
+这属于自动重试合同变更，并非 adapter 字段删除所证明的远端 exactly-once。
 
 v8 writer 开始写入后，旧程序不能读取新格式。部署前保留匹配的完整数据快照；只回退二进制不足以回退数据。
 恢复升级前快照会丢弃快照之后的新轮次，不自动合并这些新事件。
@@ -116,9 +117,11 @@ v9 是明确支持的当前语义格式；其他未列出的旧版与 future ver
 
 v7/v8 共用旧 exact 执行路径，均能由 `SessionPreparedRequestReconstructor` 生成 dispatchable `CompletionRequest`。
 恢复使用已存 exactContextInputs、raw/setup 和 commitment，不调用 `ISessionInputProjector` 或重新查询 RecapGrid。
-真实旧 Observation/Setup v1 解码为 Text；不能拿新 structured 内容改版号冒充旧 fixture。正常历史恢复写 Started v1；
-若读取到 Started v2，其 canonical codec 与 commitment 都必须等于 source Prepared。v9 必须搭配 Started v2，
+真实旧 Observation/Setup v1 解码为 Text；不能拿新 structured 内容改版号冒充旧 fixture。
+新恢复不写 Started/Failed，完整结果以 Action v2 接 Prepared 或合法历史 Started 尾。
+历史 Started v2 的 canonical codec 与 commitment 都必须等于 source Prepared；v9 历史 Started 只接受 v2，
 v5 不接受 Started v2，完整矩阵见 [v9 合同](completion-request-prepared-v9.md#恢复版本矩阵)。
+旧 Action v1 仍严格要求 Started parent，不因新 writer 直接接 Prepared 而放宽旧字节。
 
 若 selected head 是 historical v5 Prepared，或是其后的 active `CompletionAttemptStarted`：
 

@@ -328,15 +328,10 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     }
 
     [Theory]
-    [InlineData(
-        nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted),
-        true)]
-    [InlineData(
-        nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted),
-        false)]
+    [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted))]
+    [InlineData("LegacyStarted")]
     public async Task ActiveFormalRecipeFrozenRecoveryNeverRunsRecapProvider(
-        string failpointName,
-        bool resumes
+        string failpointName
     ) {
         RollingRepository fixture = CreateRollingRepository();
         IReadOnlyList<CompletionConnectionConfig> connections =
@@ -350,7 +345,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             fixture,
             connections[0],
             boundaryFactory.Agent,
-            Enum.Parse<SessionJournalFailpoint>(failpointName)
+            SessionJournalFailpoint.AfterRequestPreparedCommitted,
+            failpointName == "LegacyStarted"
         );
         Assert.Equal(fixture.Recipe.Digest,
             ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
@@ -385,27 +381,15 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             new GalateaTurnOptions(
                 AgentConnectionId,
                 GalateaTurnMode.Resume,
-                RestartUncertainCompletion: false,
                 ExpectedHead: recoveryHead
             )
         );
 
-        if (resumes) {
+        {
             await service.RunTurnAsync(session, turn, CancellationToken.None);
             service.FinishTurn(session, turn);
             Assert.Equal("completed", turn.Status);
             Assert.Equal(1, recoveryFactory.Agent.DispatchCallCount);
-        }
-        else {
-            GalateaTurnException failure = await Assert.ThrowsAsync<
-                GalateaTurnException>(() => service.RunTurnAsync(
-                    session,
-                    turn,
-                    CancellationToken.None
-                ));
-            Assert.Equal("uncertain-completion-restart-required",
-                failure.FailureReason);
-            Assert.Equal(0, recoveryFactory.Agent.DispatchCallCount);
         }
         Assert.Empty(recoveryFactory.Recap.Invocations);
         Assert.Equal(0, routeLoads);
@@ -694,7 +678,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         RollingRepository fixture,
         CompletionConnectionConfig connection,
         ICompletionClient client,
-        SessionJournalFailpoint failpoint
+        SessionJournalFailpoint failpoint,
+        bool legacyStarted
     ) {
         CompletionDispatchIdentity dispatch =
             CompletionDispatchIdentityFactory.Create(connection, client);
@@ -722,7 +707,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 )
             ));
         Assert.Equal(failpoint, exception.Failpoint);
-        return engine.ReadCurrentHead()!.Value;
+        EventAddress head = engine.ReadCurrentHead()!.Value;
+        engine.Dispose();
+        return legacyStarted ? LegacyPreparedV7Fixture.AppendStarted(fixture.Path, head) : head;
     }
 
     private static async Task<EventAddress>

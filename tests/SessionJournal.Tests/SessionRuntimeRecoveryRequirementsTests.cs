@@ -87,7 +87,7 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         }
         Assert.Equal(prepared, safe.CapturedHead);
         Assert.Equal(
-            SessionExecutionPhase.AwaitingCompletionDispatch,
+            SessionExecutionPhase.AwaitingCompletion,
             safe.Phase
         );
         Assert.Equal(
@@ -104,10 +104,7 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
             safe.VisibleToolSetSha256
         );
         Assert.Equal(ToolIdentity, safe.ToolRuntimeIdentity);
-        Assert.Equal(
-            SessionDurableDispatchState.NotStarted,
-            safe.DispatchState
-        );
+        Assert.Equal(prepared, safe.SourcePreparedAddress);
 
         EventAddress started = AppendStarted(path, prepared);
         SessionRuntimeRecoveryRequirements.FrozenCompletionRequired
@@ -138,10 +135,7 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
             safe.ToolRuntimeIdentity,
             uncertain.ToolRuntimeIdentity
         );
-        Assert.Equal(
-            SessionDurableDispatchState.StartedOutcomeUncertain,
-            uncertain.DispatchState
-        );
+        Assert.Equal(prepared, uncertain.SourcePreparedAddress);
         Assert.Equal(0, client.Calls);
         Assert.Equal(0, tool.Calls);
         Assert.Equal(started, ReadHead(path));
@@ -154,7 +148,7 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         using (var inspection = SessionJournalEngine.OpenReadOnly(path)) {
             var terminal = Assert.IsType<
                 SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned
+                    .LegacyFailedTurnBlocked
             >(inspection.InspectRuntimeRecoveryRequirements());
             Assert.Equal(failed, terminal.CapturedHead);
             Assert.Equal(failed, terminal.FailedHead);

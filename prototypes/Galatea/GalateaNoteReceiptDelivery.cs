@@ -41,6 +41,9 @@ internal static class GalateaNoteReceiptDelivery {
             case SessionExpectedObservationTurnReadResult.Terminal terminal:
                 Complete(terminal.Evidence.ObservationAddress);
                 return;
+            case SessionExpectedObservationTurnReadResult.Terminated terminated:
+                Complete(terminated.Evidence.ObservationAddress);
+                return;
             default:
                 throw Invalid(
                     $"Receipt delivery requires exact Observation evidence ({proof.GetType().Name}).");

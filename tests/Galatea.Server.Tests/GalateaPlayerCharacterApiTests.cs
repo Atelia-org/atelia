@@ -27,7 +27,10 @@ public sealed class GalateaPlayerCharacterApiTests {
         ("GET", "/agent/status"), ("POST", "/agent/retry-admission"),
         ("POST", "/mailbox/inbound"), ("POST", "/chat/turns/pop-latest"),
         ("GET", "/chat/turns/current"), ("POST", "/chat/turns/{turnId}/stop"),
-        ("GET", "/chat/turns/{turnId}/events")
+        ("GET", "/chat/turns/{turnId}/events"),
+        ("POST", "/chat/turns/pending/stop"),
+        ("GET", "/agent/admission"),
+        ("POST", "/agent/admission/{operationId}/stop")
     ];
 
     [Fact]
@@ -60,7 +63,7 @@ public sealed class GalateaPlayerCharacterApiTests {
     }
 
     [Fact]
-    public async Task AllThirteenCharacterRoutes_RequireExplicitTarget_AndUnknownTargetsFailBeforeSessionAttach() {
+    public async Task AllCharacterRoutes_RequireExplicitTarget_AndUnknownTargetsFailBeforeSessionAttach() {
         await using var host = CreateTwoCharacterHost();
         using HttpClient client = host.CreateClient();
         _ = await LoginAsync(client);
@@ -68,11 +71,12 @@ public sealed class GalateaPlayerCharacterApiTests {
         RouteEndpoint[] characterEndpoints = source.Endpoints.OfType<RouteEndpoint>()
             .Where(value => value.RoutePattern.RawText?.StartsWith("/api/v1/characters/{characterId}/", StringComparison.Ordinal) == true)
             .ToArray();
-        Assert.Equal(13, characterEndpoints.Length);
+        Assert.Equal(CharacterRoutes.Length, characterEndpoints.Length);
         foreach ((string method, string suffix) in CharacterRoutes) {
             Assert.Contains(characterEndpoints, endpoint => endpoint.RoutePattern.RawText == "/api/v1/characters/{characterId}" + suffix
                 && endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods.Contains(method));
-            string concrete = suffix.Replace("{turnId}", new string('a', 32));
+            string concrete = suffix.Replace("{turnId}", new string('a', 32))
+                .Replace("{operationId}", new string('b', 32));
             using var retired = new HttpRequestMessage(new HttpMethod(method), "/api/v1" + concrete);
             if (method == "POST") retired.Content = JsonContent.Create(new { });
             using HttpResponseMessage response = await client.SendAsync(retired);

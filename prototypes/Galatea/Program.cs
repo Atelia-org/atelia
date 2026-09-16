@@ -448,7 +448,7 @@ characterApi.MapPost(
                     Phase: SessionExecutionPhase.Idle
                 } => true,
                 SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned => true,
+                    .LegacyFailedTurnBlocked => false,
                 SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
                     Phase: SessionExecutionPhase.Empty
                 } => false,
@@ -505,10 +505,7 @@ characterApi.MapPost(
         catch (Exception original) when (
             liveTurn is not null && !writerOwnershipTransferred) {
             try {
-                await hostService.ReconcileDurableAdmissionAsync(
-                    session,
-                    CancellationToken.None
-                );
+                hostService.ReconcileAcceptanceCleanup(session);
             }
             catch (Exception cleanup) when (
                 GalateaExceptionClassifier.IsNonFatal(cleanup)) {
@@ -611,11 +608,11 @@ characterApi.MapPost(
                 );
             }
             if (recovery is SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned) {
+                    .LegacyFailedTurnBlocked) {
                 return RecoveryConflict(
                     recovery,
                     "failed-turn-must-be-abandoned",
-                    "失败轮次必须通过新消息入口在精确边界安全放弃。"
+                    "旧失败轮次必须在精确边界显式结束。"
                 );
             }
             if (recovery is SessionRuntimeRecoveryRequirements
@@ -624,19 +621,6 @@ characterApi.MapPost(
                     recovery,
                     "no-recovery-required",
                     "当前会话没有待恢复轮次。"
-                );
-            }
-            if (recovery is SessionRuntimeRecoveryRequirements
-                    .FrozenCompletionRequired {
-                        DispatchState:
-                            SessionDurableDispatchState
-                                .StartedOutcomeUncertain
-                    }
-                && !request.RestartUncertainCompletion) {
-                return RecoveryConflict(
-                    recovery,
-                    "uncertain-completion-restart-required",
-                    "上次模型调用结果不确定；必须明确授权重新调用。"
                 );
             }
 
@@ -678,11 +662,11 @@ characterApi.MapPost(
                 new GalateaTurnOptions(
                     connectionId,
                     GalateaTurnMode.Resume,
-                    request.RestartUncertainCompletion,
                     expectedHead
                 )
             );
             IResult result = BuildAcceptedTurnResult(liveTurn);
+            session.GenerationBlocked = false;
             _ = turnRunner.Start(session, liveTurn);
             writerOwnershipTransferred = true;
             return result;
@@ -764,6 +748,19 @@ characterApi.MapPost(
     }
 ).WithMetadata(GalateaHttpV1.JsonBody, GalateaHttpV1.MaintenanceWrite);
 
+characterApi.MapGet("/agent/admission", (string characterId, GalateaHostService hostService) =>
+    Results.Ok(hostService.ReadAttachedSession(characterId)?.ReadAdmissionStatus() ?? new GalateaAdmissionStatusDto(null, "idle")));
+
+characterApi.MapPost("/agent/admission/{operationId}/stop", (string characterId, string operationId, GalateaHostService hostService) => {
+    if (!GalateaHttpV1.IsCanonicalTurnId(operationId)) {
+        return Results.BadRequest(new ApiErrorDto("invalid-operation-id", "operationId格式无效。"));
+    }
+    if (hostService.ReadAttachedSession(characterId)?.StopAdmission(operationId) != true) {
+        return Results.Conflict(new ApiErrorDto("admission-changed", "整理操作已结束或已变化。"));
+    }
+    return Results.Accepted();
+}).WithMetadata(GalateaHttpV1.MaintenanceWrite);
+
 characterApi.MapPost(
     "/mailbox/inbound",
     async (
@@ -827,7 +824,7 @@ characterApi.MapPost(
                     Phase: SessionExecutionPhase.Idle
                 } => true,
                 SessionRuntimeRecoveryRequirements
-                    .FailedTurnMustBeAbandoned => true,
+                    .LegacyFailedTurnBlocked => false,
                 _ => false
             };
             if (!acceptsFreshMail) {
@@ -981,6 +978,27 @@ characterApi.MapGet(
 );
 
 characterApi.MapPost(
+    "/chat/turns/pending/stop",
+    async (HttpContext context, string characterId, GalateaHostService hostService) => {
+        var request = await GalateaHttpV1.ReadJsonBodyAsync<StopPendingTurnRequest>(context);
+        if (!GalateaHttpV1.TryParseCanonicalEventAddress(request.ExpectedHead, out var expectedHead)) {
+            return Results.BadRequest(new ApiErrorDto("invalid-expected-head", "expectedHead格式无效。"));
+        }
+        var session = await hostService.GetSessionAsync(characterId, context.RequestAborted);
+        if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
+        try {
+            hostService.RequireRunning();
+            if (session.GetCurrentTurn() is not null || !hostService.EndPendingTurn(session, expectedHead, context.RequestAborted)) {
+                return Results.Conflict(new ApiErrorDto("unsafe-turn-boundary", "会话边界已变化或工具尚未结算。"));
+            }
+            await hostService.RefreshRecentTurnsBestEffortAsync(session, context.RequestAborted);
+            return Results.NoContent();
+        }
+        finally { session.TurnLock.Release(); }
+    }
+).WithMetadata(GalateaHttpV1.JsonBody, GalateaHttpV1.MaintenanceWrite);
+
+characterApi.MapPost(
     "/chat/turns/{turnId}/stop",
     async (HttpContext httpContext, string characterId, GalateaHostService hostService, string turnId) => {
         if (!GalateaHttpV1.IsCanonicalTurnId(turnId)) {
@@ -1094,7 +1112,7 @@ static IResult BuildAcceptedTurnResult(
             new StartTurnResponseDto(liveTurn.TurnId),
             statusCode: StatusCodes.Status202Accepted
         ),
-        "delegate-reply" or "heartbeat-activation" => Results.Json(
+        "delegate-reply" or "heartbeat-activation" or "recovery" => Results.Json(
             new LoopPulseAcceptedTurnDto(
                 liveTurn.TurnId,
                 loopPulseOrigin
@@ -1131,6 +1149,10 @@ static (int StatusCode, ApiErrorDto Error) MapApiException(
         );
     }
     return exception switch {
+    GalateaTurnException { FailureReason: "admission-stopped" } => (
+        StatusCodes.Status409Conflict,
+        new ApiErrorDto("admission-stopped", "本次整理已停止；原持久化目标保留。")
+    ),
     BadHttpRequestException badRequest when
         badRequest.StatusCode == StatusCodes.Status413PayloadTooLarge => (
         StatusCodes.Status413PayloadTooLarge,

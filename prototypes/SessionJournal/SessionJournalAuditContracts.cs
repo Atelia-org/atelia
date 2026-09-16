@@ -64,6 +64,8 @@ public sealed record SessionJournalAuditToolResultObservedFact(
 public sealed record SessionJournalAuditCompletionAttemptStartedFact
     : SessionJournalAuditFact;
 
+public sealed record SessionJournalAuditTurnEndedFact(SessionTurnEndReason Reason) : SessionJournalAuditFact;
+
 public sealed record SessionJournalAuditCompletionAttemptFailedFact(
     CompletionTerminationKind TerminationKind
 ) : SessionJournalAuditFact;

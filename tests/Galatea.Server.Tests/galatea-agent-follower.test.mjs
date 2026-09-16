@@ -12,12 +12,13 @@ const production = await import(
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const turnId = "0123456789abcdef0123456789abcdef";
 const idle = { status: "idle", turnId: null, connectionId: null,
-  restartRequired: false, recoveryHead: null };
+  recoveryHead: null };
 const running = { ...idle, status: "running", turnId, connectionId: "codex" };
 const waiting = { state: "waiting", connectionId: "codex",
   nextActivationAtUnixTimeMilliseconds: Date.now() + 600000,
   lastActivationAtUnixTimeMilliseconds: null, code: null, admissionFailure: null };
 const recent = (text) => ({ turns: [{ userText: "world",
+  endReason: null,
   assistant: { text, reasoningText: null } }], rewindLatestToken: null,
   contextHeader: { observation: "", action: "" }, recapGridReadiness: null });
 const response = (value) => new Response(JSON.stringify(value), {
@@ -287,6 +288,7 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
   let statusValue = waiting;
   let retryResponse = null;
   let confirms = 0;
+  let admissionStopStatus = 202;
   const fetchImpl = async (url, options = {}) => {
     requests.push({ url, options });
     if (url.endsWith("/mailbox/status")) return response({
@@ -294,10 +296,21 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
       attemptCount: 0, code: null, nextRetryAtUnixTimeMilliseconds: null,
     });
     if (url.endsWith("/agent/status")) return response(statusValue);
+    if (url.endsWith("/agent/admission")) return response({ operationId: turnId, state: "running" });
+    if (url.endsWith(`/agent/admission/${turnId}/stop`)) return admissionStopStatus === 202
+      ? new Response(null, { status: 202 })
+      : new Response(JSON.stringify({ code: "admission-changed", error: "整理操作已结束或已变化。" }),
+        { status: admissionStopStatus, headers: { "content-type": "application/json" } });
     if (url.endsWith("/retry-admission")) {
       return retryResponse === null ? response(statusValue) : await retryResponse;
     }
     if (url.endsWith("/current")) return response(currentValue);
+    if (url.endsWith("/pending/stop")) {
+      currentValue = idle;
+      recentValue = { ...recent(""), turns: [{ userText: "world", assistant: null, endReason: "stopped" }] };
+      return new Response(null, { status: 204 });
+    }
+    if (url.endsWith("/stop")) return new Response(null, { status: 204 });
     if (url.endsWith("/recent-turns")) {
       if (recentPending) { const result = recentPending; recentPending = null; return result.promise; }
       return response(recentValue);
@@ -341,6 +354,17 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
     setRecent: (value) => { recentValue = value; },
     deferRecent() { recentPending = deferred(); return recentPending; },
     confirms: () => confirms,
+    setAdmissionStopStatus: (value) => { admissionStopStatus = value; },
+    emit(name, payload) {
+      streams[0].enqueue(new TextEncoder().encode(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`));
+    },
+    terminate(reason) {
+      currentValue = idle;
+      recentValue = { ...recent(""), turns: [{ userText: "world", assistant: null, endReason: reason }] };
+      const stream = streams.shift();
+      stream.enqueue(new TextEncoder().encode(`event: terminated\ndata: ${JSON.stringify({ reason, recent: recentValue })}\n\n`));
+      stream.close();
+    },
     finish(text, nextCurrent = idle) {
       currentValue = nextCurrent; recentValue = recent(text);
       const stream = streams.shift();
@@ -476,7 +500,7 @@ test("actual DOM clears obsolete recovery notices when current becomes idle", as
   const recovery = { ...idle, status: "recovery-required", recoveryHead: "head" };
   const h = domHarness({ current: recovery });
   await flush(); await poll(h);
-  assert.match(h.node("status-text").textContent, /待恢复/);
+  assert.match(h.node("status-text").textContent, /待处理/);
   h.setCurrent(idle);
   h.listeners.get("visibilitychange")(); await poll(h);
   assert.equal(h.node("status-text").textContent, "");
@@ -498,9 +522,87 @@ test("actual DOM terminal handoff does not wait for a later background turn to f
   assert.match(h.node("turn-list").innerHTML, /next turn complete/);
   h.listeners.get("pagehide")();
 });
+test("actual DOM retry resets only uncommitted segment and stop waits for durable termination", async () => {
+  const h = domHarness({ current: running });
+  await flush(); await poll(h);
+  h.emit("attempt-start", { attempt: 1, segment: 1 });
+  h.emit("text-delta", { delta: "committed prefix" });
+  h.emit("attempt-start", { attempt: 1, segment: 2 });
+  h.emit("text-delta", { delta: " failed partial" });
+  h.emit("reasoning-delta", { delta: "failed thinking" });
+  h.emit("attempt-reset", { segment: 2 });
+  h.emit("retry-wait", { attempt: 1, code: "transport", nextRetryAtUnixTimeMilliseconds: Date.now() + 5000 });
+  await flush();
+  assert.equal(h.node("live-text").textContent, "committed prefix");
+  assert.equal(h.node("live-reasoning").textContent, "");
+  h.emit("attempt-reset", { segment: 3 }); // This start was suppressed by the preview cap.
+  await flush();
+  assert.equal(h.node("live-text").textContent, "committed prefix");
+  assert.match(h.node("status-text").textContent, /重试/);
+  await h.node("stop-button").dispatch("click");
+  assert.match(h.node("status-text").textContent, /正在停止/);
+  assert.doesNotMatch(h.node("status-text").textContent, /已停止/);
+  h.terminate("stopped"); await flush();
+  assert.equal(h.node("status-text").textContent, "本轮已停止");
+  assert.match(h.node("turn-list").innerHTML, /本轮已停止/);
+  assert.doesNotMatch(h.node("turn-list").innerHTML, /Assistant/);
+  h.listeners.get("pagehide")();
+});
+
+test("admission stop uses the exact current operation id and is disabled in maintenance", async () => {
+  const status = { ...waiting, state: "running", nextActivationAtUnixTimeMilliseconds: null, code: "ADMISSION_RUNNING" };
+  assert.equal(production.requireAgentStatus(status), status);
+  assert.throws(() => production.requireAdmissionOperation({ state: "running", operationId: null }));
+  assert.throws(() => production.requireAdmissionOperation({ state: "idle", operationId: turnId }));
+  const h = domHarness();
+  h.setStatus(status);
+  await flush(); await poll(h);
+  assert.match(h.node("autonomy-state").textContent, /正在整理/);
+  const button = h.node("stop-admission");
+  assert.equal(button.classList.contains("hidden"), false);
+  assert.equal(button.disabled, false);
+  await button.dispatch("click");
+  const requests = h.requests.filter((x) => x.url.includes("/agent/admission"));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].url, "/api/v1/characters/gpt/agent/admission");
+  assert.equal(requests[1].url, `/api/v1/characters/gpt/agent/admission/${turnId}/stop`);
+  assert.equal(requests[1].options.method, "POST");
+  assert.equal(h.streams.length, 0);
+  assert.match(h.node("status-text").textContent, /正在停止整理/);
+  h.setAdmissionStopStatus(409);
+  await button.dispatch("click");
+  assert.match(h.node("status-text").textContent, /已结束或已变化/);
+  assert.equal(h.requests.filter((x) => x.url.endsWith(`/agent/admission/${turnId}/stop`)).length, 2,
+    "stale exact-id stop is never automatically retried against a new operation");
+  h.setStatus({ ...status, code: "ADMISSION_STOPPING" });
+  h.listeners.get("visibilitychange")(); await poll(h);
+  assert.equal(button.disabled, true);
+  h.listeners.get("pagehide")();
+  const maintenance = domHarness({ maintenanceMode: true });
+  maintenance.setStatus(status);
+  await flush(); await poll(maintenance);
+  await maintenance.node("stop-admission").dispatch("click");
+  assert.equal(maintenance.node("stop-admission").disabled, true);
+  assert.equal(maintenance.requests.some((x) => x.options.method === "POST"), false);
+  maintenance.listeners.get("pagehide")();
+});
+
+test("actual DOM pending stop submits exact head without provider resume", async () => {
+  const h = domHarness({ current: { ...idle, status: "recovery-required", recoveryHead: "head" } });
+  await flush(); await poll(h);
+  assert.equal(h.node("send-button").disabled, true);
+  await h.node("pending-stop-button").dispatch("click");
+  const posts = h.requests.filter((x) => x.options.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.ok(posts[0].url.endsWith("/pending/stop"));
+  assert.deepEqual(JSON.parse(posts[0].options.body), { expectedHead: "head" });
+  assert.equal(h.node("status-text").textContent, "本轮已停止");
+  assert.equal(h.node("send-button").disabled, false);
+  h.listeners.get("pagehide")();
+});
+
 test("actual DOM recovery is explicit, maintenance is read-only, and hidden pages stop follower", async () => {
-  const recovery = { ...idle, status: "recovery-required", recoveryHead: "head",
-    restartRequired: true };
+  const recovery = { ...idle, status: "recovery-required", recoveryHead: "head" };
   const h = domHarness({ current: recovery });
   await flush(); await poll(h);
   assert.equal(h.confirms(), 0);
@@ -508,10 +610,10 @@ test("actual DOM recovery is explicit, maintenance is read-only, and hidden page
   assert.equal(h.node("resume-turn-button").disabled, false);
   const resumed = h.node("resume-turn-button").dispatch("click");
   await flush();
-  assert.equal(h.confirms(), 1);
+  assert.equal(h.confirms(), 0);
   const request = h.requests.find((x) => x.url.endsWith("/resume"));
   assert.equal(JSON.parse(request.options.body).expectedHead, "head");
-  assert.equal(JSON.parse(request.options.body).restartUncertainCompletion, true);
+  assert.equal("restartUncertainCompletion" in JSON.parse(request.options.body), false);
   h.finish("recovered"); await resumed;
   h.document.visibilityState = "hidden";
   h.listeners.get("visibilitychange")();

@@ -88,7 +88,7 @@ public sealed class GalateaAdmissionRetryTests {
     [Theory]
     [InlineData(false, false, HttpStatusCode.OK)]
     [InlineData(true, true, HttpStatusCode.ServiceUnavailable)]
-    public async Task RetryRespectsEnrollmentAndMaintenanceWithoutAttaching(bool enrolled, bool maintenance, HttpStatusCode expected) {
+    public async Task RetryInspectsExistingZeroIntervalSessionButMaintenanceDoesNotAttach(bool enrolled, bool maintenance, HttpStatusCode expected) {
         var completion = new Factory();
         await using var fixture = GalateaTestHost.Create(completion,
             DisabledGalateaUserMessageNormalizer.Instance, maintenanceMode: maintenance,
@@ -100,7 +100,8 @@ public sealed class GalateaAdmissionRetryTests {
         using var response = await client.PostAsync(Endpoint, Json("{}"));
         Assert.Equal(expected, response.StatusCode);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
-        Assert.Null(host.ReadAttachedSession("alice"));
+        if (maintenance) { Assert.Null(host.ReadAttachedSession("alice")); }
+        else { Assert.NotNull(host.ReadAttachedSession("alice")); }
         Assert.Equal(0, completion.MainCalls);
     }
 
@@ -144,13 +145,16 @@ public sealed class GalateaAdmissionRetryTests {
         Assert.Equal("recovery-required", result.Code);
         Assert.True(session.AutomaticAdmissionFailed);
         Assert.Equal("RECOVERY_REQUIRED", coordinator.ReadStatus("alice").Code);
-        var pulse = Assert.IsType<GalateaAutomaticTurnResult.Blocked>(
-            await coordinator.TryPulseAsync("alice", CancellationToken.None));
-        Assert.Equal("recovery-required", pulse.Code);
-        Assert.Equal("RECOVERY_REQUIRED", coordinator.ReadStatus("alice").Code);
-        Assert.Null(coordinator.ReadStatus("alice").AdmissionFailure);
         Assert.Equal(head, session.Engine.ReadCurrentHead());
         Assert.Equal(0, completion.MainCalls);
+        var pulse = Assert.IsType<GalateaAutomaticTurnResult.Started>(
+            await coordinator.TryPulseAsync("alice", CancellationToken.None));
+        Assert.Equal("recovery", pulse.Origin);
+        await pulse.Turn.RunTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("completed", pulse.Turn.Status);
+        Assert.Null(coordinator.ReadStatus("alice").AdmissionFailure);
+        Assert.NotEqual(head, session.Engine.ReadCurrentHead());
+        Assert.Equal(1, completion.MainCalls);
         Assert.Equal(0, completion.ExtractionCalls);
         Assert.Null(session.GetCurrentTurn());
     }

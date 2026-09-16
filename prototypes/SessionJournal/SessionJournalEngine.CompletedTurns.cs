@@ -242,6 +242,7 @@ public sealed partial class SessionJournalEngine {
             EventAddress? observationParent;
             SessionInputContent? observationContent;
             SessionTerminalActionProjection? terminalAction;
+            SessionTurnEndProjection? turnEnd = null;
             if (located.OpenTurn is { } open) {
                 observationAddress = open.ObservationAddress;
                 observationParent = open.ObservationPredecessor;
@@ -256,6 +257,7 @@ public sealed partial class SessionJournalEngine {
                 observationContent =
                     completed.Projection.ObservationContent;
                 terminalAction = completed.Projection.TerminalAction;
+                turnEnd = (completed.Projection.Outcome as SessionClosedTurnOutcome.Terminated)?.End;
             }
             else {
                 observationAddress = null;
@@ -318,6 +320,12 @@ public sealed partial class SessionJournalEngine {
                 observationParent.Value,
                 proofDiagnostics
             );
+            if (turnEnd is not null) {
+                if (recovery.State.Phase != SessionExecutionPhase.Idle) {
+                    throw new InvalidDataException("A terminated expected turn is not idle.");
+                }
+                return new SessionExpectedObservationTurnReadResult.Terminated(evidence, turnEnd);
+            }
             if (terminalAction is null) {
                 if (recovery.State.Phase == SessionExecutionPhase.Idle) {
                     throw new InvalidDataException(
@@ -648,6 +656,7 @@ public sealed partial class SessionJournalEngine {
                 || recovery.State.HeadKind is not (
                     SessionEventKind.AgentActionProduced
                     or SessionEventKind.ImportedAgentAction
+                    or SessionEventKind.TurnEnded
                 )) {
                 return new SessionCompletedTurnRewindPrepareResult
                     .Unavailable(
@@ -666,7 +675,7 @@ public sealed partial class SessionJournalEngine {
             CompletedTurnLocation? latest =
                 located.CompletedTurns.LastOrDefault();
             if (latest is null
-                || latest.Projection.TerminalAction.Address
+                || latest.Projection.Outcome.Address
                     != expectedHead) {
                 throw new InvalidDataException(
                     $"Exact terminal Action '{expectedHead}' was not located as the latest completed turn."
@@ -682,7 +691,8 @@ public sealed partial class SessionJournalEngine {
                     new SessionRetractedTurnProjection(
                         projection.ObservationAddress,
                         projection.ObservationContent,
-                        projection.TerminalAction
+                        projection.TerminalAction,
+                        (projection.Outcome as SessionClosedTurnOutcome.Terminated)?.End
                     )
                 )
             );
@@ -817,6 +827,13 @@ public sealed partial class SessionJournalEngine {
         foreach (SessionHistoryPlanningUnit unit in window.Units) {
             cancellationToken.ThrowIfCancellationRequested();
             switch (unit.Message) {
+                case SessionTurnEndedMessage ended when open is not null:
+                    completed.Add(new CompletedTurnLocation(
+                        new SessionCompletedTurnProjection(open.ObservationAddress, open.ObservationContent,
+                            new SessionClosedTurnOutcome.Terminated(new SessionTurnEndProjection(unit.SourceEndInclusive, ended.Reason))),
+                        open.ObservationPredecessor));
+                    open = null;
+                    break;
                 case ToolResultsMessage:
                     // ToolResultsMessage shares the observation role in provider context,
                     // but it is protocol material inside the current visible user turn.
@@ -984,25 +1001,33 @@ public sealed partial class SessionJournalEngine {
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         _testHooks.BeforeTurnRefMove?.Invoke(_journal);
-        var move = _journal.MoveRef(
-            _branchRefId,
-            expectedHead,
-            newHead
-        );
-        if (move.IsFailure
-            && string.Equals(
-                move.Error!.ErrorCode,
-                "EventJournal.RefCasMismatch",
-                StringComparison.Ordinal
-            )) {
+        try {
+            var move = _journal.MoveRef(
+                _branchRefId,
+                expectedHead,
+                newHead
+            );
+            if (move.IsFailure
+                && string.Equals(
+                    move.Error!.ErrorCode,
+                    "EventJournal.RefCasMismatch",
+                    StringComparison.Ordinal
+                )) {
+                InvalidateHeadBoundCaches();
+                observedHead = _journal.GetHead(_branchRefId);
+                return false;
+            }
+            _ = move.Unwrap();
+            _testHooks.AfterTurnRefMoveBeforeReturn?.Invoke();
             InvalidateHeadBoundCaches();
-            observedHead = _journal.GetHead(_branchRefId);
-            return false;
+            observedHead = newHead;
+            return true;
         }
-        _ = move.Unwrap();
-        InvalidateHeadBoundCaches();
-        observedHead = newHead;
-        return true;
+        catch {
+            InvalidateHeadBoundCaches();
+            Interlocked.Exchange(ref _reopenRequired, 1);
+            throw;
+        }
     }
 
     private void InvalidateHeadBoundCaches() {

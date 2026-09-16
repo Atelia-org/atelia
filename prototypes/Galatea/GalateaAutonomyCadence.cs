@@ -102,6 +102,11 @@ internal sealed class GalateaAutonomyCadence {
 
     internal bool IsArmed => _lastPulseTimestamp is not null;
 
+    internal void ResumeAfterPendingTermination() {
+        _paused = false;
+        if (IsArmed) { Rearm(_timeProvider.GetTimestamp()); }
+    }
+
     /// <summary>
     /// Observes one server pulse and, when exactly due, reports that one activation may
     /// be created. The caller must hold the corresponding session TurnLock.

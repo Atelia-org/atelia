@@ -22,7 +22,6 @@ internal static partial class RecapGridCommands {
             "connection",
             "message",
             "maximum-canonical-request-bytes",
-            "uncertain-recovery",
             "admission"
         );
         string repositoryPath = options.RequireSingle("input");
@@ -39,26 +38,6 @@ internal static partial class RecapGridCommands {
         RecapGridOnlineMode mode = ClassifyOnlineMode(recovery);
         string? message = options.GetOptionalSingle("message");
         ValidateOnlineMessage(mode, message);
-        SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
-            ParseOnlineRecoveryPolicy(
-                options.GetOptionalSingle("uncertain-recovery")
-            );
-
-        // A Started/Refuse operation is intentionally decided before reading
-        // connection or route manifests and before constructing any client.
-        if (mode == RecapGridOnlineMode.ResumeStarted
-            && recoveryPolicy
-                == SessionUncertainCompletionRecoveryPolicy.Refuse) {
-            return Print(
-                "run-online-turn",
-                "started-outcome-uncertain",
-                new {
-                    nextAction = "retry-with-restart-new-attempt",
-                    head = FormatAddress(recovery.CapturedHead)
-                },
-                exitCode: 2
-            );
-        }
 
         RecapGridAgentControlProfile? agentProfile = null;
         if (options.GetOptionalSingle("admission") is not null) {
@@ -341,7 +320,6 @@ internal static partial class RecapGridCommands {
                 agentControl?.ToolSession,
                 CompletionTarget:
                     CompletionTargetIdentityFactory.Create(dispatchIdentity),
-                UncertainCompletionRecoveryPolicy: recoveryPolicy,
                 ToolRuntimeIdentity: agentControl?.RuntimeIdentity,
                 ContextCandidateSource: online?.CandidateSource,
                 MaximumCanonicalRequestBytes: ParsePositiveOnlineLong(
@@ -441,12 +419,8 @@ internal static partial class RecapGridCommands {
         SessionRuntimeRecoveryRequirements.NewRequestRequired
             when value.HeadKind == SessionEventKind.ObservationAccepted
             => RecapGridOnlineMode.CompleteObservation,
-        SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
-            DispatchState: SessionDurableDispatchState.NotStarted
-        } => RecapGridOnlineMode.ResumePrepared,
-        SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
-            DispatchState: SessionDurableDispatchState.StartedOutcomeUncertain
-        } => RecapGridOnlineMode.ResumeStarted,
+        SessionRuntimeRecoveryRequirements.FrozenCompletionRequired
+            => RecapGridOnlineMode.ResumePrepared,
         SessionRuntimeRecoveryRequirements.NoRuntimeRequired
             when value.Phase == SessionExecutionPhase.Empty
             => throw new InvalidOperationException(
@@ -457,9 +431,9 @@ internal static partial class RecapGridCommands {
             => RecapGridOnlineMode.CompleteToolResult,
         SessionRuntimeRecoveryRequirements.ToolContinuationRequired
             => RecapGridOnlineMode.ResumeTool,
-        SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned
+        SessionRuntimeRecoveryRequirements.LegacyFailedTurnBlocked
             => throw new InvalidOperationException(
-                "The failed turn must be abandoned before a new request."
+                "The historical failed turn requires explicit closure before a new request."
             ),
         _ => throw new InvalidOperationException(
             $"Unsupported online phase '{value.Phase}'."
@@ -481,18 +455,6 @@ internal static partial class RecapGridCommands {
             );
         }
     }
-
-    private static SessionUncertainCompletionRecoveryPolicy
-        ParseOnlineRecoveryPolicy(string? value) => value switch {
-            null or "refuse"
-                => SessionUncertainCompletionRecoveryPolicy.Refuse,
-            "restart-new-attempt"
-                => SessionUncertainCompletionRecoveryPolicy
-                    .RestartWithNewAttempt,
-            _ => throw new ArgumentException(
-                "--uncertain-recovery must be refuse or restart-new-attempt."
-            )
-        };
 
     private static long? ParsePositiveOnlineLong(string? value) {
         if (value is null) { return null; }
@@ -725,7 +687,6 @@ internal static partial class RecapGridCommands {
         CompleteObservation,
         CompleteToolResult,
         ResumePrepared,
-        ResumeStarted,
         ResumeTool
     }
 }

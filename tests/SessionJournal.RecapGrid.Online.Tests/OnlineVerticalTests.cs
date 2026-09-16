@@ -1280,7 +1280,7 @@ public sealed class OnlineVerticalTests : IDisposable {
         Assert.Throws<ArgumentException>(() =>
             new SessionContextLifecycleRequest(
                 new SessionContextSelectionRequest(boundary, 0),
-                SessionExecutionPhase.AwaitingCompletionDispatch,
+                SessionExecutionPhase.AwaitingCompletion,
                 SessionContextLifecycleTrigger.PreObservation));
 
         string otherPath = NewPath();

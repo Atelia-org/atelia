@@ -91,6 +91,17 @@ internal static class HistoryUnitLoadRenderer {
             maxRenderedUtf8Bytes
         );
         switch (message) {
+            case SJ.SessionTurnEndedMessage ended:
+                writer.AppendField("turn-ended", ended.Reason switch {
+                    SJ.SessionTurnEndReason.Stopped => "stopped",
+                    SJ.SessionTurnEndReason.Rejected => "rejected",
+                    SJ.SessionTurnEndReason.Incomplete => "incomplete",
+                    _ => throw new HistoryLoadMeasurementException(
+                        HistoryLoadMeasurementDefectCodes.UnsupportedHistoryMessage,
+                        "Unsupported turn ending reason."
+                    )
+                });
+                break;
             case SJ.SessionInputObservationMessage observation:
                 // This is the fixed machine-content measurement grammar, not
                 // the host's replaceable prompt projection. Old text records

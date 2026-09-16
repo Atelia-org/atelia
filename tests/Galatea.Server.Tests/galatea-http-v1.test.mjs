@@ -227,6 +227,7 @@ assert.deepEqual(
 const valid = {
   turns: [{
     userText: "user",
+    endReason: null,
     assistant: { text: "assistant", reasoningText: null },
   }],
   rewindLatestToken: null,
@@ -447,7 +448,6 @@ const runningCurrent = {
   status: "running",
   turnId: "0123456789abcdef0123456789abcdef",
   connectionId: "test",
-  restartRequired: false,
   recoveryHead: null,
 };
 assert.equal(

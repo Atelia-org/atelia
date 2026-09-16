@@ -108,6 +108,14 @@ Delegation supervisor 在 host 启动时就分类每个 Character 的状态。�
 
 `runtime.callLogDir` 启用 Completion metadata 日志：记录连接/模型、请求长度和摘要（可用时）、耗时、结果计数及异常类型，不记录请求/输出全文、工具参数或异常消息。它不构成 durable dispatch 证据。旧全文日志不会自动删除；其他领域 Debug 日志仍按各自规则处理。
 
+`runtime.completionAttemptTimeoutSeconds` 是可选的 connection id 到秒数的 object，例如
+`{"gpt-main":1800,"note-extractor":300}`。键必须是 connections 中的现有 id，值为 1..86400
+的整数；未列出的连接默认 1800 秒。它是宿主单次生成期限，不改变 provider identity 或冻结请求。
+期限到达会请求取消并等待资源清理，然后按暂时失败政策重试；不证明远端计算或计费已停止。
+Recap maintenance 使用 route manifest 自己的 `dispatchTimeoutMilliseconds` 作为每次 attempt
+期限，不受此 connection map 覆盖；重试不再有第二个整逻辑调用期限。Recap 的逻辑 work/cell
+计数不是物理 provider attempts 或费用上限。
+
 ## `connections.json`
 
 `connections.json` 是 Completion endpoint catalog，与 Character/session 身份分离。Galatea 只接受 V3：根对象必须有非空 `connections`、非空 `selectableConnectionIds` 和恰好四个 `bindings`：

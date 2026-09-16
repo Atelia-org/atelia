@@ -115,6 +115,15 @@ public abstract class SessionExpectedObservationTurnReadResult {
         public SessionTerminalActionProjection TerminalAction { get; }
     }
 
+    public sealed class Terminated : SessionExpectedObservationTurnReadResult {
+        internal Terminated(SessionExpectedObservationTurnEvidence evidence, SessionTurnEndProjection end) {
+            Evidence = evidence;
+            End = end;
+        }
+        public SessionExpectedObservationTurnEvidence Evidence { get; }
+        public SessionTurnEndProjection End { get; }
+    }
+
     public sealed class Conflict
         : SessionExpectedObservationTurnReadResult {
         internal Conflict(

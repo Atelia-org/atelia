@@ -168,7 +168,7 @@ public sealed class PublicSurfaceTests {
     }
 
     [Fact]
-    public void BorrowingFactoryExposesOptionalAgentControlAndLiveTelemetryComposition() {
+    public void BorrowingFactoryExposesOptionalAgentControlTelemetryAndMaintenanceDeadlineOwner() {
         var factories = typeof(RecapGridCompletionHost).GetMethods()
             .Where(static method => string.Equals(
                 method.Name,
@@ -187,7 +187,8 @@ public sealed class PublicSurfaceTests {
             typeof(RecapCompletionRuntimeOptions),
             typeof(int),
             typeof(IRecapCompletionTelemetry),
-            typeof(ISessionInputProjector)
+            typeof(ISessionInputProjector),
+            typeof(Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>)
         ]));
         Assert.Contains(signatures, static signature => signature.SequenceEqual([
             typeof(Func<RecapGridRouteManifest>),
@@ -196,20 +197,34 @@ public sealed class PublicSurfaceTests {
             typeof(RecapCompletionRuntimeOptions),
             typeof(int),
             typeof(IRecapCompletionTelemetry),
-            typeof(ISessionInputProjector)
+            typeof(ISessionInputProjector),
+            typeof(Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>)
         ]));
         Assert.All(factories, static method => {
-            var liveTelemetry = method.GetParameters()[^2];
+            var liveTelemetry = method.GetParameters()[^3];
             Assert.Equal("liveTelemetry", liveTelemetry.Name);
             Assert.True(liveTelemetry.IsOptional);
             Assert.Null(liveTelemetry.DefaultValue);
-            var inputProjector = method.GetParameters()[^1];
+            var inputProjector = method.GetParameters()[^2];
             Assert.Equal("inputProjector", inputProjector.Name);
             Assert.Equal(typeof(ISessionInputProjector), inputProjector.ParameterType);
             Assert.True(inputProjector.IsOptional);
             Assert.True(inputProjector.HasDefaultValue);
             Assert.Null(inputProjector.DefaultValue);
+            var maintenanceFactory = method.GetParameters()[^1];
+            Assert.Equal("maintenanceInvokerFactory", maintenanceFactory.Name);
+            Assert.Equal(typeof(Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>),
+                maintenanceFactory.ParameterType);
+            Assert.True(maintenanceFactory.IsOptional);
+            Assert.True(maintenanceFactory.HasDefaultValue);
+            Assert.Null(maintenanceFactory.DefaultValue);
         });
+        Assert.True(typeof(IRecapCompletionInvoker).IsAssignableFrom(typeof(IRecapCompletionAttemptDeadlineInvoker)));
+        var timeout = typeof(IRecapCompletionAttemptDeadlineInvoker).GetProperty("AttemptTimeout");
+        Assert.NotNull(timeout);
+        Assert.Equal(typeof(TimeSpan), timeout.PropertyType);
+        Assert.True(timeout.CanRead);
+        Assert.False(timeout.CanWrite);
     }
 
     [Fact]

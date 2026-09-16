@@ -2543,12 +2543,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     observer,
                     cancellationToken
                 ).ConfigureAwait(false),
-            SessionExecutionPhase.AwaitingCompletionDispatch =>
-                await ResumeCompletionAsync(
-                    recovery,
-                    observer,
-                    cancellationToken
-                ).ConfigureAwait(false),
             SessionExecutionPhase.AwaitingToolExecution => ToResumeOutcome(
                 await ContinueToolLoopAsync(
                     recovery,
@@ -3054,7 +3048,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         TriggerFailpoint(SessionJournalFailpoint.AfterRequestPreparedCommitted);
         CompletionRequest request = SessionPreparedRequestReconstructor.Reconstruct(
             _reader, preparedAddress, cancellationToken, runtime.InputProjector).Request;
-        return await StartAndExecuteCompletionAttemptAsync(
+        return await ExecutePreparedCompletionAsync(
             request,
             preparedAddress,
             manifest,
@@ -3065,7 +3059,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ).ConfigureAwait(false);
     }
 
-    private async Task<CommittedCompletionResult> StartAndExecuteCompletionAttemptAsync(
+    private async Task<CommittedCompletionResult> ExecutePreparedCompletionAsync(
         CompletionRequest request,
         EventAddress expectedParent,
         CompletionRequestPreparedBody manifest,
@@ -3076,19 +3070,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         EnforceProjectedCanonicalRequestByteGuard(runtime, request);
-        CompletionAttemptStartedBody evidence = manifest.Commitment is null
-            ? new CompletionAttemptStartedBody(SessionRequestManifestDefaults.CanonicalRequestCodecId, SessionRequestCanonicalizer.CreateCommitment(request))
-            : new CompletionAttemptStartedBody();
-        EventAddress startedAddress = AppendExpected(
-            SessionEventKind.CompletionAttemptStarted,
-            evidence,
-            expectedParent,
-            requireBoundSetupCursor: false
-        );
-        TriggerFailpoint(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted);
-        return await ExecuteCommittedCompletionAttemptAsync(
+        return await InvokeAndCommitCompletionAsync(
             request,
-            startedAddress,
+            expectedParent,
             manifest,
             runtime,
             allowResultToolCalls,
@@ -3097,9 +3081,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ).ConfigureAwait(false);
     }
 
-    private async Task<CommittedCompletionResult> ExecuteCommittedCompletionAttemptAsync(
+    private async Task<CommittedCompletionResult> InvokeAndCommitCompletionAsync(
         CompletionRequest request,
-        EventAddress activeAttemptAddress,
+        EventAddress pendingHead,
         CompletionRequestPreparedBody manifest,
         SessionRuntime runtime,
         bool allowResultToolCalls,
@@ -3113,16 +3097,14 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 .ConfigureAwait(false);
         }
         catch (CompletionRequestRejectedException rejection) {
-            throw PersistKnownCompletionFailure(
-                activeAttemptAddress,
+            throw CreateCompletionFailure(
                 rejection.Termination,
                 rejection.Errors
             );
         }
 
         if (!result.Termination.IsSuccess) {
-            throw PersistKnownCompletionFailure(
-                activeAttemptAddress,
+            throw CreateCompletionFailure(
                 result.Termination,
                 result.Errors
             );
@@ -3135,7 +3117,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
         if (invocationMismatch is not null) {
             ThrowKnownHostFailure(
-                activeAttemptAddress,
                 InvalidCompletionInvocationReason,
                 invocationMismatch
             );
@@ -3144,7 +3125,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
             const string detail =
                 "Provider returned tool calls for a request whose durable policy supports no tools.";
             ThrowKnownHostFailure(
-                activeAttemptAddress,
                 UnsupportedTailToolCallReason,
                 detail
             );
@@ -3164,7 +3144,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                             "A prepared result containing tool calls requires a durable tool runtime identity."
                         )
             ),
-            activeAttemptAddress,
+            pendingHead,
             requireBoundSetupCursor: false
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterActionCommitted);
@@ -3172,50 +3152,24 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     private void ThrowKnownHostFailure(
-        EventAddress activeAttemptAddress,
         string reason,
         string detail
     ) {
         CompletionTermination hostFailure = CompletionTermination.Failed(reason, detail);
         IReadOnlyList<string> errors = Array.AsReadOnly([detail]);
-        throw PersistKnownCompletionFailure(
-            activeAttemptAddress,
+        throw CreateCompletionFailure(
             hostFailure,
             errors
         );
     }
 
     private SessionJournalTurnAbortedException
-        PersistKnownCompletionFailure(
-            EventAddress activeAttemptAddress,
+        CreateCompletionFailure(
             CompletionTermination failure,
             IReadOnlyList<string>? errors
         ) {
         IReadOnlyList<string> frozenErrors = FreezeErrors(errors)
             ?? Array.AsReadOnly(Array.Empty<string>());
-        try {
-            AppendExpected(
-                SessionEventKind.CompletionAttemptFailed,
-                new CompletionAttemptFailedBody(
-                    failure.Kind,
-                    failure.ProviderReason,
-                    failure.Detail,
-                    frozenErrors
-                ),
-                activeAttemptAddress,
-                requireBoundSetupCursor: false
-            );
-        }
-        catch {
-            // CommitToRef appends a Ref move before DurableFlush. If that
-            // flush (or a later return path) throws, this EventJournal
-            // instance can still report Started while reopening may recover
-            // either Started or the exact Failed move. Never continue from
-            // the stale in-memory Ref cache; repository reopen is the only
-            // authority that may classify the physical head.
-            Interlocked.Exchange(ref _reopenRequired, 1);
-            throw;
-        }
         return new SessionJournalTurnAbortedException(
             BuildTurnAbortMessage(failure),
             failure,
@@ -3224,6 +3178,47 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     private async Task<ResumeOutcome> ResumeCompletionAsync(
+        SessionExecutionRecovery recovery,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
+    ) {
+        CommittedCompletionResult committed = await InvokePreparedRecoveryAsync(recovery, observer, cancellationToken).ConfigureAwait(false);
+        SessionExecutionRecovery actionRecovery = ResolveExecutionTail(
+            committed.ActionAddress,
+            cancellationToken
+        );
+        if (actionRecovery.State.Phase == SessionExecutionPhase.AwaitingToolExecution) {
+            return ToResumeOutcome(await ContinueToolLoopAsync(actionRecovery, observer, cancellationToken).ConfigureAwait(false));
+        }
+        if (actionRecovery.State.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidDataException($"Recovered terminal Action resolved to unexpected phase '{actionRecovery.State.Phase}'.");
+        }
+        return ToResumeOutcome(new TurnResult(committed.Result.Message, committed.Result.Invocation, FreezeErrors(committed.Result.Errors)));
+    }
+
+    /// <summary>
+    /// Resumes one exact Prepared request and returns immediately after its Action is durable.
+    /// Does not execute tools or select context for a successor request; the Host can rebind
+    /// lifecycle/candidate dependencies at that new boundary without changing the frozen request.
+    /// </summary>
+    public async Task<SessionPreparedCompletionBoundaryResult> ResumePreparedCompletionToBoundaryAsync(
+        EventAddress expectedHead,
+        CompletionStreamObserver? observer = null,
+        CancellationToken cancellationToken = default
+    ) {
+        using MutationLease mutation = EnterMutation(nameof(ResumePreparedCompletionToBoundaryAsync));
+        ThrowIfReadOnlyMutation(nameof(ResumePreparedCompletionToBoundaryAsync));
+        cancellationToken.ThrowIfCancellationRequested();
+        SessionExecutionRecovery recovery = ResolveExecutionTail(cancellationToken);
+        if (recovery.Head != expectedHead) {
+            throw new SessionJournalExpectedHeadMismatchException(expectedHead, recovery.Head);
+        }
+        CommittedCompletionResult committed = await InvokePreparedRecoveryAsync(recovery, observer, cancellationToken).ConfigureAwait(false);
+        _ = ResolveExecutionTail(committed.ActionAddress, cancellationToken);
+        return new(committed.ActionAddress, committed.Result.Message, committed.Result.Invocation, FreezeErrors(committed.Result.Errors));
+    }
+
+    private async Task<CommittedCompletionResult> InvokePreparedRecoveryAsync(
         SessionExecutionRecovery recovery,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
@@ -3240,38 +3235,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 "Prepared recovery is missing its exact durable attempt boundary."
             );
         }
-        bool uncertain =
-            recovery.State.Phase == SessionExecutionPhase.AwaitingCompletion;
-        if (uncertain
-            && recovery.State.ActiveCompletionAttemptAddress != activeHead) {
-            throw new InvalidDataException(
-                "Uncertain completion recovery is missing its exact active Started boundary."
-            );
-        }
-        if (!uncertain
-            && recovery.State.ActiveCompletionAttemptAddress is not null) {
-            throw new InvalidDataException(
-                "Prepared-only recovery must not expose an active Started boundary."
-            );
-        }
-        // Validate durable facts even when policy refuses dispatch. Semantic v9 verification
+        // Validate durable facts before dispatch. Semantic v9 verification
         // does not need the current projector; historical versions keep exact verification.
         _ = CreateFrozenCompletionRequirement(recovery, cancellationToken);
-        SessionUncertainCompletionRecoveryPolicy policy =
-            _runtime?.UncertainCompletionRecoveryPolicy
-            ?? SessionUncertainCompletionRecoveryPolicy.Refuse;
-        if (uncertain && policy == SessionUncertainCompletionRecoveryPolicy.Refuse) {
-            throw new InvalidOperationException(
-                "The current completion attempt has an uncertain outcome. "
-                + "Recovery policy Refuse does not call the provider or mutate the journal."
-            );
-        }
-        if (uncertain
-            && policy != SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt) {
-            throw new NotSupportedException(
-                $"Unsupported uncertain completion recovery policy '{policy}'."
-            );
-        }
 
         SessionRuntime runtime = RequireRuntime();
         SessionPreparedRequestReconstruction reconstruction = ReconstructPreparedRecovery(recovery, cancellationToken);
@@ -3280,8 +3246,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
         bool sourceAllowsToolCalls =
             !manifest.ToolSet.Definitions.IsEmpty;
-        CommittedCompletionResult committed =
-            await StartAndExecuteCompletionAttemptAsync(
+        return await ExecutePreparedCompletionAsync(
                 reconstruction.Request,
                 activeHead,
                 manifest,
@@ -3291,30 +3256,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 cancellationToken
             ).ConfigureAwait(false);
 
-        SessionExecutionRecovery actionRecovery = ResolveExecutionTail(
-            committed.ActionAddress,
-            cancellationToken
-        );
-        if (actionRecovery.State.Phase ==
-            SessionExecutionPhase.AwaitingToolExecution) {
-            return ToResumeOutcome(
-                await ContinueToolLoopAsync(
-                    actionRecovery,
-                    observer,
-                    cancellationToken
-                ).ConfigureAwait(false)
-            );
-        }
-        if (actionRecovery.State.Phase != SessionExecutionPhase.Idle) {
-            throw new InvalidDataException(
-                $"Recovered terminal Action resolved to unexpected phase '{actionRecovery.State.Phase}'."
-            );
-        }
-        return ToResumeOutcome(new TurnResult(
-            committed.Result.Message,
-            committed.Result.Invocation,
-            FreezeErrors(committed.Result.Errors)
-        ));
     }
 
     private static void ValidateRecoveryRuntimeCompatibility(
@@ -4663,21 +4604,30 @@ public sealed partial class SessionJournalEngine : IDisposable {
         }
 
         byte[] payload = SessionEventCodec.Encode(kind, body);
+        bool outcomeMayBePublished = true;
         try {
             _testHooks.BeforeCommit?.Invoke(kind, _journal);
-            EventAddress committed = _journal.CommitToRef(
+            var commit = _journal.CommitToRef(
                 _branchRefId,
                 expectedHead,
                 payload,
                 opaqueEventKind: (uint)kind,
                 hint: default
-            ).Unwrap().EventAddress;
+            );
+            if (commit.IsFailure && (commit.Error is { ErrorCode: "EventJournal.RefCasMismatch" }
+                or { ErrorCode: "EventJournal.CommitRefAdvanceFailed", Cause.ErrorCode: "EventJournal.RefCasMismatch" })) {
+                outcomeMayBePublished = false;
+            }
+            EventAddress committed = commit.Unwrap().EventAddress;
             _testHooks.AfterCommitBeforeReturn?.Invoke(kind, _journal);
             AdvanceGoverningSetupCursor(kind, body, expectedHead, committed);
             return committed;
         }
         catch {
             _governingSetupCursor = null;
+            // Ref publication/flush may have succeeded even when the return path failed.
+            // Only reopening the repository can establish the selected durable lineage.
+            if (outcomeMayBePublished) { Interlocked.Exchange(ref _reopenRequired, 1); }
             throw;
         }
     }

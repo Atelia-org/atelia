@@ -25,7 +25,7 @@ using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
-public sealed class GalateaRecapGridCompositionTests : IDisposable {
+public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
     private static readonly TimeSpan HttpCompletionDeadline =
         TimeSpan.FromSeconds(10);
     private const string FrozenRecoverySystemPrompt =
@@ -914,22 +914,17 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     }
 
     [Theory]
-    [InlineData(
-        nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted),
-        true)]
-    [InlineData(
-        nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted),
-        false)]
+    [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted))]
+    [InlineData("LegacyStarted")]
     public async Task ActualServiceFrozenRecoveryNeverCreatesOnline(
-        string failpointName,
-        bool resumes
+        string failpointName
     ) {
         string path = NewPath();
         CompletionConnectionConfig connection = Connection();
-        SessionJournalFailpoint failpoint = Enum.Parse<
-            SessionJournalFailpoint>(failpointName);
+        bool legacyStarted = failpointName == "LegacyStarted";
+        SessionJournalFailpoint failpoint = SessionJournalFailpoint.AfterRequestPreparedCommitted;
         EventAddress recoveryHead = await CreateRecoveryBoundaryAsync(
-            path, connection, failpoint);
+            path, connection, failpoint, legacyStarted);
         using (SessionJournalEngine targetProvisioner =
                SessionJournalEngine.Open(path)) {
             ProvisionTimelineAndControl(targetProvisioner);
@@ -973,10 +968,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             new GalateaTurnOptions(
                 connection.Id,
                 GalateaTurnMode.Resume,
-                RestartUncertainCompletion: false,
                 ExpectedHead: recoveryHead));
 
-        if (resumes) {
+        {
             await service.RunTurnAsync(session, turn, CancellationToken.None);
             Assert.Equal("completed", turn.Status);
             Assert.Equal(1, candidateFactory.CreateCallCount);
@@ -988,20 +982,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 request.PromptPrefix.SystemPrompt);
             Assert.Equal(
                 SessionExecutionPhase.Idle,
-                session.Engine.InspectExecutionBoundary().Phase);
-        }
-        else {
-            GalateaTurnException exception = await Assert.ThrowsAsync<
-                GalateaTurnException>(() => service.RunTurnAsync(
-                    session, turn, CancellationToken.None));
-            Assert.Equal(
-                "uncertain-completion-restart-required",
-                exception.FailureReason);
-            Assert.Equal(0, candidateFactory.CreateCallCount);
-            Assert.Equal(0, candidateFactory.Client.DispatchCallCount);
-            Assert.Empty(candidateFactory.Client.AgentRequests);
-            Assert.Equal(
-                SessionExecutionPhase.AwaitingCompletion,
                 session.Engine.InspectExecutionBoundary().Phase);
         }
 
@@ -1231,6 +1211,92 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(1, snapshot.Head.Generation);
         Assert.Single(snapshot.Families);
         Assert.Equal(2, snapshot.Definitions.Count);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task RecoveredTwoToolBatch_StopOrGenerationRetryNeverRepeatsTools(bool afterFirstTool, bool retryAfterTools) {
+        string path = NewPath();
+        CompletionConnectionConfig connection = Connection();
+        RecapGridAgentControlProfile profile = AgentProfile();
+        EventAddress actionHead = await CreateAgentControlRecoveryBoundaryAsync(path, connection, profile,
+            SessionJournalFailpoint.AfterActionCommitted, SessionExecutionPhase.AwaitingToolExecution,
+            new TwoControlInspectionsClient());
+        int routeLoads = 0;
+        var factory = new TrackingFactory("must not dispatch");
+        var retryFactory = new FlakyContinuationFactory();
+        if (!afterFirstTool && !retryAfterTools) {
+            await using GalateaTestHost httpHost = GalateaTestHost.OpenExisting(path, [connection], connection.Id,
+                factory, DisabledGalateaUserMessageNormalizer.Instance, agentControlProfile: profile);
+            using HttpClient http = httpHost.CreateClient();
+            using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
+            Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+            using HttpResponseMessage rejected = await http.PostAsJsonAsync(
+                "/api/v1/characters/alice/chat/turns/pending/stop",
+                new StopPendingTurnRequest(EventAddressTextCodec.Format(actionHead)));
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+            var httpService = httpHost.Factory.Services.GetRequiredService<GalateaHostService>();
+            var pending = await httpService.GetSessionAsync("alice", CancellationToken.None);
+            Assert.Null(pending.GetCurrentTurn());
+            Assert.Equal(actionHead, pending.Engine.ReadCurrentHead());
+            Assert.Equal(SessionExecutionPhase.AwaitingToolExecution, pending.Engine.InspectExecutionBoundary().Phase);
+            Assert.Equal(0, factory.CreateCallCount);
+            Assert.Equal(0, factory.Client.DispatchCallCount);
+        }
+        var completion = RecapGridCompletionHost.Create(
+            () => { routeLoads++; throw new InvalidOperationException("Stopped tool continuation must not run maintenance."); },
+            Connections(connection), retryAfterTools ? retryFactory : factory, new RecapGridAgentControlProfileRegistry([profile]),
+            inputProjector: GalateaInputProjector.Instance);
+        var candidate = new GalateaRecapGridComposition(completion, RecapGridOnlineLimits.Production, _estimator);
+        await using var service = new GalateaHostService(Config(path, connection), DisabledGalateaUserMessageNormalizer.Instance, candidate);
+        GalateaLiveTurn? live = null;
+        int committedTools = 0;
+        service.OpenSessionForTest = sessionPath => SessionJournalEngine.OpenForTest(sessionPath, runtime: null,
+            new SessionJournalTestHooks(AfterCommitBeforeReturn: (kind, _) => {
+                if (kind == SessionEventKind.ToolResultObserved && ++committedTools == 1 && afterFirstTool) {
+                    Assert.True(live!.RequestStop());
+                }
+            }), new EventJournalOptions());
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        await session.TurnLock.WaitAsync();
+        try {
+            var turn = service.StartRecovery(session, new(connection.Id, GalateaTurnMode.Resume, actionHead));
+            live = turn;
+            // The preparation token is already cancelled when the runner
+            // starts. Both durably committed tools still have to settle.
+            if (!afterFirstTool && !retryAfterTools) { Assert.True(service.RequestStop(session, turn.TurnId)); }
+            await service.RunTurnAsync(session, turn, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
+            service.FinishTurn(session, turn);
+            turn.Complete();
+            Assert.Equal(retryAfterTools ? "completed" : "terminated", turn.Status);
+            Assert.Equal(SessionExecutionPhase.Idle, session.Engine.InspectExecutionBoundary().Phase);
+            SessionClosedTurnOutcome outcome = Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns).Outcome;
+            if (retryAfterTools) { Assert.IsType<SessionClosedTurnOutcome.Completed>(outcome); }
+            else { Assert.IsType<SessionClosedTurnOutcome.Terminated>(outcome); }
+        }
+        finally { session.TurnLock.Release(); }
+        Assert.Equal(0, routeLoads);
+        Assert.Equal(2, committedTools);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.Client.DispatchCallCount);
+        Assert.Equal(retryAfterTools ? 2 : 0, retryFactory.Calls);
+        await service.DisposeAsync();
+        using var reopened = SessionJournalEngine.OpenReadOnly(path);
+        var audit = new List<SessionJournalAuditEvent>();
+        _ = reopened.ScanCheckedAuditEvents(audit.Add);
+        Assert.Contains(audit, item => item.Address == actionHead && item.Kind == SessionEventKind.AgentActionProduced);
+        var results = audit.Select(item => item.Fact).OfType<SessionJournalAuditToolResultObservedFact>().ToArray();
+        Assert.Equal(["inspect-one", "inspect-two"], results.Select(result => result.ToolCallId));
+        Assert.All(results, result => Assert.Equal(ToolExecutionStatus.Success, result.Status));
+        Assert.Single(audit.Where(item => item.Kind == SessionEventKind.ObservationAccepted));
+        Assert.Equal(retryAfterTools ? SessionEventKind.AgentActionProduced : SessionEventKind.TurnEnded, audit[^1].Kind);
+        Assert.Equal(2, audit.Count(item => item.Kind == SessionEventKind.ToolExecutionStarted));
+        if (retryAfterTools) {
+            Assert.Equal(2, audit.Count(item => item.Kind == SessionEventKind.CompletionRequestPrepared));
+            Assert.DoesNotContain(audit, item => item.Kind is SessionEventKind.CompletionAttemptStarted or SessionEventKind.CompletionAttemptFailed);
+        }
     }
 
     [Fact]
@@ -1767,7 +1833,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     private async Task<EventAddress> CreateRecoveryBoundaryAsync(
         string path,
         CompletionConnectionConfig connection,
-        SessionJournalFailpoint failpoint
+        SessionJournalFailpoint failpoint,
+        bool legacyStarted
     ) {
         var fixtureClient = new TrackingClient("unused");
         CompletionDispatchIdentity dispatch =
@@ -1797,7 +1864,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         "frozen fixture",
                         DateTimeOffset.UnixEpoch)));
         Assert.Equal(failpoint, exception.Failpoint);
-        return engine.ReadCurrentHead()!.Value;
+        EventAddress head = engine.ReadCurrentHead()!.Value;
+        engine.Dispose();
+        return legacyStarted ? LegacyPreparedV7Fixture.AppendStarted(path, head) : head;
     }
 
     private async Task<EventAddress>
@@ -1806,7 +1875,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         CompletionConnectionConfig connection,
         RecapGridAgentControlProfile profile,
         SessionJournalFailpoint failpoint,
-        SessionExecutionPhase expectedPhase
+        SessionExecutionPhase expectedPhase,
+        ICompletionClient? completionClient = null
     ) {
         using (SessionJournalEngine provisioner = SessionJournalEngine.Create(
                    path,
@@ -1816,7 +1886,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                        connection.CompletionSurfaceId))) {
             ProvisionTimelineAndControl(provisioner);
         }
-        var fixtureClient = new ControlToolCallClient();
+        var fixtureClient = completionClient ?? new ControlToolCallClient();
         CompletionDispatchIdentity identity =
             CompletionDispatchIdentityFactory.Create(
                 connection,
@@ -2636,6 +2706,32 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new CompletionDescriptor(
                     Name, ApiSpecId, request.ModelId)));
         }
+    }
+
+    private sealed class FlakyContinuationFactory : ICompletionClientFactory, ICompletionClient {
+        public string Name => "galatea-flaky-continuation";
+        public string ApiSpecId => "openai-chat-v1";
+        internal int Calls { get; private set; }
+        public ICompletionClient Create(CompletionConnectionConfig connection) => this;
+        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default) {
+            if (++Calls == 1) {
+                throw new CompletionFailureException(new(CompletionFailureKind.Transport), "scripted disconnect");
+            }
+            return Task.FromResult(new CompletionResult(new ActionMessage([new ActionBlock.Text("continued after retry")]),
+                CompletionDescriptor.From(this, request)));
+        }
+    }
+
+    private sealed class TwoControlInspectionsClient : ICompletionClient {
+        public string Name => "galatea-recap-grid-test";
+        public string ApiSpecId => "openai-chat-v1";
+        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default) => Task.FromResult(new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall("recap_grid_control", "inspect-one", "{\"action\":\"inspect\"}")),
+                    new ActionBlock.ToolCall(new RawToolCall("recap_grid_control", "inspect-two", "{\"action\":\"inspect\"}"))
+                ]), CompletionDescriptor.From(this, request)));
     }
 
     private sealed class ControlToolCallClient : ICompletionClient {

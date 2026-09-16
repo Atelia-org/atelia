@@ -269,7 +269,7 @@ internal sealed record GalateaReplyNoticeSnapshot(
     string? Code,
     long CompletionSequence,
     GalateaReplyNoticeState State,
-    string? ConsumedActionAddress,
+    string? ConsumedTurnEndAddress,
     long Revision,
     string NoticeFormat = "legacy-text",
     GalateaSenderSnapshot? Sender = null,
