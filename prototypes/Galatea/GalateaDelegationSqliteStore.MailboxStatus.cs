@@ -26,6 +26,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
                        SELECT 1 FROM reply_lease
                        WHERE active_slot = 1 AND state = 'Quarantined'
                    ),
+                   EXISTS(
+                       SELECT 1 FROM reply_lease
+                       WHERE active_slot = 1
+                   ),
                    (
                        SELECT COUNT(*) FROM outbound_mail
                        WHERE state IN (
@@ -72,9 +76,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
             ReadNullableString(reader, 9),
             reader.IsDBNull(10) ? null : reader.GetInt64(10),
             reader.GetInt64(11) == 1,
-            checked((int)reader.GetInt64(12)),
+            reader.GetInt64(12) == 1,
             checked((int)reader.GetInt64(13)),
-            checked((int)reader.GetInt64(14))
+            checked((int)reader.GetInt64(14)),
+            checked((int)reader.GetInt64(15))
         );
         if (reader.Read()) {
             throw Corrupt("route_binding has multiple singleton rows.");
@@ -193,6 +198,24 @@ internal sealed partial class GalateaDelegationSqliteStore {
             code: null,
             nextRetryAtUnixTimeMilliseconds: null
         );
+    }
+
+    internal static GalateaAutomaticWakeReason ProjectAutomaticWakeReason(
+        GalateaMailboxStatusAggregate value
+    ) {
+        GalateaMailboxStatusProjection status = ProjectMailboxStatus(value);
+        if (status.State is GalateaMailboxStatusState.Unavailable
+            or GalateaMailboxStatusState.Quarantined
+            or GalateaMailboxStatusState.Backoff
+            or GalateaMailboxStatusState.AcceptedHistoryUnavailable) {
+            return GalateaAutomaticWakeReason.None;
+        }
+        if (value.HasActiveReplyLease) {
+            return GalateaAutomaticWakeReason.ActiveReplyLease;
+        }
+        return value.ReadyNoticeCount > 0
+            ? GalateaAutomaticWakeReason.ReadyNotice
+            : GalateaAutomaticWakeReason.None;
     }
 
     private static GalateaMailboxStatusProjection Build(

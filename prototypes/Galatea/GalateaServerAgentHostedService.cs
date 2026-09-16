@@ -13,7 +13,7 @@ internal sealed class GalateaServerAgentHostedService(
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) {
         if (host.MaintenanceMode) { return Task.CompletedTask; }
-        return Task.WhenAll(host.AutonomyCharacterIds.Select(characterId => RunCharacterAsync(characterId, stoppingToken)));
+        return Task.WhenAll(host.CharacterIds.Select(characterId => RunCharacterAsync(characterId, stoppingToken)));
     }
 
     private async Task RunCharacterAsync(string characterId, CancellationToken ct) {

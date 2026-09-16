@@ -324,6 +324,18 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         return GetSlot(userId).ReadMailboxStatus();
     }
 
+    /// <summary>
+    /// Pure scheduler-facing observation for reply-only autonomous admission.
+    /// It never attaches a session, initializes a store, signals a driver, or
+    /// advances delegation state.
+    /// </summary>
+    internal GalateaAutomaticWakeReason ReadAutomaticWakeReason(
+        string userId
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        return GetSlot(userId).ReadAutomaticWakeReason();
+    }
+
     internal GalateaDelegationSessionHandle AttachWritableSession(
         string userId,
         SessionJournalEngine engine
@@ -898,6 +910,32 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                     return GalateaMailboxStatusProjection.Unavailable(
                         "STORE_READ_FAILED"
                     );
+                }
+            }
+        }
+
+        internal GalateaAutomaticWakeReason ReadAutomaticWakeReason() {
+            lock (_gate) {
+                if (_availability
+                    != GalateaDelegationCharacterAvailability.Writable
+                    || _store is null) {
+                    return GalateaAutomaticWakeReason.None;
+                }
+                try {
+                    return _store.ReadAutomaticWakeReason();
+                }
+                catch (Exception exception) when (
+                    GalateaExceptionClassifier.IsNonFatal(exception)) {
+                    DebugUtil.Warning(
+                        LogCategory,
+                        "Durable automatic wake read failed: "
+                            + $"user={Safe(CharacterId)}, "
+                            + "code=STORE_READ_FAILED, "
+                            + $"exception={exception.GetType().Name}.",
+                        exception,
+                        DebugEventKind.Failure
+                    );
+                    return GalateaAutomaticWakeReason.None;
                 }
             }
         }

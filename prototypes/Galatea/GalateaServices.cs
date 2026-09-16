@@ -88,6 +88,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _selectableConnections;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
     internal IReadOnlyList<string> AutonomyCharacterIds { get; }
+    internal IReadOnlyList<string> CharacterIds { get; }
     public GalateaHostService(
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
@@ -167,6 +168,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _connectionCatalog = components.ConnectionCatalog;
         _selectableConnections = components.SelectableConnections;
         AutonomyCharacterIds = components.AutonomyCharacterIds;
+        CharacterIds = _characters.Keys.ToArray();
     }
 
     internal GalateaHostService(
@@ -227,6 +229,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             static value => value.CharacterId,
             StringComparer.Ordinal
         );
+        CharacterIds = _characters.Keys.ToArray();
         GalateaConfigValidation.RequireValidPlayers(config.Players);
         _players = config.Players.ToDictionary(static player => player.PlayerId, StringComparer.Ordinal);
         _outboundMailExtractors = _characters.Keys.ToDictionary(
@@ -3681,10 +3684,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 try {
                     await ReconcileDurableAdmissionAsync(host, ct)
                         .ConfigureAwait(false);
-                    if (AutonomyCharacterIds.Contains(character.CharacterId, StringComparer.Ordinal)) {
-                        host.AutonomyCadence?.Arm();
-                        host.PublishAutonomyStatus();
-                    }
+                    host.AutonomyCadence?.Arm();
+                    host.PublishAutonomyStatus();
                 }
                 finally {
                     host.TurnLock.Release();

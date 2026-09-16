@@ -17,6 +17,40 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         TimeSpan.FromSeconds(5);
 
     [Fact]
+    public async Task ZeroIntervalPulse_WithReadyReply_StartsOnlyDelegateReply() {
+        var completionFactory = new TrackingCompletionClientFactory(
+            "durable reply accepted"
+        );
+        await using var fixture = GalateaTestHost.Create(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = fixture.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        GalateaAutomaticTurnCoordinator coordinator = fixture.Factory.Services
+            .GetRequiredService<GalateaAutomaticTurnCoordinator>();
+        CharacterSessionHost session = await service.GetSessionAsync(
+            "alice", CancellationToken.None
+        );
+        Assert.Null(session.AutonomyCadence);
+        SeedReadyReply(session.DelegationHandle!.Store, "durable reply");
+
+        GalateaAutomaticTurnResult.Started started = Assert.IsType<
+            GalateaAutomaticTurnResult.Started>(
+                await coordinator.TryPulseAsync("alice", CancellationToken.None)
+            );
+
+        Assert.Equal("delegate-reply", started.Origin);
+        Assert.IsType<GalateaFreshInput.DelegateReply>(started.Turn.FreshInput);
+        await Assert.IsAssignableFrom<Task>(started.Turn.RunTask)
+            .WaitAsync(CompletionDeadline);
+        Assert.Equal("completed", started.Turn.Status);
+        Assert.Equal(1, completionFactory.Client.DispatchCallCount);
+        Assert.Equal("waiting", coordinator.ReadStatus("alice").State);
+        Assert.Null(coordinator.ReadStatus("alice").NextActivationAtUnixTimeMilliseconds);
+    }
+
+    [Fact]
     public async Task ReadyReplyTurn_WhenTurnFailed_DoesNotClaimOrAbandon() {
         var completionFactory = new TrackingCompletionClientFactory();
         var normalizer = new TrackingNormalizer();

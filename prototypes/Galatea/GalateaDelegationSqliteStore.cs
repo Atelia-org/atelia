@@ -231,6 +231,26 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         }
     }
 
+    /// <summary>
+    /// Reads only the durable evidence that permits reply-only automatic
+    /// admission. It uses the same deferred aggregate read as mailbox status,
+    /// never creates state, and exposes no durable identity or payload.
+    /// </summary>
+    internal GalateaAutomaticWakeReason ReadAutomaticWakeReason() {
+        lock (_gate) {
+            ThrowIfDisposed();
+            using SqliteConnection connection = OpenVerifiedConnection();
+            using SqliteTransaction transaction =
+                connection.BeginTransaction(deferred: true);
+            GalateaMailboxStatusAggregate aggregate =
+                ReadMailboxStatusAggregate(connection, transaction);
+            GalateaAutomaticWakeReason result =
+                ProjectAutomaticWakeReason(aggregate);
+            transaction.Commit();
+            return result;
+        }
+    }
+
     public void Dispose() {
         lock (_gate) {
             if (_disposed) { return; }

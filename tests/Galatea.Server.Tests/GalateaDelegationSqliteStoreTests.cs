@@ -117,6 +117,35 @@ public sealed class GalateaDelegationSqliteStoreTests {
     }
 
     [Fact]
+    public void AutomaticWakeReason_IsDeferredReadOnlyAndRetainsActiveLeaseRecoveryEvidence() {
+        using var fixture = new RoutedStore();
+        GalateaOutboundMailSnapshot mail = StartEarliest(fixture.Store, "thread-a");
+        GalateaReplyNoticeSnapshot notice = fixture.Store.RecordCompletedMail(
+            mail.DispatchId, mail.Revision, "thread-a", "turn-a", "reply"
+        );
+        long readyRevision = fixture.Store.ReadSnapshot().StoreRevision;
+
+        Assert.Equal(
+            GalateaAutomaticWakeReason.ReadyNotice,
+            fixture.Store.ReadAutomaticWakeReason()
+        );
+        Assert.Equal(readyRevision, fixture.Store.ReadSnapshot().StoreRevision);
+
+        _ = fixture.Store.BeginReplyLeaseMembership(
+            "wake-active-lease",
+            "player",
+            [new(notice.NoticeId, notice.Revision)]
+        );
+        long leaseRevision = fixture.Store.ReadSnapshot().StoreRevision;
+
+        Assert.Equal(
+            GalateaAutomaticWakeReason.ActiveReplyLease,
+            fixture.Store.ReadAutomaticWakeReason()
+        );
+        Assert.Equal(leaseRevision, fixture.Store.ReadSnapshot().StoreRevision);
+    }
+
+    [Fact]
     public void CreateOpen_RequiresExactIdentityLimitsAndExclusiveOwner() {
         using var directory = new StoreDirectory();
         GalateaDelegationStoreOwner owner = Owner();

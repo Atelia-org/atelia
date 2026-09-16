@@ -21,18 +21,23 @@ internal sealed class GalateaAutomaticTurnCoordinator(
     private readonly ConcurrentDictionary<string, string> _attachFailures = new(StringComparer.Ordinal);
 
     internal GalateaAgentStatusDto ReadStatus(string characterId) {
-        bool enrolled = host.AutonomyCharacterIds.Contains(characterId, StringComparer.Ordinal);
-        string? connection = enrolled && host.TryGetCharacter(characterId, out var character)
-            ? character.DefaultConnectionId : null;
+        bool configured = host.TryGetCharacter(characterId, out GalateaCharacterConfig? character);
+        string? connection = configured ? character.DefaultConnectionId : null;
         string? state = host.IsStopping ? "stopping"
             : host.MaintenanceMode ? "maintenance"
-            : !enrolled ? "disabled" : null;
+            : !configured ? "disabled" : null;
         if (state is not null) { return new(state, connection, null, null, null); }
         if (_attachFailures.TryGetValue(characterId, out string? code)) {
             return new("blocked", connection, null, null, code);
         }
         return host.ReadAttachedSession(characterId)?.ReadAgentStatus()
-            ?? new("starting", connection, null, null, null);
+            ?? new(
+                character.AutonomyIntervalMinutes == 0 ? "waiting" : "starting",
+                connection,
+                null,
+                null,
+                null
+            );
     }
 
     internal void BlockAfterFailure(string characterId) {
@@ -48,7 +53,18 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             return new GalateaAutomaticTurnResult.Status(status);
         }
         ct.ThrowIfCancellationRequested();
+        bool replyOnly = IsReplyOnlyCharacter(characterId);
+        if (replyOnly && host.DelegationSupervisor.ReadAutomaticWakeReason(characterId)
+            == GalateaAutomaticWakeReason.None) {
+            return new GalateaAutomaticTurnResult.Status(status);
+        }
         CharacterSessionHost? session = host.ReadAttachedSession(characterId);
+        if (session is null || _attachFailures.ContainsKey(characterId)) {
+            if (replyOnly && !_attachFailures.ContainsKey(characterId)) {
+                session = await host.GetSessionAsync(characterId, ct)
+                    .ConfigureAwait(false);
+            }
+        }
         if (session is null || _attachFailures.ContainsKey(characterId)) {
             return new GalateaAutomaticTurnResult.Blocked("session-unavailable", "会话尚未就绪；请检查服务端初始化诊断。");
         }
@@ -61,6 +77,10 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                 return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
             }
             if (!session.AutomaticAdmissionFailed) {
+                if (replyOnly) {
+                    await host.ReconcileDurableAdmissionAsync(session, ct)
+                        .ConfigureAwait(false);
+                }
                 return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
             }
             await host.ReconcileDurableAdmissionAsync(session, ct).ConfigureAwait(false);
@@ -124,6 +144,11 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             return new GalateaAutomaticTurnResult.Blocked("automatic-admission-failed", "服务端自动轮次初始化失败；请检查服务端诊断。");
         }
         ct.ThrowIfCancellationRequested();
+        bool replyOnly = IsReplyOnlyCharacter(characterId);
+        if (replyOnly && host.DelegationSupervisor.ReadAutomaticWakeReason(characterId)
+            == GalateaAutomaticWakeReason.None) {
+            return new GalateaAutomaticTurnResult.Status(status);
+        }
         CharacterSessionHost session = await host.GetSessionAsync(characterId, ct).ConfigureAwait(false);
         if (!session.TurnLock.Wait(0)) {
             return new GalateaAutomaticTurnResult.Busy(session.GetCurrentTurn()?.TurnId);
@@ -174,6 +199,12 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                 origin = "delegate-reply";
             }
             else if (reply is GalateaReadyReplyTurnStartResult.Empty) {
+                if (replyOnly) {
+                    session.PublishAutonomyStatus();
+                    return new GalateaAutomaticTurnResult.Status(
+                        session.ReadAgentStatus()
+                    );
+                }
                 if (session.AutonomyCadence?.ObservePulse()
                     != GalateaAutonomyCadencePulseResult.AutonomousActivationDue) {
                     session.PublishAutonomyStatus();
@@ -217,4 +248,8 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             }
         }
     }
+
+    private bool IsReplyOnlyCharacter(string characterId) =>
+        host.TryGetCharacter(characterId, out GalateaCharacterConfig? character)
+        && character.AutonomyIntervalMinutes == 0;
 }

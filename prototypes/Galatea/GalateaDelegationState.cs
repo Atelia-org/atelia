@@ -80,6 +80,17 @@ internal enum GalateaMailboxStatusState {
 }
 
 /// <summary>
+/// Closed, non-public evidence that permits a zero-interval Character to
+/// attach and reconcile durable reply work. This is a scheduling hint only;
+/// the reply lease cutoff remains the authoritative claim.
+/// </summary>
+internal enum GalateaAutomaticWakeReason {
+    None,
+    ReadyNotice,
+    ActiveReplyLease
+}
+
+/// <summary>
 /// Non-sensitive aggregate projection for mailbox observability. This type
 /// deliberately cannot carry message content or durable identities.
 /// </summary>
@@ -125,6 +136,7 @@ internal sealed record GalateaMailboxStatusAggregate(
     string? ActiveMailLastCode,
     long? ActiveMailNextRetryAtUnixTimeMilliseconds,
     bool ActiveLeaseQuarantined,
+    bool HasActiveReplyLease,
     int ActiveStateMailCount,
     int QueuedCount,
     int ReadyNoticeCount

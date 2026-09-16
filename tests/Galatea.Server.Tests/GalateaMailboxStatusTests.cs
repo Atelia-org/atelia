@@ -104,6 +104,47 @@ public sealed class GalateaMailboxStatusTests {
         Assert.Equal(GalateaMailboxStatusState.NoMail, empty.State);
     }
 
+    [Fact]
+    public void AutomaticWake_UsesIndependentReadyAndLeaseEvidenceButFailsClosed() {
+        Assert.Equal(
+            GalateaAutomaticWakeReason.ReadyNotice,
+            GalateaDelegationSqliteStore.ProjectAutomaticWakeReason(
+                Baseline() with {
+                    ReadyNoticeCount = 1,
+                    RouteState = GalateaDelegationRouteState.Binding
+                }
+            )
+        );
+        Assert.Equal(
+            GalateaAutomaticWakeReason.ActiveReplyLease,
+            GalateaDelegationSqliteStore.ProjectAutomaticWakeReason(
+                Baseline() with { HasActiveReplyLease = true }
+            )
+        );
+        Assert.Equal(
+            GalateaAutomaticWakeReason.None,
+            GalateaDelegationSqliteStore.ProjectAutomaticWakeReason(
+                Baseline() with {
+                    ReadyNoticeCount = 1,
+                    HasActiveReplyLease = true,
+                    ActiveLeaseQuarantined = true
+                }
+            )
+        );
+        Assert.Equal(
+            GalateaAutomaticWakeReason.None,
+            GalateaDelegationSqliteStore.ProjectAutomaticWakeReason(
+                Baseline() with {
+                    ReadyNoticeCount = 1,
+                    ActiveMailState = GalateaDurableMailState.OutcomeUnknown,
+                    RouteHasActiveMail = true,
+                    ActiveStateMailCount = 1,
+                    ActiveMailNextRetryAtUnixTimeMilliseconds = 1
+                }
+            )
+        );
+    }
+
     [Theory]
     [InlineData(true, 0)]
     [InlineData(false, 1)]
@@ -181,6 +222,7 @@ public sealed class GalateaMailboxStatusTests {
         ActiveMailLastCode: null,
         ActiveMailNextRetryAtUnixTimeMilliseconds: null,
         ActiveLeaseQuarantined: false,
+        HasActiveReplyLease: false,
         ActiveStateMailCount: 0,
         QueuedCount: 0,
         ReadyNoticeCount: 0

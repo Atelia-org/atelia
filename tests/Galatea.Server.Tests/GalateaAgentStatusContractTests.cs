@@ -10,7 +10,7 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaAgentStatusContractTests {
     [Theory]
-    [InlineData(false, false, "disabled", null)]
+    [InlineData(false, false, "waiting", "test")]
     [InlineData(true, false, "starting", "test")]
     [InlineData(true, true, "maintenance", "test")]
     public async Task StatusIsAuthenticatedClosedAndNeverAttaches(
@@ -56,7 +56,7 @@ public sealed class GalateaAgentStatusContractTests {
     }
 
     [Fact]
-    public async Task DisabledOneShotNeverAttachesAndRejectsConnectionOverride() {
+    public async Task ZeroIntervalOneShotNeverAttachesAndRejectsConnectionOverride() {
         var factory = new RejectProviderFactory();
         await using var fixture = GalateaTestHost.Create(
             factory,
@@ -64,12 +64,25 @@ public sealed class GalateaAgentStatusContractTests {
         );
         using HttpClient client = fixture.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
-        using HttpResponseMessage disabled = await client.PostAsync(
+        using HttpResponseMessage waiting = await client.PostAsync(
             "/api/v1/characters/alice/mailbox/ready-turn", Json("{}")
         );
-        Assert.Equal(HttpStatusCode.OK, disabled.StatusCode);
-        using JsonDocument document = JsonDocument.Parse(await disabled.Content.ReadAsStringAsync());
-        Assert.Equal("disabled", document.RootElement.GetProperty("state").GetString());
+        Assert.Equal(HttpStatusCode.OK, waiting.StatusCode);
+        using JsonDocument document = JsonDocument.Parse(await waiting.Content.ReadAsStringAsync());
+        Assert.Equal("waiting", document.RootElement.GetProperty("state").GetString());
+
+        using HttpResponseMessage retry = await client.PostAsync(
+            "/api/v1/characters/alice/agent/retry-admission", Json("{}")
+        );
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+
+        GalateaAutomaticTurnCoordinator coordinator = fixture.Factory.Services
+            .GetRequiredService<GalateaAutomaticTurnCoordinator>();
+        GalateaAutomaticTurnResult.Status direct = Assert.IsType<
+            GalateaAutomaticTurnResult.Status>(
+                await coordinator.TryPulseAsync("alice", CancellationToken.None)
+            );
+        Assert.Equal("waiting", direct.Value.State);
 
         foreach (string body in new[] { "{\"connectionId\":\"test\"}", "{\"connectionId\":null}", "{\"unexpected\":1}" }) {
             using HttpResponseMessage rejected = await client.PostAsync("/api/v1/characters/alice/mailbox/ready-turn", Json(body));
