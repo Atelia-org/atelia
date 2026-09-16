@@ -1,7 +1,7 @@
 # Character 级自主激活间隔设计
 
 状态：**设计已收敛，尚未实施**。本文定义用每个 Character 的自主激活间隔替代
-`heartbeatEnabled` 的 V11 硬切方案。它不是当前运行合同；在实现、测试和显式离线迁移完成前，
+`heartbeatEnabled` 的 V11 硬切方案。它不是当前运行合同；在实现、测试和单一开发实例的人工配置切换完成前，
 现有 V10 `config.json` 仍按 [V10 合同](../SessionJournal/current/contracts/galatea-root-config-v10.md)工作。
 
 ## 结论
@@ -73,9 +73,11 @@ V11 的 Character 对象删除 `heartbeatEnabled`，新增**必填** JSON intege
 1. `GalateaStrictConfigReader.CurrentConfigVersion`、精确 token、Character whitelist 和错误文本改为 V11；`heartbeatEnabled` 作为 unknown field 拒绝。
 2. file DTO / resolved `GalateaCharacterConfig` 改为已验证的分钟数或 `TimeSpan? AutonomousActivationInterval`；删除 `HeartbeatEnabled`、`HeartbeatCharacterIds` 和 `ReadHeartbeatCharacterIds`，不保留优先级规则或兼容 property。
 3. bootstrap template、root-field tests、配置指南、运行指南和 V11 current contract 使用同一字段语言。
-4. 保留一个显式离线 V10→V11 plan/apply：`true → 10`、`false` 或省略 → `0`。它必须停服、备份、严格审计候选文件后发布；不在 startup 自动改写，也不触碰 ignored `.atelia` 实例。
+4. 删除已无输入消费者的 V9→V10 converter/upgrade command 及其测试，不把它改造成 V10→V11 通用迁移器。历史合同和验收记录仍作为历史材料保留。
 
-V11 而不是重定义 `v:10` 的原因不是下游兼容层，而是诚实的 schema 身份：当前 V10 已把 bool 类型和默认值写入 strict contract，并且现有 V9 converter 会产出 V10 bool。新 binary 可硬拒 V10；不需要 runtime dual reader。
+本仓只有一份 V10 开发实例，因此切换是一次人工、停服的配置维护，而不是产品化迁移功能：先在实例状态目录之外备份 config，手动将 `v` 改为 `11`，并把每个 `heartbeatEnabled:true` 替换为 `autonomyIntervalMinutes:10`、`false` 替换为 `0`，再启动新 binary。启动前的新 strict parser 必须拒绝旧 V10；startup 不读、写或转换 V10。这次人工编辑不改 SessionJournal、delegation SQLite、CharacterMemory 或历史 Observation。
+
+V11 而不是重定义 `v:10` 的原因不是下游兼容层，而是诚实的 schema 身份：当前 V10 已把 bool 类型和默认值写入 strict contract。新 binary 硬拒 V10；不需要 runtime dual reader、converter、plan/apply/resume 或自动实例迁移。
 
 ## 调度与恢复：一个 safe spine，两个 policy
 
@@ -159,18 +161,19 @@ interval snapshot，而不是在读取历史时从当前 config 重算。v2 的 
 | interval=0 的 attached-only 资格 | **delete** | attach 是 process-local 偶然状态；重启后不可预测，也不是 provider/work authorization。 |
 | `automaticReplyEnabled` 新字段 | **delete** | 用户已把关闭限定为无 Ready 的周期自主激活；durable Ready / active lease 是可验证的独立唤醒事实。 |
 | v1 arbitrary interval 放宽 | **delete** | interval 是持久语义，需 v2 writer 与 v1 exact reader，而非 silent grammar mutation。 |
-| V10 runtime compatibility reader | **delete** | V11 explicit offline migration 足够；双读只会保留无用分支。 |
+| V10 runtime compatibility reader 或 V10→V11 converter | **delete** | 单一开发实例手动停服备份后切换足够；双读、plan/apply/resume 与自动迁移均无消费者。 |
+| V9→V10 upgrade implementation | **delete** | 当前只有 V10 实例，保留历史文档即可；不让旧 converter 继续制造无法被 V11 binary 读取的文件。 |
 | immediate supervisor→coordinator callback | **defer** | 是延迟优化，不是正确性要求；10 秒 fallback 仍是唯一 liveness 基线。 |
 
 概念数从一个含混 `heartbeatEnabled` 的“总开关”收敛为：一个自主 interval、一个 pure wake reason、一个既有 safe admission spine；并明确保留两个原本独立的 durable scheduler。没有引入通用 scheduler、持久 deadline 或第二个配置开关。
 
 ## 最小垂直实施切片
 
-1. **V11 config cut**：DTO、strict reader、resolved model、template 和 root-language tests；V10→V11 offline plan/apply 的 dry-run / apply / refusal tests。此切片不改 ignored live config。
+1. **V11 config cut**：DTO、strict reader、resolved model、template 和 root-language tests；删除 V9→V10 converter/CLI 与其 tests。为唯一开发实例写停服/备份/人工字段替换的操作说明；代码测试只验证新 parser 拒绝 V10，不实现或测试转换器。
 2. **Cadence parameterization**：positive minutes injection、零 interval 不 arm、custom interval due/reset/no-catch-up/failure-pause tests；保留原 10 秒 tick。
 3. **reply-only wake**：internal wake projection（Ready + active lease）、zero interval no-store/no-mail zero-call proof、reply-only coordinator mode、race/restart/uncertain recovery tests；更新 ready-turn/retry/status semantics。
 4. **Observation v2**：snapshot carrying input, v1/v2 exact read matrix, renderer/recall propagation, legacy v1 reopen proof；不得重写 SessionJournal history。
-5. **operator/docs**：V11 current contract、configuration/runtime/server API/README、browser strict status consumer（若必要）和 doc scope；最后只在已停服、备份后的独立实例上进行显式 migration/验证。
+5. **operator/docs**：V11 current contract、configuration/runtime/server API/README、browser strict status consumer（若必要）和 doc scope；最后只在已停服、备份后的唯一开发实例上人工切换 config 并验证。
 
 ## 验收矩阵
 
@@ -186,4 +189,3 @@ interval snapshot，而不是在读取历史时从当前 config 重算。v2 的 
 | lifecycle / API | maintenance/shutdown 不因 scan attach；ready-turn/retry 的 zero policy 明确；status 的 null next deadline 不再误称“完全 disabled”。 |
 
 建议实现后按仓库既有串行方式运行 Galatea focused/full Debug 与 Release tests、Release build、Node HTTP/SSE checks、文档检查和 `git diff --check`；本设计阶段没有运行这些实现验证，也没有调用真实 provider。
-
