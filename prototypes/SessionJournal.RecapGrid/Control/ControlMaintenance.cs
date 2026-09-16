@@ -5,7 +5,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 
 namespace Atelia.SessionJournal.RecapGrid.Control;
 
-public static class RecapGridControlMaintenance {
+public static partial class RecapGridControlMaintenance {
     private const string BackupStateFileName = "control.json";
     private const string BackupManifestFileName = "manifest.json";
 
