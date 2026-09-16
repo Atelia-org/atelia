@@ -65,6 +65,8 @@ public static partial class HistoryTimelineMaintenance {
     /// <summary>
     /// Enumerates only canonical V2 Timeline database names below the supplied
     /// repository. This is maintenance inventory, not a runtime locator lookup.
+    /// It is a cooperative durable-layout no-reparse guard, not a defense against
+    /// an adversary renaming paths between inspection and open.
     /// </summary>
     public static HistoryTimelineScopeInventoryResult InventoryScopes(
         string repositoryPath
@@ -86,7 +88,8 @@ public static partial class HistoryTimelineMaintenance {
                 foreach (string entry in Directory.EnumerateFileSystemEntries(refPath)) {
                     string name = Path.GetFileName(entry);
                     if (name == "timelines") continue;
-                    if (name == "locator.json" && IsRegularFile(repository, entry)) continue;
+                    if ((name == "locator.json" || IsLocatorTemporary(name))
+                        && IsRegularFile(repository, entry)) continue;
                     throw new InvalidDataException("Timeline inventory encountered a foreign Ref entry.");
                 }
                 RequireSafeDirectory(repository, timelines);
@@ -96,9 +99,8 @@ public static partial class HistoryTimelineMaintenance {
                         throw new InvalidDataException("Timeline inventory encountered a non-regular file.");
                     }
                     string name = Path.GetFileName(databasePath);
-                    if (!name.EndsWith(".sqlite", StringComparison.Ordinal)) {
-                        throw new InvalidDataException("Timeline inventory encountered a foreign filename.");
-                    }
+                    if (IsTimelineTemporaryOrSidecar(name)) continue;
+                    if (!name.EndsWith(".sqlite", StringComparison.Ordinal)) throw new InvalidDataException("Timeline inventory encountered a foreign filename.");
                     string idText = name[..^".sqlite".Length];
                     var timelineId = new TimelineId(idText);
                     if (!string.Equals(name, $"{timelineId.Value}.sqlite", StringComparison.Ordinal)) {
@@ -143,6 +145,11 @@ public static partial class HistoryTimelineMaintenance {
         }
     }
 
+    /// <summary>
+    /// Opens an observed exact scope with the same cooperative no-reparse guard.
+    /// Apply callers still require a stopped repository, exclusive lock, and a
+    /// witness recheck immediately before mutation.
+    /// </summary>
     public static HistoryTimelineExactReaderOpenResult OpenExactReader(
         string repositoryPath,
         RefId refId,
@@ -192,6 +199,33 @@ public static partial class HistoryTimelineMaintenance {
     private static bool IsRegularFile(string repository, string path) {
         HistoryTimelineDurableFiles.RequireSafePath(repository, path);
         return (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
+    }
+
+    private static bool IsLocatorTemporary(string name)
+        => name.StartsWith(".locator.json.", StringComparison.Ordinal)
+            && name.EndsWith(".tmp", StringComparison.Ordinal)
+            && Guid.TryParseExact(name[".locator.json.".Length..^".tmp".Length], "N", out _);
+
+    private static bool IsTimelineTemporaryOrSidecar(string name) {
+        foreach (string kind in new[] { "upgrade", "restore" }) {
+            if (name.StartsWith(".", StringComparison.Ordinal)
+                && name.EndsWith($".{kind}.tmp", StringComparison.Ordinal)) {
+                string body = name[1..^($".{kind}.tmp".Length)];
+                int separator = body.LastIndexOf('.');
+                if (separator > 0
+                    && Guid.TryParseExact(body[(separator + 1)..], "N", out _)
+                    && IsCanonicalTimelineId(body[..separator])) return true;
+            }
+        }
+        // The production ledger forces journal_mode=DELETE; an interrupted
+        // SQLite transaction may retain only this exact rollback-journal form.
+        return name.EndsWith(".sqlite-journal", StringComparison.Ordinal)
+            && IsCanonicalTimelineId(name[..^".sqlite-journal".Length]);
+    }
+
+    private static bool IsCanonicalTimelineId(string value) {
+        try { return new TimelineId(value).Value == value; }
+        catch (ArgumentException) { return false; }
     }
 
     private static RefId ParseRefName(string value) {

@@ -36,6 +36,7 @@ public sealed partial class ControlVerticalTests {
         Values featureValues = ValuesFor(path, feature);
         ControlHeadRef featureControl = Assert.IsType<RecapGridControlCreateResult.Created>(
             RecapGridControlFactory.Create(path, feature.BranchRefId, featureValues.Admission)).Head;
+        feature.Dispose();
 
         string locatorPath = Path.Combine(path, "derived", "history-timeline", "v2", "refs", mainRef.ToHexString(), "locator.json");
         string historicalControlPath = ControlStatePath(path, mainRef, historicalControl);
@@ -43,6 +44,7 @@ public sealed partial class ControlVerticalTests {
         byte[] locatorBytes = File.ReadAllBytes(locatorPath);
         byte[] historicalBytes = File.ReadAllBytes(historicalControlPath);
         byte[] activeBytes = File.ReadAllBytes(activeControlPath);
+        IReadOnlyDictionary<string, byte[]> manifestBefore = FileManifest(path);
 
         HistoryTimelineScope[] timelines = Assert.IsType<HistoryTimelineScopeInventoryResult.Available>(
             HistoryTimelineMaintenance.InventoryScopes(path)).Scopes.ToArray();
@@ -63,6 +65,15 @@ public sealed partial class ControlVerticalTests {
         Assert.Equal(locatorBytes, File.ReadAllBytes(locatorPath));
         Assert.Equal(historicalBytes, File.ReadAllBytes(historicalControlPath));
         Assert.Equal(activeBytes, File.ReadAllBytes(activeControlPath));
+        IReadOnlyDictionary<string, byte[]> manifestAfter = FileManifest(path);
+        Assert.Equal(manifestBefore.Keys.Order(), manifestAfter.Keys.Order());
+        foreach ((string relative, byte[] bytes) in manifestBefore) {
+            Assert.Equal(bytes, manifestAfter[relative]);
+        }
+
+        File.Copy(historicalControlPath, activeControlPath, overwrite: true);
+        Assert.IsType<RecapGridControlScopeInventoryResult.Invalid>(
+            RecapGridControlMaintenance.InventoryScopes(path));
     }
 
     [Fact]
@@ -76,7 +87,22 @@ public sealed partial class ControlVerticalTests {
         File.WriteAllText(Path.Combine(refs, "foreign"), "x");
         Assert.IsType<HistoryTimelineScopeInventoryResult.Invalid>(HistoryTimelineMaintenance.InventoryScopes(path));
         File.Delete(Path.Combine(refs, "foreign"));
+        string refPath = Path.Combine(refs, journal.BranchRefId.ToHexString());
+        string locatorTemp = Path.Combine(refPath, $".locator.json.{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(locatorTemp, "temp");
+        Assert.IsType<HistoryTimelineScopeInventoryResult.Available>(HistoryTimelineMaintenance.InventoryScopes(path));
+        File.Delete(locatorTemp);
+        File.WriteAllText(Path.Combine(refPath, ".locator.json.not-a-guid.tmp"), "temp");
+        Assert.IsType<HistoryTimelineScopeInventoryResult.Invalid>(HistoryTimelineMaintenance.InventoryScopes(path));
+        File.Delete(Path.Combine(refPath, ".locator.json.not-a-guid.tmp"));
         string timelines = Path.Combine(refs, journal.BranchRefId.ToHexString(), "timelines");
+        string upgradeTemp = Path.Combine(timelines, $".{control.TimelineId.Value}.{Guid.NewGuid():N}.upgrade.tmp");
+        File.WriteAllText(upgradeTemp, "temp");
+        Assert.IsType<HistoryTimelineScopeInventoryResult.Available>(HistoryTimelineMaintenance.InventoryScopes(path));
+        File.Delete(upgradeTemp);
+        File.WriteAllText(Path.Combine(timelines, $".{control.TimelineId.Value}.not-a-guid.restore.tmp"), "temp");
+        Assert.IsType<HistoryTimelineScopeInventoryResult.Invalid>(HistoryTimelineMaintenance.InventoryScopes(path));
+        File.Delete(Path.Combine(timelines, $".{control.TimelineId.Value}.not-a-guid.restore.tmp"));
         Directory.CreateDirectory(Path.Combine(timelines, "foreign"));
         Assert.IsType<HistoryTimelineScopeInventoryResult.Invalid>(HistoryTimelineMaintenance.InventoryScopes(path));
         Directory.Delete(Path.Combine(timelines, "foreign"));
@@ -113,4 +139,9 @@ public sealed partial class ControlVerticalTests {
             RecapGridControlMaintenance.OpenExactReader(path, refId, expected.TimelineId)).Handle;
         Assert.Equal(expected, Assert.IsType<RecapGridControlSnapshotResult.Available>(handle.Reader.ReadSnapshot()).Snapshot.Head);
     }
+
+    private static IReadOnlyDictionary<string, byte[]> FileManifest(string root)
+        => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => Path.GetRelativePath(root, path), File.ReadAllBytes,
+                StringComparer.Ordinal);
 }

@@ -17,6 +17,10 @@ public abstract record RecapGridControlScopeInventoryResult {
 public static partial class RecapGridControlMaintenance {
     private const int MaximumInventoryScopes = 4_096;
 
+    /// <summary>
+    /// Cooperative durable-layout no-reparse inventory; it does not claim to
+    /// prevent hostile rename races after a path has been observed.
+    /// </summary>
     public static RecapGridControlScopeInventoryResult InventoryScopes(string repositoryPath) {
         try {
             string repository = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath));
@@ -53,6 +57,21 @@ public static partial class RecapGridControlMaintenance {
                             && Guid.TryParseExact(name[".control.json.".Length..^".tmp".Length], "N", out _)) continue;
                         throw new InvalidDataException("Control inventory encountered a foreign filename.");
                     }
+                    RecapGridControlReaderOpenResult opened = OpenExactReader(
+                        repository, refId, timelineId);
+                    switch (opened) {
+                        case RecapGridControlReaderOpenResult.Opened available:
+                            available.Handle.Dispose();
+                            break;
+                        case RecapGridControlReaderOpenResult.Invalid invalid:
+                            throw new ControlStoreException("ControlInventoryScopeInvalid", invalid.Code);
+                        case RecapGridControlReaderOpenResult.Busy:
+                            throw new ControlBusyException();
+                        case RecapGridControlReaderOpenResult.UnsupportedSchema schema:
+                            throw new ControlUnsupportedSchemaException(schema.SchemaVersion);
+                        default:
+                            throw new ControlStoreException("ControlInventoryScopeUnavailable", "Control scope disappeared or its Timeline is unavailable.");
+                    }
                     scopes.Add(new RecapGridControlScope(refId, timelineId));
                     if (scopes.Count > MaximumInventoryScopes) throw new ControlLimitException("ControlInventoryScopeCount");
                 }
@@ -65,7 +84,10 @@ public static partial class RecapGridControlMaintenance {
         }
     }
 
-    /// <summary>Opens the named Control scope and its named Timeline without consulting a locator.</summary>
+    /// <summary>
+    /// Opens the named Control scope and its named Timeline without consulting a locator.
+    /// Apply callers require a stopped repository, exclusive lock, and witness recheck.
+    /// </summary>
     public static RecapGridControlReaderOpenResult OpenExactReader(string repositoryPath, RefId refId, TimelineId timelineId) {
         HistoryTimelineExactReaderHandle? timeline = null;
         FileStream? lease = null;

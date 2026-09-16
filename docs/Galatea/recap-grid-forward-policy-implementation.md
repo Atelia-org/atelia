@@ -15,6 +15,9 @@
   Journal/Timeline/Cadence/Control。合成 two-ref、同 Ref active+historical
   Timeline 验证 inventory 稳定排序、exact head/control 与 locator/control
   bytes 不变；public-surface 与 focused Release TRX 见本轮提交证据。
+  no-reparse 检查是 cooperative durable-layout guard，不宣称抵抗恶意
+  rename TOCTOU；未来 G5 apply 仍须 stopped repository、exclusive lock 与
+  mutation 前 witness recheck。
 
 - Full recipe canonical V2 可记录 `OriginRootRecipeDigest`，V1 canonical
   bytes/digest 仍按原语义解码。
