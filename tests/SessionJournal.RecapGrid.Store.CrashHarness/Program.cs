@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -7,10 +8,11 @@ namespace Atelia.SessionJournal.RecapGrid.Store.CrashHarness;
 
 internal static class Program {
     public static int Main(string[] args) {
-        if (args.Length != 3
+        if (args.Length is < 3 or > 4
+            || (args.Length == 4 && args[0] != "upgrade-v4")
             || args[0] is not ("cell" or "row-view" or "fulfilled" or "reset" or "upgrade-v4")) {
             Console.Error.WriteLine(
-                "usage: <cell|row-view|fulfilled|reset|upgrade-v4> <failpoint> <repository>"
+                "usage: <cell|row-view|fulfilled|reset|upgrade-v4> <failpoint> <repository> [proof-bundle]"
             );
             return 2;
         }
@@ -20,11 +22,9 @@ internal static class Program {
         Action crash = () => Environment.FailFast(
             $"Intentional RecapGrid Store crash at {operation}/{failpoint}."
         );
-        StorePersistenceTestHooks hooks = Hooks(
-            operation,
-            failpoint,
-            crash
-        );
+        StorePersistenceTestHooks hooks = operation == "upgrade-v4"
+            ? StorePersistenceTestHooks.None
+            : Hooks(operation, failpoint, crash);
         if (operation == "reset") {
             RecapGridStorePhysicalWitness witness =
                 (RecapGridStoreMaintenance.PrepareReset(repository)
@@ -40,10 +40,13 @@ internal static class Program {
             );
         }
         else if (operation == "upgrade-v4") {
+            IReadOnlyList<RowWork> proofs = args.Length == 4
+                ? ReadProofBundle(repository, args[3])
+                : [];
             _ = RecapGridStoreMaintenance.UpgradeV4ForTest(
                 repository,
                 apply: true,
-                static () => [],
+                () => proofs,
                 UpgradeHooks(failpoint, crash)
             );
         }
@@ -83,6 +86,27 @@ internal static class Program {
         }
         Console.Error.WriteLine("Crash failpoint was not reached.");
         return 3;
+    }
+
+    private static IReadOnlyList<RowWork> ReadProofBundle(
+        string repository,
+        string proofPath
+    ) {
+        string canonicalRepository = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(repository));
+        string canonicalProof = Path.GetFullPath(proofPath);
+        if (canonicalProof.StartsWith(
+                canonicalRepository + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "The upgrade proof bundle must be outside the repository.");
+        }
+        string[] encoded = JsonSerializer.Deserialize<string[]>(
+            File.ReadAllBytes(canonicalProof))
+            ?? throw new InvalidDataException(
+                "The upgrade proof bundle must be a JSON string array.");
+        return encoded.Select(static value =>
+            RowWork.DecodeCanonical(Convert.FromBase64String(value))).ToArray();
     }
 
     private static StorePersistenceTestHooks Hooks(
