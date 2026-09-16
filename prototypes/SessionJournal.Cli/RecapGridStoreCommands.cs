@@ -7,7 +7,7 @@ internal static class RecapGridStoreCommands {
     internal static int Run(string[] args) {
         if (args.Length == 0) {
             throw new ArgumentException(
-                "recap-grid requires inspect, export, verify, reset, or upgrade-store-v5."
+                "recap-grid requires inspect, export, verify, reset, upgrade-store-v5, prepare-restore-store-v4, or restore-store-v4."
             );
         }
         string subcommand = args[0];
@@ -18,6 +18,8 @@ internal static class RecapGridStoreCommands {
             "verify" => Verify(options),
             "reset" => Reset(options),
             "upgrade-store-v5" => UpgradeStoreV5(options),
+            "prepare-restore-store-v4" => PrepareRestoreStoreV4(options),
+            "restore-store-v4" => RestoreStoreV4(options),
             _ => throw new ArgumentException(
                 $"Unknown recap-grid subcommand '{subcommand}'."
             )
@@ -339,6 +341,140 @@ internal static class RecapGridStoreCommands {
                 "Unknown RecapGrid Store reset result."
             )
         };
+    }
+
+    private static int PrepareRestoreStoreV4(CliOptions options) {
+        options.EnsureOnly("input", "backup");
+        string repository = options.RequireSingle("input");
+        string backup = options.RequireSingle("backup");
+        RecapGridStorePrepareRestoreResult result =
+            RecapGridStoreMaintenance.PrepareRestoreV4(
+                repository,
+                backup,
+                () => RecapGridV4PartialWorkProofResolver.ResolveBackup(
+                    repository, backup)
+            );
+        return result switch {
+            RecapGridStorePrepareRestoreResult.Prepared prepared => Print(
+                "prepare-restore-store-v4", "prepared", new {
+                    prepared.BackupPath,
+                    Active = prepared.Active,
+                    Backup = prepared.Backup
+                }),
+            RecapGridStorePrepareRestoreResult.AlreadyRestored restored =>
+                Print("prepare-restore-store-v4", "already-restored", new {
+                    restored.BackupPath,
+                    Active = restored.Active,
+                    nextAction = "run-upgrade-store-v5-explicitly"
+                }),
+            RecapGridStorePrepareRestoreResult.Absent => Print(
+                "prepare-restore-store-v4", "absent", exitCode: 2),
+            RecapGridStorePrepareRestoreResult.BackupAbsent => Print(
+                "prepare-restore-store-v4", "backup-absent", exitCode: 2),
+            RecapGridStorePrepareRestoreResult.Busy => Print(
+                "prepare-restore-store-v4", "busy", exitCode: 2),
+            RecapGridStorePrepareRestoreResult.OfflineCleanupRequired value =>
+                Print("prepare-restore-store-v4",
+                    "offline-cleanup-required", new { value.Slot }, 2),
+            RecapGridStorePrepareRestoreResult.UnsupportedSchema value =>
+                Print("prepare-restore-store-v4", "unsupported-schema",
+                    new { value.Slot, value.SchemaVersion }, 2),
+            RecapGridStorePrepareRestoreResult.PlatformUnsupported => Print(
+                "prepare-restore-store-v4", "platform-unsupported",
+                exitCode: 2),
+            RecapGridStorePrepareRestoreResult.Invalid value => Print(
+                "prepare-restore-store-v4", value.Code is
+                    "partial-proof-unprovable" or "partial-proof-ambiguous"
+                    or "partial-proof-unavailable" ? value.Code : "invalid",
+                new { value.Code, value.Detail }, 2),
+            _ => throw new InvalidOperationException(
+                "Unknown RecapGrid Store prepare-restore result.")
+        };
+    }
+
+    private static int RestoreStoreV4(CliOptions options) {
+        options.EnsureOnly(
+            "input", "backup",
+            "confirm-active-length", "confirm-active-sha256",
+            "confirm-backup-length", "confirm-backup-sha256"
+        );
+        string repository = options.RequireSingle("input");
+        string backup = options.RequireSingle("backup");
+        var activeWitness = new RecapGridStorePhysicalWitness(
+            ParsePositiveLength(options.RequireSingle(
+                "confirm-active-length"), "confirm-active-length"),
+            options.RequireSingle("confirm-active-sha256"));
+        var backupWitness = new RecapGridStorePhysicalWitness(
+            ParsePositiveLength(options.RequireSingle(
+                "confirm-backup-length"), "confirm-backup-length"),
+            options.RequireSingle("confirm-backup-sha256"));
+        RecapGridStoreRestoreResult result = RecapGridStoreMaintenance.RestoreV4(
+            repository,
+            backup,
+            activeWitness,
+            backupWitness,
+            () => RecapGridV4PartialWorkProofResolver.ResolveBackup(
+                repository, backup)
+        );
+        return result switch {
+            RecapGridStoreRestoreResult.Restored restored => Print(
+                "restore-store-v4", "restored", new {
+                    restored.BackupPath,
+                    Active = restored.Active,
+                    nextAction = "run-upgrade-store-v5-explicitly"
+                }),
+            RecapGridStoreRestoreResult.AlreadyRestored restored => Print(
+                "restore-store-v4", "already-restored", new {
+                    restored.BackupPath,
+                    Active = restored.Active,
+                    nextAction = "run-upgrade-store-v5-explicitly"
+                }),
+            RecapGridStoreRestoreResult.ActiveChanged value => Print(
+                "restore-store-v4", "active-changed",
+                new { Actual = value.Actual }, 2),
+            RecapGridStoreRestoreResult.BackupChanged value => Print(
+                "restore-store-v4", "backup-changed",
+                new { Actual = value.Actual }, 2),
+            RecapGridStoreRestoreResult.CommitIndeterminate value => Print(
+                "restore-store-v4", "commit-indeterminate", new {
+                    value.BackupPath,
+                    Intended = value.Intended,
+                    ObservedActive = value.ObservedActive,
+                    value.NextAction
+                }, 2),
+            RecapGridStoreRestoreResult.Absent => Print(
+                "restore-store-v4", "absent", exitCode: 2),
+            RecapGridStoreRestoreResult.BackupAbsent => Print(
+                "restore-store-v4", "backup-absent", exitCode: 2),
+            RecapGridStoreRestoreResult.Busy => Print(
+                "restore-store-v4", "busy", exitCode: 2),
+            RecapGridStoreRestoreResult.OfflineCleanupRequired value => Print(
+                "restore-store-v4", "offline-cleanup-required",
+                new { value.Slot }, 2),
+            RecapGridStoreRestoreResult.UnsupportedSchema value => Print(
+                "restore-store-v4", "unsupported-schema",
+                new { value.Slot, value.SchemaVersion }, 2),
+            RecapGridStoreRestoreResult.PlatformUnsupported => Print(
+                "restore-store-v4", "platform-unsupported", exitCode: 2),
+            RecapGridStoreRestoreResult.Invalid value => Print(
+                "restore-store-v4", value.Code is "partial-proof-unprovable"
+                    or "partial-proof-ambiguous" or "partial-proof-unavailable"
+                    ? value.Code : "invalid",
+                new { value.Code, value.Detail }, 2),
+            _ => throw new InvalidOperationException(
+                "Unknown RecapGrid Store restore result.")
+        };
+    }
+
+    private static long ParsePositiveLength(string text, string option) {
+        if (!long.TryParse(text,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out long length) || length < 1) {
+            throw new ArgumentException(
+                $"--{option} must be a positive integer.");
+        }
+        return length;
     }
 
     private static int PrepareReset(string repository) {

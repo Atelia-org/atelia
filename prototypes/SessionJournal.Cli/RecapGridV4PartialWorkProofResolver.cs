@@ -11,6 +11,18 @@ namespace Atelia.SessionJournal.Cli;
 internal static class RecapGridV4PartialWorkProofResolver {
     internal static IReadOnlyList<RowWork> Resolve(string repositoryPath) {
         string database = Path.Combine(repositoryPath, "derived", "recap-grid", "v1", "grid.sqlite");
+        return ResolveDatabase(repositoryPath, database);
+    }
+
+    internal static IReadOnlyList<RowWork> ResolveBackup(
+        string repositoryPath,
+        string backupPath
+    ) => ResolveDatabase(repositoryPath, backupPath);
+
+    private static IReadOnlyList<RowWork> ResolveDatabase(
+        string repositoryPath,
+        string database
+    ) {
         if (!File.Exists(database)) return [];
         using SqliteConnection connection = OpenReadOnly(database);
         if (ReadSchemaVersion(connection) != 4) return [];

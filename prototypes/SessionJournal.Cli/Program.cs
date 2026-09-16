@@ -328,6 +328,12 @@ internal static class Program {
             "  recap-grid upgrade-store-v5 --input <stopped-repo-copy> [--apply]"
         );
         Console.WriteLine(
+            "  recap-grid prepare-restore-store-v4 --input <stopped-repo-copy> --backup <exact-v4-backup>"
+        );
+        Console.WriteLine(
+            "  recap-grid restore-store-v4 --input <stopped-repo-copy> --backup <exact-v4-backup> --confirm-active-length <n> --confirm-active-sha256 <hex> --confirm-backup-length <n> --confirm-backup-sha256 <hex>"
+        );
+        Console.WriteLine(
             "  recap-grid <scaffold|init|timeline|control|cadence|build|progress|materialize> ..."
         );
         Console.WriteLine(

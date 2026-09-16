@@ -60,6 +60,18 @@ internal sealed record StoreUpgradeTestHooks(
     internal static StoreUpgradeTestHooks None { get; } = new();
 }
 
+/// <summary>
+/// Test-only interruption points for the offline V4 restore protocol.
+/// </summary>
+internal sealed record StoreRestoreTestHooks(
+    Action? AfterTempVerified = null,
+    Action? AfterReplaceBeforeDirectoryFsync = null,
+    Action? AfterDirectoryFsyncBeforeVerify = null,
+    Action? AfterVerify = null
+) {
+    internal static StoreRestoreTestHooks None { get; } = new();
+}
+
 internal sealed class StorePaths {
     internal StorePaths(string repositoryPath) {
         if (!OperatingSystem.IsLinux()) {

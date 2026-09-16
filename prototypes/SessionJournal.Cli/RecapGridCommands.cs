@@ -30,7 +30,8 @@ internal static partial class RecapGridCommands {
         string[] tail = args.Skip(1).ToArray();
         return command switch {
             "inspect" or "export" or "verify" or "reset"
-                or "upgrade-store-v5"
+                or "upgrade-store-v5" or "prepare-restore-store-v4"
+                or "restore-store-v4"
                 => ValueTask.FromResult(RecapGridStoreCommands.Run(args)),
             "init" => ValueTask.FromResult(Init(CliOptions.Parse(tail))),
             "scaffold" => ValueTask.FromResult(

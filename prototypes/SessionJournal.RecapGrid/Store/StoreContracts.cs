@@ -126,6 +126,64 @@ public sealed record RecapGridStoreUpgradeObservation(
     RecapGridStorePhysicalWitness? Witness
 );
 
+public abstract record RecapGridStorePrepareRestoreResult {
+    private RecapGridStorePrepareRestoreResult() { }
+
+    public sealed record Prepared(
+        string BackupPath,
+        RecapGridStoreUpgradeEvidence Active,
+        RecapGridStoreUpgradeEvidence Backup
+    ) : RecapGridStorePrepareRestoreResult;
+    public sealed record AlreadyRestored(
+        string BackupPath,
+        RecapGridStoreUpgradeEvidence Active
+    ) : RecapGridStorePrepareRestoreResult;
+    public sealed record Absent : RecapGridStorePrepareRestoreResult;
+    public sealed record BackupAbsent : RecapGridStorePrepareRestoreResult;
+    public sealed record Busy : RecapGridStorePrepareRestoreResult;
+    public sealed record OfflineCleanupRequired(string Slot)
+        : RecapGridStorePrepareRestoreResult;
+    public sealed record UnsupportedSchema(string Slot, int SchemaVersion)
+        : RecapGridStorePrepareRestoreResult;
+    public sealed record PlatformUnsupported
+        : RecapGridStorePrepareRestoreResult;
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridStorePrepareRestoreResult;
+}
+
+public abstract record RecapGridStoreRestoreResult {
+    private RecapGridStoreRestoreResult() { }
+
+    public sealed record Restored(
+        string BackupPath,
+        RecapGridStoreUpgradeEvidence Active
+    ) : RecapGridStoreRestoreResult;
+    public sealed record AlreadyRestored(
+        string BackupPath,
+        RecapGridStoreUpgradeEvidence Active
+    ) : RecapGridStoreRestoreResult;
+    public sealed record ActiveChanged(RecapGridStorePhysicalWitness Actual)
+        : RecapGridStoreRestoreResult;
+    public sealed record BackupChanged(RecapGridStorePhysicalWitness Actual)
+        : RecapGridStoreRestoreResult;
+    public sealed record CommitIndeterminate(
+        string BackupPath,
+        RecapGridStoreUpgradeEvidence Intended,
+        RecapGridStoreUpgradeObservation ObservedActive,
+        string NextAction
+    ) : RecapGridStoreRestoreResult;
+    public sealed record Absent : RecapGridStoreRestoreResult;
+    public sealed record BackupAbsent : RecapGridStoreRestoreResult;
+    public sealed record Busy : RecapGridStoreRestoreResult;
+    public sealed record OfflineCleanupRequired(string Slot)
+        : RecapGridStoreRestoreResult;
+    public sealed record UnsupportedSchema(string Slot, int SchemaVersion)
+        : RecapGridStoreRestoreResult;
+    public sealed record PlatformUnsupported : RecapGridStoreRestoreResult;
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridStoreRestoreResult;
+}
+
 /// <summary>
 /// A caller-owned, read-only proof pass could not establish the immutable
 /// facts needed to attach V4 partial cells to RowWork.  The Store deliberately
