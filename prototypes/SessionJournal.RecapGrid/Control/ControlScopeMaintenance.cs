@@ -34,7 +34,13 @@ public static partial class RecapGridControlMaintenance {
                 string timelines = Path.Combine(refPath, "timelines");
                 RequireSafe(repository, timelines);
                 foreach (string entry in Directory.EnumerateFileSystemEntries(refPath)) {
-                    if (Path.GetFileName(entry) != "timelines") throw new InvalidDataException("Control inventory encountered a foreign Ref entry.");
+                    string name = Path.GetFileName(entry);
+                    if (name == "timelines") continue;
+                    if (name == "cadence") {
+                        RequireDirectory(repository, entry);
+                        continue;
+                    }
+                    throw new InvalidDataException("Control inventory encountered a foreign Ref entry.");
                 }
                 RequireDirectory(repository, timelines);
                 foreach (string timelinePath in Directory.EnumerateFileSystemEntries(timelines).Order(StringComparer.Ordinal)) {

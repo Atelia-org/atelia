@@ -118,6 +118,21 @@ public sealed partial class ControlVerticalTests {
         File.WriteAllText(Path.Combine(controlRefs, "foreign"), "x");
         Assert.IsType<RecapGridControlScopeInventoryResult.Invalid>(RecapGridControlMaintenance.InventoryScopes(path));
         File.Delete(Path.Combine(controlRefs, "foreign"));
+        string controlRef = Path.Combine(controlRefs, journal.BranchRefId.ToHexString());
+        string cadence = Path.Combine(controlRef, "cadence");
+        Directory.CreateDirectory(cadence);
+        File.WriteAllText(Path.Combine(cadence, "owner-data-is-not-inventory-input"), "inert");
+        Assert.IsType<RecapGridControlScopeInventoryResult.Available>(
+            RecapGridControlMaintenance.InventoryScopes(path));
+        Directory.Delete(cadence, recursive: true);
+        Directory.CreateDirectory(Path.Combine(controlRef, "cadence-near-match"));
+        Assert.IsType<RecapGridControlScopeInventoryResult.Invalid>(
+            RecapGridControlMaintenance.InventoryScopes(path));
+        Directory.Delete(Path.Combine(controlRef, "cadence-near-match"));
+        Directory.CreateSymbolicLink(cadence, Path.Combine(controlRef, "timelines"));
+        Assert.IsType<RecapGridControlScopeInventoryResult.Invalid>(
+            RecapGridControlMaintenance.InventoryScopes(path));
+        Directory.Delete(cadence);
         string controlTimelines = Path.Combine(controlRefs, journal.BranchRefId.ToHexString(), "timelines");
         File.CreateSymbolicLink(Path.Combine(controlTimelines, "linked"), Path.Combine(controlTimelines, control.TimelineId.Value));
         Assert.IsType<RecapGridControlScopeInventoryResult.Invalid>(RecapGridControlMaintenance.InventoryScopes(path));
