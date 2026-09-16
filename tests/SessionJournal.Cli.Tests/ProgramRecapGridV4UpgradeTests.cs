@@ -72,6 +72,38 @@ public sealed partial class ProgramRecapGridCommandTests {
         AssertRepositoryBytesEqual(before, SnapshotRepositoryBytes());
     }
 
+    [Fact]
+    public void UpgradeStoreV5UsesHistoricalExactScopeNotNewActiveTimeline() {
+        V4PartialFixture fixture = CreateV4PartialFixture(activate: false);
+        ActiveTimelineLocator oldLocator = Assert.IsType<HistoryTimelineInspectResult.Available>(
+            HistoryTimelineMaintenance.Inspect(_root, fixture.RefId)).Locator;
+        Dictionary<string, byte[]> raw = SnapshotRawAuthority();
+        Dictionary<string, byte[]> control = SnapshotDirectory(Path.Combine(
+            _root, "control", "recap-grid"));
+        var policy = new HistoryTimelineInitialPolicySpec(
+            HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            new HistoryLoadUnit(1), 64, 1024 * 1024);
+        HistoryTimelineAbandonResult.Abandoned abandoned = Assert.IsType<
+            HistoryTimelineAbandonResult.Abandoned>(
+            HistoryTimelineMaintenance.Abandon(_root, fixture.RefId, oldLocator,
+                policy, new O200kBaseHistoryUnitLoadEstimator()));
+        Assert.NotEqual(oldLocator.ActiveTimelineId,
+            abandoned.Locator.ActiveTimelineId);
+
+        (int code, JsonElement result) = RunGridCaptured(
+            "upgrade-store-v5", "--input", _root, "--apply");
+
+        Assert.Equal(0, code);
+        Assert.Equal("upgraded", result.GetProperty("status").GetString());
+        Assert.Equal(abandoned.Locator, Assert.IsType<HistoryTimelineInspectResult.Available>(
+            HistoryTimelineMaintenance.Inspect(_root, fixture.RefId)).Locator);
+        AssertSnapshotEqual(raw, SnapshotRawAuthority());
+        AssertSnapshotEqual(control, SnapshotDirectory(Path.Combine(
+            _root, "control", "recap-grid")));
+        AssertUpgradedPartial(fixture);
+    }
+
     private V4PartialFixture CreateV4PartialFixture(bool activate) {
         CreateJournal(turns: 3);
         RefId refId;
