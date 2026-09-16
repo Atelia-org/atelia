@@ -8,6 +8,14 @@
 
 ## 已实现并验证
 
+- G5a：HistoryTimeline 与 RecapGrid Control 增加 maintenance-only 的
+  canonical exact-scope inventory / `(RefId, TimelineId)` read-only reader；
+  不经 locator 的 active timeline 选择。枚举拒绝 reparse、foreign entry、
+  non-canonical name 与内部 identity mismatch，并有 4096 scope bound；不写
+  Journal/Timeline/Cadence/Control。合成 two-ref、同 Ref active+historical
+  Timeline 验证 inventory 稳定排序、exact head/control 与 locator/control
+  bytes 不变；public-surface 与 focused Release TRX 见本轮提交证据。
+
 - Full recipe canonical V2 可记录 `OriginRootRecipeDigest`，V1 canonical
   bytes/digest 仍按原语义解码。
 - Store V5 fresh schema 含 `row_work`/`row_work_member`；RowWork 在

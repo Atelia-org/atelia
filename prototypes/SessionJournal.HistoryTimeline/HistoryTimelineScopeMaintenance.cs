@@ -77,19 +77,22 @@ public static partial class HistoryTimelineMaintenance {
                 return new HistoryTimelineScopeInventoryResult.Available([]);
             }
             var scopes = new List<HistoryTimelineScope>();
-            foreach (string refPath in Directory.EnumerateDirectories(refs).Order(StringComparer.Ordinal)) {
+            foreach (string refPath in Directory.EnumerateFileSystemEntries(refs).Order(StringComparer.Ordinal)) {
                 RequireSafeDirectory(repository, refPath);
                 string refName = Path.GetFileName(refPath);
                 RefId refId = ParseRefName(refName);
                 string timelines = Path.Combine(refPath, "timelines");
                 HistoryTimelineDurableFiles.RequireSafePath(repository, timelines);
-                if (!Directory.Exists(timelines)) {
-                    continue;
+                foreach (string entry in Directory.EnumerateFileSystemEntries(refPath)) {
+                    string name = Path.GetFileName(entry);
+                    if (name == "timelines") continue;
+                    if (name == "locator.json" && IsRegularFile(repository, entry)) continue;
+                    throw new InvalidDataException("Timeline inventory encountered a foreign Ref entry.");
                 }
                 RequireSafeDirectory(repository, timelines);
-                foreach (string databasePath in Directory.EnumerateFiles(timelines).Order(StringComparer.Ordinal)) {
+                foreach (string databasePath in Directory.EnumerateFileSystemEntries(timelines).Order(StringComparer.Ordinal)) {
                     HistoryTimelineDurableFiles.RequireSafePath(repository, databasePath);
-                    if ((File.GetAttributes(databasePath) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0) {
+                    if (!IsRegularFile(repository, databasePath)) {
                         throw new InvalidDataException("Timeline inventory encountered a non-regular file.");
                     }
                     string name = Path.GetFileName(databasePath);
@@ -184,6 +187,11 @@ public static partial class HistoryTimelineMaintenance {
         if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory) {
             throw new InvalidDataException("Timeline inventory encountered a reparse or non-directory entry.");
         }
+    }
+
+    private static bool IsRegularFile(string repository, string path) {
+        HistoryTimelineDurableFiles.RequireSafePath(repository, path);
+        return (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
     }
 
     private static RefId ParseRefName(string value) {

@@ -94,6 +94,29 @@ public sealed class ControlPublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void ExternalMaintenanceCanInventoryAndOpenAnExactControlScope() {
+        using SessionJournalEngine journal = SessionJournalEngine.Create(_path,
+            new SessionCreateOptions("model", "system", "surface"));
+        var estimator = new O200kBaseHistoryUnitLoadEstimator();
+        Assert.IsType<HistoryTimelineCreateResult.Created>(HistoryTimelineFactory.Create(journal.ReadView,
+            new HistoryTimelineInitialPolicySpec(HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId, new HistoryLoadUnit(1), 8, 1024 * 1024), estimator));
+        FamilyDefinition family = FamilyDefinition.Create("scope family.", [],
+            new FamilyOutputProtocol("output-v1", FamilyOutputMode.FullReplacementText),
+            new FamilyInputRenderingProtocol("input-v1", "prior-v1", "history-v1"));
+        var admission = new RecapGridControlAdmission(RecapGridControlPermission.Create,
+            [family.Digest], [], [], ["case."], 0, 0);
+        ControlHeadRef created = Assert.IsType<RecapGridControlCreateResult.Created>(
+            RecapGridControlFactory.Create(_path, journal.BranchRefId, admission)).Head;
+        RecapGridControlScope scope = Assert.Single(Assert.IsType<RecapGridControlScopeInventoryResult.Available>(
+            RecapGridControlMaintenance.InventoryScopes(_path)).Scopes);
+        using RecapGridControlReaderHandle handle = Assert.IsType<RecapGridControlReaderOpenResult.Opened>(
+            RecapGridControlMaintenance.OpenExactReader(_path, scope.RefId, scope.TimelineId)).Handle;
+        Assert.Equal(created, Assert.IsType<RecapGridControlSnapshotResult.Available>(
+            handle.Reader.ReadSnapshot()).Snapshot.Head);
+    }
+
+    [Fact]
     public void AdmissionLimitsAreNotExported() {
         Assert.DoesNotContain(
             typeof(RecapGridControlFactory).Assembly.GetExportedTypes()

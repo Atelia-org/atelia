@@ -105,6 +105,24 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void ExternalMaintenanceCanInventoryAndBindAnExactScope() {
+        using SessionJournalEngine journal = SessionJournalEngine.Create(_path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"));
+        var estimator = new O200kBaseHistoryUnitLoadEstimator();
+        HistoryTimelineCreateResult.Created created = Assert.IsType<HistoryTimelineCreateResult.Created>(
+            HistoryTimelineFactory.Create(journal.ReadView, new HistoryTimelineInitialPolicySpec(
+                HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId, new HistoryLoadUnit(1), 8, 1024 * 1024), estimator));
+        HistoryTimelineScope scope = Assert.Single(Assert.IsType<HistoryTimelineScopeInventoryResult.Available>(
+            HistoryTimelineMaintenance.InventoryScopes(_path)).Scopes);
+        Assert.Equal(created.Locator.ActiveTimelineId, scope.TimelineId);
+        using HistoryTimelineExactReaderHandle handle = Assert.IsType<HistoryTimelineExactReaderOpenResult.Opened>(
+            HistoryTimelineMaintenance.OpenExactReader(_path, scope.RefId, scope.TimelineId)).Handle;
+        Assert.Equal(scope.TimelineId, Assert.IsType<HistoryTimelineSnapshotResult.Available>(
+            handle.Reader.ReadSnapshot()).Head.TimelineId);
+    }
+
+    [Fact]
     public void O200kExtensionAssemblyExportsOnlyEstimator() {
         var timelineAssembly = typeof(HistoryTimelineFactory).Assembly;
         var o200kAssembly = typeof(O200kBaseHistoryUnitLoadEstimator).Assembly;

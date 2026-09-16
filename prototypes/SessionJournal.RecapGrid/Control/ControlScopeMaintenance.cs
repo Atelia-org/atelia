@@ -24,14 +24,16 @@ public static partial class RecapGridControlMaintenance {
             RequireSafe(repository, refs);
             if (!Directory.Exists(refs)) return new RecapGridControlScopeInventoryResult.Available([]);
             var scopes = new List<RecapGridControlScope>();
-            foreach (string refPath in Directory.EnumerateDirectories(refs).Order(StringComparer.Ordinal)) {
+            foreach (string refPath in Directory.EnumerateFileSystemEntries(refs).Order(StringComparer.Ordinal)) {
                 RequireDirectory(repository, refPath);
                 RefId refId = ParseRefName(Path.GetFileName(refPath));
                 string timelines = Path.Combine(refPath, "timelines");
                 RequireSafe(repository, timelines);
-                if (!Directory.Exists(timelines)) continue;
+                foreach (string entry in Directory.EnumerateFileSystemEntries(refPath)) {
+                    if (Path.GetFileName(entry) != "timelines") throw new InvalidDataException("Control inventory encountered a foreign Ref entry.");
+                }
                 RequireDirectory(repository, timelines);
-                foreach (string timelinePath in Directory.EnumerateDirectories(timelines).Order(StringComparer.Ordinal)) {
+                foreach (string timelinePath in Directory.EnumerateFileSystemEntries(timelines).Order(StringComparer.Ordinal)) {
                     RequireDirectory(repository, timelinePath);
                     var timelineId = new TimelineId(Path.GetFileName(timelinePath));
                     if (!string.Equals(timelineId.Value, Path.GetFileName(timelinePath), StringComparison.Ordinal)) throw new InvalidDataException("Control inventory encountered a non-canonical TimelineId directory.");
@@ -41,7 +43,15 @@ public static partial class RecapGridControlMaintenance {
                     if ((File.GetAttributes(state) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0) throw new InvalidDataException("Control inventory encountered a non-regular state file.");
                     foreach (string entry in Directory.EnumerateFileSystemEntries(timelinePath)) {
                         string name = Path.GetFileName(entry);
-                        if (name is not ("control.json" or "lifetime.lock" or "writer.lock")) throw new InvalidDataException("Control inventory encountered a foreign filename.");
+                        RequireSafe(repository, entry);
+                        if (name is "control.json" or "lifetime.lock" or "writer.lock") {
+                            if ((File.GetAttributes(entry) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0) throw new InvalidDataException("Control inventory encountered a non-regular durable file.");
+                            continue;
+                        }
+                        if (name.StartsWith(".control.json.", StringComparison.Ordinal)
+                            && name.EndsWith(".tmp", StringComparison.Ordinal)
+                            && Guid.TryParseExact(name[".control.json.".Length..^".tmp".Length], "N", out _)) continue;
+                        throw new InvalidDataException("Control inventory encountered a foreign filename.");
                     }
                     scopes.Add(new RecapGridControlScope(refId, timelineId));
                     if (scopes.Count > MaximumInventoryScopes) throw new ControlLimitException("ControlInventoryScopeCount");
