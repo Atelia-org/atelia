@@ -21,7 +21,8 @@
 
 | 主题 | 入口 |
 |:--|:--|
-| root config 的字段合同 | [V10 当前合同](../SessionJournal/current/contracts/galatea-root-config-v10.md)、[操作配置参考](configuration.md#configjson)；[V9 历史合同](../SessionJournal/current/contracts/galatea-root-config-v9.md)仅说明升级前数据 |
+| root config 的字段合同 | [V11 当前合同](../SessionJournal/current/contracts/galatea-root-config-v11.md)、[操作配置参考](configuration.md#configjson)；[V10](../SessionJournal/current/contracts/galatea-root-config-v10.md)及更早合同仅保留历史语境 |
+| Character 自主 interval | [实现后设计与语义边界](per-character-autonomy-interval-design.md)：`autonomyIntervalMinutes`、reply-only wake、Observation v1/v2 与唯一开发实例人工切换 |
 | Player / Character 身份分离 | [重构方案](player-character-separation-design.md)：零 Player、超级管理员与可信来源；[结构化输入专题](structured-input-rendering-design.md)定义稳定存储、md-json 瞬态渲染及恢复边界；实施状态与验证见[工作单](player-character-implementation-work-order.md) |
 | prompt 的代码与 operator 分工 | [prompt 资源说明](prompt/README.md) |
 | TextExtractor 与 Observation 通讯 | [Observation Bridge](text-extractor-observation-bridge.md) |

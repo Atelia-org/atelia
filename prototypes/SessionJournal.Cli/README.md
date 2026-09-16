@@ -109,7 +109,8 @@ admission交给`init`，profile/route路径交给Galatea strict config。
 Family/Definition/Recipe、admission 等持久 canonical 输入继续使用各自严格 codec。
 
 `recap-grid build` 通过共享 `Galatea.Input` 的 `GalateaObservationInputProjector` 消费
-`galatea.observation.v1` 历史。Player 动作、心跳、notice/recall 的来源与正文在 Runtime 真正调用前投影，
+`galatea.observation.v1` 与 `galatea.observation.v2` 历史。v1 heartbeat 严格保持 `externalIntervalMinutes:10`；
+新 v2 heartbeat 保存本轮 `1..525_600` 分钟 snapshot。Player 动作、delegate reply 与 inbound mail 仍为 v1；所有来源与正文在 Runtime 真正调用前投影，
 旧 Text 原样保留；CLI 不引用 Galatea Web host，也不复制一份领域 schema 或 JSON Pointer 列表。
 未知 domain schema 在调用前明确失败，不作为普通 JSON 字符串发送。这个接入只提供输入表示能力，
 不改变 recipe/route/权限、调用预算或已发生外部工作的恢复政策。

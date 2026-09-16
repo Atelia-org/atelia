@@ -1,8 +1,8 @@
-# Galatea root config V10 current contract
+# Galatea root config V10 historical contract
 
-状态：**Current product contract；V9 → V10 显式离线转换**。本页拥有 root config 的当前字段与身份边界；
-完整示例、启动和操作步骤见 [配置参考](../../../Galatea/configuration.md)。
-[V9](galatea-root-config-v9.md)及更早页面保留历史版本规则，不能用于当前启动。
+状态：**Archived historical predecessor**。本页保留 V10 当时的字段、V9 → V10 离线转换和验收语境；
+当前配置由 [V11 合同](galatea-root-config-v11.md) 定义，当前 loader 拒绝 V10。
+下文的字段、current/writer 描述和验收记录均属于 V10 当时的历史语境，不能用于当前启动。
 
 实现依据：[`GalateaStrictConfigReader`](../../../../prototypes/Galatea/GalateaStrictConfigReader.cs)、
 [`GalateaConfig`](../../../../prototypes/Galatea/GalateaConfig.cs) 的 file DTO 与业务验证、

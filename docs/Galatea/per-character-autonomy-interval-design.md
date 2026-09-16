@@ -1,8 +1,8 @@
 # Character 级自主激活间隔设计
 
-状态：**设计已收敛，尚未实施**。本文定义用每个 Character 的自主激活间隔替代
-`heartbeatEnabled` 的 V11 硬切方案。它不是当前运行合同；在实现、测试和单一开发实例的人工配置切换完成前，
-现有 V10 `config.json` 仍按 [V10 合同](../SessionJournal/current/contracts/galatea-root-config-v10.md)工作。
+状态：**已实施；唯一开发实例尚待 operator 按下文人工切换**。本文记录已采用的 V11 硬切、
+reply-only wake 与 Observation v1/v2 边界；当前字段合同见 [V11 合同](../SessionJournal/current/contracts/galatea-root-config-v11.md)。
+V10 `config.json` 是历史输入，新 binary 严格拒绝它；本文不表示实例已经停服、备份或切换。
 
 ## 结论
 
@@ -28,16 +28,15 @@
 
 `0` **不**关闭 durable delegation/mail 的推进，也不让已持久化的 Codex Ready reply 饿死。它只禁止没有 Ready reply 时由时间触发的新 `HeartbeatActivation`。这正是本次“状态推进”和“自主活动”分开的落点。
 
-## 先纠正术语：当前有三种独立 cadence
+## 先纠正术语：变更前的三种独立 cadence
 
-| 名称 | 当前入口 | 周期/触发 | 是否受 `heartbeatEnabled` 控制 | 是否会直接创建主模型回合 |
+| 名称 | 原入口 | 周期/触发 | 原 `heartbeatEnabled` 是否控制 | 是否会直接创建主模型回合 |
 |:--|:--|:--|:--|:--|
 | durable delegation fallback pulse | [`GalateaDelegationSupervisor`](../../prototypes/Galatea/GalateaDelegationSupervisor.cs) | 1 秒 fallback 加合并 signal | 否 | 否；推进 SQLite outbox、binding、inspect/recovery |
 | character-mail relay sweep | [`GalateaCharacterMailRelay`](../../prototypes/Galatea/GalateaCharacterMailRelay.cs) | 1 秒 sweep 加 signal | 否 | 仅按独立 internal-mail 合同接纳入箱回合 |
-| automatic coordination pulse | [`GalateaServerAgentHostedService`](../../prototypes/Galatea/GalateaServerAgentHostedService.cs) | 每 Character 10 秒 | **是** | Ready reply 优先；空时才检查 10 分钟自主激活 |
+| automatic coordination pulse | [`GalateaServerAgentHostedService`](../../prototypes/Galatea/GalateaServerAgentHostedService.cs) | 每 Character 10 秒 | **是** | Ready reply 优先；空时才检查固定 10 分钟自主激活 |
 
-因此，提问中的判断有一半正确、也需要更精确：`heartbeatEnabled` 不会停掉前两种持久状态推进；但它目前确实把第三种 10 秒协调循环、Ready reply 自动续接和固定 10 分钟空激活绑在一起。代码证据是 coordinator 在 Ready cutoff 为空后才调用
-`AutonomyCadence.ObservePulse()`，而 hosted service 只枚举 `HeartbeatCharacterIds`。
+因此，提问中的判断有一半正确、也需要更精确：旧 `heartbeatEnabled` 不会停掉前两种持久状态推进；它曾把第三种 10 秒协调循环、Ready reply 自动续接和固定 10 分钟空激活绑在一起。现在第三者已改为每角色 interval，零 interval 由 pure wake probe 保留 durable reply/recovery。
 
 ## 保留的产品律
 
@@ -68,14 +67,14 @@ V11 的 Character 对象删除 `heartbeatEnabled`，新增**必填** JSON intege
 }
 ```
 
-实施时同步改动：
+已同步完成：
 
 1. `GalateaStrictConfigReader.CurrentConfigVersion`、精确 token、Character whitelist 和错误文本改为 V11；`heartbeatEnabled` 作为 unknown field 拒绝。
 2. file DTO / resolved `GalateaCharacterConfig` 改为已验证的分钟数或 `TimeSpan? AutonomousActivationInterval`；删除 `HeartbeatEnabled`、`HeartbeatCharacterIds` 和 `ReadHeartbeatCharacterIds`，不保留优先级规则或兼容 property。
 3. bootstrap template、root-field tests、配置指南、运行指南和 V11 current contract 使用同一字段语言。
 4. 删除已无输入消费者的 V9→V10 converter/upgrade command 及其测试，不把它改造成 V10→V11 通用迁移器。历史合同和验收记录仍作为历史材料保留。
 
-本仓只有一份 V10 开发实例，因此切换是一次人工、停服的配置维护，而不是产品化迁移功能：先在实例状态目录之外备份 config，手动将 `v` 改为 `11`，并把每个 `heartbeatEnabled:true` 替换为 `autonomyIntervalMinutes:10`、`false` 替换为 `0`，再启动新 binary。启动前的新 strict parser 必须拒绝旧 V10；startup 不读、写或转换 V10。这次人工编辑不改 SessionJournal、delegation SQLite、CharacterMemory 或历史 Observation。
+本仓只有一份 V10 开发实例，因此尚未执行的切换是一次人工、停服的配置维护，而不是产品化 migration：先在实例状态目录之外备份 config，手动将 `v` 改为 `11`，并把每个 `heartbeatEnabled:true` 替换为 `autonomyIntervalMinutes:10`、`false` 替换为 `0`，再启动新 binary。新 strict parser 拒绝旧 V10；startup 不读、写或转换 V10。这次人工编辑不改 SessionJournal、delegation SQLite、CharacterMemory 或历史 Observation，也不应被本文误读为已完成的真实 provider 验证。
 
 V11 而不是重定义 `v:10` 的原因不是下游兼容层，而是诚实的 schema 身份：当前 V10 已把 bool 类型和默认值写入 strict contract。新 binary 硬拒 V10；不需要 runtime dual reader、converter、plan/apply/resume 或自动实例迁移。
 
@@ -116,7 +115,7 @@ AutomaticWakeReason = None | ReadyNotice | ActiveReplyLease
 
 保持现有 per-Character hosted tasks 和 shutdown drain 语义即可；是否将它们合并为一个 host-wide timer不属于本变更。立即 signal 优化也不属于本变更：10 秒 durable-store fallback 已提供 liveness，未来 signal 只能是合并提示，不能成为 Ready 事实或替代 fallback。
 
-### Cadence 的最小代码变化
+### Cadence 的已实现代码变化
 
 `GalateaAutonomyCadence` 继续是 `TurnLock` owner 的 process-local monotonic state machine；将静态
 `IdleInterval = 10 minutes` 改成构造时注入的 immutable positive `TimeSpan`。零间隔不创建/arm cadence。
@@ -133,8 +132,8 @@ Agent status 不再把 interval=0 叫作 `disabled`；最小 public contract 是
 目前 `galatea.observation.v1` 严格要求
 `action.externalIntervalMinutes == 10`，并且 canonical Markdown、Memo recall query 和测试都使用该值。这是第二个隐藏的全局十分钟常量。
 
-V11 必须同时引入一个新的、闭合的 structured Observation schema（建议
-`galatea.observation.v2`）：
+V11 已同时引入一个新的、闭合的 structured Observation schema
+`galatea.observation.v2`：
 
 | 记录 | reader | writer / renderer |
 |:--|:--|:--|
@@ -167,13 +166,13 @@ interval snapshot，而不是在读取历史时从当前 config 重算。v2 的 
 
 概念数从一个含混 `heartbeatEnabled` 的“总开关”收敛为：一个自主 interval、一个 pure wake reason、一个既有 safe admission spine；并明确保留两个原本独立的 durable scheduler。没有引入通用 scheduler、持久 deadline 或第二个配置开关。
 
-## 最小垂直实施切片
+## 已完成实施切片与 operator 后续
 
-1. **V11 config cut**：DTO、strict reader、resolved model、template 和 root-language tests；删除 V9→V10 converter/CLI 与其 tests。为唯一开发实例写停服/备份/人工字段替换的操作说明；代码测试只验证新 parser 拒绝 V10，不实现或测试转换器。
-2. **Cadence parameterization**：positive minutes injection、零 interval 不 arm、custom interval due/reset/no-catch-up/failure-pause tests；保留原 10 秒 tick。
-3. **reply-only wake**：internal wake projection（Ready + active lease）、zero interval no-store/no-mail zero-call proof、reply-only coordinator mode、race/restart/uncertain recovery tests；更新 ready-turn/retry/status semantics。
-4. **Observation v2**：snapshot carrying input, v1/v2 exact read matrix, renderer/recall propagation, legacy v1 reopen proof；不得重写 SessionJournal history。
-5. **operator/docs**：V11 current contract、configuration/runtime/server API/README、browser strict status consumer（若必要）和 doc scope；最后只在已停服、备份后的唯一开发实例上人工切换 config 并验证。
+1. **V11 config cut**：DTO、strict reader、resolved model、template 和 root-language tests 已收口；V9→V10 converter/CLI 与其 tests 已删除。
+2. **Cadence parameterization**：positive minutes injection、零 interval 不 arm、custom interval due/reset/no-catch-up/failure-pause tests 已实现；10 秒 fallback 保留。
+3. **reply-only wake**：internal wake projection（Ready + active lease）、zero interval no-store/no-mail zero-call、race/restart/uncertain recovery 与 ready-turn/retry/status semantics 已收口。
+4. **Observation v2**：snapshot-carrying input、v1/v2 exact read matrix、renderer/recall propagation 与 legacy v1 reopen 已实现；不重写 SessionJournal history。
+5. **operator**：当前仍需在已停服、备份后的唯一开发实例上人工切换 config 并按真实运行边界验证；本实施提交不执行该操作。
 
 ## 验收矩阵
 

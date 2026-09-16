@@ -26,6 +26,7 @@ docs/SessionJournal/operations/galatea-g2a-staging-acceptance.md
 prototypes/SessionJournal/README.md
 prototypes/SessionJournal.Cli/README.md
 prototypes/Galatea/README.md
+prototypes/Galatea.Input/README.md
 docs/Galatea/README.md
 docs/Galatea/configuration.md
 docs/Galatea/per-character-autonomy-interval-design.md
@@ -48,8 +49,11 @@ docs/Galatea/character-mail-design.md
 docs/Galatea/player-character-separation-design.md
 docs/Galatea/structured-input-rendering-design.md
 docs/Galatea/player-character-implementation-work-order.md
+docs/Galatea/prompt/README.md
+docs/Galatea/prompt/recap-maintainer-family/system-zh-cn.md
 docs/SessionJournal/current/contracts/galatea-root-config-v9.md
 docs/SessionJournal/current/contracts/galatea-root-config-v10.md
+docs/SessionJournal/current/contracts/galatea-root-config-v11.md
 
 # Evidence/archive records are intentionally not default-scanned. Their links
 # remain observable with:

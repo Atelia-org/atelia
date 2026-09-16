@@ -51,7 +51,7 @@ Outbound Mail extraction 不设置 code-owned elapsed deadline，只服从 calle
 
 ## Observation 与回合入口
 
-新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v1` 的机读 JSON，外层由 SessionJournal
+新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v1` 或 `galatea.observation.v2` 的机读 JSON，外层由 SessionJournal
 `SessionInputContent.Structured` 明确标记。`GalateaInputProjector` 在请求时用 md-json 投影；正文的空白、换行、
 Unicode 和 Markdown 不被当成 runtime 元数据解析。存储、查询、Undo、exact append proof 不读取生成的 fence。
 
@@ -88,7 +88,7 @@ inbound/recovery 不领取新 cutoff，也不重新 normalize 或 fresh recall�
 
 per-session `IGalateaPlayerTurnRecallProvider` 在 CharacterMemory lazy attach 后构造。`galatea.memo-recall=null` 或 maintenance mode 使用 disabled singleton，在 context/barrier 建立前直接绕过，因此 disabled 路径没有 selector I/O；仅将 binding 设 null 不影响独立的 save-receipt 投递。enabled recall 服务三种 fresh trigger（包括带 reply lease 的 PlayerAction），inbound/recovery 不做 fresh recall。
 
-它把已采样 timestamp、尚无 recall 的 typed Observation、本轮 Reply/DeliveryFailure 与同一 pre-append raw window 最近一条非空 visible Action 组装为 `atelia.galatea.memo-recall-context.v4` JSON query，作为本次辅助调用的瞬态输入，不落盘，也不再调用 query-builder 模型。`player-action` 带完整 playerText，`heartbeat-activation` 带 characterName 与已确定的 externalIntervalMinutes，`delegate-reply` 以 externalNotices 提供结果；query 的稳定 inputMeaning 解释时间、分块来源及旧记录边界。最近 Action 保留原 sourceStartInclusive/sourceEndInclusive，明确是 GM 可见叙述，不冒充角色发言。optional notice 按 whole-item prefix、Action 按 whole item 纳入 512 KiB query budget，`NoteSaveReceipt` 不进入 query。Default MemoPod 在短 `_podMutationGate` 内按 settled identity 打开 Frozen handle，provider await 在 gate 外。
+它把已采样 timestamp、尚无 recall 的 typed Observation、本轮 Reply/DeliveryFailure 与同一 pre-append raw window 最近一条非空 visible Action 组装为 `atelia.galatea.memo-recall-context.v4` JSON query，作为本次辅助调用的瞬态输入，不落盘，也不再调用 query-builder 模型。`player-action` 带完整 playerText；heartbeat 带当轮持久的 characterName 与 `externalIntervalMinutes` snapshot；`delegate-reply` 以 externalNotices 提供结果。v1 heartbeat 只接受并保持 `10`，新 v2 heartbeat 接受并保持 `1..525_600`；读取历史绝不从当前 config 重算。query 的稳定 inputMeaning 解释时间、分块来源及旧记录边界。最近 Action 保留原 sourceStartInclusive/sourceEndInclusive，明确是 GM 可见叙述，不冒充角色发言。optional notice 按 whole-item prefix、Action 按 whole item 纳入 512 KiB query budget，`NoteSaveReceipt` 不进入 query。Default MemoPod 在短 `_podMutationGate` 内按 settled identity 打开 Frozen handle，provider await 在 gate 外。
 
 selector 最多返回 8 个 ordered ID；runtime 以 Title eligibility、`CharacterNoteOriginBarrier`、`RecallBarrier` 和 1 MiB final Observation budget 选择第一条 `MemoExactText`，最终注入 `0..1` 条。SourceId 是 `memo-pod:v1/<32-lowerhex PodId>/<canonical MemoId>`，保存当时 title、exactText 和 Pod 状态版本，投影时再呈现，正文不截断。空 selector 或全部候选过滤是正常 underfill；configured provider/authority failure 则 fail closed，阻止 main Completion。receipt 先占预算，recall 只使用剩余空间；最终 structured Observation 在 selector 后、`SendAsync` 前绑定到 reply lease 与 receipt outbox。恢复复用已选机读内容，不重新 recall、领取或采样时间。MemoPod Open/Freeze 冻结并验证机读 document；Recall 前才惰性渲染缓存，await 前后仍核对同一冻结内容周期，缓存对象不承担周期身份。
 
@@ -149,7 +149,7 @@ Delivered 只证明 Observation append，不证明 provider 收到或理解，ab
 
 ## 自动 Agent loop 与可观察性
 
-非 maintenance 的 `GalateaServerAgentHostedService` 只 attach `heartbeatEnabled=true` 的 Characters，随后每 10 秒调用 `GalateaAutomaticTurnCoordinator`。协调器在 `TurnLock` 内先结算 lease/gap，仅在 exact `Idle` 边界 admission：有 Ready reply 时冻结 FIFO 前缀并运行 `DelegateReply`；没有时到期才 claim `HeartbeatActivation`。busy 跳过，不补 tick；首次启动重新 arm，不从 SQLite/raw 恢复 deadline，也不补停机期间的 tick。成功主回合重新计时，Heartbeat failure 只暂停空激活，reply failure 进入阻断以避免反复领取。实现边界与验证见 [headless agent pilot 工作单](headless-agent-pilot-work-order.md)。
+非 maintenance 的 `GalateaServerAgentHostedService` 为每个 configured Character 保留 10 秒 fallback。正 `autonomyIntervalMinutes` 的角色沿既有 `TurnLock` admission spine：Ready reply 优先，Empty 才检查该角色 process-local monotonic cadence 并可能 claim `HeartbeatActivation`。`0` 角色先读无副作用的 durable wake projection；只有 Ready notice 或 active reply lease 才 attach/reconcile，并且 reply-only path 的 Empty/busy/race 绝不创建 heartbeat turn。uninitialized、unavailable、quarantined/backoff store 都 fail closed，不 attach、不 provision、也不调用 provider。busy 跳过，不补 tick；正 interval 的首次启动重新 arm，不从 SQLite/raw 恢复 deadline，也不补停机期间的 tick。成功主回合重新计时，autonomous failure 只暂停空激活，reply failure 进入阻断以避免反复领取。实现边界与验证见[自主 interval 设计](per-character-autonomy-interval-design.md)。
 
 admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细节。显式`POST /api/v1/characters/{characterId}/agent/retry-admission`在同一`TurnLock`内复用`ReconcileDurableAdmissionAsync`，只处理旧lease、extraction gap与保存恢复；它不`StartTurn`，不跳过真实provider/结构错误。处理成功且runtime为Idle后才清除admission失败，独立reply失败与runtime recovery仍保留各自约束。忙碌或失败返回409，具体HTTP合同见[Server API](server-api.md)。
 
@@ -178,7 +178,7 @@ family/definition-only registration 与 promotion 命令不变。最终真实切
 recipe registration，以及依赖旧 Store proof 的 promotion，不能以 receipt 存在绕过 command/proof 检查。
 当前实施与最终处置见 [Timeline 单一行身份](timeline-row-identity-simplification-plan.md)。
 
-当前 root strict config language 为 V10，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V4，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
+当前 root strict config language 为 V11，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V4，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。
 

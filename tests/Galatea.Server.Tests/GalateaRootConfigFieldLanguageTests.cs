@@ -15,7 +15,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
     public void AutonomyEnrollmentComesOnlyFromCharactersAndAllowsZeroPlayers() {
         using var fixture = new RootConfigFixture();
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         root["players"] = new JsonArray();
         Assert.Empty(fixture.Load(root.ToJsonString()).AutonomyCharacterIds);
         CharacterObject(root)["autonomyIntervalMinutes"] = 10;
@@ -33,7 +33,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [InlineData(525_600, true)]
     public void AutonomyIntervalAcceptsClosedMinuteRange(int minutes, bool enrolled) {
         using var fixture = new RootConfigFixture();
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         CharacterObject(root)["autonomyIntervalMinutes"] = minutes;
 
         GalateaConfig config = fixture.Load(root.ToJsonString());
@@ -49,7 +49,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [InlineData("2147483648")]
     [InlineData("[]")]
     public void AutonomyIntervalRejectsNonIntegerValues(string json) {
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         CharacterObject(root)["autonomyIntervalMinutes"] = JsonNode.Parse(json);
         Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(root.ToJsonString())));
     }
@@ -58,18 +58,18 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [InlineData(-1)]
     [InlineData(525_601)]
     public void AutonomyIntervalRejectsOutOfRangeValues(int value) {
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         CharacterObject(root)["autonomyIntervalMinutes"] = value;
         Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(root.ToJsonString())));
     }
 
     [Fact]
     public void AutonomyIntervalIsRequiredAndOldHeartbeatFieldIsUnknown() {
-        JsonObject missing = ParseRoot(MinimalV10);
+        JsonObject missing = ParseRoot(MinimalV11);
         Assert.True(CharacterObject(missing).Remove("autonomyIntervalMinutes"));
         Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(missing.ToJsonString())));
 
-        JsonObject old = ParseRoot(MinimalV10);
+        JsonObject old = ParseRoot(MinimalV11);
         CharacterObject(old)["heartbeatEnabled"] = true;
         Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(old.ToJsonString())));
     }
@@ -79,7 +79,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [InlineData("users")]
     [InlineData("Characters")]
     public void OldOrWrongCaseRootFieldsAreRejected(string field) {
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         root[field] = new JsonArray();
         Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(root.ToJsonString())));
     }
@@ -87,7 +87,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
     public void PlayerAndCharacterIdsHaveIndependentNamespaces() {
         using var fixture = new RootConfigFixture();
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         PlayerObject(root)["id"] = "alice";
         GalateaConfig config = fixture.Load(root.ToJsonString());
         Assert.Equal("alice", Assert.Single(config.Players).PlayerId);
@@ -96,19 +96,19 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         Assert.Throws<InvalidOperationException>(() => fixture.Load(root.ToJsonString()));
     }
 
-    private const string MinimalV10 = """
+    private const string MinimalV11 = """
         {"v":11,"characters":[{"id":"alice","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"create-if-missing","defaultConnectionId":"test","characterContextTemplate":"inline ${characterName}","autonomyIntervalMinutes":0}],"players":[{"id":"player-main","name":"刘世超","password":"pw"}],"runtime":{"recapGrid":{"routeManifestPath":"routes.json","agentControlProfileFiles":["profile.json"],"currentAgentControlProfileId":"test-profile"}}}
         """;
 
-    private const string ReorderedEscapedFullV10 = """
+    private const string ReorderedEscapedFullV11 = """
         {"runtime":{"maintenanceMode":true,"recapGrid":{"currentAgentControlProfileId":"test-profile","agentControlProfileFiles":["profile.json"],"\u0072outeManifestPath":"routes.json"},"callLogDir":"call-logs","listenUrls":["opaque-listener","opaque-listener"]},"players":[{"password":"pw","name":"刘世超","id":"player-main"}],"\u0063haracters":[{"characterContextTemplateFile":null,"characterContextTemplate":"inline ${characterName}","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"existing-only","defaultConnectionId":"test","autonomyIntervalMinutes":10,"\u0069d":"alice"}],"\u0076":11}
         """;
 
     [Fact]
-    public void HandwrittenFullV9AcceptsOrderFreeNestedAndEscapedNames() {
+    public void HandwrittenFullV11AcceptsOrderFreeNestedAndEscapedNames() {
         using var fixture = new RootConfigFixture();
 
-        GalateaConfig config = fixture.Load(ReorderedEscapedFullV10);
+        GalateaConfig config = fixture.Load(ReorderedEscapedFullV11);
 
         GalateaCharacterConfig user = Assert.Single(config.Characters);
         Assert.Equal("alice", user.CharacterId);
@@ -204,7 +204,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void SessionProvisioningIsRequiredAndUsesClosedExactTokens() {
         using var fixture = new RootConfigFixture();
 
-        JsonObject missing = ParseRoot(MinimalV10);
+        JsonObject missing = ParseRoot(MinimalV11);
         Assert.True(CharacterObject(missing).Remove("sessionProvisioning"));
         Assert.Throws<InvalidDataException>(() => fixture.Load(
             missing.ToJsonString()
@@ -217,14 +217,14 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      JsonValue.Create("create_if_missing"),
                      JsonValue.Create("")
                  }) {
-            JsonObject root = ParseRoot(MinimalV10);
+            JsonObject root = ParseRoot(MinimalV11);
             CharacterObject(root)["sessionProvisioning"] = invalid?.DeepClone();
             Assert.Throws<InvalidDataException>(() => fixture.Load(
                 root.ToJsonString()
             ));
         }
 
-        JsonObject existingOnly = ParseRoot(MinimalV10);
+        JsonObject existingOnly = ParseRoot(MinimalV11);
         CharacterObject(existingOnly)["sessionProvisioning"] = "existing-only";
         Assert.Equal(
             GalateaSessionProvisioning.ExistingOnly,
@@ -233,7 +233,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         );
         Assert.Equal(
             GalateaSessionProvisioning.CreateIfMissing,
-            Assert.Single(fixture.Load(MinimalV10).Characters).SessionProvisioning
+            Assert.Single(fixture.Load(MinimalV11).Characters).SessionProvisioning
         );
     }
 
@@ -241,12 +241,12 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void OptionalRootAndUserFieldsLockMissingNullAndDefaultSemantics() {
         using var fixture = new RootConfigFixture();
 
-        GalateaConfig missing = fixture.Load(MinimalV10);
+        GalateaConfig missing = fixture.Load(MinimalV11);
         Assert.Null(missing.ListenUrls);
         Assert.Null(missing.CallLogDir);
         Assert.False(missing.MaintenanceMode);
 
-        JsonObject explicitValues = ParseRoot(MinimalV10);
+        JsonObject explicitValues = ParseRoot(MinimalV11);
         RuntimeObject(explicitValues)["listenUrls"] = null;
         RuntimeObject(explicitValues)["callLogDir"] = null;
         RuntimeObject(explicitValues)["maintenanceMode"] = false;
@@ -258,7 +258,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         Assert.Null(explicitDefaults.CallLogDir);
         Assert.False(explicitDefaults.MaintenanceMode);
 
-        JsonObject invalidMaintenance = ParseRoot(MinimalV10);
+        JsonObject invalidMaintenance = ParseRoot(MinimalV11);
         RuntimeObject(invalidMaintenance)["maintenanceMode"] = null;
         Assert.Throws<InvalidDataException>(() => fixture.Load(
             invalidMaintenance.ToJsonString()
@@ -269,7 +269,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void UsersCapAndExactUserIdIdentityAreLocked() {
         using var fixture = new RootConfigFixture();
 
-        JsonObject emptyRoot = ParseRoot(MinimalV10);
+        JsonObject emptyRoot = ParseRoot(MinimalV11);
         emptyRoot["characters"] = new JsonArray();
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             emptyRoot.ToJsonString()
@@ -281,7 +281,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             ConfigWithCharacters(257)
         ));
 
-        JsonObject duplicate = ParseRoot(MinimalV10);
+        JsonObject duplicate = ParseRoot(MinimalV11);
         duplicate["characters"] = new JsonArray(
             CharacterNode("alice", "sessions/first"),
             CharacterNode("alice", "sessions/second")
@@ -290,7 +290,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             duplicate.ToJsonString()
         ));
 
-        JsonObject ordinalDistinct = ParseRoot(MinimalV10);
+        JsonObject ordinalDistinct = ParseRoot(MinimalV11);
         JsonObject lower = CharacterNode("alice", "sessions/lower");
         lower["name"] = "lower";
         JsonObject upper = CharacterNode("Alice", "sessions/upper");
@@ -311,7 +311,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "delegationStateDir",
                      "characterMemoryStateDir"
                  }) {
-            JsonObject root = ParseRoot(MinimalV10);
+            JsonObject root = ParseRoot(MinimalV11);
             CharacterObject(root)[field] = " \t ";
             Assert.Throws<InvalidOperationException>(() => fixture.Load(
                 root.ToJsonString()
@@ -343,7 +343,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "角色名",
                      new string('a', 129)
                  }) {
-            JsonObject root = ParseRoot(MinimalV10);
+            JsonObject root = ParseRoot(MinimalV11);
             CharacterObject(root)["name"] = invalid;
             Assert.Throws<InvalidOperationException>(() => fixture.Load(
                 root.ToJsonString()
@@ -354,7 +354,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "👩‍🚀",
                      new string('a', 128)
                  }) {
-            JsonObject root = ParseRoot(MinimalV10);
+            JsonObject root = ParseRoot(MinimalV11);
             CharacterObject(root)["name"] = valid;
             GalateaCharacterConfig user = Assert.Single(
                 fixture.Load(root.ToJsonString()).Characters
@@ -370,7 +370,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
     public void CharacterRecipientDirectoryRequiresOrdinalUniqueNonCodexNamesAndRendersPeers() {
         using var fixture = new RootConfigFixture();
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         JsonObject alice = CharacterNode("alice", "sessions/alice");
         alice["name"] = "Alice";
         JsonObject bob = CharacterNode("bob", "sessions/bob");
@@ -442,7 +442,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "角色名",
                      new string('a', 129)
                  }) {
-            JsonObject root = ParseRoot(MinimalV10);
+            JsonObject root = ParseRoot(MinimalV11);
             PlayerObject(root)["name"] = invalid;
             Assert.Throws<InvalidOperationException>(() => fixture.Load(
                 root.ToJsonString()
@@ -453,17 +453,17 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "🧑‍🚀",
                      new string('a', 128)
                  }) {
-            JsonObject root = ParseRoot(MinimalV10);
+            JsonObject root = ParseRoot(MinimalV11);
             PlayerObject(root)["name"] = valid;
             GalateaConfig loaded = fixture.Load(root.ToJsonString());
             Assert.Equal(valid, Assert.Single(loaded.Players).Name.Value);
-            Assert.Equal(Assert.Single(fixture.Load(MinimalV10).Characters).SystemPrompt,
+            Assert.Equal(Assert.Single(fixture.Load(MinimalV11).Characters).SystemPrompt,
                 Assert.Single(loaded.Characters).SystemPrompt);
         }
     }
 
     [Fact]
-    public void LegacyPromptFieldsRemainUnknownInV9() {
+    public void LegacyPromptFieldsRemainUnknownInV11() {
         using var fixture = new RootConfigFixture();
 
         foreach (string oldField in new[] {
@@ -472,7 +472,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "systemPromptTemplate",
                      "systemPromptTemplateFile"
                  }) {
-            JsonObject root = ParseRoot(MinimalV10);
+            JsonObject root = ParseRoot(MinimalV11);
             CharacterObject(root)[oldField] = "legacy";
             Assert.Throws<InvalidDataException>(() => fixture.Load(
                 root.ToJsonString()
@@ -484,11 +484,11 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void ListenUrlsCapAllowsDuplicateOpaqueNonblankValues() {
         using var fixture = new RootConfigFixture();
 
-        JsonObject emptyRoot = ParseRoot(MinimalV10);
+        JsonObject emptyRoot = ParseRoot(MinimalV11);
         RuntimeObject(emptyRoot)["listenUrls"] = new JsonArray();
         Assert.Empty(fixture.Load(emptyRoot.ToJsonString()).ListenUrls!);
 
-        JsonObject maximumRoot = ParseRoot(MinimalV10);
+        JsonObject maximumRoot = ParseRoot(MinimalV11);
         RuntimeObject(maximumRoot)["listenUrls"] = StringArray(
             Enumerable.Repeat("opaque-listener", 256)
         );
@@ -497,7 +497,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         Assert.All(maximum.ListenUrls,
             static value => Assert.Equal("opaque-listener", value));
 
-        JsonObject overRoot = ParseRoot(MinimalV10);
+        JsonObject overRoot = ParseRoot(MinimalV11);
         RuntimeObject(overRoot)["listenUrls"] = StringArray(
             Enumerable.Repeat("opaque-listener", 257)
         );
@@ -505,13 +505,13 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             overRoot.ToJsonString()
         ));
 
-        JsonObject blankRoot = ParseRoot(MinimalV10);
+        JsonObject blankRoot = ParseRoot(MinimalV11);
         RuntimeObject(blankRoot)["listenUrls"] = new JsonArray(" ");
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             blankRoot.ToJsonString()
         ));
 
-        JsonObject nullItemRoot = ParseRoot(MinimalV10);
+        JsonObject nullItemRoot = ParseRoot(MinimalV11);
         var nullItem = new JsonArray();
         nullItem.Add((JsonNode?)null);
         RuntimeObject(nullItemRoot)["listenUrls"] = nullItem;
@@ -519,7 +519,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             nullItemRoot.ToJsonString()
         ));
 
-        JsonObject nonStringRoot = ParseRoot(MinimalV10);
+        JsonObject nonStringRoot = ParseRoot(MinimalV11);
         var nonString = new JsonArray();
         nonString.Add(17);
         RuntimeObject(nonStringRoot)["listenUrls"] = nonString;
@@ -531,20 +531,20 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
     public void ProfileFileCountAndResolvedIdentityAreExact() {
         using var fixture = new RootConfigFixture();
-        JsonObject one = ParseRoot(MinimalV10);
+        JsonObject one = ParseRoot(MinimalV11);
         Assert.Equal(
             "test-profile",
             fixture.Load(one.ToJsonString()).RecapGrid!
                 .CurrentAgentControlProfileId
         );
 
-        JsonObject zero = ParseRoot(MinimalV10);
+        JsonObject zero = ParseRoot(MinimalV11);
         RecapObject(zero)["agentControlProfileFiles"] = new JsonArray();
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             zero.ToJsonString()
         ));
 
-        JsonObject missingPath = ParseRoot(MinimalV10);
+        JsonObject missingPath = ParseRoot(MinimalV11);
         RecapObject(missingPath)["agentControlProfileFiles"] =
             new JsonArray("missing-profile.json");
         Assert.Throws<FileNotFoundException>(() => fixture.Load(
@@ -561,7 +561,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             );
             paths.Add(relative);
         }
-        JsonObject maximumRoot = ParseRoot(MinimalV10);
+        JsonObject maximumRoot = ParseRoot(MinimalV11);
         JsonObject maximumRecap = RecapObject(maximumRoot);
         maximumRecap["agentControlProfileFiles"] = StringArray(paths);
         maximumRecap["currentAgentControlProfileId"] = "profile-000";
@@ -571,7 +571,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             maximum.RecapGrid!.CurrentAgentControlProfileId
         );
 
-        JsonObject overRoot = ParseRoot(MinimalV10);
+        JsonObject overRoot = ParseRoot(MinimalV11);
         JsonObject overRecap = RecapObject(overRoot);
         overRecap["agentControlProfileFiles"] = StringArray(
             paths.Append("profiles/not-read-257.json")
@@ -581,7 +581,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             overRoot.ToJsonString()
         ));
 
-        JsonObject duplicateRoot = ParseRoot(MinimalV10);
+        JsonObject duplicateRoot = ParseRoot(MinimalV11);
         RecapObject(duplicateRoot)["agentControlProfileFiles"] =
             new JsonArray("profile.json", "./profile.json");
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
@@ -603,7 +603,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             "duplicate-profile",
             identityDiscriminator: 2
         );
-        JsonObject duplicateProfileRoot = ParseRoot(MinimalV10);
+        JsonObject duplicateProfileRoot = ParseRoot(MinimalV11);
         JsonObject duplicateProfileRecap = RecapObject(duplicateProfileRoot);
         duplicateProfileRecap["agentControlProfileFiles"] = new JsonArray(
             "registry/duplicate-profile-a.json",
@@ -625,7 +625,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             "runtime-b",
             identityDiscriminator: 3
         );
-        JsonObject duplicateRuntimeRoot = ParseRoot(MinimalV10);
+        JsonObject duplicateRuntimeRoot = ParseRoot(MinimalV11);
         JsonObject duplicateRuntimeRecap = RecapObject(duplicateRuntimeRoot);
         duplicateRuntimeRecap["agentControlProfileFiles"] = new JsonArray(
             "registry/duplicate-runtime-a.json",
@@ -641,19 +641,19 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void CharacterContextInlineAndFileLanguageIsExact() {
         using var fixture = new RootConfigFixture();
 
-        JsonObject missingInline = ParseRoot(MinimalV10);
+        JsonObject missingInline = ParseRoot(MinimalV11);
         CharacterObject(missingInline).Remove("characterContextTemplate");
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             missingInline.ToJsonString()
         ));
 
-        JsonObject nullInline = ParseRoot(MinimalV10);
+        JsonObject nullInline = ParseRoot(MinimalV11);
         CharacterObject(nullInline)["characterContextTemplate"] = null;
         Assert.Throws<InvalidDataException>(() => fixture.Load(
             nullInline.ToJsonString()
         ));
 
-        JsonObject blankInline = ParseRoot(MinimalV10);
+        JsonObject blankInline = ParseRoot(MinimalV11);
         CharacterObject(blankInline)["characterContextTemplate"] = " \t ";
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             blankInline.ToJsonString()
@@ -665,7 +665,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "${characterName} ${other}",
                      "${"
                  }) {
-            JsonObject invalid = ParseRoot(MinimalV10);
+            JsonObject invalid = ParseRoot(MinimalV11);
             CharacterObject(invalid)["characterContextTemplate"] =
                 invalidTemplate;
             Assert.Throws<InvalidOperationException>(() => fixture.Load(
@@ -678,7 +678,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      JsonValue.Create(""),
                      JsonValue.Create("  ")
                  }) {
-            JsonObject noFile = ParseRoot(MinimalV10);
+            JsonObject noFile = ParseRoot(MinimalV11);
             CharacterObject(noFile)["characterContextTemplateFile"] =
                 absentFile?.DeepClone();
             Assert.Equal(
@@ -687,7 +687,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                     .SystemPrompt.JsonValue.GetProperty("instructions")[1].GetProperty("source").GetString()
             );
         }
-        JsonObject missingFileProperty = ParseRoot(MinimalV10);
+        JsonObject missingFileProperty = ParseRoot(MinimalV11);
         Assert.False(CharacterObject(missingFileProperty)
             .ContainsKey("characterContextTemplateFile"));
         Assert.Equal(
@@ -759,7 +759,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             "shared.md",
             "Hello ${characterName}."u8.ToArray()
         );
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         JsonObject alice = CharacterNode("alice", "sessions/alice");
         alice["name"] = "Alice";
         alice["characterContextTemplateFile"] = "shared.md";
@@ -785,7 +785,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void RecapPathsAndCurrentProfileIdLockBlankAndExactMatch() {
         using var fixture = new RootConfigFixture();
 
-        GalateaConfig exact = fixture.Load(MinimalV10);
+        GalateaConfig exact = fixture.Load(MinimalV11);
         Assert.Equal(
             Path.Combine(fixture.Root, "routes.json"),
             exact.RecapGrid!.RouteManifestPath
@@ -795,26 +795,26 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             exact.RecapGrid.CurrentAgentControlProfileId
         );
 
-        JsonObject blankRoute = ParseRoot(MinimalV10);
+        JsonObject blankRoute = ParseRoot(MinimalV11);
         RecapObject(blankRoute)["routeManifestPath"] = "  ";
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             blankRoute.ToJsonString()
         ));
 
-        JsonObject blankProfile = ParseRoot(MinimalV10);
+        JsonObject blankProfile = ParseRoot(MinimalV11);
         RecapObject(blankProfile)["agentControlProfileFiles"] =
             new JsonArray(" ");
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             blankProfile.ToJsonString()
         ));
 
-        JsonObject blankCurrent = ParseRoot(MinimalV10);
+        JsonObject blankCurrent = ParseRoot(MinimalV11);
         RecapObject(blankCurrent)["currentAgentControlProfileId"] = " ";
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             blankCurrent.ToJsonString()
         ));
 
-        JsonObject wrongCase = ParseRoot(MinimalV10);
+        JsonObject wrongCase = ParseRoot(MinimalV11);
         RecapObject(wrongCase)["currentAgentControlProfileId"] =
             "Test-Profile";
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
@@ -826,7 +826,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     public void CallLogPathsResolveRelativeAndAbsoluteAndRemainDisjoint() {
         using var fixture = new RootConfigFixture();
 
-        JsonObject relativeRoot = ParseRoot(MinimalV10);
+        JsonObject relativeRoot = ParseRoot(MinimalV11);
         RuntimeObject(relativeRoot)["callLogDir"] = "call-logs";
         Assert.Equal(
             Path.Combine(fixture.Root, "call-logs"),
@@ -834,20 +834,20 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         );
 
         string absolute = Path.Combine(fixture.Root, "absolute-logs");
-        JsonObject absoluteRoot = ParseRoot(MinimalV10);
+        JsonObject absoluteRoot = ParseRoot(MinimalV11);
         RuntimeObject(absoluteRoot)["callLogDir"] = absolute;
         Assert.Equal(
             absolute,
             fixture.Load(absoluteRoot.ToJsonString()).CallLogDir
         );
 
-        JsonObject nestedRoot = ParseRoot(MinimalV10);
+        JsonObject nestedRoot = ParseRoot(MinimalV11);
         RuntimeObject(nestedRoot)["callLogDir"] = "sessions/alice/call-logs";
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             nestedRoot.ToJsonString()
         ));
 
-        JsonObject blankRoot = ParseRoot(MinimalV10);
+        JsonObject blankRoot = ParseRoot(MinimalV11);
         RuntimeObject(blankRoot)["callLogDir"] = "  ";
         Assert.Throws<InvalidOperationException>(() => fixture.Load(
             blankRoot.ToJsonString()
@@ -857,7 +857,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
     public void RootBytesRejectBomInvalidUtf8CommentTrailingCommaAndData() {
         using var fixture = new RootConfigFixture();
-        byte[] valid = Encoding.UTF8.GetBytes(MinimalV10);
+        byte[] valid = Encoding.UTF8.GetBytes(MinimalV11);
         byte[] bom = [.. Encoding.UTF8.GetPreamble(), .. valid];
         Assert.Throws<InvalidDataException>(() =>
             GalateaStrictConfigReader.ValidateRoot(bom));
@@ -878,7 +878,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             invalidUtf8Failure.Message
         );
 
-        string comment = MinimalV10.Replace(
+        string comment = MinimalV11.Replace(
             "\"v\":11,",
             "\"v\":11/*comment*/,",
             StringComparison.Ordinal
@@ -888,19 +888,19 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                 Encoding.UTF8.GetBytes(comment)
             ));
 
-        string trailingComma = MinimalV10[..^1] + ",}";
+        string trailingComma = MinimalV11[..^1] + ",}";
         Assert.Throws<InvalidDataException>(() =>
             GalateaStrictConfigReader.ValidateRoot(
                 Encoding.UTF8.GetBytes(trailingComma)
             ));
         Assert.Throws<InvalidDataException>(() =>
             GalateaStrictConfigReader.ValidateRoot(
-                Encoding.UTF8.GetBytes(MinimalV10 + "null")
+                Encoding.UTF8.GetBytes(MinimalV11 + "null")
             ));
     }
 
     private static string ConfigWithCharacters(int count) {
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         var users = new JsonArray();
         for (int index = 0; index < count; index++) {
             JsonObject user = CharacterNode(
@@ -915,7 +915,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     private static JsonObject ConfigWithPromptFile(string path) {
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         CharacterObject(root)["characterContextTemplateFile"] = path;
         return root;
     }
@@ -944,7 +944,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         string field,
         RequiredMutation mutation
     ) {
-        JsonObject root = ParseRoot(MinimalV10);
+        JsonObject root = ParseRoot(MinimalV11);
         JsonObject target = scope switch {
             "root" => root,
             "user" => CharacterObject(root),

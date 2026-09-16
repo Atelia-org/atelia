@@ -1,6 +1,6 @@
 # Galatea 角色间站内信设计
 
-> **当前格式边界（2026-09-16）**：本文保留站内信的原始设计和阶段验收；`users[]`、`rendered_observation` 与冻结 Observation 文本的描述属于旧格式。当前配置 V10 已分离 Player/Character，delegation SQLite V5 的新输入绑定稳定机读内容，请求时才渲染；见[结构化输入合同](structured-input-rendering-design.md)与[当前运行时](runtime.md)。原子 capture、目标门禁、exact append proof 和 Delivered 的语义继续适用，旧 Bound 按原证明读取。真实实例已迁移并完成验收，结果见[迁移验收](player-character-migration-validation.md)。
+> **格式边界（2026-09-16）**：本文保留站内信的原始设计和阶段验收；`users[]`、`rendered_observation` 与冻结 Observation 文本的描述属于旧格式。V10 已完成 Player/Character 分离和 delegation SQLite V5 的稳定机读绑定；当前 root config 已为 [V11](../SessionJournal/current/contracts/galatea-root-config-v11.md)，请求时仍瞬态渲染。见[结构化输入合同](structured-input-rendering-design.md)与[当前运行时](runtime.md)。原子 capture、目标门禁、exact append proof 和 Delivered 的语义继续适用，旧 Bound 按原证明读取。真实 V10 迁移验收记录仍见[迁移验收](player-character-migration-validation.md)，不替代 V11 operator 切换。
 
 2026-09-15 阶段状态：**已实现，当时真实 ignored 实例尚未迁移。** 该阶段完成第二次 dialectical-simplification 审查、独立代码审阅及 provider-free 两角色 production spine 验证。第 6 节保留当时的部署前置步骤；后续实际结果以上方迁移验收为准。
 

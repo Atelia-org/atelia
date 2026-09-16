@@ -1,7 +1,7 @@
 # Galatea 主 system prompt source 导航
 
 状态：**Current source ownership router**  
-Current contract：[V10 配置](../configuration.md)、[typed setup / Prepared v9](../../SessionJournal/current/contracts/completion-request-prepared-v9.md)
+Current contract：[V11 配置](../configuration.md)、[typed setup / Prepared v9](../../SessionJournal/current/contracts/completion-request-prepared-v9.md)
 
 Galatea 主system prompt不是一份可由operator整体替换的文件。指令源包含以下五份 tracked resource，另有代码拥有的输入种类/来源解释：
 

@@ -2,10 +2,10 @@
 
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
-[runtime.md](runtime.md)。根配置当前为 [V10](../SessionJournal/current/contracts/galatea-root-config-v10.md)；exact 字段由
+[runtime.md](runtime.md)。根配置当前为 [V11](../SessionJournal/current/contracts/galatea-root-config-v11.md)；exact 字段由
 [`GalateaStrictConfigReader`](../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与
 [`GalateaRootFileConfig`](../../prototypes/Galatea/GalateaConfig.cs) 定义。
-旧 [V9 合同](../SessionJournal/current/contracts/galatea-root-config-v9.md)仅用于识别升级前数据，不是当前配置入口。
+[V10](../SessionJournal/current/contracts/galatea-root-config-v10.md)及更早合同仅用于识别历史数据，不是当前配置入口。
 
 ## 配置目录与首次生成
 
@@ -34,15 +34,15 @@
 
 ## `config.json`
 
-根文件必须是 strict V10 JSON：`v` 必须是整数 `10`，根字段为 `v`、`characters`、`players`、`runtime`。
+根文件必须是 strict V11 JSON：`v` 必须是整数 `11`，根字段为 `v`、`characters`、`players`、`runtime`。
 `characters` 至少一项；`players` 可以为 `[]`。`runtime.recapGrid` 是必需 object。未知字段、旧版、未来版、
-`null` 或 `10.0` 都拒绝；正常启动不会迁移或重写旧文件。
+`null` 或 `11.0` 都拒绝；正常启动不会迁移或重写旧文件。
 
 下面展示当前字段归属，密码位置仅为占位符；除必需的 absolute `homeDir` 外，相对路径以配置文件目录解析。
 
 ```json
 {
-  "v": 10,
+  "v": 11,
   "characters": [{
     "id": "alice",
     "name": "Alice",
@@ -52,7 +52,7 @@
     "homeDir": "/galatea-homes/alice",
     "sessionProvisioning": "create-if-missing",
     "defaultConnectionId": "local",
-    "heartbeatEnabled": false,
+    "autonomyIntervalMinutes": 0,
     "characterContextTemplate": "",
     "characterContextTemplateFile": "prompts/character-context-standard-zh-cn.md"
   }],
@@ -86,7 +86,7 @@ bootstrap 示例 ID，不是硬编码角色或权限。`players: []` 没有可�
 
 这不会读取 route、创建 Completion client 或调用 provider；空 Timeline 的首轮上下文仍是 raw-only。它也绝不补写已有空目录、残缺 repository 或既有 RecapGrid 派生产物。maintenance mode 不会创建 session。
 
-每个 Character 的 `heartbeatEnabled` 省略时为 false；true 才加入周期 pulse。它不控制独立的角色信 relay，也不阻止人工交互。自动轮次始终使用该 Character 的 `defaultConnectionId`，浏览器当前连接仅影响人工请求。旧根字段 `serverAgentUserIds` 已删除。
+每个 Character 必须提供 `autonomyIntervalMinutes` integer：`0` 关闭没有 Ready reply 时的周期 `HeartbeatActivation`，`1..525_600` 是该角色的分钟 interval。没有第二个关闭值，负数、浮点、指数和旧 `heartbeatEnabled` 都拒绝。`0` 不控制独立的角色信 relay，也不阻止人工交互或已 durable 的 Codex reply 自动续接；自动轮次始终使用该 Character 的 `defaultConnectionId`，浏览器当前连接仅影响人工请求。旧根字段 `serverAgentUserIds` 已删除。
 
 ### 角色上下文
 
@@ -230,8 +230,13 @@ dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- 
 
 该 asset 包含 `world-understanding` 与 `autobiography` 两列。Host 会在 fresh admission 前验证 active recipe 是否精确匹配该角色的新语义资产定义；不匹配时以 `character-asset-mismatch` fail closed。CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
 
-## 升级边界
+## V11 唯一开发实例的人工切换
 
-V9 的 users 配置不能直接由 V10 启动读取。应停服、备份，在明确的离线迁移中拆分 Character/Player 并保留原
-Character ID、状态路径与旧调用证据；配置版本升级不等于 SQLite、prompt 资产和未完成工作的迁移已完成。
-当前集成与实例迁移状态见[实施工作单](player-character-implementation-work-order.md)，本页不宣告任何真实实例已迁移。
+V11 binary 严格拒绝 V10；不存在 V10 runtime reader、自动转换器或 CLI migration。当前仅有一份开发实例，切换由 operator 人工完成：
+
+1. 正常停服并确认 writer 已退出。
+2. 在 session、delegation、CharacterMemory 等状态目录**之外**备份 `config.json`。
+3. 将根 `v` 从 `10` 改为 `11`；每个 `heartbeatEnabled:true` 改为 `autonomyIntervalMinutes:10`，每个 `false` 改为 `0`，删除旧字段。之后可按角色模型配额调整正分钟数。
+4. 用 V11 binary 重启；如果仍有 V10 字段或版本，strict parser 会 fail closed。
+
+不要把此配置编辑当成 SQLite、prompt asset、未完成 delegation 或历史 Observation 的迁移：本次不改写任何这些状态，也不自动重发外部工作。旧 V9→V10 的实例迁移记录仍见[实施工作单](player-character-implementation-work-order.md)，它是历史证据而非当前操作入口。

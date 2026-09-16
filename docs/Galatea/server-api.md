@@ -93,7 +93,7 @@ Inbound mail：
 
 `from`、`body` required；`subject`、`connectionId` optional。caller 不能提交 `to`，server 固定 `To=session.Character.CharacterName` 并生成 canonical 32-lowerhex `messageId`。body 最多 64 KiB UTF-8，from 最多 1 KiB，subject 最多 4 KiB；from/subject 拒绝 CR、LF、NEL、Unicode line separator 等换行。来信内容是故事数据，不取得指令权限。Runtime 记录已认证 Player 的 sender/injectedBy；`from` 只是信内自称署名，即使为 `Codex` 也不冒充经过核实的 Codex 来源。
 
-Ready-turn 是已启用 heartbeatEnabled 的 Character的 Dev one-shot：
+Ready-turn 是任意 configured Character 的 Dev one-shot：
 
 ```js
 const result = await fetch(`${apiBase}/mailbox/ready-turn`, {
@@ -105,7 +105,7 @@ const result = await fetch(`${apiBase}/mailbox/ready-turn`, {
 console.log(result);
 ```
 
-body 必须是 strict `{}`，不能带 `connectionId`、player text 或其他字段。它不强制越过 cadence：启动时返回 202 `{turnId,origin}`，其中 `origin` 为 `delegate-reply|heartbeat-activation`；等待、暂停或未启用时返回 200 `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`；busy、recovery 或失败阻断返回 409。它与后台 loop 复用同一 coordinator，不是后台 loop 的启动条件。
+body 必须是 strict `{}`，不能带 `connectionId`、player text 或其他字段。它不强制越过 cadence：启动时返回 202 `{turnId,origin}`，其中 `origin` 为 `delegate-reply|heartbeat-activation`；等待或暂停返回 200 `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`；busy、recovery 或失败阻断返回 409。正 interval 角色可在 Empty 后继续检查 cadence；`autonomyIntervalMinutes:0` 角色只在 durable Ready notice/active reply lease 的纯读 wake evidence 存在时 attach，并且即使 cutoff 变 Empty 也只能返回状态，绝不创建 `heartbeat-activation`。它与后台 loop 复用同一 coordinator，不是后台 loop 的启动条件。
 
 Undo/pop-latest body 为：
 
@@ -141,11 +141,11 @@ Stop 没有 request body。`turnId` 必须使用接纳响应或 current 返回�
 {state,connectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code,admissionFailure}
 ```
 
-它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`；`connectionId` 显示 启用心跳的 Character 的 default connection，时间字段只作诊断，blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
+它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`；`connectionId` 显示 Character 的 default connection，时间字段只作诊断。`waiting` 且 `nextActivationAtUnixTimeMilliseconds=null` 表示该 Character 的 interval 为 `0`：没有自主 deadline、仍监视 durable reply；正 interval 的 waiting 才有 deadline。`disabled` 是保留内部投影，正常 API 的未知 Character 会先返回 404。blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
 
 `POST /api/v1/characters/{characterId}/agent/retry-admission`接受strict `{}`，遵守同一认证、JSON与Maintenance写操作guard；维护模式返回503。它尝试立即取得目标角色`TurnLock`，只重试旧的未完成admission处理，不创建角色轮次、不领取新轮次的cutoff。旧Action尚未capture时，此操作可能调用extractor provider；已capture内容沿原有恢复流程处理。
 
-成功返回200及上述Agent状态；没有admission失败时只返回当前状态。200不承诺已经开始自主活动，也不清除独立的reply失败暂停。已有运行/恢复需求仍须按其入口处理，不能借此跳过runtime recovery。忙碌返回409 `{code:"turn-busy",error,turnId}`；提取、存储、会话未就绪或恢复未完成返回409 `{code,error}`，保留阻断和具体原因。它不把失败写成零Note结果，也不在失败后推进角色head。示例：
+成功返回200及上述Agent状态；没有admission失败时只返回当前状态。200不承诺已经开始自主活动，也不清除独立的reply失败暂停。interval 为 `0` 且无 durable wake evidence 时它不 attach；有 evidence 时也只 reconciliation/settlement，绝不领取新 cutoff 或创建主线回合。已有运行/恢复需求仍须按其入口处理，不能借此跳过runtime recovery。忙碌返回409 `{code:"turn-busy",error,turnId}`；提取、存储、会话未就绪或恢复未完成返回409 `{code,error}`，保留阻断和具体原因。它不把失败写成零Note结果，也不在失败后推进角色head。示例：
 
 ```js
 const retry = await fetch(`${apiBase}/agent/retry-admission`, {

@@ -23,7 +23,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 | 文件 | 需要准备什么 |
 |:--|:--|
-| `config.json` | V10；Characters 的身份/状态/home/连接、Players 的登录信息、Runtime 设置 |
+| `config.json` | V11；Characters 的身份/状态/home/连接与自主 interval、Players 的登录信息、Runtime 设置 |
 | 同目录 `connections.json` | V3；可用连接、可选连接列表，以及全部四个 feature bindings |
 | 同目录 `delegates.json` | V4；有效的 Node/Codex/sidecar 路径与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
@@ -39,17 +39,19 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 ## 启用服务端自主运行
 
-在 V10 `config.json` 的目标 `characters[]` 项内设置：
+在 V11 `config.json` 的每个 `characters[]` 项内设置必填的分钟数：
 
 ```json
-"heartbeatEnabled": true
+"autonomyIntervalMinutes": 30
 ```
 
-省略时为 false。它只控制该角色的周期 pulse，不关闭独立的角色信 relay或人工交互。修改后重启生效；没有
-运行时 enrollment 开关。`players: []` 是合法配置：无人登录，角色仍可心跳、收发信及运行委派。
+`0` 关闭**无 Ready reply 时**的周期 `HeartbeatActivation`；正整数 `1..525_600` 是该角色的自主激活间隔。
+字段不可省略，负数与 `heartbeatEnabled` 都被 strict parser 拒绝。修改后重启生效；没有运行时 enrollment
+开关。它不关闭独立的角色信 relay、durable delegation 或人工交互。`players: []` 是合法配置：无人登录，角色仍可收发信及运行委派。
 
-- 服务端启动时检查已启用角色的 Ready 回信，之后每10秒检查一次；有回信时优先续接。
-- 没有 Ready 回信时，完整空闲10分钟后可启动一次自主轮次。成功完成主线轮次会重新计时。
+- 服务端每个 Character 每 10 秒检查一次。`0` 角色先作纯 durable wake probe；无 Ready reply/active reply lease 时不 attach、provision 或调用 provider。
+- 有 durable Ready reply 或 active reply lease 时，任意 interval 都可按既有 recovery/lease 规则续接 `DelegateReply`；它不是空闲自主激活。
+- 正 interval 角色在没有 Ready reply 时，完整空闲该分钟数后可启动一次自主轮次。成功完成主线轮次会重新计时；重启重新 arm，不补跑停机期间的轮次。
 - 自动轮次使用该角色的 `defaultConnectionId`。网页模型选择只影响人工请求。
 - 关闭或休眠网页不会停止后台 Agent。重启重新计时，不补跑停机期间的轮次。
 
@@ -71,7 +73,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 页面可见时会约每5秒读取 Agent 状态，并根据当前情况刷新 recent 或接入生成流。轮询期间已经完成的后台轮次会从 recent 补看；recent 是最近6轮的视图，不是完整历史浏览器。
 
-`POST /api/v1/characters/{characterId}/mailbox/ready-turn` 是已启用角色的 Dev API，网页没有对应按钮。它只立即执行一次条件检查，不强制跳过10分钟间隔。需要使用它或注入来信时，参见 [API 调用示例](../../docs/Galatea/server-api.md)。
+`POST /api/v1/characters/{characterId}/mailbox/ready-turn` 是 Dev API，网页没有对应按钮。它只立即执行一次条件检查；interval 为 `0` 时仅在 durable wake evidence 存在时尝试 reply-only admission，绝不创建空闲自主轮次。需要使用它或注入来信时，参见 [API 调用示例](../../docs/Galatea/server-api.md)。
 
 ## 查看状态
 
@@ -79,9 +81,9 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 | Agent 状态 | 含义与处理 |
 |:--|:--|
-| `disabled` | 角色未设置 `heartbeatEnabled: true` |
+| `disabled` | 保留的内部投影；正常 API 的未知角色会先返回 404，不用它表达 interval 为 `0` |
 | `starting` | 正在建立该角色的运行会话 |
-| `waiting` | 正常等待空闲间隔；页面倒计时仅供观察，服务端决定何时启动 |
+| `waiting` | 正常等待；正 interval 有自主 deadline，`nextActivationAt...=null` 则表示 interval 为 `0`、仍监视 durable reply |
 | `running` | 当前有主线轮次执行中 |
 | `autonomy-paused` | 上次自主轮次失败，空激活暂停，仍会检查 Ready 回信 |
 | `blocked` | 需要处理 `code` 指出的原因，例如待恢复轮次或初始化失败 |
@@ -117,7 +119,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 |:--|:--|
 | 启动后生成模板并退出 | 按提示检查模板，准备有效 delegates 路径及 Agent Control profile |
 | Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和服务端异常日志 |
-| 页面显示 `disabled` | 目标角色是否启用 `heartbeatEnabled`，修改后是否重启 |
+| interval 为 `0` 但期待自主活动 | 将 `autonomyIntervalMinutes` 设为正整数后重启；`0` 只会自动续接 durable reply |
 | `blocked` 或需要恢复 | 页面原因码、当前轮次、`Galatea.Autonomy` 与相关服务端错误日志 |
 | 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 先核对当前异常与已绑定的 connection/client/API、原生载荷；旧 adapter 标签已不再作为执行身份。未完成轮次只按实际恢复状态显式处理。不要修改 Origin、清空历史或反复重试；详见[模型切换排障与升级边界](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |
 | 主回复已有内容但轮次未结束 | 邮件/笔记后处理可能仍在执行；检查对应日志 |
@@ -138,5 +140,4 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 
 新 Observation 和 system setup 保存机读 JSON 事实与来源快照，给 LLM 的 Markdown 在请求时生成。
 新 Prepared 保存所选语义计划，每次 Started 记录实际请求摘要；换格式不授权重发结果未知的调用。
-旧 v7/v8 exact 请求仍走旧恢复合同。V9 配置不能直接启动，真实实例需停服、备份并显式迁移；
-代码接入与实例迁移进度分别见[实施工作单](../../docs/Galatea/player-character-implementation-work-order.md)。
+旧 v7/v8 exact 请求仍走旧恢复合同。V10 配置不能由 V11 binary 启动；唯一开发实例须停服、在状态目录外备份 config、手动替换字段后再重启，详见[配置指南](../../docs/Galatea/configuration.md#v11-唯一开发实例的人工切换)。

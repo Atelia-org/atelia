@@ -51,11 +51,11 @@ producer-decoded/read-only/publication/retry/privacy/resource窄scope；fresh ga
 annotated v6 tag object `acc73dab`锚定reviewed ledger `14b570cb`。对post-tag review object `bbfd7823`与actual tag的
 independent review已PASS；本tail不移动tag、不续期证据或扩大scope。
 
-Current Galatea root `config.json` 为 [V10](galatea-root-config-v10.md)：Character/Player/Runtime 分离，
-允许零 Player，每角色 `heartbeatEnabled` 替代根 enrollment，业务角色保持原状态身份；system setup 和输入
+Current Galatea root `config.json` 为 [V11](galatea-root-config-v11.md)：Character/Player/Runtime 分离，
+允许零 Player，每角色必填 `autonomyIntervalMinutes` 管理空闲自主激活，`0` 仍允许 durable reply/recovery；业务角色保持原状态身份；system setup 和输入
 按 [Prepared v9](completion-request-prepared-v9.md) 的机读/瞬态边界处理。
-[V9](galatea-root-config-v9.md) 的 per-user home、[V8](galatea-root-config-v8.md) 的 serverAgentUserIds、
-[V7](galatea-root-config-v7.md) 及更早页面均是历史版本。下文旧 approval anchors 不认证 V2–V10 delta，
+[V10](galatea-root-config-v10.md)、[V9](galatea-root-config-v9.md) 的 per-user home、[V8](galatea-root-config-v8.md) 的 serverAgentUserIds、
+[V7](galatea-root-config-v7.md) 及更早页面均是历史版本。下文旧 approval anchors 不认证 V2–V11 delta，
 历史 appendix、字段表与证据保持当时原义。
 
 Contract Freeze R2已在surface set 6后有意停止；[closure evidence](../../evidence/contract-freeze-r2-closure.md)
@@ -219,7 +219,7 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | Route manifest | **Post-R2 current candidate**：[canonical V2](recap-grid-route-manifest-v2.md)；1 MiB / 4,096 entries；connection id strict UTF-8 128 bytes；concurrency 1..1,024；timeout 1 ms..1 day且整毫秒；不再包含output-token字段；unknown/missing/duplicate/noncanonical reject | operator只拥有exact route与Recap调度policy；Completion request/connection均有意不暴露caller output cap，具体adapter只使用不限量或模型最大值语义；V1 hard cut且无compat reader，不是durable semantic identity |
 | Completion connections | Completion-owned default-bearing numeric `v:2`继续供既有consumer使用；新增default-free catalog `v:3`，复用同一connection field parser/normalization与1 MiB、depth 8、1..256及identifier/endpoint/secret bounds；V3 root只允许`v`/`connections`及optional `selectableConnectionIds`/`bindings`，明确拒绝`defaultConnectionId` | V2 registry保留default fallback；V3 registry exact-only。Galatea只读V3并收紧required selectable/exact bindings，把fallback authority放在root V7 per-user config；SessionJournal.Cli继续V2。两版都不改变Recap route/frozen identity或output-cap policy |
 | AgentControl profile | canonical `v:1`；profile id strict UTF-8 128 bytes；profile最多128 KiB；admission inclusive 2..64 KiB；registry 1..256且profile id/runtime identity分别exact unique | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version/order/duplicate mismatch fail closed；public admission producer不会生成owner decoder拒绝的bytes |
-| Galatea root config | **Current product V10**：[当前合同](galatea-root-config-v10.md)；exact `v:10`，characters/players/runtime，零 Player、每角色 heartbeatEnabled、独立登录与角色状态、typed setup。sibling Completion V3 / delegates V4 各守自己的合同；V1–V9 页面保留历史 | 旧 tag 不认证 V2–V10；CharacterMemory、SessionJournal 和 delegation schema/恢复由各 owner 独立约束。V1 product source `8c450bf0`、integration `6c5d3d50` 与 immutable surface-set-2 approval 仅保留历史含义 |
+| Galatea root config | **Current product V11**：[当前合同](galatea-root-config-v11.md)；exact `v:11`，characters/players/runtime，零 Player、每角色必填 autonomyIntervalMinutes、独立登录与角色状态、typed setup。sibling Completion V3 / delegates V4 各守自己的合同；V1–V10 页面保留历史 | 旧 tag 不认证 V2–V11；CharacterMemory、SessionJournal 和 delegation schema/恢复由各 owner 独立约束。V1 product source `8c450bf0`、integration `6c5d3d50` 与 immutable surface-set-2 approval 仅保留历史含义 |
 | RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` [status/detail/exit ledger](../../evidence/contract-freeze-r2-r1-priority-review.md#52-stable-detail-ledger)是freeze-ready machine contract；[Cadence `set-reserve` receipt](cadence-set-reserve-receipt.md) exact command-local ledger/recovery由surface set 5 immutable tag锚定；其他non-Store command detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
 | Other reports | [offline validation V3 approved contract](offline-validation-report-v3.md)、legacy import v1、[desired setup reconciliation V2 approved contract](desired-setup-reconciliation-report-v2.md)、[history-load V2 approved top-level contract](history-load-report-v2.md)、legacy-root v2 | **Partial**：desired-setup V2由v3 tag锚定；history-load V2 top-level/read-only由v4 tag锚定；offline validation V3 exact 25-field/nested/closed-token/read-only/publication/retry/privacy/resource scope由v6 tag锚定；其余report继续Defer；不因外层相似抽generic envelope |
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
@@ -231,7 +231,7 @@ Route合同见[Route Manifest V2](recap-grid-route-manifest-v2.md)。[root confi
 先后hard-cut到未由旧tag认证的[root config V2](galatea-root-config-v2.md)、
 [root config V3](galatea-root-config-v3.md)、[root config V4](galatea-root-config-v4.md)与
 [root config V5](galatea-root-config-v5.md)、[root config V6](galatea-root-config-v6.md)，current又hard-cut到
-[root config V10](galatea-root-config-v10.md)；
+[root config V10](galatea-root-config-v10.md)，当前为 [root config V11](galatea-root-config-v11.md)；
 [Desired Setup report V2](desired-setup-reconciliation-report-v2.md)的exact narrow receipt/recovery scope由additive
 surface set 3批准、通过unified gates并由v3 tag锚定。[HistoryLoad report V2](history-load-report-v2.md)的exact
 top-level/read-only scope已获surface set 4用户批准、通过unified gates/review并由v4 tag锚定。其他reports、
