@@ -30,6 +30,7 @@
 | 角色间站内信 | [角色间站内信设计与实施记录](character-mail-design.md)：地址簿、提示词、可靠入箱、recovery 与实例迁移边界 |
 | Character 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |
+| 每 Character 的自主激活间隔（待实施设计） | [自主激活间隔设计](per-character-autonomy-interval-design.md)：澄清 durable pulse、Ready reply 与周期自主活动的边界 |
 | SessionJournal / RecapGrid authority | [当前架构与代码地图](../SessionJournal/current/architecture-and-code-map.md) |
 | 简化 Galatea / RecapGrid 身份与恢复校验 | [设计与实施记录](identity-simplification-design.md)：前三切片及 [Store 简化](recap-store-simplification-plan.md)已实现；[Timeline 单一行身份](timeline-row-identity-simplification-plan.md)记录代码验证及已完成的 Dev 数据升级、真实 Recap 重建 |
 | RecapGrid operator CLI | [构建与即时诊断](../../prototypes/SessionJournal.Cli/README.md#构建与即时诊断)：现有 V3 catalog、人工 route、订阅环境与 stderr 进度；[本轮设计与实施记录](recap-operations-usability-plan.md) |
