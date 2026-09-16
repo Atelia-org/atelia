@@ -3,10 +3,48 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaAutonomyCadenceTests {
+    private static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(10);
+
+    [Fact]
+    public void CustomPositiveIntervalControlsDueAndCompletedTurnReset() {
+        var clock = new ManualTimeProvider();
+        var cadence = new GalateaAutonomyCadence(clock, TimeSpan.FromMinutes(1));
+        _ = cadence.ObservePulse();
+
+        clock.Advance(TimeSpan.FromSeconds(59));
+        Assert.Equal(GalateaAutonomyCadencePulseResult.Waiting, cadence.ObservePulse());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(GalateaAutonomyCadencePulseResult.AutonomousActivationDue, cadence.ObservePulse());
+        Assert.True(cadence.TryClaimAutonomousActivationStarted(out GalateaAutonomyCadenceClaim? claim));
+        Assert.NotNull(claim);
+        Assert.True(cadence.SettleMainTurn(
+            new GalateaAutonomyCadenceTurnSettlement(),
+            isAutonomousActivation: true,
+            completed: true,
+            autonomousClaim: claim
+        ));
+        Assert.Equal(
+            (clock.GetUtcNow() + TimeSpan.FromMinutes(1)).ToUnixTimeMilliseconds(),
+            cadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
+        );
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonPositiveIntervalIsRejected(int minutes) {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new GalateaAutonomyCadence(
+                new ManualTimeProvider(),
+                TimeSpan.FromMinutes(minutes)
+            )
+        );
+    }
+
     [Fact]
     public void ArmStartsDeadlineOnceWithoutRearmingOnRepeatedAttach() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
         cadence.Arm();
         long? expectedDue = cadence.ProjectStatus()
             .NextActivationAtUnixTimeMilliseconds;
@@ -30,7 +68,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void FirstPulseArmsAndContinuousPulsesDoNotMoveDeadline() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
 
         GalateaAutonomyCadenceStatus initial =
             cadence.ProjectStatus();
@@ -45,7 +83,7 @@ public sealed class GalateaAutonomyCadenceTests {
             cadence.ObservePulse()
         );
         DateTimeOffset expectedDue = clock.GetUtcNow()
-            + GalateaAutonomyCadence.IdleInterval;
+            + DefaultInterval;
         Assert.Equal(
             expectedDue.ToUnixTimeMilliseconds(),
             cadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
@@ -65,7 +103,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void DelayedPulsesKeepDeadlineAndMonotonicRegressionRearms() {
         var exactClock = new ManualTimeProvider();
-        var exactCadence = new GalateaAutonomyCadence(exactClock);
+        var exactCadence = new GalateaAutonomyCadence(exactClock, DefaultInterval);
         _ = exactCadence.ObservePulse();
 
         long? expectedDue = exactCadence.ProjectStatus()
@@ -79,7 +117,7 @@ public sealed class GalateaAutonomyCadenceTests {
             .NextActivationAtUnixTimeMilliseconds);
 
         var overClock = new ManualTimeProvider();
-        var overCadence = new GalateaAutonomyCadence(overClock);
+        var overCadence = new GalateaAutonomyCadence(overClock, DefaultInterval);
         _ = overCadence.ObservePulse();
         long? overExpectedDue = overCadence.ProjectStatus()
             .NextActivationAtUnixTimeMilliseconds;
@@ -100,7 +138,7 @@ public sealed class GalateaAutonomyCadenceTests {
         );
         Assert.Equal(
             (overClock.GetUtcNow()
-                + GalateaAutonomyCadence.IdleInterval)
+                + DefaultInterval)
                 .ToUnixTimeMilliseconds(),
             overCadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
         );
@@ -109,7 +147,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void WallClockRegressionDoesNotAdvanceMonotonicDueDecision() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
         _ = cadence.ObservePulse();
 
         clock.AdvanceMonotonic(TimeSpan.FromSeconds(10));
@@ -129,7 +167,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void ExactDueClaimsOnceAndNeverCatchesUp() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
         _ = cadence.ObservePulse();
 
         for (int pulse = 1; pulse < 60; pulse++) {
@@ -171,7 +209,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void CompletedMainTurnOnlyResetsPreviouslyArmedState() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
 
         Assert.True(cadence.SettleMainTurn(
             new GalateaAutonomyCadenceTurnSettlement(),
@@ -191,7 +229,7 @@ public sealed class GalateaAutonomyCadenceTests {
             completed: true
         ));
         DateTimeOffset expected = clock.GetUtcNow()
-            + GalateaAutonomyCadence.IdleInterval;
+            + DefaultInterval;
         Assert.Equal(
             expected.ToUnixTimeMilliseconds(),
             cadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
@@ -212,7 +250,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void AutonomousNonCompletedOutcomePausesUntilCompletedMainTurn() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
         GalateaAutonomyCadenceClaim claim = ClaimAtExactDue(
             cadence,
             clock
@@ -256,7 +294,7 @@ public sealed class GalateaAutonomyCadenceTests {
         Assert.Null(resumed.Code);
         Assert.Equal(
             (clock.GetUtcNow()
-                + GalateaAutonomyCadence.IdleInterval)
+                + DefaultInterval)
                 .ToUnixTimeMilliseconds(),
             resumed.NextActivationAtUnixTimeMilliseconds
         );
@@ -265,11 +303,11 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void NewInstanceAfterRestartAlwaysLateRearms() {
         var clock = new ManualTimeProvider();
-        var beforeRestart = new GalateaAutonomyCadence(clock);
+        var beforeRestart = new GalateaAutonomyCadence(clock, DefaultInterval);
         _ = beforeRestart.ObservePulse();
         clock.Advance(TimeSpan.FromMinutes(10));
 
-        var afterRestart = new GalateaAutonomyCadence(clock);
+        var afterRestart = new GalateaAutonomyCadence(clock, DefaultInterval);
         Assert.Equal(
             GalateaAutonomyCadencePulseResult.Rearmed,
             afterRestart.ObservePulse()
@@ -278,7 +316,7 @@ public sealed class GalateaAutonomyCadenceTests {
             afterRestart.ProjectStatus();
         Assert.Equal(
             (clock.GetUtcNow()
-                + GalateaAutonomyCadence.IdleInterval)
+                + DefaultInterval)
                 .ToUnixTimeMilliseconds(),
             status.NextActivationAtUnixTimeMilliseconds
         );
@@ -288,7 +326,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void CurrentUnsettledClaimRollsBackExactDueAndLastActivation() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
         GalateaAutonomyCadenceClaim firstClaim = ClaimAtExactDue(
             cadence,
             clock
@@ -342,7 +380,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void RollbackValidationFailuresAreZeroMutation() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
         GalateaAutonomyCadenceClaim current = ClaimAtExactDue(
             cadence,
             clock
@@ -407,7 +445,7 @@ public sealed class GalateaAutonomyCadenceTests {
     [Fact]
     public void TerminalSettlementValidationFailuresAreZeroMutation() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaAutonomyCadence(clock);
+        var cadence = new GalateaAutonomyCadence(clock, DefaultInterval);
         GalateaAutonomyCadenceClaim current = ClaimAtExactDue(
             cadence,
             clock

@@ -18,14 +18,14 @@ public sealed class GalateaServerAgentRuntimeTests {
             completion, new Normalizer(), timeProvider: clock,
             connections: [Connection("other"), Connection("test")],
             selectableConnectionIds: ["other", "test"],
-            heartbeatCharacterIds: ["alice"], enableServerAgentHostedService: true
+            autonomyCharacterIds: ["alice"], enableServerAgentHostedService: true
         );
         JsonObject config = JsonNode.Parse(File.ReadAllText(fixture.ConfigPath))!.AsObject();
         JsonArray characters = config["characters"]!.AsArray();
         JsonObject bob = characters[0]!.DeepClone().AsObject();
         bob["id"] = "bob";
         bob["name"] = "Bob";
-        bob["heartbeatEnabled"] = false;
+        bob["autonomyIntervalMinutes"] = 0;
         bob["homeDir"] = Directory.CreateDirectory(Path.Combine(
             Path.GetDirectoryName(fixture.ConfigPath)!, "homes", "bob")).FullName;
         bob["defaultConnectionId"] = "other";
@@ -79,7 +79,7 @@ public sealed class GalateaServerAgentRuntimeTests {
     [Fact]
     public async Task HostedStop_WithCancelledBudget_DrainsAttachAndDisposesResources() {
         await using var fixture = GalateaTestHost.Create(
-            new CompletionClient(), new Normalizer(), heartbeatCharacterIds: ["alice"]
+            new CompletionClient(), new Normalizer(), autonomyCharacterIds: ["alice"]
         );
         IServiceProvider services = fixture.Factory.Services;
         var host = services.GetRequiredService<GalateaHostService>();

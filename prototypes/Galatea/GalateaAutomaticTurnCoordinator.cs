@@ -21,7 +21,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
     private readonly ConcurrentDictionary<string, string> _attachFailures = new(StringComparer.Ordinal);
 
     internal GalateaAgentStatusDto ReadStatus(string characterId) {
-        bool enrolled = host.HeartbeatCharacterIds.Contains(characterId, StringComparer.Ordinal);
+        bool enrolled = host.AutonomyCharacterIds.Contains(characterId, StringComparer.Ordinal);
         string? connection = enrolled && host.TryGetCharacter(characterId, out var character)
             ? character.DefaultConnectionId : null;
         string? state = host.IsStopping ? "stopping"
@@ -174,7 +174,8 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                 origin = "delegate-reply";
             }
             else if (reply is GalateaReadyReplyTurnStartResult.Empty) {
-                if (session.AutonomyCadence.ObservePulse() != GalateaAutonomyCadencePulseResult.AutonomousActivationDue) {
+                if (session.AutonomyCadence?.ObservePulse()
+                    != GalateaAutonomyCadencePulseResult.AutonomousActivationDue) {
                     session.PublishAutonomyStatus();
                     return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
                 }

@@ -18,7 +18,7 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
             connections: [GalateaNoteReceiptFixture.MainConnection, GalateaNoteReceiptFixture.HelperConnection],
             timeProvider: clock, reportArtifact: output.WriteLine,
             characterNoteExtractorConnectionId: GalateaNoteReceiptFixture.HelperConnection.Id,
-            heartbeatCharacterIds: ["alice"], enableServerAgentHostedService: true);
+            autonomyCharacterIds: ["alice"], enableServerAgentHostedService: true);
 
         var first = await GalateaNoteReceiptFixture.StartEpochAsync(lab, clock, firstFactory);
         await GalateaNoteReceiptFixture.AdvanceHeartbeatAsync(first);

@@ -34,8 +34,8 @@ public sealed record GalateaConfig(
         init;
     }
 
-    public IReadOnlyList<string> HeartbeatCharacterIds =>
-        GalateaConfigValidation.ReadHeartbeatCharacterIds(Characters);
+    public IReadOnlyList<string> AutonomyCharacterIds =>
+        GalateaConfigValidation.ReadAutonomyCharacterIds(Characters);
 }
 
 /// <summary>
@@ -214,7 +214,7 @@ internal sealed record GalateaCharacterFileConfig(
     string DefaultConnectionId,
     string CharacterContextTemplate = "",
     string? CharacterContextTemplateFile = null,
-    bool HeartbeatEnabled = false
+    int AutonomyIntervalMinutes = 0
 );
 
 internal sealed record GalateaPlayerFileConfig(
@@ -239,7 +239,7 @@ public sealed record GalateaCharacterConfig(
     GalateaSessionProvisioning SessionProvisioning,
     SessionInputContent SystemPrompt,
     string DefaultConnectionId,
-    bool HeartbeatEnabled = false
+    int AutonomyIntervalMinutes = 0
 );
 
 [JsonConverter(typeof(JsonStringEnumConverter<GalateaSessionProvisioning>))]
@@ -252,6 +252,7 @@ public enum GalateaSessionProvisioning {
 
 internal static class GalateaConfigValidation {
     internal const int MaximumConnectionIdUtf8Bytes = 128;
+    internal const int MaximumAutonomyIntervalMinutes = 525_600;
 
     internal static void RequireValidPlayers(IReadOnlyList<GalateaPlayerConfig> players) {
         ArgumentNullException.ThrowIfNull(players);
@@ -269,12 +270,32 @@ internal static class GalateaConfigValidation {
         }
     }
 
-    internal static IReadOnlyList<string> ReadHeartbeatCharacterIds(
+    internal static IReadOnlyList<string> ReadAutonomyCharacterIds(
         IReadOnlyList<GalateaCharacterConfig> characters
     ) {
         ArgumentNullException.ThrowIfNull(characters);
-        return Array.AsReadOnly(characters.Where(static character => character.HeartbeatEnabled)
+        RequireValidAutonomyIntervals(characters);
+        return Array.AsReadOnly(characters.Where(static character => character.AutonomyIntervalMinutes > 0)
             .Select(static character => character.CharacterId).ToArray());
+    }
+
+    internal static void RequireValidAutonomyIntervals(
+        IReadOnlyList<GalateaCharacterConfig> characters
+    ) {
+        ArgumentNullException.ThrowIfNull(characters);
+        for (int index = 0; index < characters.Count; index++) {
+            GalateaCharacterConfig character = characters[index]
+                ?? throw new InvalidOperationException(
+                    $"Galatea config character[{index}] must not be null."
+                );
+            if (character.AutonomyIntervalMinutes is < 0
+                or > MaximumAutonomyIntervalMinutes) {
+                throw new InvalidOperationException(
+                    $"Galatea config character '{character.CharacterId}' autonomyIntervalMinutes "
+                    + $"must be an integer from 0 to {MaximumAutonomyIntervalMinutes}."
+                );
+            }
+        }
     }
 
     internal static void RequireValidConnectionDefaults(

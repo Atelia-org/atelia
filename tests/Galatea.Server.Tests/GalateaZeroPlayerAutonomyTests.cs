@@ -26,13 +26,13 @@ public sealed class GalateaZeroPlayerAutonomyTests {
             connections: [Connection("test"), Connection("helper")],
             selectableConnectionIds: ["test"],
             outboundMailExtractorConnectionId: "helper", delegateTransport: transport,
-            timeProvider: clock, heartbeatCharacterIds: ["alice"],
+            timeProvider: clock, autonomyCharacterIds: ["alice"],
             enableServerAgentHostedService: true);
         JsonNode config = JsonNode.Parse(File.ReadAllText(fixture.ConfigPath))!;
         JsonObject bob = config["characters"]![0]!.DeepClone().AsObject();
         bob["id"] = "bob";
         bob["name"] = "Bob";
-        bob["heartbeatEnabled"] = false;
+        bob["autonomyIntervalMinutes"] = 0;
         bob["sessionProvisioning"] = "create-if-missing";
         bob["sessionDir"] = Path.Combine(fixture.RootDirectory, "bob-session");
         bob["delegationStateDir"] = Path.Combine(fixture.RootDirectory, "bob-delegation");

@@ -52,7 +52,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
             characterNoteExtractorConnectionId: helper.Id,
             playerTurnRecallProviderFactory: (_, _) => recall,
             timeProvider: clock,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);

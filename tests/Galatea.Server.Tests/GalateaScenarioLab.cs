@@ -45,7 +45,7 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
         TimeProvider? timeProvider = null,
         Action<string>? reportArtifact = null,
         string? characterNoteExtractorConnectionId = null,
-        IReadOnlyList<string>? heartbeatCharacterIds = null,
+        IReadOnlyList<string>? autonomyCharacterIds = null,
         bool enableServerAgentHostedService = false,
         bool provisionRawOnly = true) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
@@ -63,7 +63,7 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
             normalizer, deleteFilesOnDispose: false, connections: connections,
             delegateTransport: new RejectingDelegateTransport(), timeProvider: timeProvider,
             characterNoteExtractorConnectionId: characterNoteExtractorConnectionId,
-            heartbeatCharacterIds: heartbeatCharacterIds,
+            autonomyCharacterIds: autonomyCharacterIds,
             enableServerAgentHostedService: enableServerAgentHostedService,
             provisionRawOnly: provisionRawOnly);
         return new GalateaScenarioLab(name, host, normalizer, reportArtifact);

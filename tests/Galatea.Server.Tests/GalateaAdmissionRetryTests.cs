@@ -22,7 +22,7 @@ public sealed class GalateaAdmissionRetryTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [Connection("test"), Connection("note")],
             selectableConnectionIds: ["test"], characterNoteExtractorConnectionId: "note",
-            heartbeatCharacterIds: ["alice"]);
+            autonomyCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
@@ -39,7 +39,7 @@ public sealed class GalateaAdmissionRetryTests {
         await Assert.ThrowsAsync<GalateaTurnException>(() => coordinator.TryPulseAsync("alice", CancellationToken.None));
         Assert.True(session.AutomaticAdmissionFailed);
         var head = session.Engine.ReadCurrentHead();
-        var cadence = session.AutonomyCadence.ProjectStatus();
+        var cadence = session.AutonomyCadence!.ProjectStatus();
         using HttpClient client = fixture.CreateClient();
         using var login = await GalateaTestHost.LoginAsync(client);
         using (var failed = await client.PostAsync(Endpoint, Json("{}"))) {
@@ -72,7 +72,7 @@ public sealed class GalateaAdmissionRetryTests {
         Assert.False(session.AutomaticAdmissionFailed);
         Assert.Equal(replyFailed, session.AutomaticReplyFailed);
         Assert.Equal(head, session.Engine.ReadCurrentHead());
-        Assert.Equal(cadence, session.AutonomyCadence.ProjectStatus());
+        Assert.Equal(cadence, session.AutonomyCadence!.ProjectStatus());
         Assert.Equal(1, completion.MainCalls);
         Assert.Null(session.GetCurrentTurn());
         Assert.NotNull(session.CharacterMemoryReconciler.ReadPendingReceiptDelivery());
@@ -92,7 +92,7 @@ public sealed class GalateaAdmissionRetryTests {
         var completion = new Factory();
         await using var fixture = GalateaTestHost.Create(completion,
             DisabledGalateaUserMessageNormalizer.Instance, maintenanceMode: maintenance,
-            heartbeatCharacterIds: enrolled ? ["alice"] : []);
+            autonomyCharacterIds: enrolled ? ["alice"] : []);
         using HttpClient client = fixture.CreateClient();
         using var anonymous = await client.PostAsync(Endpoint, Json("{}"));
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
@@ -108,7 +108,7 @@ public sealed class GalateaAdmissionRetryTests {
     public async Task RetryRejectsUnexpectedInputAndDoesNotAttachOrClearInitializationFailure() {
         var completion = new Factory();
         await using var fixture = GalateaTestHost.Create(completion,
-            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, autonomyCharacterIds: ["alice"]);
         using HttpClient client = fixture.CreateClient();
         using var login = await GalateaTestHost.LoginAsync(client);
         foreach (string body in new[] { "null", "{\"connectionId\":\"test\"}", "{\"skip\":true}" }) {
@@ -128,7 +128,7 @@ public sealed class GalateaAdmissionRetryTests {
     public async Task RetryDoesNotClearPendingTurnRecoveryOrAdvanceItsHead() {
         var completion = new Factory();
         await using var fixture = GalateaTestHost.Create(completion,
-            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, autonomyCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
@@ -158,7 +158,7 @@ public sealed class GalateaAdmissionRetryTests {
     [Fact]
     public async Task CancelledRetryKeepsOriginalFailure() {
         await using var fixture = GalateaTestHost.Create(new Factory(),
-            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, autonomyCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
@@ -176,7 +176,7 @@ public sealed class GalateaAdmissionRetryTests {
     [Fact]
     public async Task RetryDoesNotClearFailureAfterShutdownBegins() {
         await using var fixture = GalateaTestHost.Create(new Factory(),
-            DisabledGalateaUserMessageNormalizer.Instance, heartbeatCharacterIds: ["alice"]);
+            DisabledGalateaUserMessageNormalizer.Instance, autonomyCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);

@@ -115,7 +115,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory = null,
         TimeProvider? timeProvider = null,
-        IReadOnlyList<string>? heartbeatCharacterIds = null,
+        IReadOnlyList<string>? autonomyCharacterIds = null,
         bool enableServerAgentHostedService = false
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
@@ -175,7 +175,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             characterNoteExtractorConnectionId:
                 characterNoteExtractorConnectionId,
             memoRecallConnectionId: memoRecallConnectionId,
-            heartbeatCharacterIds: heartbeatCharacterIds
+            autonomyCharacterIds: autonomyCharacterIds
         );
 
         return new GalateaTestHost(
@@ -530,7 +530,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
         string? memoRecallConnectionId = null,
-        IReadOnlyList<string>? heartbeatCharacterIds = null,
+        IReadOnlyList<string>? autonomyCharacterIds = null,
         string characterName = "Galatea",
         string playerName = "刘世超"
     ) {
@@ -565,7 +565,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     sessionProvisioning,
                     defaultConnectionId,
                     CharacterContextTemplate: characterContextTemplate,
-                    HeartbeatEnabled: heartbeatCharacterIds?.Contains(TestCharacterId, StringComparer.Ordinal) == true
+                    AutonomyIntervalMinutes: autonomyCharacterIds?.Contains(TestCharacterId, StringComparer.Ordinal) == true
+                        ? 10
+                        : 0
                 )
             ],
             Players: [new GalateaPlayerFileConfig(TestPlayerId, playerName, TestPassword)],

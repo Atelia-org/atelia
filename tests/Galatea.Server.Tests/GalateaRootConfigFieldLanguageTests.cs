@@ -13,27 +13,65 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
-    public void HeartbeatEnrollmentComesOnlyFromCharactersAndAllowsZeroPlayers() {
+    public void AutonomyEnrollmentComesOnlyFromCharactersAndAllowsZeroPlayers() {
         using var fixture = new RootConfigFixture();
         JsonObject root = ParseRoot(MinimalV10);
         root["players"] = new JsonArray();
-        Assert.Empty(fixture.Load(root.ToJsonString()).HeartbeatCharacterIds);
-        CharacterObject(root)["heartbeatEnabled"] = true;
+        Assert.Empty(fixture.Load(root.ToJsonString()).AutonomyCharacterIds);
+        CharacterObject(root)["autonomyIntervalMinutes"] = 10;
         GalateaConfig config = fixture.Load(root.ToJsonString());
         Assert.Empty(config.Players);
-        Assert.Equal(["alice"], config.HeartbeatCharacterIds);
-        Assert.Throws<NotSupportedException>(() => ((IList<string>)config.HeartbeatCharacterIds)[0] = "changed");
+        Assert.Equal(["alice"], config.AutonomyCharacterIds);
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)config.AutonomyCharacterIds)[0] = "changed");
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(10, true)]
+    [InlineData(60, true)]
+    [InlineData(525_600, true)]
+    public void AutonomyIntervalAcceptsClosedMinuteRange(int minutes, bool enrolled) {
+        using var fixture = new RootConfigFixture();
+        JsonObject root = ParseRoot(MinimalV10);
+        CharacterObject(root)["autonomyIntervalMinutes"] = minutes;
+
+        GalateaConfig config = fixture.Load(root.ToJsonString());
+        Assert.Equal(minutes, Assert.Single(config.Characters).AutonomyIntervalMinutes);
+        Assert.Equal(enrolled, config.AutonomyCharacterIds.Count == 1);
     }
 
     [Theory]
     [InlineData("null")]
     [InlineData("\"true\"")]
-    [InlineData("1")]
+    [InlineData("1.0")]
+    [InlineData("1e0")]
+    [InlineData("2147483648")]
     [InlineData("[]")]
-    public void HeartbeatEnrollmentRejectsNonBooleanValues(string json) {
+    public void AutonomyIntervalRejectsNonIntegerValues(string json) {
         JsonObject root = ParseRoot(MinimalV10);
-        CharacterObject(root)["heartbeatEnabled"] = JsonNode.Parse(json);
+        CharacterObject(root)["autonomyIntervalMinutes"] = JsonNode.Parse(json);
         Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(root.ToJsonString())));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(525_601)]
+    public void AutonomyIntervalRejectsOutOfRangeValues(int value) {
+        JsonObject root = ParseRoot(MinimalV10);
+        CharacterObject(root)["autonomyIntervalMinutes"] = value;
+        Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(root.ToJsonString())));
+    }
+
+    [Fact]
+    public void AutonomyIntervalIsRequiredAndOldHeartbeatFieldIsUnknown() {
+        JsonObject missing = ParseRoot(MinimalV10);
+        Assert.True(CharacterObject(missing).Remove("autonomyIntervalMinutes"));
+        Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(missing.ToJsonString())));
+
+        JsonObject old = ParseRoot(MinimalV10);
+        CharacterObject(old)["heartbeatEnabled"] = true;
+        Assert.Throws<InvalidDataException>(() => GalateaStrictConfigReader.ValidateRoot(Encoding.UTF8.GetBytes(old.ToJsonString())));
     }
 
     [Theory]
@@ -59,11 +97,11 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     private const string MinimalV10 = """
-        {"v":10,"characters":[{"id":"alice","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"create-if-missing","defaultConnectionId":"test","characterContextTemplate":"inline ${characterName}"}],"players":[{"id":"player-main","name":"刘世超","password":"pw"}],"runtime":{"recapGrid":{"routeManifestPath":"routes.json","agentControlProfileFiles":["profile.json"],"currentAgentControlProfileId":"test-profile"}}}
+        {"v":11,"characters":[{"id":"alice","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"create-if-missing","defaultConnectionId":"test","characterContextTemplate":"inline ${characterName}","autonomyIntervalMinutes":0}],"players":[{"id":"player-main","name":"刘世超","password":"pw"}],"runtime":{"recapGrid":{"routeManifestPath":"routes.json","agentControlProfileFiles":["profile.json"],"currentAgentControlProfileId":"test-profile"}}}
         """;
 
     private const string ReorderedEscapedFullV10 = """
-        {"runtime":{"maintenanceMode":true,"recapGrid":{"currentAgentControlProfileId":"test-profile","agentControlProfileFiles":["profile.json"],"\u0072outeManifestPath":"routes.json"},"callLogDir":"call-logs","listenUrls":["opaque-listener","opaque-listener"]},"players":[{"password":"pw","name":"刘世超","id":"player-main"}],"\u0063haracters":[{"characterContextTemplateFile":null,"characterContextTemplate":"inline ${characterName}","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"existing-only","defaultConnectionId":"test","\u0069d":"alice"}],"\u0076":10}
+        {"runtime":{"maintenanceMode":true,"recapGrid":{"currentAgentControlProfileId":"test-profile","agentControlProfileFiles":["profile.json"],"\u0072outeManifestPath":"routes.json"},"callLogDir":"call-logs","listenUrls":["opaque-listener","opaque-listener"]},"players":[{"password":"pw","name":"刘世超","id":"player-main"}],"\u0063haracters":[{"characterContextTemplateFile":null,"characterContextTemplate":"inline ${characterName}","name":"Galatea","homeDir":"/__TEST_HOME__/alice","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"existing-only","defaultConnectionId":"test","autonomyIntervalMinutes":10,"\u0069d":"alice"}],"\u0076":11}
         """;
 
     [Fact]
@@ -841,8 +879,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         );
 
         string comment = MinimalV10.Replace(
-            "\"v\":10,",
-            "\"v\":10/*comment*/,",
+            "\"v\":11,",
+            "\"v\":11/*comment*/,",
             StringComparison.Ordinal
         );
         Assert.Throws<InvalidDataException>(() =>
@@ -886,6 +924,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         ["id"] = id,
         ["homeDir"] = $"/__TEST_HOME__/{id}",
         ["sessionDir"] = session,
+        ["autonomyIntervalMinutes"] = 0,
         ["delegationStateDir"] = $"delegation-state/{id}",
         ["characterMemoryStateDir"] = $"character-memory/{id}",
         ["sessionProvisioning"] = "existing-only",

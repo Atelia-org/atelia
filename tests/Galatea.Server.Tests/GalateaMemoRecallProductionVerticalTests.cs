@@ -527,7 +527,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             maintenanceMode: maintenanceMode,
-            heartbeatCharacterIds: serverAgentUserIds,
+            autonomyCharacterIds: serverAgentUserIds,
             connections: [
                 Connection("test", "main-model"),
                 Connection("recall", "recall-model"),

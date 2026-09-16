@@ -71,7 +71,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             delegateTransport: new DurableTransport(backend),
             playerTurnRecallProviderFactory: (_, _) => recallProvider,
             timeProvider: clock,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -370,7 +370,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
             selectableConnectionIds: [main.Id],
-            timeProvider: clock
+            timeProvider: clock,
+            autonomyCharacterIds: ["alice"]
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -381,8 +382,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         session.TurnLock.Wait();
         try {
             Assert.Equal(
-                GalateaAutonomyCadencePulseResult.Rearmed,
-                session.AutonomyCadence.ObservePulse()
+                GalateaAutonomyCadencePulseResult.Waiting,
+                session.AutonomyCadence!.ObservePulse()
             );
         }
         finally {
@@ -423,7 +424,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             Assert.Equal(
                 GalateaAutonomyCadencePulseResult
                     .AutonomousActivationDue,
-                session.AutonomyCadence.ObservePulse()
+                session.AutonomyCadence!.ObservePulse()
             );
 
             GalateaLiveTurn second = service.StartHeartbeatActivationTurn(
@@ -433,7 +434,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             service.RollbackHeartbeatActivationAdmission(session, second);
             service.FinishTurn(session, second);
             Assert.Equal(GalateaAutonomyCadence.WaitingState,
-                session.AutonomyCadence.ProjectStatus().State);
+                session.AutonomyCadence!.ProjectStatus().State);
             Assert.Null(session.GetCurrentTurn());
         }
         finally {
@@ -463,7 +464,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
             selectableConnectionIds: [main.Id],
-            timeProvider: clock
+            timeProvider: clock,
+            autonomyCharacterIds: ["alice"]
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -473,7 +475,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         session.TurnLock.Wait();
         try {
-            _ = session.AutonomyCadence.ObservePulse();
+            _ = session.AutonomyCadence!.ObservePulse();
         }
         finally {
             session.TurnLock.Release();
@@ -496,7 +498,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.True(session.TurnLock.Wait(0));
         try {
             GalateaAutonomyCadenceStatus paused = session
-                .AutonomyCadence.ProjectStatus();
+                .AutonomyCadence!.ProjectStatus();
             Assert.Equal(GalateaAutonomyCadence.PausedState,
                 paused.State);
             Assert.Equal(GalateaAutonomyCadence.PausedCode,
@@ -536,7 +538,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             connections: [main],
             selectableConnectionIds: [main.Id],
             timeProvider: clock,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -549,7 +551,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         LoopPulseStatusDto first = await PostWaitingPulseAsync(http);
         long expectedInitialDue = (clock.GetUtcNow()
-            + GalateaAutonomyCadence.IdleInterval)
+            + TimeSpan.FromMinutes(10))
             .ToUnixTimeMilliseconds();
         Assert.Equal(expectedInitialDue,
             first.NextActivationAtUnixTimeMilliseconds);
@@ -595,7 +597,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         Assert.Equal(
             (clock.GetUtcNow()
-                + GalateaAutonomyCadence.IdleInterval)
+                + TimeSpan.FromMinutes(10))
                 .ToUnixTimeMilliseconds(),
             reset.NextActivationAtUnixTimeMilliseconds
         );
@@ -624,7 +626,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             connections: [main],
             selectableConnectionIds: [main.Id],
             timeProvider: clock,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -685,7 +687,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             timeProvider: clock,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -778,7 +780,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -890,7 +892,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             connections: [main],
             delegateTransport: new DurableTransport(backend),
             timeProvider: clock,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         GalateaTestHost? restarted = null;
         try {
@@ -914,7 +916,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
             Assert.Equal(
                 (clock.GetUtcNow()
-                    + GalateaAutonomyCadence.IdleInterval)
+                    + TimeSpan.FromMinutes(10))
                     .ToUnixTimeMilliseconds(),
                 status.NextActivationAtUnixTimeMilliseconds
             );
@@ -1094,7 +1096,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -1451,7 +1453,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             clock.AdvanceMonotonic(TimeSpan.FromSeconds(10));
             session.TurnLock.Wait();
             try {
-                result = session.AutonomyCadence
+                result = session.AutonomyCadence!
                     .ObservePulse();
             }
             finally {

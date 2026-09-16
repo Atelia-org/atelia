@@ -23,7 +23,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await using var host = GalateaTestHost.Create(
             completionFactory,
             normalizer,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         CompletionConnectionConfig connection = GetConnection(host);
         EventAddress failedHead = await CreateFailedBoundaryAsync(

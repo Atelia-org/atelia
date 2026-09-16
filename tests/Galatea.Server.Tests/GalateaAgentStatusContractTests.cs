@@ -24,7 +24,7 @@ public sealed class GalateaAgentStatusContractTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             maintenanceMode: maintenance,
-            heartbeatCharacterIds: enrolled ? ["alice"] : [],
+            autonomyCharacterIds: enrolled ? ["alice"] : [],
             enableServerAgentHostedService: maintenance
         );
         using HttpClient client = fixture.CreateClient();
@@ -85,7 +85,7 @@ public sealed class GalateaAgentStatusContractTests {
         await using var fixture = GalateaTestHost.Create(
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient client = fixture.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
@@ -94,12 +94,12 @@ public sealed class GalateaAgentStatusContractTests {
         await session.TurnLock.WaitAsync();
         try {
             var head = session.Engine.ReadCurrentHead();
-            GalateaAutonomyCadenceStatus before = session.AutonomyCadence.ProjectStatus();
+            GalateaAutonomyCadenceStatus before = session.AutonomyCadence!.ProjectStatus();
             using HttpResponseMessage response = await client.GetAsync("/api/v1/characters/alice/agent/status")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(head, session.Engine.ReadCurrentHead());
-            Assert.Equal(before.State, session.AutonomyCadence.ProjectStatus().State);
+            Assert.Equal(before.State, session.AutonomyCadence!.ProjectStatus().State);
             Assert.Null(session.GetCurrentTurn());
             Assert.Equal(0, factory.CreateCount);
         }

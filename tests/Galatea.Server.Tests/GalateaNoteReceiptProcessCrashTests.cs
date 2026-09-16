@@ -34,7 +34,7 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
                 Connection("note-helper", GalateaLabNoteReceiptResponsesServer.HelperModel, provider)],
             timeProvider: clock, reportArtifact: output.WriteLine,
             characterNoteExtractorConnectionId: "note-helper",
-            heartbeatCharacterIds: ["alice"], enableServerAgentHostedService: true);
+            autonomyCharacterIds: ["alice"], enableServerAgentHostedService: true);
 
         // Real Note extraction, SQLite apply, MemoPod save and valid DerivedInfo
         // settlement; only the seed's LLM boundary is deterministic in-process.
@@ -55,7 +55,7 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
         // real-process configuration before its first admission, then keep it
         // identical for restart. Main/helper endpoints were local from birth.
         JsonNode configuration = JsonNode.Parse(File.ReadAllText(configPath))!;
-        foreach (JsonNode? character in configuration["characters"]!.AsArray()) { character!["heartbeatEnabled"] = false; }
+        foreach (JsonNode? character in configuration["characters"]!.AsArray()) { character!["autonomyIntervalMinutes"] = 0; }
         File.WriteAllText(configPath, configuration.ToJsonString());
         string configDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(configPath)));
         provider.ExpectReceipt(pending.Receipt);

@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 10;
+    internal const int CurrentConfigVersion = 11;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumCharacterCount = 256;
@@ -244,13 +244,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("10"u8)) {
+            || !reader.ValueSpan.SequenceEqual("11"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 10; "
+        "Galatea config requires exact integer version 'v': 11; "
         + "migrate the config before retrying."
     );
 
@@ -275,8 +275,8 @@ internal static class GalateaStrictConfigReader {
                 case "characterContextTemplateFile":
                     RequireStringOrNull(reader.TokenType, property);
                     break;
-                case "heartbeatEnabled":
-                    RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
+                case "autonomyIntervalMinutes":
+                    RequireAutonomyIntervalMinutes(ref reader);
                     break;
                 default:
                     throw Unknown("character", property);
@@ -296,6 +296,25 @@ internal static class GalateaStrictConfigReader {
         if (!seen.Contains("defaultConnectionId")) {
             throw new InvalidDataException(
                 "character requires string field 'defaultConnectionId'."
+            );
+        }
+        if (!seen.Contains("autonomyIntervalMinutes")) {
+            throw new InvalidDataException(
+                "character requires integer field 'autonomyIntervalMinutes'."
+            );
+        }
+    }
+
+    private static void RequireAutonomyIntervalMinutes(
+        ref Utf8JsonReader reader
+    ) {
+        if (reader.TokenType != JsonTokenType.Number
+            || !reader.TryGetInt32(out int minutes)
+            || minutes is < 0 or > GalateaConfigValidation.MaximumAutonomyIntervalMinutes) {
+            throw new InvalidDataException(
+                "autonomyIntervalMinutes must be an integer from 0 to "
+                + GalateaConfigValidation.MaximumAutonomyIntervalMinutes
+                + "."
             );
         }
     }

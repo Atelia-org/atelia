@@ -276,7 +276,7 @@ public sealed class GalateaHttpV1ContractTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             provisionRawOnly: false,
             timeProvider: clock,
-            heartbeatCharacterIds: ["alice"]
+            autonomyCharacterIds: ["alice"]
         );
         using HttpClient client = host.CreateClient();
         _ = await GalateaTestHost.LoginAsync(client);
@@ -291,7 +291,7 @@ public sealed class GalateaHttpV1ContractTests {
             "{\"state\":\"waiting\","
                 + "\"nextActivationAtUnixTimeMilliseconds\":"
                 + (clock.GetUtcNow()
-                    + GalateaAutonomyCadence.IdleInterval)
+                    + TimeSpan.FromMinutes(10))
                     .ToUnixTimeMilliseconds()
                 + ",\"lastActivationAtUnixTimeMilliseconds\":null,"
                 + "\"code\":null}",

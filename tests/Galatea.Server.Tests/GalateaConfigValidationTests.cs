@@ -105,13 +105,13 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public async Task ServerAgentEnrollmentIsSnapshottedForRuntimeAndHost() {
+    public async Task AutonomyEnrollmentIsSnapshottedForRuntimeAndHost() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(root,
                 [User("alice", Path.Combine(root, "sessions", "alice"))]);
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
-            var characters = loaded.Characters.Select(character => character with { HeartbeatEnabled = true }).ToList();
+            var characters = loaded.Characters.Select(character => character with { AutonomyIntervalMinutes = 10 }).ToList();
             GalateaConfig initializerConfig = loaded with {
                 Characters = characters
             };
@@ -120,11 +120,11 @@ public sealed class GalateaConfigValidationTests {
                 initializerConfig, factory,
                 DisabledGalateaUserMessageNormalizer.Instance
             );
-            characters[0] = characters[0] with { HeartbeatEnabled = false };
-            Assert.Equal(["alice"], service.HeartbeatCharacterIds);
+            characters[0] = characters[0] with { AutonomyIntervalMinutes = 0 };
+            Assert.Equal(["alice"], service.AutonomyCharacterIds);
             Assert.Throws<NotSupportedException>(() =>
-                ((IList<string>)service.HeartbeatCharacterIds)[0] = "changed");
-            Assert.Empty(initializerConfig.HeartbeatCharacterIds);
+                ((IList<string>)service.AutonomyCharacterIds)[0] = "changed");
+            Assert.Empty(initializerConfig.AutonomyCharacterIds);
             Assert.Equal(0, factory.CreateCallCount);
         }
         finally {
@@ -151,7 +151,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigTemplateStartsWithExactV9AndRoundTrips() {
+    public void RootConfigTemplateStartsWithExactV11AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
             GalateaConfigTemplateFactory.CreateRootFile(),
             GalateaJson.Options
@@ -163,14 +163,14 @@ public sealed class GalateaConfigValidationTests {
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("10", first.Value.GetRawText());
+        Assert.Equal("11", first.Value.GetRawText());
 
         GalateaRootFileConfig? decoded = JsonSerializer.Deserialize(
             template,
             GalateaJsonContext.Default.GalateaRootFileConfig
         );
         Assert.NotNull(decoded);
-        Assert.All(decoded.Characters, static character => Assert.False(character.HeartbeatEnabled));
+        Assert.All(decoded.Characters, static character => Assert.Equal(0, character.AutonomyIntervalMinutes));
         Assert.Equal(["/galatea-homes/alice", "/galatea-homes/bob"],
             decoded.Characters.Select(static user => user.HomeDir));
         Assert.Equal(
@@ -1006,7 +1006,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV10OutsideFirstProperty() {
+    public void RootConfigAcceptsExactV11OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1014,11 +1014,11 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":10,";
+            const string LeadingVersion = "{\"v\":11,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":10}";
+                + ",\"v\":11}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -1030,7 +1030,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV10AndRejectsOtherVersions() {
+    public void RootConfigRequiresExactIntegerV11AndRejectsOtherVersions() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1038,7 +1038,7 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":10";
+            const string Version = "\"v\":11";
             Assert.Contains(Version, original, StringComparison.Ordinal);
             Assert.Equal("alice", Assert.Single(GalateaConfigLoader.Load(configPath).Characters).CharacterId);
 
@@ -1050,7 +1050,7 @@ public sealed class GalateaConfigValidationTests {
                 ),
                 original.Replace(Version, "\"v\":null",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":\"10\"",
+                original.Replace(Version, "\"v\":\"11\"",
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":0",
                     StringComparison.Ordinal),
@@ -1072,13 +1072,13 @@ public sealed class GalateaConfigValidationTests {
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":9",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":11",
+                original.Replace(Version, "\"v\":10",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":10.0",
+                original.Replace(Version, "\"v\":11.0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":10e0",
+                original.Replace(Version, "\"v\":11e0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":10",
+                original.Replace(Version, "\"V\":11",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -1166,11 +1166,11 @@ public sealed class GalateaConfigValidationTests {
                 GalateaConfigLoader.ConnectionsFileName
             );
             byte[] original = File.ReadAllBytes(configPath);
-            Assert.Contains("\"v\":10,", System.Text.Encoding.UTF8.GetString(original), StringComparison.Ordinal);
+            Assert.Contains("\"v\":11,", System.Text.Encoding.UTF8.GetString(original), StringComparison.Ordinal);
             byte[] versionless = original;
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":10,",
+                    "\"v\":11,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
@@ -1387,8 +1387,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":10,\"characters\"",
-                    "{\"v\":10,\"unknown\":1,\"characters\"",
+                    "{\"v\":11,\"characters\"",
+                    "{\"v\":11,\"unknown\":1,\"characters\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(

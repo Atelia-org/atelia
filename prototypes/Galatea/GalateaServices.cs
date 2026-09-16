@@ -87,7 +87,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly IReadOnlyList<GalateaConnectionInfoDto>
         _selectableConnections;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
-    internal IReadOnlyList<string> HeartbeatCharacterIds { get; }
+    internal IReadOnlyList<string> AutonomyCharacterIds { get; }
     public GalateaHostService(
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
@@ -166,7 +166,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _players = config.Players.ToDictionary(static player => player.PlayerId, StringComparer.Ordinal);
         _connectionCatalog = components.ConnectionCatalog;
         _selectableConnections = components.SelectableConnections;
-        HeartbeatCharacterIds = components.HeartbeatCharacterIds;
+        AutonomyCharacterIds = components.AutonomyCharacterIds;
     }
 
     internal GalateaHostService(
@@ -183,7 +183,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
-        HeartbeatCharacterIds = GalateaConfigValidation.ReadHeartbeatCharacterIds(
+        AutonomyCharacterIds = GalateaConfigValidation.ReadAutonomyCharacterIds(
             config.Characters
         );
         _ = GalateaDelegateConfigReader.Validate(config.Delegates);
@@ -287,8 +287,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizerFactory);
         GalateaConfigValidation.RequireValidPlayers(config.Players);
-        IReadOnlyList<string> heartbeatCharacterIds =
-            GalateaConfigValidation.ReadHeartbeatCharacterIds(
+        IReadOnlyList<string> autonomyCharacterIds =
+            GalateaConfigValidation.ReadAutonomyCharacterIds(
                 config.Characters
             );
         GalateaConfigValidation.RequireValidStorageTopology(
@@ -392,7 +392,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 characters,
                 connectionCatalog,
                 selectableConnections,
-                heartbeatCharacterIds
+                autonomyCharacterIds
             );
         }
         catch (Exception exception) {
@@ -463,7 +463,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IReadOnlyDictionary<string, CompletionConnectionConfig>
             ConnectionCatalog,
         IReadOnlyList<GalateaConnectionInfoDto> SelectableConnections,
-        IReadOnlyList<string> HeartbeatCharacterIds
+        IReadOnlyList<string> AutonomyCharacterIds
     );
 
     internal static IReadOnlyDictionary<string, IOutboundMailExtractor>
@@ -1962,12 +1962,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "角色站内信生成未完成；请先处理会话恢复。"
             );
         }
-        bool settled = host.AutonomyCadence.SettleMainTurn(
+        bool settled = host.AutonomyCadence?.SettleMainTurn(
             turn.AutonomyCadenceSettlement,
             turn.FreshInput is GalateaFreshInput.HeartbeatActivation,
             completed,
             turn.AutonomyCadenceClaim
-        );
+        ) ?? turn.AutonomyCadenceSettlement.TrySettle();
         if (settled && completed) {
             host.AutomaticReplyFailed = false;
             host.AutomaticAdmissionFailed = false;
@@ -2001,14 +2001,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
+        GalateaAutonomyCadence cadence = host.AutonomyCadence
+            ?? throw new InvalidOperationException(
+                "Heartbeat activation requires a positive autonomy interval."
+            );
         GalateaLiveTurn turn = host.StartTurn(
             new GalateaFreshInput.HeartbeatActivation(
                 host.Character.CharacterName
             ),
             options
         );
-        if (host.AutonomyCadence
-            .TryClaimAutonomousActivationStarted(out
+        if (cadence.TryClaimAutonomousActivationStarted(out
                 GalateaAutonomyCadenceClaim? claim)) {
             turn.BindAutonomyCadenceClaim(
                 claim ?? throw new InvalidOperationException(
@@ -2038,11 +2041,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(turn);
         if (turn.FreshInput is not GalateaFreshInput.HeartbeatActivation
             || turn.AutonomyCadenceClaim is not { } claim
-            || !host.AutonomyCadence
+            || !(host.AutonomyCadence?
                 .TryRollbackAutonomousActivationClaim(
                     claim,
                     turn.AutonomyCadenceSettlement
-                )) {
+                ) ?? false)) {
             throw new InvalidOperationException(
                 "Heartbeat activation admission could not roll back its exact cadence claim."
             );
@@ -3678,8 +3681,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 try {
                     await ReconcileDurableAdmissionAsync(host, ct)
                         .ConfigureAwait(false);
-                    if (HeartbeatCharacterIds.Contains(character.CharacterId, StringComparer.Ordinal)) {
-                        host.AutonomyCadence.Arm();
+                    if (AutonomyCharacterIds.Contains(character.CharacterId, StringComparer.Ordinal)) {
+                        host.AutonomyCadence?.Arm();
                         host.PublishAutonomyStatus();
                     }
                 }
@@ -4130,7 +4133,12 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
         DelegationHandle = delegationHandle;
         CharacterNoteExtractor = characterNoteExtractor;
         PlayerTurnRecallProvider = playerTurnRecallProvider;
-        AutonomyCadence = new(timeProvider ?? TimeProvider.System);
+        AutonomyCadence = character.AutonomyIntervalMinutes > 0
+            ? new GalateaAutonomyCadence(
+                timeProvider ?? TimeProvider.System,
+                TimeSpan.FromMinutes(character.AutonomyIntervalMinutes)
+            )
+            : null;
         if (characterMemoryReconciler is not null
             && derivedInfoEnricher is not null) {
             CharacterNoteDerivedInfoPump =
@@ -4175,7 +4183,7 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
     internal CharacterNoteDerivedInfoPump?
         CharacterNoteDerivedInfoPump { get; }
 
-    internal GalateaAutonomyCadence AutonomyCadence {
+    internal GalateaAutonomyCadence? AutonomyCadence {
         get;
     }
 
@@ -4204,12 +4212,15 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
             SetAgentStatus("blocked", "AUTOMATIC_REPLY_FAILED");
             return;
         }
-        if (!AutonomyCadence.IsArmed) { SetAgentStatus("waiting"); return; }
-        GalateaAutonomyCadenceStatus cadence = AutonomyCadence.ProjectStatus();
+        if (AutonomyCadence is not { IsArmed: true } cadence) {
+            SetAgentStatus("waiting");
+            return;
+        }
+        GalateaAutonomyCadenceStatus status = cadence.ProjectStatus();
         Volatile.Write(ref _agentStatus, new GalateaAgentStatusDto(
-            cadence.State, Character.DefaultConnectionId,
-            cadence.NextActivationAtUnixTimeMilliseconds,
-            cadence.LastActivationAtUnixTimeMilliseconds, cadence.Code
+            status.State, Character.DefaultConnectionId,
+            status.NextActivationAtUnixTimeMilliseconds,
+            status.LastActivationAtUnixTimeMilliseconds, status.Code
         ));
     }
 
@@ -4417,21 +4428,6 @@ internal static class GalateaConfigLoader {
         }
 
         return LoadCore(resolvedPath, ReadRootFile(resolvedPath), projectedSources: null);
-    }
-
-    // Offline candidate validation uses the same runtime contracts and dependencies.
-    // Only the uncommitted config and effective source text are supplied in memory.
-    internal static GalateaConfig ValidateConfigUpgradeCandidate(
-        string configPath, byte[] configBytes, IReadOnlyDictionary<string, string> projectedSources
-    ) {
-        if (configBytes.Length is < 1 or > GalateaStrictConfigReader.MaximumConfigUtf8Bytes) {
-            throw new InvalidDataException("Configuration upgrade candidate exceeds the config byte limit.");
-        }
-        GalateaStrictConfigReader.ValidateRoot(configBytes);
-        GalateaRootFileConfig root = JsonSerializer.Deserialize(configBytes,
-            GalateaJsonContext.Default.GalateaRootFileConfig)
-            ?? throw new InvalidDataException("Invalid configuration upgrade candidate.");
-        return LoadCore(Path.GetFullPath(configPath), root, projectedSources);
     }
 
     private static GalateaConfig LoadCore(string resolvedPath, GalateaRootFileConfig rootFile,
@@ -4786,7 +4782,7 @@ internal static class GalateaConfigLoader {
                 character.SessionProvisioning,
                 systemPrompt,
                 character.DefaultConnectionId,
-                character.HeartbeatEnabled
+                character.AutonomyIntervalMinutes
             ));
         }
         return (
@@ -5166,7 +5162,8 @@ internal static class GalateaConfigTemplateFactory {
             DefaultConnectionId: DefaultConnectionId,
             CharacterContextTemplate: "",
             CharacterContextTemplateFile:
-                GalateaDefaults.CharacterContextTemplateFile
+                GalateaDefaults.CharacterContextTemplateFile,
+            AutonomyIntervalMinutes: 0
         );
     }
 }

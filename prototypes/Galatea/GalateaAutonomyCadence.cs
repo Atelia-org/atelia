@@ -62,8 +62,9 @@ internal sealed class GalateaAutonomyCadenceClaim(
 }
 
 /// <summary>
-/// Process-local cadence for server-owned autonomous turns. Ten minutes is
-/// code-owned; a new session rearms instead of catching up missed work.
+/// Process-local cadence for server-owned autonomous turns. The positive
+/// interval is immutable per session; a new session rearms instead of
+/// catching up missed work.
 ///
 /// The caller must hold the corresponding session TurnLock for every method.
 /// This type performs no locking and owns no timer, background work, SQLite
@@ -72,22 +73,31 @@ internal sealed class GalateaAutonomyCadenceClaim(
 /// is used only to project diagnostic timestamps.
 /// </summary>
 internal sealed class GalateaAutonomyCadence {
-    internal static readonly TimeSpan IdleInterval = TimeSpan.FromMinutes(10);
-
     internal const string WaitingState = "waiting";
     internal const string PausedState = "autonomy-paused";
     internal const string PausedCode = "AUTONOMOUS_TURN_FAILED";
 
     private readonly TimeProvider _timeProvider;
+    private readonly TimeSpan _idleInterval;
     private long? _lastPulseTimestamp;
     private long? _nextDueFromTimestamp;
     private long? _lastAutonomousActivationTimestamp;
     private GalateaAutonomyCadenceClaim? _activeClaim;
     private bool _paused;
 
-    internal GalateaAutonomyCadence(TimeProvider timeProvider) {
+    internal GalateaAutonomyCadence(
+        TimeProvider timeProvider,
+        TimeSpan idleInterval
+    ) {
         _timeProvider = timeProvider
             ?? throw new ArgumentNullException(nameof(timeProvider));
+        if (idleInterval <= TimeSpan.Zero) {
+            throw new ArgumentOutOfRangeException(
+                nameof(idleInterval),
+                "Autonomy cadence interval must be positive."
+            );
+        }
+        _idleInterval = idleInterval;
     }
 
     internal bool IsArmed => _lastPulseTimestamp is not null;
@@ -116,7 +126,7 @@ internal sealed class GalateaAutonomyCadence {
             return GalateaAutonomyCadencePulseResult.Waiting;
         }
         if (now < dueFrom
-            || _timeProvider.GetElapsedTime(dueFrom, now) < IdleInterval) {
+            || _timeProvider.GetElapsedTime(dueFrom, now) < _idleInterval) {
             return GalateaAutonomyCadencePulseResult.Waiting;
         }
 
@@ -141,7 +151,7 @@ internal sealed class GalateaAutonomyCadence {
         }
         long now = _timeProvider.GetTimestamp();
         if (now < dueFrom
-            || _timeProvider.GetElapsedTime(dueFrom, now) < IdleInterval) {
+            || _timeProvider.GetElapsedTime(dueFrom, now) < _idleInterval) {
             return false;
         }
         var created = new GalateaAutonomyCadenceClaim(
@@ -262,9 +272,9 @@ internal sealed class GalateaAutonomyCadence {
 
     private TimeSpan RemainingUntilDue(long dueFrom, long now) {
         TimeSpan elapsed = ElapsedOrZero(dueFrom, now);
-        return elapsed >= IdleInterval
+        return elapsed >= _idleInterval
             ? TimeSpan.Zero
-            : IdleInterval - elapsed;
+            : _idleInterval - elapsed;
     }
 
     private TimeSpan ElapsedOrZero(long start, long end) => end < start
