@@ -97,7 +97,12 @@ public static partial class RecapGridStoreMaintenance {
         }
         catch (RecapGridStorePartialProofException exception) {
             return new RecapGridStoreUpgradeResult.Invalid(
-                exception.Code, exception.Message);
+                exception.Failure switch {
+                    RecapGridStorePartialProofFailure.Unprovable => "partial-proof-unprovable",
+                    RecapGridStorePartialProofFailure.Ambiguous => "partial-proof-ambiguous",
+                    RecapGridStorePartialProofFailure.Unavailable => "partial-proof-unavailable",
+                    _ => "partial-proof-unprovable"
+                }, exception.Message);
         }
         catch (Exception exception) when (exception is ArgumentException
             or FormatException

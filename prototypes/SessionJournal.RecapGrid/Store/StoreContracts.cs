@@ -97,13 +97,25 @@ public abstract record RecapGridStoreUpgradeResult {
 /// facts needed to attach V4 partial cells to RowWork.  The Store deliberately
 /// does not choose an alternative scope or prior.
 /// </summary>
+public enum RecapGridStorePartialProofFailure {
+    Unprovable,
+    Ambiguous,
+    Unavailable
+}
+
 public sealed class RecapGridStorePartialProofException : Exception {
-    public RecapGridStorePartialProofException(string code, string detail)
+    public RecapGridStorePartialProofException(
+        RecapGridStorePartialProofFailure failure,
+        string detail
+    )
         : base(detail) {
-        Code = code;
+        if (string.IsNullOrWhiteSpace(detail) || detail.Length > 1024) {
+            throw new ArgumentException("Partial-proof detail must be nonempty and bounded.", nameof(detail));
+        }
+        Failure = failure;
     }
 
-    public string Code { get; }
+    public RecapGridStorePartialProofFailure Failure { get; }
 }
 
 public sealed record RecapGridStoreExportCursor {

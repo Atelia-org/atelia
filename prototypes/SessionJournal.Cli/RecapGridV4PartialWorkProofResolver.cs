@@ -24,9 +24,11 @@ internal static class RecapGridV4PartialWorkProofResolver {
 
     private static V4Scope[] InventoryIntersection(string repositoryPath) {
         HistoryTimelineScopeInventoryResult timelines = HistoryTimelineMaintenance.InventoryScopes(repositoryPath);
-        if (timelines is not HistoryTimelineScopeInventoryResult.Available t) throw Unavailable("Timeline scope inventory is unavailable.");
+        if (timelines is HistoryTimelineScopeInventoryResult.Invalid invalidTimeline) throw Unprovable($"Timeline scope inventory invalid: {invalidTimeline.Code}: {invalidTimeline.Detail}");
+        if (timelines is not HistoryTimelineScopeInventoryResult.Available t) throw Unavailable("Timeline scope inventory is temporarily unavailable.");
         RecapGridControlScopeInventoryResult controls = RecapGridControlMaintenance.InventoryScopes(repositoryPath);
-        if (controls is not RecapGridControlScopeInventoryResult.Available c) throw Unavailable("Control scope inventory is unavailable.");
+        if (controls is RecapGridControlScopeInventoryResult.Invalid invalidControl) throw Unprovable($"Control scope inventory invalid: {invalidControl.Code}: {invalidControl.Detail}");
+        if (controls is not RecapGridControlScopeInventoryResult.Available c) throw Unavailable("Control scope inventory is temporarily unavailable.");
         var control = c.Scopes.Select(static x => new V4Scope(x.RefId.ToHexString(), x.TimelineId.Value)).ToHashSet();
         return t.Scopes.Select(static x => new V4Scope(x.RefId.ToHexString(), x.TimelineId.Value))
             .Where(control.Contains).OrderBy(static x => x.RefId, StringComparer.Ordinal).ThenBy(static x => x.TimelineId, StringComparer.Ordinal).ToArray();
@@ -37,24 +39,38 @@ internal static class RecapGridV4PartialWorkProofResolver {
         return candidates.Length switch {
             1 => candidates[0],
             0 => throw Unprovable("No exact Control/Timeline scope can prove this V4 partial cell."),
-            _ => throw new RecapGridStorePartialProofException("partial-proof-ambiguous", "Multiple exact Control/Timeline scopes can prove this V4 partial cell.")
+            _ => throw Ambiguous("Multiple exact Control/Timeline scopes can prove this V4 partial cell.")
         };
     }
 
     private static RowWork? TryResolveScope(string repositoryPath, V4Scope scope, IReadOnlyList<V4Row> rows, string root, string history, IReadOnlyList<V4Cell> cells) {
         RefId refId = ParseRef(scope.RefId);
         RecapGridControlReaderOpenResult controlOpened = RecapGridControlMaintenance.OpenExactReader(repositoryPath, refId, new TimelineId(scope.TimelineId));
-        if (controlOpened is not RecapGridControlReaderOpenResult.Opened control) throw Unavailable("An inventoried Control scope cannot be opened exactly.");
+        if (controlOpened is not RecapGridControlReaderOpenResult.Opened control) {
+            if (controlOpened is RecapGridControlReaderOpenResult.Busy) throw Unavailable("An inventoried Control scope is busy.");
+            throw Unprovable($"An inventoried Control scope cannot be opened exactly: {controlOpened}.");
+        }
         using (control.Handle) {
             RecapGridControlSnapshotResult snapshotResult = control.Handle.Reader.ReadSnapshot();
-            if (snapshotResult is not RecapGridControlSnapshotResult.Available snapshot) throw Unavailable("An inventoried Control scope cannot be read.");
-            RegisteredGridRecipe? registered = snapshot.Snapshot.Recipes.SingleOrDefault(x => x.Recipe.Digest.Value == root);
+            if (snapshotResult is not RecapGridControlSnapshotResult.Available snapshot) {
+                if (snapshotResult is RecapGridControlSnapshotResult.Busy or RecapGridControlSnapshotResult.Disposed) throw Unavailable($"An inventoried Control scope is temporarily unreadable: {snapshotResult}.");
+                throw Unprovable($"An inventoried Control scope is invalid: {snapshotResult}.");
+            }
+            RegisteredGridRecipe[] registeredMatches = snapshot.Snapshot.Recipes.Where(x => x.Recipe.Digest.Value == root).ToArray();
+            if (registeredMatches.Length > 1) throw Unprovable("Control has duplicate registrations for the V4 root recipe.");
+            RegisteredGridRecipe? registered = registeredMatches.SingleOrDefault();
             if (registered is null || registered.Recipe.TimelineId.Value != scope.TimelineId) return null;
             HistoryTimelineExactReaderOpenResult timelineOpened = HistoryTimelineMaintenance.OpenExactReader(repositoryPath, refId, new TimelineId(scope.TimelineId));
-            if (timelineOpened is not HistoryTimelineExactReaderOpenResult.Opened timeline) throw Unavailable("An inventoried Timeline scope cannot be opened exactly.");
+            if (timelineOpened is not HistoryTimelineExactReaderOpenResult.Opened timeline) {
+                if (timelineOpened is HistoryTimelineExactReaderOpenResult.Busy) throw Unavailable("An inventoried Timeline scope is busy.");
+                throw Unprovable($"An inventoried Timeline scope cannot be opened exactly: {timelineOpened}.");
+            }
             using (timeline.Handle) {
                 HistoryTimelineSnapshotResult timelineSnapshot = timeline.Handle.Reader.ReadSnapshot();
-                if (timelineSnapshot is not HistoryTimelineSnapshotResult.Available head) throw Unavailable("An inventoried Timeline scope cannot be read.");
+                if (timelineSnapshot is not HistoryTimelineSnapshotResult.Available head) {
+                    if (timelineSnapshot is HistoryTimelineSnapshotResult.Busy) throw Unavailable("An inventoried Timeline scope is busy.");
+                    throw Unprovable($"An inventoried Timeline scope is invalid: {timelineSnapshot}.");
+                }
                 IReadOnlyList<HistoryTimelineSelectedRow> selected = ReadSelectedPath(timeline.Handle.Reader, head.Head);
                 int index = selected.ToList().FindIndex(x => x.Descriptor.RowId.Value == history);
                 if (index < 0) return null;
@@ -75,7 +91,9 @@ internal static class RecapGridV4PartialWorkProofResolver {
             int throughIndex = selected.ToList().FindIndex(x => x.Descriptor.RowId == through);
             if (throughIndex < 0) throw Unprovable("V4 Overlay bootstrap row is absent from its selected path.");
             prefix = index <= throughIndex;
-            baseRecipe = recipes.SingleOrDefault(x => x.Recipe.Digest == recipe.BaseRecipeDigest)?.Recipe ?? throw Unprovable("V4 Overlay base recipe is absent from Control.");
+            RegisteredGridRecipe[] baseMatches = recipes.Where(x => x.Recipe.Digest == recipe.BaseRecipeDigest).ToArray();
+            if (baseMatches.Length > 1) throw Unprovable("Control has duplicate registrations for the V4 Overlay base recipe.");
+            baseRecipe = baseMatches.SingleOrDefault()?.Recipe ?? throw Unprovable("V4 Overlay base recipe is absent from Control.");
         }
         var assignments = new List<RowWorkAssignment>(recipe.Target.OrderedColumns.Count);
         foreach (BuildTargetColumn target in recipe.Target.OrderedColumns) {
@@ -118,8 +136,9 @@ internal static class RecapGridV4PartialWorkProofResolver {
     private static int ReadSchemaVersion(SqliteConnection connection) { using SqliteCommand command = connection.CreateCommand(); command.CommandText = "PRAGMA user_version;"; return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture); }
     private static SqliteConnection OpenReadOnly(string path) { var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Cache = SqliteCacheMode.Private, Pooling = false, DefaultTimeout = 0 }.ToString()); connection.Open(); return connection; }
     private static RefId ParseRef(string value) => new(ulong.Parse(value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture));
-    private static RecapGridStorePartialProofException Unprovable(string detail) => new("partial-proof-unprovable", detail);
-    private static RecapGridStorePartialProofException Unavailable(string detail) => new("partial-proof-unavailable", detail);
+    private static RecapGridStorePartialProofException Unprovable(string detail) => new(RecapGridStorePartialProofFailure.Unprovable, detail);
+    private static RecapGridStorePartialProofException Ambiguous(string detail) => new(RecapGridStorePartialProofFailure.Ambiguous, detail);
+    private static RecapGridStorePartialProofException Unavailable(string detail) => new(RecapGridStorePartialProofFailure.Unavailable, detail);
     private sealed record V4Scope(string RefId, string TimelineId);
     private sealed record V4Cell(string Id, string RecipeDigest, string HistoryRowId, string LogicalColumnId, string DefinitionDigest);
     private sealed record V4Member(string LogicalColumnId, string DefinitionDigest, string CellId);
