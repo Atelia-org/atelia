@@ -13,18 +13,7 @@ Diagnostics、Completion.Abstractions、Completion、Completion.Tools 的源码�
 
 本机冻结包及 manifest 位于 `gitignore/completion-packages/0.1.0-dev.20260916114103/`。
 [本地配置](../eng/NuGet.Completion.Local.config)精确映射四包，其他依赖仍用 nuget.org，
-独立缓存为 `gitignore/completion-local-cache/`。在仓库根执行（SDK 10.0.201）：
-
-本机默认 SDK 版本低于 global.json，已将本轮固定 SDK 保存在 ignored 的
-`gitignore/dotnet-10.0.201/`（不改全局安装，约 860 MiB）。本机新 shell 先执行：
-
-```sh
-export DOTNET_ROOT="$PWD/gitignore/dotnet-10.0.201"
-export PATH="$DOTNET_ROOT:$PATH"
-dotnet --version
-```
-
-其他机器正常安装 10.0.201 即可，不需要复制本机 SDK。然后执行：
+独立缓存为 `gitignore/completion-local-cache/`。在仓库根执行：
 
 ```sh
 dotnet restore tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --configfile eng/NuGet.Completion.Local.config -p:UseCompletionSources=false -m:1 -nr:false
