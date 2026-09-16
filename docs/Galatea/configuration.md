@@ -255,7 +255,9 @@ context 仍是 raw-only。
 
 对已有 raw-only/partial session 的完整启用，必须停服、备份、先做 strict read-only audit，再使用专用 bounded admission 走 `init`、受限 `timeline sync`、`control provision-asset`、compose/put recipe、有界 candidate build 与 `control promote`。`build` 才是 provider effect，direct `activate` 不能取代 promotion；未知结果绝不自动重试。完整、按当前 CLI 参数编写的流程见[已有 SessionJournal 的 RecapGrid 显式升级](recap-grid-existing-session-upgrade.md)。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name`。scaffold 不会创建 provider、Timeline、Control 或 Store；其他持久产物仍使用各自的 canonical 格式。
 
-该 asset 包含 `world-understanding` 与 `autobiography` 两列。Host 会在 fresh admission 前验证 active recipe 是否精确匹配该角色的新语义资产定义；不匹配时以 `character-asset-mismatch` fail closed。CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
+该 asset 包含 `world-understanding` 与 `autobiography` 两列。asset/default 只用于选择尚无 `RowWork` 的新工作；已有行按持久
+`RowWork` 的 actual producer 验真，不因当前 default 或 active recipe 变化而阻断。普通策略变化不改写 `ActiveRecipeDigest`。
+CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
 
 ## V11 → V12 root config operator 升级
 

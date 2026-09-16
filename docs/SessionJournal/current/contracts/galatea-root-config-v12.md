@@ -35,8 +35,9 @@ RecapGrid 配置收口而改变。相对路径仍以 `config.json` 所在目录�
 
 V12 删除 root config 的 live `routeManifestPath`、`agentControlProfileFiles` 与
 `currentAgentControlProfileId` authority。maintenance connection、retry invoker、connection registry 与全局并发 lane
-共享；每个 work 不得另建 semaphore。Host 根据已持久化 `RowWork` 的 actual family、protocol 与 semantic key 在执行时构造
-exact route，因而新默认 family 和旧未完成 family 都能按其自身事实运行。
+共享；每个 work 不得另建 semaphore。asset/default 仅选择尚无 `RowWork` 的新工作；Host 根据已持久化 `RowWork` 的
+actual family、protocol 与 semantic key 在执行时构造 exact route，因而已有行按 actual producer 验真，不因当前 default 或
+active recipe 变化阻断。普通策略变化不改写 `ActiveRecipeDigest`，新默认 family 与旧未完成 family 都能按其自身事实运行。
 
 已完成 Recap 的读取不依赖 route manifest 或可用 maintenance connection。maintenance connection 不可用时，只在需要新生成
 时返回具体阻塞。独立 SessionJournal CLI 的 exact route manifest 仍是其显式 build/operator workflow 的输入；保留它不等于
