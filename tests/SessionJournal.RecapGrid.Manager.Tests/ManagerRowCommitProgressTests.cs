@@ -27,7 +27,7 @@ public sealed partial class ManagerVerticalTests {
         using (RecapGridManagerHandle manager = OpenManager(fixture, hooks)) {
             RecapGridBuildRequest request = zeroColumns
                 ? CandidateRequest(fixture.Recipe.Digest)
-                : Request();
+                : Request(fixture.Recipe.Target);
             var result = Assert.IsType<RecapGridBuildResult.Fulfilled>(
                 await manager.Manager.BuildAsync(request, executor,
                     rowCommitted: value => {
@@ -58,7 +58,7 @@ public sealed partial class ManagerVerticalTests {
         using (fixture.Journal)
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
             var result = Assert.IsType<RecapGridBuildResult.Fulfilled>(
-                await manager.Manager.BuildAsync(Request(), new RecordingExecutor(),
+                await manager.Manager.BuildAsync(Request(fixture.Recipe.Target), new RecordingExecutor(),
                     rowCommitted: _ => {
                         observed++;
                         throw new IOException("observer failed");

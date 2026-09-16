@@ -42,32 +42,19 @@ public sealed partial class RecapGridManager {
             previousRowResultId = previousRow.View.Id;
         }
 
-        RowBuildAssignment[] provisionalAssignments;
-        try {
-            provisionalAssignments = DeriveAssignments(
-                plan,
-                descriptor,
-                isOverlayBootstrap,
-                baseRow,
-                work: null
-            );
-        }
-        catch (Exception exception) when (IsContractFailure(exception)) {
-            return (null, Invalid(
-                "RowBuildSpecDerivationInvalid",
-                exception.Message
-            ));
-        }
-        (RowWork? work, RecapGridBuildResult? workError) = SelectRowWork(
+        (RowWork? work, RecapGridBuildResult? workError) = ReadRowWork(
             plan,
-            descriptor,
-            previousRowResultId,
-            provisionalAssignments,
-            allowNewWorkSelection
+            descriptor
         );
         if (workError is not null) {
             return (null, workError);
         }
+        if (work is null && plan.NewWorkProducerTarget is null) {
+            return (null, new RecapGridBuildResult.ProducerPolicyRequired(
+                plan.Recipe.Digest, descriptor.RowId));
+        }
+        BuildTarget producerTarget = work?.ProducerTarget
+            ?? plan.NewWorkProducerTarget!;
         RowBuildAssignment[] assignments;
         try {
             assignments = DeriveAssignments(
@@ -75,11 +62,33 @@ public sealed partial class RecapGridManager {
                 descriptor,
                 isOverlayBootstrap,
                 baseRow,
+                producerTarget,
                 work
             );
         }
         catch (Exception exception) when (IsContractFailure(exception)) {
             return (null, Invalid("RowWorkAssignmentDerivationInvalid", exception.Message));
+        }
+        if (work is null && allowNewWorkSelection) {
+            RecapGridBuildResult? targetError = ValidateNewWorkProducerTarget(
+                plan, producerTarget);
+            if (targetError is not null) {
+                return (null, targetError);
+            }
+            (work, workError) = SelectNewRowWork(
+                plan, descriptor, previousRowResultId, assignments, producerTarget);
+            if (workError is not null) {
+                return (null, workError);
+            }
+            producerTarget = work!.ProducerTarget;
+            try {
+                assignments = DeriveAssignments(
+                    plan, descriptor, isOverlayBootstrap, baseRow,
+                    producerTarget, work);
+            }
+            catch (Exception exception) when (IsContractFailure(exception)) {
+                return (null, Invalid("RowWorkAssignmentDerivationInvalid", exception.Message));
+            }
         }
         try {
             var coordinate = new RowViewCoordinate(
@@ -87,7 +96,7 @@ public sealed partial class RecapGridManager {
                 descriptor.TimelineId,
                 descriptor.RowId,
                 plan.Recipe.Digest,
-                (work?.ProducerTarget ?? plan.ProducerTarget).Digest,
+                producerTarget.Digest,
                 descriptor.PreviousRowId,
                 previousRowResultId,
                 !isOverlayBootstrap
@@ -99,7 +108,7 @@ public sealed partial class RecapGridManager {
                     plan.Recipe,
                     coordinate,
                     assignments,
-                    plan.ProducerTarget
+                    producerTarget
                 ),
                 GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
                     plan.Recipe, coordinate, assignments, work
@@ -107,7 +116,7 @@ public sealed partial class RecapGridManager {
                 GridBuildRecipeKind.Overlay
                     when isOverlayBootstrap && work is null
                     => RowBuildSpec.CreateOverlayBootstrapProposed(
-                        plan.Recipe, coordinate, assignments, plan.ProducerTarget
+                        plan.Recipe, coordinate, assignments, producerTarget
                     ),
                 GridBuildRecipeKind.Overlay
                     when isOverlayBootstrap
@@ -120,7 +129,7 @@ public sealed partial class RecapGridManager {
                 GridBuildRecipeKind.Overlay
                     when work is null
                     => RowBuildSpec.CreateNormalProposed(
-                        plan.Recipe, coordinate, assignments, plan.ProducerTarget
+                        plan.Recipe, coordinate, assignments, producerTarget
                     ),
                 GridBuildRecipeKind.Overlay
                     => RowBuildSpec.CreateNormal(
@@ -151,6 +160,7 @@ public sealed partial class RecapGridManager {
         HistorySegmentDescriptor descriptor,
         bool isOverlayBootstrap,
         BuiltRow? baseRow,
+        BuildTarget producerTarget,
         RowWork? work
     ) {
         HashSet<LogicalColumnId> recomputed = plan.Recipe
@@ -169,7 +179,6 @@ public sealed partial class RecapGridManager {
                 static cell => cell.LogicalColumnId
             );
         }
-        BuildTarget producerTarget = work?.ProducerTarget ?? plan.ProducerTarget;
         var assignments = new RowBuildAssignment[
             producerTarget.OrderedColumns.Count
         ];
@@ -203,12 +212,28 @@ public sealed partial class RecapGridManager {
         return assignments;
     }
 
-    private (RowWork? Work, RecapGridBuildResult? Error) SelectRowWork(
+    private static RecapGridBuildResult? ValidateNewWorkProducerTarget(
         FrozenRecipePlan plan,
-        HistorySegmentDescriptor descriptor,
-        RowResultId? previousRowResultId,
-        IReadOnlyList<RowBuildAssignment> assignments,
-        bool allowNewWorkSelection
+        BuildTarget producerTarget
+    ) {
+        foreach (BuildTargetColumn column in producerTarget.OrderedColumns) {
+            if (!plan.RegisteredDefinitions.TryGetValue(
+                    column.DefinitionDigest,
+                    out MaintainerDefinitionRevision? definition)
+                || definition.LogicalColumnId != column.LogicalColumnId
+                || !plan.RegisteredFamilies.ContainsKey(definition.FamilyDigest)) {
+                return Invalid(
+                    "RecipeDefinitionClosureInvalid",
+                    "A new RowWork producer target lacks its exact definition or family."
+                );
+            }
+        }
+        return null;
+    }
+
+    private (RowWork? Work, RecapGridBuildResult? Error) ReadRowWork(
+        FrozenRecipePlan plan,
+        HistorySegmentDescriptor descriptor
     ) {
         var key = new RowWorkKey(
             descriptor.RefId,
@@ -223,12 +248,22 @@ public sealed partial class RecapGridManager {
         if (read is not RecapGridStoreReadResult<RowWork>.Missing) {
             return (null, MapRowWorkRead(read));
         }
-        if (!allowNewWorkSelection) {
-            return (null, null);
-        }
+        return (null, null);
+    }
+
+    private (RowWork? Work, RecapGridBuildResult? Error) SelectNewRowWork(
+        FrozenRecipePlan plan,
+        HistorySegmentDescriptor descriptor,
+        RowResultId? previousRowResultId,
+        IReadOnlyList<RowBuildAssignment> assignments,
+        BuildTarget producerTarget
+    ) {
+        var key = new RowWorkKey(
+            descriptor.RefId, descriptor.TimelineId, plan.Recipe.Digest,
+            descriptor.RowId);
         var selected = new RowWork(
             key,
-            plan.ProducerTarget,
+            producerTarget,
             descriptor.PreviousRowId,
             previousRowResultId,
             assignments.Select(static assignment => assignment switch {

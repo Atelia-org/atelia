@@ -429,6 +429,14 @@ internal static class GalateaRecapGridReadiness {
                     "recipe-absent",
                     absent.RecipeDigest.Value
                 ),
+            RecapGridBuildProgressResult.ProducerPolicyRequired required
+                => Exact(
+                    "blocked",
+                    capturedRawHead,
+                    metrics,
+                    "producer-policy-required",
+                    $"{required.RootRecipeDigest.Value}:{required.RowId.Value}"
+                ),
             RecapGridBuildProgressResult.ThroughRowNotSelected missing
                 => Exact(
                     "invalid",

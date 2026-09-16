@@ -274,6 +274,9 @@ public sealed partial class RecapGridManager {
             => new RecapGridBuildProgressResult.NoActiveRecipe(),
         RecapGridBuildResult.RecipeAbsent value
             => new RecapGridBuildProgressResult.RecipeAbsent(value.RecipeDigest),
+        RecapGridBuildResult.ProducerPolicyRequired value
+            => new RecapGridBuildProgressResult.ProducerPolicyRequired(
+                value.RootRecipeDigest, value.RowId),
         RecapGridBuildResult.ThroughRowNotSelected value
             => new RecapGridBuildProgressResult.ThroughRowNotSelected(value.RowId),
         RecapGridBuildResult.BudgetExceeded value

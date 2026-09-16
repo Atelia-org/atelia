@@ -1746,6 +1746,10 @@ public sealed class RecapGridOnlineContextHandle :
         RecapGridBuildProgressResult.RecipeAbsent value
             => Unavailable(RecapGridOnlineComponent.Control,
                 "ActiveRecipeAbsent", value.RecipeDigest.Value),
+        RecapGridBuildProgressResult.ProducerPolicyRequired value
+            => Unavailable(RecapGridOnlineComponent.Manager,
+                "ProducerPolicyRequired",
+                $"{value.RootRecipeDigest.Value}:{value.RowId.Value}"),
         RecapGridBuildProgressResult.ThroughRowNotSelected
             => Unavailable(RecapGridOnlineComponent.Timeline,
                 "ThroughRowNotSelected", "The requested row is not selected."),
@@ -1793,6 +1797,10 @@ public sealed class RecapGridOnlineContextHandle :
         RecapGridBuildResult.RecipeAbsent value
             => Unavailable(RecapGridOnlineComponent.Control,
                 "ActiveRecipeAbsent", value.RecipeDigest.Value),
+        RecapGridBuildResult.ProducerPolicyRequired value
+            => Unavailable(RecapGridOnlineComponent.Manager,
+                "ProducerPolicyRequired",
+                $"{value.RootRecipeDigest.Value}:{value.RowId.Value}"),
         RecapGridBuildResult.ThroughRowNotSelected
             => Unavailable(RecapGridOnlineComponent.Timeline,
                 "ThroughRowNotSelected", "The requested row is not selected."),

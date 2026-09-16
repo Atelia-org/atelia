@@ -55,6 +55,15 @@
   candidate 仍要求 bootstrap 位于当前 selected path。新 cell/row publication
   必须有已持久化的 RowWork，zero-column row 也会在发布前选择 work；纯 progress
   不创建 work。缺 cell 的 definition 校验以 RowWork 的实际 producer spec 为准。
+- G4a：live 路径的新 RowWork 必须有调用方显式传入的 producer policy；没有
+  policy 时 build/progress 返回 `ProducerPolicyRequired(root,row)`，并且在
+  executor/raw capture/RowWork 写入之前停止。先精确读取到的既有 RowWork 永远
+  优先，忽略本次 live policy；explicit candidate 的新 work 固定使用
+  `recipe.Target`。冻结 closure 不再从 active root target 推断 live policy，
+  definition/family closure 仅在真正选择新 work 前验证。CLI `build --live`
+  接受 canonical `--producer-target` 文件，并在缺 policy 时通过 Manager
+  progress 预检后、不读取 routes/connections 或构造 client 前返回
+  `producer-policy-required`。
 
 已运行的聚焦证据：
 
@@ -78,6 +87,10 @@
 - Galatea partial model-switch / Prepared、LegacyStarted frozen recovery 聚焦：
   3 passed；补列事件现断言携带原 RowWork 的 WorkId，已成功 cell 不重发。
 - G3c 聚焦 Host/Owner：6 passed（A/B/C/D）。
+- G4a Manager 聚焦：`LiveNewWorkRequiresExplicitProducerPolicyBeforeDispatch`
+  通过（build/progress typed required、零 executor batch/零 RowWork，提供
+  policy 后完成）；Manager PublicSurface：3 passed；RecapGrid 与 CLI Release
+  build 成功。
 - Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。
@@ -88,7 +101,8 @@
 ## 尚未完成
 
 G3 尚缺“历史未完成 family 按实际 work 路由”的完整纵向回归与全部冻结恢复
-覆盖；G4 的 candidate/Overlay/promotion 仍未收口；G5 尚缺 V4 partial、Overlay
+覆盖；G4 仍缺 candidate/Overlay/promotion、CLI canonical target 的完整矩阵和
+既有 live 无 policy 测试调用点的显式 policy 迁移；G5 尚缺 V4 partial、Overlay
 共享 cell、多 ref、crash/reopen、export/restore 的完整无损矩阵；A1--A15
 完整/规模验收尚未完成。本记录不能作为服务部署、真实 `.atelia/galatea` 迁移
 或 NuGet 发布的授权。

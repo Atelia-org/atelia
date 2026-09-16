@@ -33,7 +33,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (RecapGridManagerHandle manager = OpenManager(fixture, hooks)) {
             RecapGridBuildProgressResult.Frontier progress = Assert.IsType<
                 RecapGridBuildProgressResult.Frontier
-            >(manager.Manager.InspectBuildProgress(Request()));
+            >(manager.Manager.InspectBuildProgress(WithoutProducerPolicy()));
 
             Assert.Equal(0, openSegmentCalls);
             Assert.Equal(0, captureCalls);
@@ -71,13 +71,15 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
             RecapGridBuildProgressResult.BudgetExceeded over = Assert.IsType<
                 RecapGridBuildProgressResult.BudgetExceeded
-            >(manager.Manager.InspectBuildProgress(Request(maximumNewCalls: 0)));
+            >(manager.Manager.InspectBuildProgress(Request(
+                fixture.Recipe.Target, maximumNewCalls: 0)));
             Assert.Equal(RecapGridBuildBudgetKind.NewCalls, over.Kind);
             Assert.Equal(1, over.Metrics.MissingAssignments);
 
             RecapGridBuildProgressResult.Frontier exact = Assert.IsType<
                 RecapGridBuildProgressResult.Frontier
-            >(manager.Manager.InspectBuildProgress(Request(maximumNewCalls: 1)));
+            >(manager.Manager.InspectBuildProgress(Request(
+                fixture.Recipe.Target, maximumNewCalls: 1)));
             Assert.Single(exact.OrderedMissing);
             Assert.Equal(1, exact.Metrics.MissingAssignments);
         }
@@ -99,7 +101,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildProgressResult.Cancelled result = Assert.IsType<
                 RecapGridBuildProgressResult.Cancelled
             >(manager.Manager.InspectBuildProgress(
-                Request(),
+                Request(fixture.Recipe.Target),
                 cancellation.Token
             ));
 
@@ -127,7 +129,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 maximumRecipeRowSteps: 1024,
                 maximumNewCalls: 1024,
                 maximumElapsed: TimeSpan.FromSeconds(1)
-            )
+            ),
+            fixture.Recipe.Target
         );
         byte[] before = ReadStoreDatabase(fixture);
         using (fixture.Journal)
@@ -157,7 +160,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 maximumRecipeRowSteps: 0,
                 maximumNewCalls: 1024,
                 maximumElapsed: TimeSpan.FromMinutes(1)
-            )
+            ),
+            fixture.Recipe.Target
         );
         byte[] before = ReadStoreDatabase(fixture);
         using (fixture.Journal)
@@ -179,18 +183,18 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (fixture.Journal)
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
             Assert.IsType<RecapGridBuildProgressResult.Frontier>(
-                manager.Manager.InspectBuildProgress(Request())
+                manager.Manager.InspectBuildProgress(Request(fixture.Recipe.Target))
             );
             RecapGridBuildResult.Fulfilled built = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor()
             ));
 
             RecapGridBuildProgressResult.Complete complete = Assert.IsType<
                 RecapGridBuildProgressResult.Complete
-            >(manager.Manager.InspectBuildProgress(Request()));
+            >(manager.Manager.InspectBuildProgress(Request(fixture.Recipe.Target)));
             Assert.True(complete.FulfillmentPresent);
             Assert.Equal(built.Proof.RowResultId, complete.ThroughRowResultId);
             Assert.Equal(0, complete.Metrics.MissingAssignments);
@@ -207,7 +211,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Fulfilled first = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor
             ));
 
@@ -223,7 +227,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Fulfilled second = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor
             ));
             Assert.Equal(calls, executor.Batches.Count);
@@ -232,12 +236,43 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Fulfilled third = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor
             ));
             Assert.Equal(calls, executor.Batches.Count);
             Assert.Equal(0, third.Metrics.NewCalls);
             Assert.Equal(first.Proof.RowResultId, third.Proof.RowResultId);
+        }
+    }
+
+    [Fact]
+    public async Task LiveNewWorkRequiresExplicitProducerPolicyBeforeDispatch() {
+        Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        using (fixture.Journal)
+        using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+            var executor = new RecordingExecutor();
+            RecapGridBuildResult.ProducerPolicyRequired required = Assert.IsType<
+                RecapGridBuildResult.ProducerPolicyRequired
+            >(await manager.Manager.BuildAsync(WithoutProducerPolicy(), executor));
+            Assert.Equal(fixture.Recipe.Digest, required.RootRecipeDigest);
+            Assert.Equal(fixture.Rows[0].Descriptor.RowId, required.RowId);
+            Assert.Empty(executor.Batches);
+            Assert.IsType<RecapGridBuildProgressResult.ProducerPolicyRequired>(
+                manager.Manager.InspectBuildProgress(Request(fixture.Recipe.Target)));
+
+            using RecapGridStoreReaderHandle reader = OpenStoreReader(fixture);
+            Assert.IsType<RecapGridStoreReadResult<RowWork>.Missing>(
+                reader.Reader.ReadRowWork(new RowWorkKey(
+                    fixture.TimelineHead.RefId,
+                    fixture.TimelineHead.TimelineId,
+                    fixture.Recipe.Digest,
+                    fixture.Rows[0].Descriptor.RowId)));
+
+            RecapGridBuildRequest withPolicy = new(
+                new RecapGridBuildSelection.LiveActive(), null,
+                WithoutProducerPolicy().Budget, fixture.Recipe.Target);
+            Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                await manager.Manager.BuildAsync(withPolicy, executor));
         }
     }
 
@@ -250,7 +285,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridBuildResult.BudgetExceeded partial = Assert.IsType<
                     RecapGridBuildResult.BudgetExceeded
                 >(await manager.Manager.BuildAsync(
-                    Request(maximumNewCalls: 1),
+                    Request(fixture.Recipe.Target, maximumNewCalls: 1),
                     firstExecutor
                 ));
                 Assert.Equal(RecapGridBuildBudgetKind.NewCalls, partial.Kind);
@@ -279,7 +314,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridBuildResult.Fulfilled resumed = Assert.IsType<
                     RecapGridBuildResult.Fulfilled
                 >(await reopened.Manager.BuildAsync(
-                    Request(),
+                    Request(fixture.Recipe.Target),
                     resumedExecutor
                 ));
                 int remaining = fixture.Rows.Count - 1;
@@ -297,7 +332,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             using RecapGridManagerHandle third = OpenManager(fixture);
             RecapGridBuildResult.Fulfilled cached = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
-            >(await third.Manager.BuildAsync(Request(), thirdExecutor));
+            >(await third.Manager.BuildAsync(Request(fixture.Recipe.Target), thirdExecutor));
             Assert.Equal(0, cached.Metrics.NewCalls);
             Assert.Empty(thirdExecutor.Batches);
             Assert.False(Directory.Exists(legacySpool));
@@ -465,7 +500,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         var request = new RecapGridBuildRequest(
             new RecapGridBuildSelection.LiveActive(),
             fixture.Rows[0].Descriptor.RowId,
-            Request().Budget
+            Request(fixture.Recipe.Target).Budget,
+            fixture.Recipe.Target
         );
         var firstExecutor = new RecordingExecutor();
         var interrupt = new ManagerTestHooks(
@@ -500,7 +536,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             var zeroCallRequest = new RecapGridBuildRequest(
                 request.Selection,
                 request.ThroughRowId,
-                Request(maximumNewCalls: 0).Budget
+                Request(fixture.Recipe.Target, maximumNewCalls: 0).Budget
             );
             RecapGridBuildProgressResult.Frontier frontier = Assert.IsType<
                 RecapGridBuildProgressResult.Frontier
@@ -545,7 +581,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             var request = new RecapGridBuildRequest(
                 new RecapGridBuildSelection.LiveActive(),
                 null,
-                budget
+                budget,
+                fixture.Recipe.Target
             );
 
             RecapGridBuildResult.BudgetExceeded result = Assert.IsType<
@@ -574,7 +611,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                    )) {
                 Assert.IsType<RecapGridBuildResult.Unavailable>(
                     await first.Manager.BuildAsync(
-                        Request(),
+                        Request(fixture.Recipe.Target),
                         new RecordingExecutor()
                     )
                 );
@@ -591,7 +628,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Fulfilled result = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await resumed.Manager.BuildAsync(
-                Request(maximumNewCalls: 0),
+                Request(fixture.Recipe.Target, maximumNewCalls: 0),
                 noCalls
             ));
             Assert.Empty(noCalls.Batches);
@@ -651,7 +688,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Fulfilled result = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor(),
                 rowCommitted: progress.Add
             ));
@@ -698,7 +735,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.SettlementRequired result = Assert.IsType<
                 RecapGridBuildResult.SettlementRequired
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor(),
                 rowCommitted: progress.Add
             ));
@@ -742,7 +779,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Invalid result = Assert.IsType<
                 RecapGridBuildResult.Invalid
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor(),
                 rowCommitted: progress.Add
             ));
@@ -832,7 +869,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Invalid result = Assert.IsType<
                 RecapGridBuildResult.Invalid
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor()
             ));
             Assert.Contains("SettlementIntendedMismatch", result.Code,
@@ -895,7 +932,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Invalid result = Assert.IsType<
                 RecapGridBuildResult.Invalid
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor()
             ));
             Assert.Contains("SettlementObservedMismatch", result.Code,
@@ -946,7 +983,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             ),
             fixture.Rows[fixture.BootstrapRowCount - 1]
                 .Descriptor.RowId,
-            Request().Budget
+            Request(fixture.Recipe.Target).Budget
         );
         using (fixture.Journal)
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
@@ -998,7 +1035,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 maximumRecipeRowSteps: 1,
                 maximumNewCalls: 1024,
                 maximumElapsed: TimeSpan.FromMinutes(1)
-            )
+            ),
+            fixture.Recipe.Target
         );
         using (fixture.Journal) {
             int expectedSteps = checked(2 * fixture.BootstrapRowCount);
@@ -1065,7 +1103,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             Fixture rewoundFixture = fixture with { TimelineHead = rewound };
             using (RecapGridManagerHandle live = OpenManager(rewoundFixture)) {
                 Assert.IsType<RecapGridBuildResult.Fulfilled>(
-                    await live.Manager.BuildAsync(Request(), new RecordingExecutor()));
+                    await live.Manager.BuildAsync(Request(fixture.Recipe.Target), new RecordingExecutor()));
             }
             using (RecapGridManagerHandle explicitCandidate = OpenManager(rewoundFixture)) {
                 Assert.IsType<RecapGridBuildResult.ThroughRowNotSelected>(
@@ -1205,7 +1243,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             using (RecapGridManagerHandle initial = OpenManager(fixture)) {
                 Assert.IsType<RecapGridBuildResult.Fulfilled>(
                     await initial.Manager.BuildAsync(
-                        Request(),
+                        Request(fixture.Recipe.Target),
                         new RecordingExecutor()
                     )
                 );
@@ -1253,7 +1291,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             var executor = new RecordingExecutor();
             using RecapGridManagerHandle manager = OpenManager(fixture);
             RecapGridBuildResult result = await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor
             );
             RecapGridBuildResult.Unavailable invalid = Assert.IsType<
@@ -1543,7 +1581,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
             RecapGridBuildResult.StaleControlAuthority result = Assert.IsType<
                 RecapGridBuildResult.StaleControlAuthority
-            >(await manager.Manager.BuildAsync(Request(), executor));
+            >(await manager.Manager.BuildAsync(Request(fixture.Recipe.Target), executor));
             Assert.NotEqual(captured!.ControlHead, result.Actual);
             AssertCells(fixture, captured.OrderedMissingWork, 0);
         }
@@ -1618,7 +1656,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 fixture.Recipe.Digest
             ),
             fixture.Rows[1].Descriptor.RowId,
-            Request().Budget
+            Request(fixture.Recipe.Target).Budget
         );
         using (fixture.Journal)
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
@@ -1739,7 +1777,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (fixture.Journal)
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
             Assert.IsType<RecapGridBuildResult.Fulfilled>(
-                await manager.Manager.BuildAsync(Request(), executor)
+                await manager.Manager.BuildAsync(Request(fixture.Recipe.Target), executor)
             );
             Assert.True(keys.Count > 1);
             using RecapGridStoreReaderHandle reader =
@@ -1768,7 +1806,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
             RecapGridBuildResult.Invalid result = Assert.IsType<
                 RecapGridBuildResult.Invalid
-            >(await manager.Manager.BuildAsync(Request(), executor));
+            >(await manager.Manager.BuildAsync(Request(fixture.Recipe.Target), executor));
             Assert.Equal("KeepUnchangedPriorUnavailable", result.Code);
             Assert.NotNull(work);
             using RecapGridStoreReaderHandle reader =
@@ -1788,9 +1826,9 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (RecapGridManagerHandle second = OpenManager(fixture)) {
             var executor = new PairBarrierExecutor();
             Task<RecapGridBuildResult> firstBuild = first.Manager
-                .BuildAsync(Request(), executor).AsTask();
+                .BuildAsync(Request(fixture.Recipe.Target), executor).AsTask();
             Task<RecapGridBuildResult> secondBuild = second.Manager
-                .BuildAsync(Request(), executor).AsTask();
+                .BuildAsync(Request(fixture.Recipe.Target), executor).AsTask();
             RecapGridBuildResult[] results = await Task.WhenAll(
                 firstBuild,
                 secondBuild
@@ -1830,7 +1868,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.ExecutorRejected result = Assert.IsType<
                 RecapGridBuildResult.ExecutorRejected
             >(
-                await manager.Manager.BuildAsync(Request(), rejected)
+                await manager.Manager.BuildAsync(Request(
+                    rejectedFixture.Recipe.Target), rejected)
             );
             Assert.Equal(0, result.Metrics.NewCalls);
             Assert.Equal(rejectedFixture.Rows.Count,
@@ -1844,7 +1883,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 throw new IOException("executor transport failed"));
             RecapGridBuildResult.ExecutorFailed result = Assert.IsType<
                 RecapGridBuildResult.ExecutorFailed
-            >(await manager.Manager.BuildAsync(Request(), throwing));
+            >(await manager.Manager.BuildAsync(Request(
+                thrownFixture.Recipe.Target), throwing));
             Assert.Equal(nameof(IOException), result.Code);
             Assert.Equal(0, result.Metrics.NewCalls);
             Assert.Equal(thrownFixture.Rows.Count,
@@ -1863,7 +1903,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 maximumRecipeRowSteps: 1,
                 1024,
                 TimeSpan.FromMinutes(1)
-            )
+            ),
+            fixture.Recipe.Target
         );
         using (fixture.Journal) {
             for (int index = 0; index < fixture.Rows.Count; index++) {
@@ -1913,7 +1954,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             using (RecapGridManagerHandle initial = OpenManager(fixture)) {
                 before = Assert.IsType<RecapGridBuildResult.Fulfilled>(
                     await initial.Manager.BuildAsync(
-                        Request(),
+                        Request(fixture.Recipe.Target),
                         new RecordingExecutor()
                     )
                 );
@@ -1939,7 +1980,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Fulfilled after = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
             >(await reopened.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor()
             ));
             Assert.Equal(resetIdentity, after.Proof.StoreIdentity);
@@ -1998,7 +2039,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 ),
                 fixture.Rows[fixture.BootstrapRowCount - 1]
                     .Descriptor.RowId,
-                Request().Budget
+                Request(fixture.Recipe.Target).Budget
             );
             Assert.IsType<RecapGridBuildResult.FulfilledThrough>(
                 await manager.Manager.BuildAsync(
@@ -2208,12 +2249,12 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (fixture.Journal) {
             manager = OpenManager(fixture);
             Assert.IsType<RecapGridBuildResult.Fulfilled>(
-                await manager.Manager.BuildAsync(Request(), executor)
+                await manager.Manager.BuildAsync(Request(fixture.Recipe.Target), executor)
             );
             RecapGridBuildResult.Disposed disposed = Assert.IsType<
                 RecapGridBuildResult.Disposed
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor()
             ));
             Assert.Equal(RecapGridBuildMetrics.Empty, disposed.Metrics);
@@ -2228,11 +2269,11 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (fixture.Journal) {
             RecapGridManagerHandle manager = OpenManager(fixture);
             Task<RecapGridBuildResult> first = manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor
             ).AsTask();
             Task<RecapGridBuildResult> second = manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor
             ).AsTask();
             await executor.AllStarted.Task.WaitAsync(
@@ -2251,7 +2292,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             await disposing.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.IsType<RecapGridBuildResult.Disposed>(
                 await manager.Manager.BuildAsync(
-                    Request(),
+                    Request(fixture.Recipe.Target),
                     new RecordingExecutor()
                 )
             );
@@ -2285,7 +2326,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Cancelled result = Assert.IsType<
                 RecapGridBuildResult.Cancelled
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor,
                 cancellation.Token
             ));
@@ -2310,7 +2351,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (RecapGridManagerHandle manager = OpenManager(fixture)) {
             RecapGridBuildResult.ExecutorFailed result = Assert.IsType<
                 RecapGridBuildResult.ExecutorFailed
-            >(await manager.Manager.BuildAsync(Request(), executor));
+            >(await manager.Manager.BuildAsync(Request(fixture.Recipe.Target), executor));
             Assert.Equal("ExecutorCancellationContractInvalid", result.Code);
             Assert.Equal(0, result.Metrics.NewCalls);
         }
@@ -2327,7 +2368,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Cancelled result = Assert.IsType<
                 RecapGridBuildResult.Cancelled
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 executor,
                 cancellation.Token
             ));
@@ -2352,7 +2393,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     throw expected);
                 Exception actual = await Assert.ThrowsAnyAsync<Exception>(
                     () => manager.Manager.BuildAsync(
-                        Request(),
+                        Request(fixture.Recipe.Target),
                         executor
                     ).AsTask()
                 );
@@ -2480,7 +2521,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         using (fixture.Journal)
         using (RecapGridManagerHandle manager = OpenManager(fixture, hooks)) {
             RecapGridBuildResult result = await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor()
             );
             switch (drift) {
@@ -2540,7 +2581,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             RecapGridBuildResult.Invalid result = Assert.IsType<
                 RecapGridBuildResult.Invalid
             >(await manager.Manager.BuildAsync(
-                Request(),
+                Request(fixture.Recipe.Target),
                 new RecordingExecutor()
             ));
             Assert.Equal("HistorySegmentDescriptorMismatch", result.Code);
@@ -3097,6 +3138,20 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     }
 
     private static RecapGridBuildRequest Request(
+        BuildTarget producerTarget,
+        int maximumNewCalls = 1024
+    ) => new(
+        new RecapGridBuildSelection.LiveActive(),
+        throughRowId: null,
+        new RecapGridBuildBudget(
+            1024,
+            maximumNewCalls,
+            TimeSpan.FromMinutes(1)
+        ),
+        producerTarget
+    );
+
+    private static RecapGridBuildRequest WithoutProducerPolicy(
         int maximumNewCalls = 1024
     ) => new(
         new RecapGridBuildSelection.LiveActive(),

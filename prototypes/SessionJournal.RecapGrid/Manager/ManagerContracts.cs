@@ -376,6 +376,11 @@ public abstract record RecapGridBuildResult {
     public sealed record RecipeAbsent(GridBuildRecipeDigest RecipeDigest)
         : RecapGridBuildResult;
 
+    public sealed record ProducerPolicyRequired(
+        GridBuildRecipeDigest RootRecipeDigest,
+        HistoryRowId RowId
+    ) : RecapGridBuildResult;
+
     public sealed record ThroughRowNotSelected(HistoryRowId RowId)
         : RecapGridBuildResult;
 
@@ -564,6 +569,11 @@ public abstract record RecapGridBuildProgressResult {
 
     public sealed record RecipeAbsent(GridBuildRecipeDigest RecipeDigest)
         : RecapGridBuildProgressResult;
+
+    public sealed record ProducerPolicyRequired(
+        GridBuildRecipeDigest RootRecipeDigest,
+        HistoryRowId RowId
+    ) : RecapGridBuildProgressResult;
 
     public sealed record ThroughRowNotSelected(HistoryRowId RowId)
         : RecapGridBuildProgressResult;

@@ -100,28 +100,12 @@ internal static partial class RecapGridCommands {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "live", "recipe", "through-row",
             "max-recipe-row-steps", "max-new-calls",
-            "max-elapsed-ms", "routes", "connections", "call-log-dir"
+            "max-elapsed-ms", "routes", "connections", "call-log-dir",
+            "producer-target"
         );
         using SessionJournalEngine engine = OpenBranch(options);
         RequireConfirmedRef(options, engine.BranchRefId);
         RecapGridBuildRequest request = ReadBuildRequest(options);
-        RecapGridRouteManifest manifest = RecapGridRouteManifest
-            .ParseJson(ReadBoundedFile(
-                options.RequireSingle("routes"),
-                RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes
-            ));
-        CompletionConnectionCatalogConfig connections =
-            CompletionConnectionConfigLoader.DecodeCatalog(ReadBoundedFile(
-                options.RequireSingle("connections"),
-                CompletionConnectionConfigLoader.MaximumInputUtf8Bytes
-            ));
-        string? callLogDirectory = options.GetOptionalSingle("call-log-dir");
-        ICompletionClientFactory buildClientFactory = callLogDirectory is null
-            ? completionClientFactory
-            : new RecapGridLoggingCompletionClientFactory(
-                completionClientFactory,
-                callLogDirectory
-            );
         RecapGridManagerOpenResult opened = RecapGridManagerFactory.Open(
             engine.ReadView,
             RecapGridHistoryLoadEstimator
@@ -132,6 +116,32 @@ internal static partial class RecapGridCommands {
             );
         }
         using (manager.Handle) {
+            // This pure preflight keeps a missing live policy from touching
+            // routes, connections, registry, or client resources.
+            RecapGridBuildProgressResult preflight = manager.Handle.Manager
+                .InspectBuildProgress(request);
+            if (preflight is RecapGridBuildProgressResult.ProducerPolicyRequired required) {
+                return PrintBuildResult("build",
+                    new RecapGridBuildResult.ProducerPolicyRequired(
+                        required.RootRecipeDigest, required.RowId));
+            }
+            RecapGridRouteManifest manifest = RecapGridRouteManifest
+                .ParseJson(ReadBoundedFile(
+                    options.RequireSingle("routes"),
+                    RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes
+                ));
+            CompletionConnectionCatalogConfig connections =
+                CompletionConnectionConfigLoader.DecodeCatalog(ReadBoundedFile(
+                    options.RequireSingle("connections"),
+                    CompletionConnectionConfigLoader.MaximumInputUtf8Bytes
+                ));
+            string? callLogDirectory = options.GetOptionalSingle("call-log-dir");
+            ICompletionClientFactory buildClientFactory = callLogDirectory is null
+                ? completionClientFactory
+                : new RecapGridLoggingCompletionClientFactory(
+                    completionClientFactory,
+                    callLogDirectory
+                );
             await using var progress = new RecapGridBuildProgressWriter(Console.Error);
             await using var registry = new CompletionConnectionRegistry(
                 CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(connections),
@@ -287,6 +297,7 @@ internal static partial class RecapGridCommands {
     private static RecapGridBuildRequest ReadBuildRequest(CliOptions options) {
         bool live = options.HasSingleFlag("live");
         string? recipe = options.GetOptionalSingle("recipe");
+        string? producerTargetFile = options.GetOptionalSingle("producer-target");
         if (live == (recipe is not null)) {
             throw new ArgumentException(
                 "Specify exactly one of --live or --recipe."
@@ -301,6 +312,10 @@ internal static partial class RecapGridCommands {
             is { } row
             ? new HistoryRowId(row)
             : null;
+        BuildTarget? producerTarget = producerTargetFile is null
+            ? null
+            : BuildTarget.DecodeCanonical(ReadBoundedFile(
+                producerTargetFile, MaximumInputUtf8Bytes));
         return new RecapGridBuildRequest(
             selection,
             through,
@@ -312,7 +327,8 @@ internal static partial class RecapGridCommands {
                     "max-elapsed-ms",
                     checked((int)TimeSpan.FromDays(1).TotalMilliseconds)
                 ))
-            )
+            ),
+            producerTarget
         );
     }
 
@@ -341,6 +357,7 @@ internal static partial class RecapGridCommands {
             RecapGridBuildResult.NoRows => "no-rows",
             RecapGridBuildResult.NoActiveRecipe => "no-active-recipe",
             RecapGridBuildResult.RecipeAbsent => "recipe-absent",
+            RecapGridBuildResult.ProducerPolicyRequired => "producer-policy-required",
             RecapGridBuildResult.ThroughRowNotSelected
                 => "through-row-not-selected",
             RecapGridBuildResult.BudgetExceeded => "budget-exceeded",
@@ -381,6 +398,8 @@ internal static partial class RecapGridCommands {
             RecapGridBuildProgressResult.Blocked => "blocked",
             RecapGridBuildProgressResult.NoActiveRecipe => "no-active-recipe",
             RecapGridBuildProgressResult.RecipeAbsent => "recipe-absent",
+            RecapGridBuildProgressResult.ProducerPolicyRequired
+                => "producer-policy-required",
             RecapGridBuildProgressResult.ThroughRowNotSelected
                 => "through-row-not-selected",
             RecapGridBuildProgressResult.BudgetExceeded => "budget-exceeded",

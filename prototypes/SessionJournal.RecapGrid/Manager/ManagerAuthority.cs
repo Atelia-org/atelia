@@ -47,10 +47,7 @@ public sealed partial class RecapGridManager {
 
     private sealed record FrozenRecipePlan(
         RegisteredGridRecipe Registered,
-        IReadOnlyDictionary<LogicalColumnId,
-            MaintainerDefinitionRevision> Definitions,
-        IReadOnlyDictionary<LogicalColumnId, FamilyDefinition> Families,
-        BuildTarget ProducerTarget,
+        BuildTarget? NewWorkProducerTarget,
         IReadOnlyDictionary<MaintainerDefinitionDigest,
             MaintainerDefinitionRevision> RegisteredDefinitions,
         IReadOnlyDictionary<FamilyDefinitionDigest,
@@ -188,6 +185,7 @@ public sealed partial class RecapGridManager {
             requested,
             control,
             timelineHead,
+            isLive: request.Selection is RecapGridBuildSelection.LiveActive,
             request.Selection is RecapGridBuildSelection.LiveActive
                 ? request.LiveProducerTarget
                 : null,
@@ -267,6 +265,7 @@ public sealed partial class RecapGridManager {
             RegisteredGridRecipe requested,
             RecapGridControlSnapshot control,
             TimelineHeadRef timelineHead,
+            bool isLive,
             BuildTarget? liveProducerTarget,
             bool requireBootstrapOnSelectedPath
         ) {
@@ -372,36 +371,16 @@ public sealed partial class RecapGridManager {
         var plans = new List<FrozenRecipePlan>(candidateToBase.Count);
         foreach (RegisteredGridRecipe registered in candidateToBase) {
             GridBuildRecipe recipe = registered.Recipe;
-            BuildTarget producerTarget = recipe.Digest == requested.Recipe.Digest
-                && liveProducerTarget is not null
+            // A live target is a policy for newly selected work, never a
+            // reinterpretation of the active root.  In particular, leave it
+            // absent here rather than falling back to recipe.Target.
+            BuildTarget? newWorkProducerTarget = isLive
+                    && recipe.Digest == requested.Recipe.Digest
                 ? liveProducerTarget
                 : recipe.Target;
-            var recipeDefinitions = new Dictionary<LogicalColumnId,
-                MaintainerDefinitionRevision>();
-            var recipeFamilies = new Dictionary<LogicalColumnId,
-                FamilyDefinition>();
-            foreach (BuildTargetColumn column in
-                     producerTarget.OrderedColumns) {
-                if (!definitions.TryGetValue(
-                        column.DefinitionDigest,
-                        out MaintainerDefinitionRevision? definition)
-                    || definition.LogicalColumnId != column.LogicalColumnId
-                    || !families.TryGetValue(
-                        definition.FamilyDigest,
-                        out FamilyDefinition? family)) {
-                    return (null, Invalid(
-                        "RecipeDefinitionClosureInvalid",
-                        "A recipe target lacks its exact definition or family."
-                    ));
-                }
-                recipeDefinitions.Add(column.LogicalColumnId, definition);
-                recipeFamilies.Add(column.LogicalColumnId, family);
-            }
             plans.Add(new FrozenRecipePlan(
                 registered,
-                recipeDefinitions,
-                recipeFamilies,
-                producerTarget,
+                newWorkProducerTarget,
                 definitions,
                 families
             ));

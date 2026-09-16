@@ -13,7 +13,8 @@ public sealed partial class ManagerVerticalTests {
             var through = fixture.Rows[0].Descriptor.RowId;
             Assert.NotEqual(fixture.Recipe.BootstrapThroughRowId, through);
             var selection = new RecapGridBuildSelection.ExplicitCandidate(fixture.Recipe.Digest);
-            var request = new RecapGridBuildRequest(selection, through, Request().Budget);
+            var request = new RecapGridBuildRequest(selection, through,
+                WithoutProducerPolicy().Budget);
             RecapGridBuildResult.FulfilledThrough first;
             using (RecapGridManagerHandle manager = OpenManager(fixture)) {
                 var executor = new RecordingExecutor();

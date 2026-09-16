@@ -62,7 +62,7 @@ public sealed partial class ManagerVerticalTests {
             using (var runtime = new RecapCompletionRuntime(new PriorInputRouteResolver(route)))
             using (RecapGridManagerHandle manager = OpenManager(fixture)) {
                 first = Assert.IsType<RecapGridBuildResult.Fulfilled>(
-                    await manager.Manager.BuildAsync(Request(), runtime));
+                    await manager.Manager.BuildAsync(Request(recipe.Target), runtime));
             }
             int expectedCalls = fixture.Rows.Count * 2;
             Assert.Equal(expectedCalls, provider.Requests.Count);
@@ -93,7 +93,8 @@ public sealed partial class ManagerVerticalTests {
             using var reopenedRuntime = new RecapCompletionRuntime(new PriorInputRouteResolver(route));
             using RecapGridManagerHandle reopenedManager = OpenManager(fixture);
             RecapGridBuildResult.Fulfilled reopened = Assert.IsType<RecapGridBuildResult.Fulfilled>(
-                await reopenedManager.Manager.BuildAsync(Request(maximumNewCalls: 0), reopenedRuntime));
+                await reopenedManager.Manager.BuildAsync(Request(recipe.Target,
+                    maximumNewCalls: 0), reopenedRuntime));
             Assert.Equal(first.Proof.RowResultId, reopened.Proof.RowResultId);
             Assert.Equal(0, reopened.Metrics.NewCalls);
             Assert.Equal(expectedCalls, provider.Requests.Count);

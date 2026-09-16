@@ -30,6 +30,7 @@ public sealed class RecapGridBuildReportTests {
             (new RecapGridBuildResult.NoRows(timeline, recipe), "no-rows", "TimelineHead"),
             (new RecapGridBuildResult.NoActiveRecipe(), "no-active-recipe", null),
             (new RecapGridBuildResult.RecipeAbsent(recipe), "recipe-absent", "RecipeDigest"),
+            (new RecapGridBuildResult.ProducerPolicyRequired(recipe, row), "producer-policy-required", "RootRecipeDigest"),
             (new RecapGridBuildResult.ThroughRowNotSelected(row), "through-row-not-selected", "RowId"),
             (new RecapGridBuildResult.BudgetExceeded(RecapGridBuildBudgetKind.NewCalls, row), "budget-exceeded", "Kind"),
             (new RecapGridBuildResult.Cancelled(), "cancelled", null),
