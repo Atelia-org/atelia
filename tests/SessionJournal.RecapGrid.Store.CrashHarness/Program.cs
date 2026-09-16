@@ -8,11 +8,13 @@ namespace Atelia.SessionJournal.RecapGrid.Store.CrashHarness;
 
 internal static class Program {
     public static int Main(string[] args) {
-        if (args.Length is < 3 or > 4
-            || (args.Length == 4 && args[0] != "upgrade-v4")
-            || args[0] is not ("cell" or "row-view" or "fulfilled" or "reset" or "upgrade-v4")) {
+        if (args.Length < 3
+            || args[0] is not ("cell" or "row-view" or "fulfilled"
+                or "reset" or "upgrade-v4" or "restore-v4")
+            || !HasValidArgumentCount(args)) {
             Console.Error.WriteLine(
-                "usage: <cell|row-view|fulfilled|reset|upgrade-v4> <failpoint> <repository> [proof-bundle]"
+                "usage: <cell|row-view|fulfilled|reset|upgrade-v4> <failpoint> <repository> [proof-bundle]\n"
+                + "   or: restore-v4 <failpoint> <repository> <backup> <active-length> <active-sha256> <backup-length> <backup-sha256> [proof-bundle]"
             );
             return 2;
         }
@@ -22,7 +24,8 @@ internal static class Program {
         Action crash = () => Environment.FailFast(
             $"Intentional RecapGrid Store crash at {operation}/{failpoint}."
         );
-        StorePersistenceTestHooks hooks = operation == "upgrade-v4"
+        StorePersistenceTestHooks hooks = operation is "upgrade-v4"
+            or "restore-v4"
             ? StorePersistenceTestHooks.None
             : Hooks(operation, failpoint, crash);
         if (operation == "reset") {
@@ -49,6 +52,22 @@ internal static class Program {
                 () => proofs,
                 UpgradeHooks(failpoint, crash)
             );
+        }
+        else if (operation == "restore-v4") {
+            IReadOnlyList<RowWork> proofs = args.Length == 9
+                ? ReadProofBundle(repository, args[8])
+                : [];
+            var activeWitness = new RecapGridStorePhysicalWitness(
+                ParseLength(args[4]), args[5]);
+            var backupWitness = new RecapGridStorePhysicalWitness(
+                ParseLength(args[6]), args[7]);
+            _ = RecapGridStoreMaintenance.RestoreV4ForTest(
+                repository,
+                Path.GetFullPath(args[3]),
+                activeWitness,
+                backupWitness,
+                () => proofs,
+                RestoreHooks(failpoint, crash));
         }
         else {
             using RecapGridStoreHandle handle =
@@ -87,6 +106,18 @@ internal static class Program {
         Console.Error.WriteLine("Crash failpoint was not reached.");
         return 3;
     }
+
+    private static bool HasValidArgumentCount(string[] args)
+        => args[0] switch {
+            "upgrade-v4" => args.Length is 3 or 4,
+            "restore-v4" => args.Length is 8 or 9,
+            _ => args.Length == 3
+        };
+
+    private static long ParseLength(string value)
+        => long.Parse(value,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture);
 
     private static IReadOnlyList<RowWork> ReadProofBundle(
         string repository,
@@ -148,6 +179,22 @@ internal static class Program {
         AfterBackupDurable: failpoint == "after-backup-durable" ? crash : null,
         AfterReplaceBeforeDirectoryFsync: failpoint == "after-replace-before-directory-fsync" ? crash : null,
         AfterDirectoryFsyncBeforeVerify: failpoint == "after-directory-fsync-before-verify" ? crash : null,
+        AfterVerify: failpoint == "after-verify" ? crash : null
+    );
+
+    private static StoreRestoreTestHooks RestoreHooks(
+        string failpoint,
+        Action crash
+    ) => new(
+        AfterTempVerified: failpoint == "after-temp-verified" ? crash : null,
+        AfterReplaceBeforeDirectoryFsync:
+            failpoint == "after-replace-before-directory-fsync"
+                ? crash
+                : null,
+        AfterDirectoryFsyncBeforeVerify:
+            failpoint == "after-directory-fsync-before-verify"
+                ? crash
+                : null,
         AfterVerify: failpoint == "after-verify" ? crash : null
     );
 
