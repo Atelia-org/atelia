@@ -156,6 +156,33 @@ public sealed class StorePublicSurfaceTests : IDisposable {
         );
     }
 
+    [Fact]
+    public void PartialProofFailureContractIsClosedAndBounded() {
+        foreach (RecapGridStorePartialProofFailure failure in
+                 Enum.GetValues<RecapGridStorePartialProofFailure>()) {
+            var exception = new RecapGridStorePartialProofException(
+                failure,
+                "exact proof failed"
+            );
+            Assert.Equal(failure, exception.Failure);
+        }
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecapGridStorePartialProofException(
+                (RecapGridStorePartialProofFailure)int.MaxValue,
+                "invalid enum"
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new RecapGridStorePartialProofException(
+                RecapGridStorePartialProofFailure.Unprovable,
+                string.Empty
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new RecapGridStorePartialProofException(
+                RecapGridStorePartialProofFailure.Unprovable,
+                new string('x', 1025)
+            ));
+    }
+
     public void Dispose() {
         if (Directory.Exists(_root)) {
             Directory.Delete(_root, recursive: true);

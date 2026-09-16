@@ -109,6 +109,9 @@ public sealed class RecapGridStorePartialProofException : Exception {
         string detail
     )
         : base(detail) {
+        if (!Enum.IsDefined(failure)) {
+            throw new ArgumentOutOfRangeException(nameof(failure));
+        }
         if (string.IsNullOrWhiteSpace(detail) || detail.Length > 1024) {
             throw new ArgumentException("Partial-proof detail must be nonempty and bounded.", nameof(detail));
         }
