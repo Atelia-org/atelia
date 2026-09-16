@@ -24,13 +24,17 @@ dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.c
 
 | 文件 | 需要准备什么 |
 |:--|:--|
-| `config.json` | V11；Characters 的身份/状态/home/连接与自主 interval、Players 的登录信息、Runtime 设置 |
+| `config.json` | V12；Characters 的身份/状态/home/连接与自主 interval、Players 的登录信息、Runtime 设置 |
 | 同目录 `connections.json` | V3；可用连接、可选连接列表，以及全部四个 feature bindings |
 | 同目录 `delegates.json` | V4；有效的 Node/Codex/sidecar 路径与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
-| `runtime.recapGrid.agentControlProfileFiles` 指向的文件 | **启动必需，Galatea bootstrap 不会生成**；用 SessionJournal.Cli 的 `recap-grid scaffold` 准备 |
+| `runtime.recapGrid.historicalAgentControlProfileFiles` 指向的文件 | 可为空；非空时仅为 frozen exact tool recovery 保留历史 profile，不是新 work 或 bootstrap 的授权 |
 
-字段说明、scaffold 步骤、配置示例和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。Route manifest 按需读取；启动成功并不表示完整 RecapGrid 已激活。
+字段说明、operator V11→V12 升级、独立 CLI scaffold 和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。V12 host 的
+`runtime.recapGrid` 只配置 maintenance（connection、全局并发、attempt timeout）与可选 historical profiles；fresh bootstrap 使用
+code-owned bundle，不读取 profile、创建 Completion client 或调用 provider。每个 persisted RowWork 以其 actual family/protocol/semantic
+key 延迟构造 exact route，并复用共享 connection registry、retry 与全局 lane；已完成 Recap 的读取不依赖 route。独立 CLI 的 exact
+route manifest 仍保留，不能误解为全仓删除；它也不再是 Galatea root config 的 live authority。
 
 如果 `connections.json` 包含 `openai-codex-responses`，还需在启动环境设置已 provision 的 `ATELIA_CODEX_SUBSCRIPTION_ACCOUNT_FINGERPRINT`。`runtime.listenUrls` 与其他连接使用相同规则，可以绑定 `0.0.0.0`。认证文件和环境变量细节也见配置指南。
 
@@ -40,7 +44,7 @@ dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.c
 
 ## 启用服务端自主运行
 
-在 V11 `config.json` 的每个 `characters[]` 项内设置必填的分钟数：
+在 V12 `config.json` 的每个 `characters[]` 项内设置必填的分钟数：
 
 ```json
 "autonomyIntervalMinutes": 30
@@ -147,4 +151,4 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 
 新 Observation 和 system setup 保存机读 JSON 事实与来源快照，给 LLM 的 Markdown 在请求时生成。
 新 Prepared 保存所选语义计划，每次 Started 记录实际请求摘要；换格式不授权重发结果未知的调用。
-旧 v7/v8 exact 请求仍走旧恢复合同。V10 配置不能由 V11 binary 启动；唯一开发实例须停服、在状态目录外备份 config、手动替换字段后再重启，详见[配置指南](../../docs/Galatea/configuration.md#v11-唯一开发实例的人工切换)。
+旧 v7/v8 exact 请求仍走旧恢复合同。V11 config 不能由 V12 host 正常启动；必须停服、确认 writer 已退出、在状态目录外备份，并以默认 dry-run 的显式 operator command 升级。候选不唯一时必须选择 index，`--apply` 会备份并 strict reopen；这不授权 live SessionJournal/Store/Control 迁移，详见[配置指南](../../docs/Galatea/configuration.md#v11--v12-root-config-operator-升级)。

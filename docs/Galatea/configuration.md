@@ -2,10 +2,10 @@
 
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
-[runtime.md](runtime.md)。根配置当前为 [V11](../SessionJournal/current/contracts/galatea-root-config-v11.md)；exact 字段由
+[runtime.md](runtime.md)。根配置当前为 [V12](../SessionJournal/current/contracts/galatea-root-config-v12.md)；exact 字段由
 [`GalateaStrictConfigReader`](../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与
 [`GalateaRootFileConfig`](../../prototypes/Galatea/GalateaConfig.cs) 定义。
-[V10](../SessionJournal/current/contracts/galatea-root-config-v10.md)及更早合同仅用于识别历史数据，不是当前配置入口。
+[V11](../SessionJournal/current/contracts/galatea-root-config-v11.md)及更早合同仅用于历史与显式升级，不是当前配置入口。
 
 ## 配置目录与首次生成
 
@@ -27,22 +27,22 @@
 - 每个 Character 的缺失、且仍在配置目录内的 `characterContextTemplateFile`。
 
 生成后程序会故意退出，必须检查并修改模板后再次启动。它不会覆盖已有文件，不会猜测 Codex/Node 路径，也不会生成
-`runtime.recapGrid.agentControlProfileFiles` 引用的 profile、route manifest 或任何 SessionJournal state。因此首次配置的顺序是：
-先让模板生成并退出，修改密码、角色、连接和 delegate placeholder，创建各 Character 的 home，再用下面的 `scaffold` 创建 RecapGrid 文件，最后启动。
+任何 historical Agent Control profile、独立 CLI route manifest 或 SessionJournal state。因此首次配置的顺序是：
+先让模板生成并退出，修改密码、角色、连接和 delegate placeholder，创建各 Character 的 home，确认 maintenance connection，最后启动。
 
 默认模板有 `alice`、`bob` 两个示例 Character、独立的 `player-main` Player 和本地 `local` connection；密码、模型 ID 与 delegate 路径仍须由操作者填写。
 
 ## `config.json`
 
-根文件必须是 strict V11 JSON：`v` 必须是整数 `11`，根字段为 `v`、`characters`、`players`、`runtime`。
+根文件必须是 strict V12 JSON：`v` 必须是整数 `12`，根字段为 `v`、`characters`、`players`、`runtime`。
 `characters` 至少一项；`players` 可以为 `[]`。`runtime.recapGrid` 是必需 object。未知字段、旧版、未来版、
-`null` 或 `11.0` 都拒绝；正常启动不会迁移或重写旧文件。
+`null` 或 `12.0` 都拒绝；正常启动不会迁移或重写旧文件。
 
 下面展示当前字段归属，密码位置仅为占位符；除必需的 absolute `homeDir` 外，相对路径以配置文件目录解析。
 
 ```json
 {
-  "v": 11,
+  "v": 12,
   "characters": [{
     "id": "alice",
     "name": "Alice",
@@ -62,9 +62,12 @@
     "callLogDir": null,
     "maintenanceMode": false,
     "recapGrid": {
-      "routeManifestPath": "recap-grid-routes.json",
-      "agentControlProfileFiles": ["recap-grid-agent-control-profile.json"],
-      "currentAgentControlProfileId": "default"
+      "maintenance": {
+        "connectionId": "local",
+        "maximumConcurrency": 1,
+        "dispatchTimeoutMilliseconds": 900000
+      },
+      "historicalAgentControlProfileFiles": []
     }
   }
 }
@@ -112,7 +115,7 @@ Delegation supervisor 在 host 启动时就分类每个 Character 的状态。�
 `{"gpt-main":1800,"note-extractor":300}`。键必须是 connections 中的现有 id，值为 1..86400
 的整数；未列出的连接默认 1800 秒。它是宿主单次生成期限，不改变 provider identity 或冻结请求。
 期限到达会请求取消并等待资源清理，然后按暂时失败政策重试；不证明远端计算或计费已停止。
-Recap maintenance 使用 route manifest 自己的 `dispatchTimeoutMilliseconds` 作为每次 attempt
+Recap maintenance 使用 `runtime.recapGrid.maintenance.dispatchTimeoutMilliseconds` 作为每次 attempt
 期限，不受此 connection map 覆盖；重试不再有第二个整逻辑调用期限。Recap 的逻辑 work/cell
 计数不是物理 provider attempts 或费用上限。
 
@@ -203,11 +206,25 @@ task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经�
 
 ## RecapGrid 文件与首次 scaffold
 
-`runtime.recapGrid` 指向 route manifest、一个或多个现有 Agent Control profile，以及 current profile ID。profile 文件必须已经存在；它是 missing-session structural bootstrap 所需的 admission authority。历史 profile 也要保留，供冻结的 Prepared/ToolContinuation 使用。route manifest 在首次 RecapGrid 工作时才读取；每条 route 精确拥有自己的 `connectionId`、并发和 timeout，不能用 default/wildcard route 或业务 output cap 覆盖 provider 的输出策略。
+当前 V12 的 `runtime.recapGrid` 只有稳定用途的 `maintenance` 与
+`historicalAgentControlProfileFiles`，精确字段、取值范围和路径规则见
+[V12 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v12.md)。maintenance 的 connection、全局
+并发预算与每次 attempt timeout 由 `GalateaCompletionOwner` 的同一 connection registry、retry invoker 和并发 lane
+使用；不得为每个 work 创建独立 semaphore。已持久化 `RowWork` 的 actual family、protocol 和 semantic key 在执行时构造
+exact route，因此新默认 family 与旧未完成 family 都可运行。已完成 Recap 的读取不需要 route 或可用 maintenance connection；
+只有需要新生成时才报告 maintenance 连接的具体阻塞。
 
-Galatea 将 route manifest 作为普通 V2 JSON 配置读取，允许缩进、末尾换行和属性顺序变化；仍拒绝重复/未知/缺失字段、重复 route key 和越界值。内部 canonical 编码不要求人工编辑的配置文件逐字节匹配。修改后需重启，避免继续使用已缓存的路由加载结果。
+`historicalAgentControlProfileFiles` 可以是空数组。非空时它只保存冻结的 exact tool recovery 所需 profile bytes/identity，
+不是 live admission、默认 profile 或新 work 的授权来源。fresh missing-session bootstrap 由 host 的 code-owned bundle 窄入口
+建立 Store、该 Character 的 asset、empty-Timeline full recipe 与 active recipe；它不会读取历史 profile、创建 Completion client
+或调用 provider，也不会为新 session 创建或扩展任何 Agent Control tool/family allowlist。
 
-以下命令是根据当前 CLI 参数和公共 operator-chain 测试核对过的首次 scaffold 示例。将 `<配置目录>`、`<角色名>` 和 `<RecapGrid连接ID>` 换成实际值；三个输出路径须不存在，CLI 以 create-new 写入：
+独立 SessionJournal CLI 的 exact route manifest 仍保留，供显式 CLI 构建和 operator chain 使用；这不意味着 Galatea V12 root
+config 仍接受 live `routeManifestPath`。该 CLI manifest 是普通 V2 JSON，可人工格式化，但仍拒绝重复、未知、缺失字段、重复 route
+key 和越界值。
+
+如需为独立 CLI/operator workflow 准备 route manifest 与 Agent Control profile，可使用 `recap-grid scaffold`。它不是 Galatea
+fresh bootstrap 的前置条件；三个输出路径必须不存在，CLI 以 create-new 写入：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- \
@@ -232,19 +249,27 @@ dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- 
   --route-output '<配置目录>/recap-grid-routes.json'
 ```
 
-将 `config.json` 的 `runtime.recapGrid` 内 `routeManifestPath`、`agentControlProfileFiles` 和 `currentAgentControlProfileId` 对应到上述 route/profile 输出。profile 是启动必需的 bootstrap admission；existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent 仍会调用其 Completion connection。普通 `GetSessionAsync()` 不会 repair 已有 repository。对完全不存在的 new session，staging bootstrap 会一并建立 Store、该 Character 的 asset、empty-Timeline full recipe 和 active recipe；整个过程仍不会读取 route、创建 Completion client 或调用 provider。因为还没有历史行，首轮 context 仍是 raw-only。
+existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent
+仍会调用其 Completion connection。普通 `GetSessionAsync()` 不会 repair 已有 repository。因为 fresh session 还没有历史行，首轮
+context 仍是 raw-only。
 
-对已有 raw-only/partial session 的完整启用，必须停服、备份、先做 strict read-only audit，再使用专用 bounded admission 走 `init`、受限 `timeline sync`、`control provision-asset`、compose/put recipe、有界 candidate build 与 `control promote`。`build` 才是 provider effect，direct `activate` 不能取代 promotion；未知结果绝不自动重试。完整、按当前 CLI 参数编写的流程见[已有 SessionJournal 的 RecapGrid 显式升级](recap-grid-existing-session-upgrade.md)。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name`。scaffold 不会创建 provider、Timeline、Control 或 Store，Galatea 的 route manifest 读取允许上述 JSON 格式化；其他持久产物仍使用各自的 canonical 格式。
+对已有 raw-only/partial session 的完整启用，必须停服、备份、先做 strict read-only audit，再使用专用 bounded admission 走 `init`、受限 `timeline sync`、`control provision-asset`、compose/put recipe、有界 candidate build 与 `control promote`。`build` 才是 provider effect，direct `activate` 不能取代 promotion；未知结果绝不自动重试。完整、按当前 CLI 参数编写的流程见[已有 SessionJournal 的 RecapGrid 显式升级](recap-grid-existing-session-upgrade.md)。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name`。scaffold 不会创建 provider、Timeline、Control 或 Store；其他持久产物仍使用各自的 canonical 格式。
 
 该 asset 包含 `world-understanding` 与 `autobiography` 两列。Host 会在 fresh admission 前验证 active recipe 是否精确匹配该角色的新语义资产定义；不匹配时以 `character-asset-mismatch` fail closed。CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
 
-## V11 唯一开发实例的人工切换
+## V11 → V12 root config operator 升级
 
-V11 binary 严格拒绝 V10；不存在 V10 runtime reader、自动转换器或 CLI migration。当前仅有一份开发实例，切换由 operator 人工完成：
+这只是 root config 的显式、provider-free 转换，不是 live 实例迁移授权；不会启动 host、调用 provider、改写
+SessionJournal、Store、Timeline、Control、prompt asset、delegation 或任何外部工作。先正常停服并确认 writer 已退出，且在状态目录之外
+备份整个配置目录。命令默认 dry-run：
 
-1. 正常停服并确认 writer 已退出。
-2. 在 session、delegation、CharacterMemory 等状态目录**之外**备份 `config.json`。
-3. 将根 `v` 从 `10` 改为 `11`；每个 `heartbeatEnabled:true` 改为 `autonomyIntervalMinutes:10`，每个 `false` 改为 `0`，删除旧字段。之后可按角色模型配额调整正分钟数。
-4. 用 V11 binary 重启；如果仍有 V10 字段或版本，strict parser 会 fail closed。
+```bash
+dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.csproj -- \
+  operator upgrade-recap-grid-config-v12 --config /absolute/path/to/config.json
+```
 
-不要把此配置编辑当成 SQLite、prompt asset、未完成 delegation 或历史 Observation 的迁移：本次不改写任何这些状态，也不自动重发外部工作。旧 V9→V10 的实例迁移记录仍见[实施工作单](player-character-implementation-work-order.md)，它是历史证据而非当前操作入口。
+它读取 exact V11，解析旧 live route manifest，并打印按 `connectionId`、`maximumConcurrency`、
+`dispatchTimeoutMilliseconds` 去重且稳定排序的 candidate。若所有旧 route 的这三个值相同，会机械选择唯一 candidate；若不相同，
+dry-run 列出候选而不猜测第一项，operator 必须带 `--maintenance-route-index <index>` 重跑。确认 candidate 后追加 `--apply`：
+命令 create-new 写入带时间戳和随机后缀的 V11 backup，以临时文件替换 root config，并 strict reopen/validate 已写出的 V12。
+apply 后再用 V12 host 启动。旧 profile 路径原样转入 `historicalAgentControlProfileFiles`，不以旧 target 与当前默认不同拒绝配置。

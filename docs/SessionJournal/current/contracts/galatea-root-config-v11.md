@@ -1,7 +1,9 @@
-# Galatea root config V11 current contract
+# Galatea root config V11（历史合同）
 
-状态：**Current product contract**。本页拥有当前 root `config.json` 的字段语言与自主激活边界；完整示例、启动和操作步骤见[配置参考](../../../Galatea/configuration.md)。
-[V10](galatea-root-config-v10.md)及更早页面都是历史版本，当前 loader 一律拒绝它们；正常启动不读取、写入或转换旧配置。
+状态：**Historical product contract**。当前 strict root contract 是 [V12](galatea-root-config-v12.md)；本页保留 V11 root
+`config.json` 的字段语言与自主激活边界，不能作为当前配置入口或改写成 V12。V11→V12 必须使用 V12 合同所述的显式 operator
+dry-run/apply，而不是正常 host 启动时自动迁移。完整的当前示例、启动和操作步骤见[配置参考](../../../Galatea/configuration.md)。
+[V10](galatea-root-config-v10.md)及更早页面同为历史版本。
 
 实现依据：[`GalateaStrictConfigReader`](../../../../prototypes/Galatea/GalateaStrictConfigReader.cs)、[`GalateaConfig`](../../../../prototypes/Galatea/GalateaConfig.cs)、[`GalateaConfigLoader`](../../../../prototypes/Galatea/GalateaServices.cs)。字段验收入口是[`GalateaRootConfigFieldLanguageTests`](../../../../tests/Galatea.Server.Tests/GalateaRootConfigFieldLanguageTests.cs)与[`GalateaConfigValidationTests`](../../../../tests/Galatea.Server.Tests/GalateaConfigValidationTests.cs)。
 
