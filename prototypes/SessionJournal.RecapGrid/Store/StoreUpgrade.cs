@@ -95,6 +95,10 @@ public static partial class RecapGridStoreMaintenance {
         catch (SqliteException exception) when (SqliteRecapGridStore.IsBusy(exception)) {
             return new RecapGridStoreUpgradeResult.Busy();
         }
+        catch (RecapGridStorePartialProofException exception) {
+            return new RecapGridStoreUpgradeResult.Invalid(
+                exception.Code, exception.Message);
+        }
         catch (Exception exception) when (exception is ArgumentException
             or FormatException
             or OverflowException) {
@@ -348,7 +352,8 @@ public static partial class RecapGridStoreMaintenance {
                 || !referencedCells.Contains(reused.Value)
                 || !cells.TryGetValue(reused.Value, out V4Cell? source)
                 || source.LogicalColumnId != assignment.LogicalColumnId.Value
-                || source.DefinitionDigest != target.DefinitionDigest.Value) {
+                || source.DefinitionDigest != target.DefinitionDigest.Value
+                || source.HistoryRowId != proof.Key.HistoryRowId.Value) {
                 throw new InvalidDataException(
                     "V4 partial work reuse cannot be proved by its source cell.");
             }

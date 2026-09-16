@@ -92,6 +92,20 @@ public abstract record RecapGridStoreUpgradeResult {
         : RecapGridStoreUpgradeResult;
 }
 
+/// <summary>
+/// A caller-owned, read-only proof pass could not establish the immutable
+/// facts needed to attach V4 partial cells to RowWork.  The Store deliberately
+/// does not choose an alternative scope or prior.
+/// </summary>
+public sealed class RecapGridStorePartialProofException : Exception {
+    public RecapGridStorePartialProofException(string code, string detail)
+        : base(detail) {
+        Code = code;
+    }
+
+    public string Code { get; }
+}
+
 public sealed record RecapGridStoreExportCursor {
     private const byte WireVersion = 2;
     private const byte CellKind = 1;

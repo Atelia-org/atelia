@@ -222,7 +222,10 @@ internal static class RecapGridStoreCommands {
             RecapGridStoreUpgradeResult.PlatformUnsupported => Print(
                 "upgrade-store-v5", "platform-unsupported", exitCode: 2),
             RecapGridStoreUpgradeResult.Invalid value => Print(
-                "upgrade-store-v5", "invalid",
+                "upgrade-store-v5", value.Code is "partial-proof-unprovable"
+                    or "partial-proof-ambiguous" or "partial-proof-unavailable"
+                    ? value.Code
+                    : "invalid",
                 new { value.Code, value.Detail }, 2),
             _ => throw new InvalidOperationException(
                 "Unknown RecapGrid Store upgrade result.")
