@@ -126,6 +126,72 @@ public sealed partial class ProgramRecapGridCommandTests {
             after.Grid.Values.SelectMany(static value => value));
     }
 
+    [Fact]
+    public void LiveBuildWithoutPolicyDoesNotReadRoutesOrConnectionsOrCreateClient() {
+        BuildProgressFixture fixture = PrepareBuildProgressFixture();
+        var factory = new GatedBuildFactory();
+        string missingRoutes = Path.Combine(_root, "must-not-read-routes.json");
+        string missingConnections = Path.Combine(_root, "must-not-read-connections.json");
+        using var output = new BuildCaptureWriter();
+        TextWriter original = Console.Out;
+        try {
+            Console.SetOut(output);
+            Assert.Equal(2, RunWithFactory(factory, fixture.LiveArguments(
+                missingRoutes, missingConnections)));
+        }
+        finally {
+            Console.SetOut(original);
+        }
+        using JsonDocument report = JsonDocument.Parse(output.Snapshot());
+        Assert.Equal("producer-policy-required",
+            report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(0, factory.CreateCount);
+    }
+
+    [Fact]
+    public void LiveBuildAcceptsCanonicalProducerTargetFile() {
+        BuildProgressFixture fixture = PrepareBuildProgressFixture();
+        string target = Path.Combine(_root, "producer-target.canonical");
+        File.WriteAllBytes(target, fixture.Recipe.Target.ToCanonicalBytes());
+        var factory = new GatedBuildFactory();
+        factory.Release.TrySetResult();
+        using var output = new BuildCaptureWriter();
+        TextWriter original = Console.Out;
+        try {
+            Console.SetOut(output);
+            Assert.Equal(0, RunWithFactory(factory, fixture.LiveArguments(
+                fixture.RoutesPath, fixture.ConnectionsPath, target)));
+        }
+        finally {
+            Console.SetOut(original);
+        }
+        using JsonDocument report = JsonDocument.Parse(output.Snapshot());
+        Assert.Equal("fulfilled", report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(1, factory.CreateCount);
+    }
+
+    [Fact]
+    public void RecipeBuildRejectsProducerTargetBeforeReadingItsFileOrCreatingClient() {
+        BuildProgressFixture fixture = PrepareBuildProgressFixture();
+        var factory = new GatedBuildFactory();
+        string missingTarget = Path.Combine(_root, "must-not-read-target.canonical");
+        Assert.Equal(1, RunWithFactory(factory, [
+            .. fixture.Arguments(64), "--producer-target", missingTarget]));
+        Assert.Equal(0, factory.CreateCount);
+    }
+
+    [Fact]
+    public void ProgressAndPromotionRejectProducerTargetOption() {
+        var factory = new GatedBuildFactory();
+        Assert.Equal(1, RunWithFactory(factory,
+            "progress", "--input", _root, "--live",
+            "--producer-target", "not-a-target"));
+        Assert.Equal(1, RunWithFactory(factory,
+            "control", "promote", "--input", _root,
+            "--producer-target", "not-a-target"));
+        Assert.Equal(0, factory.CreateCount);
+    }
+
     private BuildProgressFixture PrepareBuildProgressFixture() {
         CreateJournal(turns: 2);
         string refText = InitializeTimeline(maxRawEvents: 64);
@@ -153,6 +219,13 @@ public sealed partial class ProgramRecapGridCommandTests {
             Assert.IsType<RecapGridControlOperationResult.Applied>(control.Coordinator.ApplyRegistrationBundle(controlHead,
                 head, RecapGridControlOperation.Create("progress-fixture", 1, new string('d', 64)),
                 new RecapGridControlRegistrationBundle(bundle.Families, bundle.Definitions, [new(recipe, row.Witness)])));
+            ControlHeadRef registered = Assert.IsType<
+                RecapGridControlSnapshotResult.Available
+            >(control.Reader.ReadSnapshot()).Snapshot.Head;
+            Assert.IsType<RecapGridControlActivateResult.Applied>(
+                control.Coordinator.CompareExchangeActiveRecipe(
+                    registered, head, recipe.Digest,
+                    RecapGridControlActivationPurpose.Direct));
         }
         string routesPath = Path.Combine(_root, "routes.json");
         WriteFormattedBuildRoutes(routesPath, RecapGridRouteManifest.Create([
@@ -182,6 +255,18 @@ public sealed partial class ProgramRecapGridCommandTests {
         internal string[] Arguments(int maximumCalls) => ["build", "--input", Path, "--confirm-ref", RefId,
             "--recipe", Recipe.Digest.Value, "--max-recipe-row-steps", "64", "--max-new-calls", maximumCalls.ToString(),
             "--max-elapsed-ms", "30000", "--routes", RoutesPath, "--connections", ConnectionsPath];
+
+        internal string[] LiveArguments(
+            string routes, string connections, string? producerTarget = null
+        ) => producerTarget is null ? [
+            "build", "--input", Path, "--confirm-ref", RefId, "--live",
+            "--max-recipe-row-steps", "64", "--max-new-calls", "64",
+            "--max-elapsed-ms", "30000", "--routes", routes,
+            "--connections", connections] : [
+            "build", "--input", Path, "--confirm-ref", RefId, "--live",
+            "--max-recipe-row-steps", "64", "--max-new-calls", "64",
+            "--max-elapsed-ms", "30000", "--routes", routes,
+            "--connections", connections, "--producer-target", producerTarget];
     }
 
     private sealed class BuildCaptureWriter : TextWriter {

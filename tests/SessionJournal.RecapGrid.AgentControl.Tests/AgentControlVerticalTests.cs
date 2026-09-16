@@ -240,6 +240,9 @@ public sealed class AgentControlVerticalTests : IDisposable {
         (RecapGridBuildProgressResult Result, string Code)[] cases = [
             (new RecapGridBuildProgressResult.RecipeAbsent(recipe),
                 "recipe-absent"),
+            (new RecapGridBuildProgressResult.ProducerPolicyRequired(
+                recipe, new HistoryRowId(new string('b', 64))),
+                "producer-policy-required"),
             (new RecapGridBuildProgressResult.StaleTimelineHead(timelineHead),
                 "stale-timeline-head")
         ];

@@ -311,6 +311,11 @@ internal sealed class RecapGridAgentControlTool {
                             "recipe-absent",
                             "The candidate recipe is absent."
                         ),
+                    RecapGridBuildProgressResult.ProducerPolicyRequired value
+                        => Failed(
+                            "producer-policy-required",
+                            $"{value.RootRecipeDigest.Value}:{value.RowId.Value}"
+                        ),
                     RecapGridBuildProgressResult.ThroughRowNotSelected
                         => Failed(
                             "through-row-not-selected",

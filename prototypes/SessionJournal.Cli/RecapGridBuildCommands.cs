@@ -303,6 +303,11 @@ internal static partial class RecapGridCommands {
                 "Specify exactly one of --live or --recipe."
             );
         }
+        if (!live && producerTargetFile is not null) {
+            throw new ArgumentException(
+                "--producer-target is only valid with --live."
+            );
+        }
         RecapGridBuildSelection selection = live
             ? new RecapGridBuildSelection.LiveActive()
             : new RecapGridBuildSelection.ExplicitCandidate(
