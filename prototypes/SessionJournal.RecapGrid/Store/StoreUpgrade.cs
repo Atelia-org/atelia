@@ -65,6 +65,7 @@ public static partial class RecapGridStoreMaintenance {
                 version = ReadV4Version(source);
             }
             if (version == SqliteRecapGridStore.SchemaVersion) {
+                _ = VerifyV5(paths, paths.DatabasePath);
                 return new RecapGridStoreUpgradeResult.AlreadyCurrent();
             }
             if (version != 4) {
@@ -78,6 +79,7 @@ public static partial class RecapGridStoreMaintenance {
             paths.RequireSafe(temporary);
             string? backup = null;
             RecapGridStoreUpgradeEvidence? backupEvidence = null;
+            bool backupCreated = false;
             bool published = false;
             bool cleanupNeeded = true;
             try {
@@ -101,6 +103,7 @@ public static partial class RecapGridStoreMaintenance {
                     + "-" + Guid.NewGuid().ToString("N") + ".sqlite";
                 paths.RequireSafe(backup);
                 File.Copy(paths.DatabasePath, backup, overwrite: false);
+                backupCreated = true;
                 StoreDurableFiles.FlushFile(paths, backup);
                 StoreDurableFiles.FlushDirectory(paths.RootPath);
                 VerifiedV4 verifiedBackup = VerifyV4(
@@ -110,6 +113,45 @@ public static partial class RecapGridStoreMaintenance {
                 BuildV5Replacement(temporary, verifiedBackup.Snapshot);
                 _ = VerifyV5(paths, temporary);
                 hooks.AfterTempVerified?.Invoke();
+                RecapGridStoreUpgradeEvidence temporaryEvidence = VerifyV5(
+                    paths, temporary);
+                if (!MatchesConvertedEvidence(backupEvidence,
+                        temporaryEvidence)) {
+                    bool cleaned = TryDeleteUpgradeTemporary(temporary);
+                    cleanupNeeded = false;
+                    return new RecapGridStoreUpgradeResult.PreCommitFailed(
+                        backup, backupEvidence,
+                        "replacement-evidence-mismatch",
+                        "The verified V5 replacement identity or counters do "
+                            + "not match the durable V4 backup.",
+                        cleaned,
+                        "inspect-active-and-backup-before-a-new-upgrade");
+                }
+                VerifiedV4 backupBeforeReplace = VerifyV4(paths, backup,
+                    partialWorkProofs);
+                if (backupBeforeReplace.Evidence != backupEvidence) {
+                    bool cleaned = TryDeleteUpgradeTemporary(temporary);
+                    cleanupNeeded = false;
+                    return new RecapGridStoreUpgradeResult.PreCommitFailed(
+                        backup, backupEvidence,
+                        "backup-changed-before-replace",
+                        "The V4 backup changed after its durable evidence was "
+                            + "captured.",
+                        cleaned,
+                        "inspect-active-and-backup-before-a-new-upgrade");
+                }
+                sidecar = ExistingSidecar(paths);
+                if (sidecar is not null) {
+                    bool cleaned = TryDeleteUpgradeTemporary(temporary);
+                    cleanupNeeded = false;
+                    return new RecapGridStoreUpgradeResult.PreCommitFailed(
+                        backup, backupEvidence,
+                        "sidecar-appeared-before-replace",
+                        $"The active V4 Store acquired sidecar '{sidecar}' "
+                            + "during the offline upgrade.",
+                        cleaned,
+                        "inspect-active-backup-and-sidecar-before-a-new-upgrade");
+                }
                 VerifiedV4 activeBeforeReplace = VerifyV4(paths,
                     paths.DatabasePath, partialWorkProofs);
                 if (activeBeforeReplace.Evidence != backupEvidence) {
@@ -127,6 +169,11 @@ public static partial class RecapGridStoreMaintenance {
                 hooks.AfterDirectoryFsyncBeforeVerify?.Invoke();
                 RecapGridStoreUpgradeEvidence activeEvidence = VerifyV5(
                     paths, paths.DatabasePath);
+                if (activeEvidence != temporaryEvidence) {
+                    throw new InvalidDataException(
+                        "The published V5 Store differs from the verified "
+                            + "replacement evidence.");
+                }
                 hooks.AfterVerify?.Invoke();
                 return new RecapGridStoreUpgradeResult.Upgraded(backup,
                     backupEvidence, activeEvidence);
@@ -140,14 +187,17 @@ public static partial class RecapGridStoreMaintenance {
                     "inspect-and-verify-active-before-any-restore-or-retry");
             }
             catch (Exception exception) when (apply
-                && backupEvidence is not null
+                && backupCreated
                 && !IsFatal(exception)) {
                 bool cleaned = TryDeleteUpgradeTemporary(temporary);
                 cleanupNeeded = false;
                 return new RecapGridStoreUpgradeResult.PreCommitFailed(
-                    backup, backupEvidence, "precommit-failed", exception.Message,
+                    backup, backupEvidence, backupEvidence is null
+                        ? "backup-not-verified"
+                        : "precommit-failed",
+                    exception.Message,
                     cleaned, backupEvidence is null
-                        ? "inspect-active-before-a-new-upgrade"
+                        ? "inspect-active-and-unverified-backup-before-a-new-upgrade"
                         : "inspect-active-and-backup-before-a-new-upgrade");
             }
             finally {
@@ -228,6 +278,18 @@ public static partial class RecapGridStoreMaintenance {
             info.CellCount, info.RowViewCount, info.RowViewMemberCount,
             info.FulfilledViewCount, StoreDurableFiles.ComputeWitness(paths, path));
     }
+
+    private static bool MatchesConvertedEvidence(
+        RecapGridStoreUpgradeEvidence backup,
+        RecapGridStoreUpgradeEvidence replacement
+    ) => backup.Identity.SchemaVersion == 4
+        && replacement.Identity.SchemaVersion
+            == SqliteRecapGridStore.SchemaVersion
+        && backup.Identity.InstanceId == replacement.Identity.InstanceId
+        && backup.CellCount == replacement.CellCount
+        && backup.RowViewCount == replacement.RowViewCount
+        && backup.RowViewMemberCount == replacement.RowViewMemberCount
+        && backup.FulfilledViewCount == replacement.FulfilledViewCount;
 
     private static RecapGridStoreUpgradeObservation ObserveActive(
         StorePaths paths

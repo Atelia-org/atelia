@@ -119,6 +119,18 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
             RecapGridStoreMaintenance.UpgradeV4(_root, apply: false));
     }
 
+    [Fact]
+    public void V5UpgradeCheckDoesNotReportAlreadyCurrentForInvalidStore() {
+        Create();
+        Execute("UPDATE store_metadata SET cell_count=1;");
+
+        RecapGridStoreUpgradeResult result =
+            RecapGridStoreMaintenance.UpgradeV4(_root, apply: false);
+
+        Assert.IsType<RecapGridStoreUpgradeResult.Invalid>(result);
+        Assert.IsNotType<RecapGridStoreUpgradeResult.AlreadyCurrent>(result);
+    }
+
     [Theory]
     [InlineData("temp")]
     [InlineData("backup")]
@@ -171,6 +183,78 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
         Assert.Equal(original, File.ReadAllBytes(result.BackupPath!));
         Assert.Equal(4, ReadSchemaVersion(active));
         Assert.Contains("strict-v4-b", File.ReadAllText(active));
+        Assert.True(result.TemporaryCleanupSucceeded);
+    }
+
+    [Theory]
+    [InlineData("backup")]
+    [InlineData("replacement")]
+    public void V4UpgradeRejectsChangedEvidenceBeforeReplace(string slot) {
+        CreateV4FullStore(out _, out _, out _);
+        string active = new StorePaths(_root).DatabasePath;
+        byte[] original = File.ReadAllBytes(active);
+        var hooks = new StoreUpgradeTestHooks(
+            AfterBackupDurable: slot == "backup" ? () => {
+                string backup = Assert.Single(Directory.GetFiles(
+                    new StorePaths(_root).RootPath,
+                    "grid.sqlite.v4-backup-*.sqlite"));
+                MutateCellContent(backup, "changed-backup");
+            } : null,
+            AfterTempVerified: slot == "replacement" ? () => {
+                string temporary = Assert.Single(Directory.GetFiles(
+                    new StorePaths(_root).RootPath,
+                    ".grid.upgrade-v5.*.sqlite"));
+                MutateStoreInstanceId(temporary);
+            } : null);
+
+        RecapGridStoreUpgradeResult.PreCommitFailed result = Assert.IsType<
+            RecapGridStoreUpgradeResult.PreCommitFailed>(
+            RecapGridStoreMaintenance.UpgradeV4ForTest(
+                _root, apply: true, static () => [], hooks));
+
+        Assert.Equal(slot == "backup"
+            ? "backup-changed-before-replace"
+            : "replacement-evidence-mismatch", result.Code);
+        Assert.Equal(original, File.ReadAllBytes(active));
+        Assert.Equal(4, ReadSchemaVersion(active));
+        Assert.True(result.TemporaryCleanupSucceeded);
+    }
+
+    [Fact]
+    public void V4UpgradePublishedEvidenceMismatchIsCommitIndeterminate() {
+        CreateV4FullStore(out _, out _, out _);
+        string active = new StorePaths(_root).DatabasePath;
+        var hooks = new StoreUpgradeTestHooks(
+            AfterReplaceBeforeDirectoryFsync: () =>
+                MutateCellContent(active, "changed-after-replace"));
+
+        RecapGridStoreUpgradeResult.CommitIndeterminate result = Assert.IsType<
+            RecapGridStoreUpgradeResult.CommitIndeterminate>(
+            RecapGridStoreMaintenance.UpgradeV4ForTest(
+                _root, apply: true, static () => [], hooks));
+
+        Assert.Equal(5, result.ObservedActive.SchemaVersion);
+        Assert.NotNull(result.ObservedActive.Witness);
+        Assert.Equal(5, ReadSchemaVersion(active));
+        Assert.IsType<RecapGridStoreVerifyResult.Healthy>(
+            RecapGridStoreMaintenance.Verify(_root));
+    }
+
+    [Fact]
+    public void V4UpgradeRejectsSidecarThatAppearsBeforeReplace() {
+        CreateV4FullStore(out _, out _, out _);
+        string active = new StorePaths(_root).DatabasePath;
+        byte[] original = File.ReadAllBytes(active);
+        var hooks = new StoreUpgradeTestHooks(AfterTempVerified: () =>
+            File.WriteAllBytes(active + "-journal", [1, 2, 3, 4]));
+
+        RecapGridStoreUpgradeResult.PreCommitFailed result = Assert.IsType<
+            RecapGridStoreUpgradeResult.PreCommitFailed>(
+            RecapGridStoreMaintenance.UpgradeV4ForTest(
+                _root, apply: true, static () => [], hooks));
+
+        Assert.Equal("sidecar-appeared-before-replace", result.Code);
+        Assert.Equal(original, File.ReadAllBytes(active));
         Assert.True(result.TemporaryCleanupSucceeded);
     }
 
@@ -603,6 +687,26 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
         command.CommandText = "PRAGMA user_version;";
         return Convert.ToInt32(command.ExecuteScalar(),
             System.Globalization.CultureInfo.InvariantCulture);
+    }
+    private static void MutateCellContent(string path, string content) {
+        using var connection = new SqliteConnection(
+            $"Data Source={path};Mode=ReadWrite;Pooling=False");
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "UPDATE cell_artifact SET content=$content;";
+        command.Parameters.AddWithValue("$content", content);
+        Assert.True(command.ExecuteNonQuery() > 0);
+    }
+    private static void MutateStoreInstanceId(string path) {
+        using var connection = new SqliteConnection(
+            $"Data Source={path};Mode=ReadWrite;Pooling=False");
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE store_metadata
+            SET store_instance_id='ffffffffffffffffffffffffffffffff';
+            """;
+        Assert.Equal(1, command.ExecuteNonQuery());
     }
     private RecapGridStoreHandle Open() => Assert.IsType<RecapGridStoreOpenResult.Opened>(RecapGridStoreFactory.Open(_root)).Handle;
     private SqliteConnection OpenRaw() => new($"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False;Foreign Keys=False");
