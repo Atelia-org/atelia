@@ -128,7 +128,7 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 
 | 现象 | 先检查 |
 |:--|:--|
-| 启动后生成模板并退出 | 按提示检查模板，准备有效 delegates 路径及 Agent Control profile |
+| 启动后生成模板并退出 | 按提示检查模板、准备有效 delegates 路径；只有 `historicalAgentControlProfileFiles` 非空且需 frozen tool recovery 时才准备相应 Agent Control profile，`[]` fresh bootstrap 不需要 |
 | Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和服务端异常日志 |
 | interval 为 `0` 但期待自主活动 | 将 `autonomyIntervalMinutes` 设为正整数后重启；`0` 仍恢复已有任务和 durable reply，但不创建空闲 heartbeat |
 | `blocked` 或需要恢复 | 页面原因码、当前轮次、`Galatea.Autonomy` 与相关服务端错误日志 |

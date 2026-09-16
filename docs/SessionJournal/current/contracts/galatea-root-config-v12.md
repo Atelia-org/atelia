@@ -29,7 +29,7 @@ RecapGrid 配置收口而改变。相对路径仍以 `config.json` 所在目录�
 
 `maintenance.connectionId` 必须为非空 string；`maximumConcurrency` 为 1..1024 的整数；
 `dispatchTimeoutMilliseconds` 为 1..86,400,000 的整数。`historicalAgentControlProfileFiles` 必须是
-0..256 个非空 string path，加载后必须是存在的 no-follow regular file，canonical path 不得重复。
+0..256 个非空 string path，加载后必须是最多 128 KiB、存在的 no-follow regular file，canonical path 不得重复。
 
 ## Live maintenance 与恢复边界
 

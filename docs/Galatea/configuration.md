@@ -214,8 +214,9 @@ task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经�
 exact route，因此新默认 family 与旧未完成 family 都可运行。已完成 Recap 的读取不需要 route 或可用 maintenance connection；
 只有需要新生成时才报告 maintenance 连接的具体阻塞。
 
-`historicalAgentControlProfileFiles` 可以是空数组。非空时它只保存冻结的 exact tool recovery 所需 profile bytes/identity，
-不是 live admission、默认 profile 或新 work 的授权来源。fresh missing-session bootstrap 由 host 的 code-owned bundle 窄入口
+`historicalAgentControlProfileFiles` 可以是空数组。非空时每个 profile 必须是最多 128 KiB 的 strict no-follow regular file，
+只保存冻结的 exact tool recovery 所需 profile bytes/identity，不是 live admission、默认 profile 或新 work 的授权来源。fresh
+missing-session bootstrap 由 host 的 code-owned bundle 窄入口
 建立 Store、该 Character 的 asset、empty-Timeline full recipe 与 active recipe；它不会读取历史 profile、创建 Completion client
 或调用 provider，也不会为新 session 创建或扩展任何 Agent Control tool/family allowlist。
 
