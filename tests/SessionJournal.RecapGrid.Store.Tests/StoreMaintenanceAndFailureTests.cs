@@ -161,6 +161,11 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                 BeforeLocalCommitRetry: _ => retries++
             )
         )).Handle;
+        RecapCellArtifact proposed = Cell('b', "answer");
+        RowBuildSpec spec = StoreFixture.Spec(
+            row: proposed.Slot.HistoryRowId
+        );
+        StoreFixture.PutWork(handle, spec);
         using SqliteConnection blocker = OpenRaw();
         blocker.Open();
         using (SqliteCommand begin = blocker.CreateCommand()) {
@@ -183,7 +188,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             RecapGridStoreMaintenance.Export(_root)
         );
         Assert.IsType<RecapGridCellPutResult.Busy>(
-            Put(handle, Cell('b', "answer"))
+            PutSelectedCell(handle, spec, proposed)
         );
         Assert.Equal(2, retries);
         using (SqliteCommand rollback = blocker.CreateCommand()) {
@@ -191,7 +196,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             rollback.ExecuteNonQuery();
         }
         Assert.IsType<RecapGridCellPutResult.Inserted>(
-            Put(handle, Cell('b', "answer"))
+            PutSelectedCell(handle, spec, proposed)
         );
     }
 
@@ -479,6 +484,13 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
     private static RecapGridCellPutResult Put(RecapGridStoreHandle handle, RecapCellArtifact cell) {
         RowBuildSpec spec = StoreFixture.Spec(row: cell.Slot.HistoryRowId);
         StoreFixture.PutWork(handle, spec);
+        return PutSelectedCell(handle, spec, cell);
+    }
+    private static RecapGridCellPutResult PutSelectedCell(
+        RecapGridStoreHandle handle,
+        RowBuildSpec spec,
+        RecapCellArtifact cell
+    ) {
         return handle.Writer.PutCell(spec, RecapCellDraft.Create(cell.Slot, cell.DefinitionDigest,
             cell.Outcome, cell.Content, RecapGridLimits.MaximumContentUtf8Bytes));
     }

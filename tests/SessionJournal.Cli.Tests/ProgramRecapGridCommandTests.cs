@@ -2400,7 +2400,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                 "--connections", onlineConnections,
                 "--routes", routes,
                 "--producer-target", producerTarget);
-        Assert.Equal(0, secondOnlineCode);
+        Assert.True(secondOnlineCode == 0, secondOnline.GetRawText());
         Assert.Equal("completed",
             secondOnline.GetProperty("status").GetString());
         Assert.True(factory.RequestCount >= beforeSecondOnline + 2);
