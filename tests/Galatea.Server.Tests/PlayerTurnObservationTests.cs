@@ -182,7 +182,7 @@ public sealed class PlayerTurnObservationTests {
         Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
             heartbeat.Replace(
                 PlayerTurnObservationEnvelope.RenderHeartbeatActivationBody(
-                    CharacterName
+                    CharacterName, 10
                 ),
                 "changed",
                 StringComparison.Ordinal

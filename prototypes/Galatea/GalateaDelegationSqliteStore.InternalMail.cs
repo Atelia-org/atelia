@@ -223,7 +223,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static void ValidateInternalMailInput(SessionInputContent content,
         GalateaInternalMailOutboxSnapshot outbox, GalateaOutboundMailSnapshot mail, string senderId) {
         JsonElement value = content.JsonValue;
-        if (content.SchemaId != GalateaObservationContent.SchemaId || value.GetProperty("kind").GetString() != "inbound-mail") {
+        if (content.SchemaId != GalateaObservationContent.V1SchemaId || value.GetProperty("kind").GetString() != "inbound-mail") {
             throw Corrupt("Internal mail bound input must be an inbound Observation.");
         }
         GalateaSenderSnapshot sender = GalateaInputContentValidation.ReadSender(value.GetProperty("sender"));

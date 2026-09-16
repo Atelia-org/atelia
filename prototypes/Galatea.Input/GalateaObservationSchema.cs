@@ -6,11 +6,19 @@ using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Input;
 
-/// <summary>The one JSON schema and external-string selection authority for galatea.observation.v1.</summary>
+/// <summary>Strict schema and external-string selection authority for persisted Galatea Observations.</summary>
 internal static class GalateaObservationSchema {
-    internal const string SchemaId = "galatea.observation.v1";
+    internal const string V1SchemaId = "galatea.observation.v1";
+    internal const string V2SchemaId = "galatea.observation.v2";
     internal const int MaximumContentUtf8Bytes = GalateaObservationLimits.MaximumContentUtf8Bytes;
-    internal static void Validate(JsonElement value) {
+    internal static bool IsSupportedSchemaId(string? schemaId) => schemaId is V1SchemaId or V2SchemaId;
+
+    internal static void Validate(string? schemaId, JsonElement value) {
+        bool isV2 = schemaId switch {
+            V1SchemaId => false,
+            V2SchemaId => true,
+            _ => throw new InvalidDataException("Unsupported Galatea Observation schema: " + schemaId)
+        };
         GalateaInputValidation.RequireObject(value, "v", "kind", "sender", "externalLocalTimestamp", "action", "notices", "recalls");
         GalateaInputValidation.RequireVersion(value);
         GalateaInputSource sender = GalateaInputValidation.ReadSender(value.GetProperty("sender"));
@@ -27,6 +35,7 @@ internal static class GalateaObservationSchema {
         }
         switch (kind) {
             case "player-action":
+                RequireV1(isV2, kind);
                 RequireSenderKind(sender, "player");
                 GalateaInputValidation.RequireObject(action, "text");
                 if (GalateaObservationRules.ValidatePlayerText(Text(action, "text", MaximumContentUtf8Bytes)) is { } error) { throw new InvalidDataException(error); }
@@ -36,15 +45,19 @@ internal static class GalateaObservationSchema {
                 GalateaInputValidation.RequireObject(action, "character", "externalIntervalMinutes");
                 RequireSenderKind(GalateaInputValidation.ReadSender(action.GetProperty("character")), "character");
                 if (!action.GetProperty("externalIntervalMinutes").TryGetInt32(out int minutes)
-                    || minutes != GalateaObservationLimits.ExternalIntervalMinutes) {
+                    || (isV2
+                        ? minutes is < 1 or > GalateaObservationLimits.MaximumExternalIntervalMinutes
+                        : minutes != GalateaObservationLimits.ExternalIntervalMinutes)) {
                     throw new InvalidDataException("Unsupported heartbeat activation interval.");
                 }
                 break;
             case "delegate-reply":
+                RequireV1(isV2, kind);
                 RequireSenderKind(sender, "runtime");
                 GalateaInputValidation.RequireObject(action);
                 break;
             case "inbound-mail":
+                RequireV1(isV2, kind);
                 if (sender.Kind is not ("player" or "character")) { throw new InvalidDataException("Inbound sender must be a Player or Character."); }
                 ValidateMailbox(action);
                 JsonElement injector = action.GetProperty("injectedBy");
@@ -82,8 +95,8 @@ internal static class GalateaObservationSchema {
         }
     }
 
-    internal static IReadOnlyList<string> ExternalStringPaths(JsonElement value) {
-        Validate(value);
+    internal static IReadOnlyList<string> ExternalStringPaths(string? schemaId, JsonElement value) {
+        Validate(schemaId, value);
         var paths = new List<string>();
         string? kind = value.GetProperty("kind").GetString();
         if (kind == "player-action") { paths.Add("/action/text"); }
@@ -222,5 +235,8 @@ internal static class GalateaObservationSchema {
     private static string? OptionalText(JsonElement value, string field, int bytes) => value.GetProperty(field).ValueKind == JsonValueKind.Null ? null : Text(value, field, bytes);
     private static void RequireSenderKind(GalateaInputSource sender, string expected) {
         if (sender.Kind != expected) { throw new InvalidDataException("Unexpected sender kind."); }
+    }
+    private static void RequireV1(bool isV2, string kind) {
+        if (isV2) { throw new InvalidDataException("Galatea Observation v2 only supports heartbeat-activation, not " + kind + "."); }
     }
 }

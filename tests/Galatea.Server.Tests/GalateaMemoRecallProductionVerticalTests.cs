@@ -275,7 +275,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             turn = triggerKind == "player-action"
                 ? service.StartTurn(session, playerText, new GalateaTurnOptions("test"), sender: GalateaDelegateTestConfiguration.PlayerSender)
                 : session.StartTurn(new GalateaFreshInput.HeartbeatActivation(
-                    new GalateaCharacterName("Alice")), new GalateaTurnOptions("test"));
+                    new GalateaCharacterName("Alice"), 10), new GalateaTurnOptions("test"));
         }
         try {
             await service.RunTurnAsync(session, turn, CancellationToken.None)
@@ -316,7 +316,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
 
     // This decoder asserts the actual transient md-json request; durable reads above use typed facts.
     private static PlayerTurnObservation ReadRequestedObservation(string requestText) =>
-        GalateaObservationContent.ReadPlayerTurn(SessionInputContent.Structured(GalateaObservationContent.SchemaId,
+        GalateaObservationContent.ReadPlayerTurn(SessionInputContent.Structured(GalateaObservationContent.V1SchemaId,
             Atelia.MdJson.MdJsonSerializer.Read(requestText)));
 
 

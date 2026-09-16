@@ -535,7 +535,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         var player = new GalateaFreshInput.PlayerAction("player", GalateaDelegateTestConfiguration.PlayerSender, notices);
         var reply = new GalateaFreshInput.DelegateReply(notices);
         var heartbeat = new GalateaFreshInput.HeartbeatActivation(
-            new GalateaCharacterName("Galatea")
+            new GalateaCharacterName("Galatea"), 10
         );
         var inbound = new GalateaFreshInput.InboundMail(
             MailboxMessage.CreateInbound(
@@ -861,7 +861,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             PlayerTurnObservationTriggerKind.PlayerAction => new GalateaFreshInput.PlayerAction(
                 observation.PlayerText, GalateaDelegateTestConfiguration.PlayerSender, observation.Notices),
             PlayerTurnObservationTriggerKind.DelegateReply => new GalateaFreshInput.DelegateReply(observation.Notices),
-            PlayerTurnObservationTriggerKind.HeartbeatActivation => new GalateaFreshInput.HeartbeatActivation(observation.HeartbeatCharacterName),
+            PlayerTurnObservationTriggerKind.HeartbeatActivation => new GalateaFreshInput.HeartbeatActivation(observation.HeartbeatCharacterName, observation.HeartbeatIntervalMinutes),
             _ => throw new InvalidOperationException("Unexpected fixture input kind.")
         };
         return GalateaObservationContent.Create(fresh, observation.ExternalLocalTimestamp!.Value,

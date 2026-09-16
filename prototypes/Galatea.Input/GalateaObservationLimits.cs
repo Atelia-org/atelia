@@ -2,11 +2,12 @@ using Atelia.MemoPod;
 
 namespace Atelia.Galatea.Input;
 
-/// <summary>Stable bounds of galatea.observation.v1, independent of Markdown presentation.</summary>
+/// <summary>Stable bounds of Galatea Observation schemas, independent of Markdown presentation.</summary>
 internal static class GalateaObservationLimits {
     internal const int MaximumContentUtf8Bytes = 1024 * 1024;
     internal const int MaximumPlayerTextUtf8Bytes = 64 * 1024;
     internal const int ExternalIntervalMinutes = 10;
+    internal const int MaximumExternalIntervalMinutes = 525_600;
     internal const int MaximumRecallSourceIdUtf8Bytes = 512;
     // Preserve v1's accepted gist/summary and legacy-body bound, including its historical 21-byte labels.
     internal const int MaximumRecallBodyUtf8Bytes = MemoPodLimits.MaximumMemoTitleUtf8Bytes + MemoPodLimits.MaximumMemoExactTextUtf8Bytes + 21;

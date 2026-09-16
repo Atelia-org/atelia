@@ -30,8 +30,8 @@ internal static class GalateaMemoRecallQueryRenderer {
         ArgumentNullException.ThrowIfNull(currentObservation);
         ArgumentNullException.ThrowIfNull(context);
         if (currentInput is not null) {
-            if (currentInput.SchemaId != GalateaObservationContent.SchemaId) { throw new InvalidDataException("Recall query requires known semantic input provenance."); }
-            GalateaObservationContent.Validate(currentInput.JsonValue);
+            if (!GalateaObservationContent.IsSupportedSchemaId(currentInput.SchemaId)) { throw new InvalidDataException("Recall query requires known semantic input provenance."); }
+            GalateaObservationContent.Validate(currentInput);
         }
         if (currentObservation.Recalls.Count != 0) {
             throw new ArgumentException(
@@ -175,7 +175,7 @@ internal static class GalateaMemoRecallQueryRenderer {
                 case PlayerTurnObservationTriggerKind.HeartbeatActivation:
                     writer.WriteString("kind", "heartbeat-activation");
                     writer.WriteString("characterName", observation.HeartbeatCharacterName.Value);
-                    writer.WriteNumber("externalIntervalMinutes", GalateaFreshInput.HeartbeatActivation.ExternalIntervalMinutes);
+                    writer.WriteNumber("externalIntervalMinutes", observation.HeartbeatIntervalMinutes);
                     break;
                 case PlayerTurnObservationTriggerKind.DelegateReply:
                     writer.WriteString("kind", "delegate-reply");

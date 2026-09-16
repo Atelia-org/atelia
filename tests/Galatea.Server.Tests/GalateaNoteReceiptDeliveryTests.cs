@@ -216,7 +216,7 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         }
 
         internal SessionInputContent Render(CharacterNoteReceiptDeliverySnapshot receipt) =>
-            GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Galatea")),
+            GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Galatea"), 10),
                 Timestamp, new GalateaSenderSnapshot("character", "user", "Galatea"),
                 [CharacterNoteSaveReceipt.SelectForObservation(receipt)]);
 

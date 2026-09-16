@@ -401,10 +401,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
 
     private static void RequireNewBoundObservation(SessionInputContent content) {
         ArgumentNullException.ThrowIfNull(content);
-        if (!content.IsStructured || content.SchemaId != GalateaObservationContent.SchemaId) {
+        if (!content.IsStructured || !GalateaObservationContent.IsSupportedSchemaId(content.SchemaId)) {
             throw new ArgumentException("New delivery bindings require a structured Galatea Observation.", nameof(content));
         }
-        GalateaObservationContent.Validate(content.JsonValue);
+        GalateaObservationContent.Validate(content);
     }
 
     private static SessionInputContent? ReadBoundInput(SqliteDataReader reader, int ordinal) {

@@ -74,13 +74,13 @@ internal static class GalateaRecallBarrierBuilder {
         var entries = new List<RecallEntry>();
         foreach (IHistoryMessage message in messages) {
             if (message is SessionInputObservationMessage structured) {
-                if (structured.Content.SchemaId != GalateaObservationContent.SchemaId) {
+                if (!GalateaObservationContent.IsSupportedSchemaId(structured.Content.SchemaId)) {
                     throw new NotSupportedException("Unknown structured Observation schema in RecallBarrier: " + structured.Content.SchemaId);
                 }
                 if (structured.Content.JsonValue.GetProperty("kind").GetString() != "inbound-mail") {
                     entries.AddRange(GalateaObservationContent.ReadPlayerTurn(structured.Content).Recalls.Select(recall => recall.Entry));
                 }
-                else { GalateaObservationContent.Validate(structured.Content.JsonValue); }
+                else { GalateaObservationContent.Validate(structured.Content); }
             }
             else if (message is ObservationMessage legacy
                 && PlayerTurnObservationEnvelope.TryUnwrap(legacy.Content, out PlayerTurnObservation observation)) {

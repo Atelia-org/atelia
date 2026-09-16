@@ -908,7 +908,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             cliTail.Content);
         JsonElement value = Atelia.MdJson.MdJsonSerializer.Read(Assert.IsType<string>(galateaTail.Content));
         PlayerTurnObservation playerTurnObservation = GalateaObservationContent.ReadPlayerTurn(
-            SessionInputContent.Structured(GalateaObservationContent.SchemaId, value));
+            SessionInputContent.Structured(GalateaObservationContent.V1SchemaId, value));
         Assert.Equal("same next clue", playerTurnObservation.PlayerText);
         Assert.NotNull(playerTurnObservation.ExternalLocalTimestamp);
     }

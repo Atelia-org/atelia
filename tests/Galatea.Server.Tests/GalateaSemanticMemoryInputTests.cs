@@ -11,6 +11,29 @@ public sealed class GalateaSemanticMemoryInputTests {
     private static readonly DateTimeOffset Time = new(2026, 9, 15, 0, 0, 0, TimeSpan.Zero);
     private static readonly GalateaSenderSnapshot Character = new("character", "alice", "Alice");
 
+    [Fact]
+    public void HeartbeatSnapshotWritesV2AndDrivesMarkdownAndRecallEvidence() {
+        SessionInputContent input = GalateaObservationContent.Create(
+            new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 7),
+            Time, Character);
+
+        Assert.Equal(GalateaObservationContent.V2SchemaId, input.SchemaId);
+        Assert.Equal(7, input.JsonValue.GetProperty("action").GetProperty("externalIntervalMinutes").GetInt32());
+        PlayerTurnObservation observed = GalateaObservationContent.ReadPlayerTurn(input);
+        Assert.Equal(7, observed.HeartbeatIntervalMinutes);
+        Assert.Contains("7分钟", PlayerTurnObservationEnvelope.FormatForDisplay(observed), StringComparison.Ordinal);
+        string wrapped = PlayerTurnObservationEnvelope.Wrap(observed);
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(wrapped, out PlayerTurnObservation reopened));
+        Assert.Equal(7, reopened.HeartbeatIntervalMinutes);
+
+        string queryText = GalateaMemoRecallQueryRenderer.Render(
+            new GalateaCharacterName("Alice"), observed,
+            new GalateaPlayerTurnRecallContext(RecallBarrier.Empty, CharacterNoteOriginBarrier.Empty), input);
+        using JsonDocument query = JsonDocument.Parse(queryText);
+        Assert.Equal(7, query.RootElement.GetProperty("currentTurn").GetProperty("trigger")
+            .GetProperty("externalIntervalMinutes").GetInt32());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -26,7 +49,7 @@ public sealed class GalateaSemanticMemoryInputTests {
         Assert.Null(receipt.NoticeBody);
         Assert.Equal(memos.Select(m => m.MemoId), selected.Selection!.MemoIds);
         Assert.Equal(large ? 0 : memos.Length, selected.Selection.ExactTexts.Count);
-        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice")), Time, Character, [selected]);
+        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10), Time, Character, [selected]);
         PlayerTurnNotice.NoteSaveReceipt reopened = Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
             Assert.Single(GalateaObservationContent.ReadPlayerTurn(input).Notices));
         Assert.Equal(selected.Selection.MemoIds, reopened.Selection!.MemoIds);

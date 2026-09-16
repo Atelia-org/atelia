@@ -305,7 +305,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             requestedObservation.Content
         );
         SessionInputContent projectedInput = SessionInputContent.Structured(
-            GalateaObservationContent.SchemaId, MdJsonSerializer.Read(wrapped));
+            GalateaObservationContent.V1SchemaId, MdJsonSerializer.Read(wrapped));
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         Assert.Equal("normalized input", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);
@@ -429,7 +429,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         Assert.Contains("memo-gist", wrapped, StringComparison.Ordinal);
         SessionInputContent projectedInput = SessionInputContent.Structured(
-            GalateaObservationContent.SchemaId, MdJsonSerializer.Read(wrapped));
+            GalateaObservationContent.V1SchemaId, MdJsonSerializer.Read(wrapped));
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         PlayerTurnRecall parsedRecall = Assert.Single(observation.Recalls);
         Assert.Equal(RecallType.MemoGist,

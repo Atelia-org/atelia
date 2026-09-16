@@ -679,7 +679,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
 
     private static SessionInputContent Structured(PlayerTurnObservation observation) {
         GalateaFreshInput fresh = observation.TriggerKind switch {
-            PlayerTurnObservationTriggerKind.HeartbeatActivation => new GalateaFreshInput.HeartbeatActivation(observation.HeartbeatCharacterName),
+            PlayerTurnObservationTriggerKind.HeartbeatActivation => new GalateaFreshInput.HeartbeatActivation(observation.HeartbeatCharacterName, observation.HeartbeatIntervalMinutes),
             PlayerTurnObservationTriggerKind.DelegateReply => new GalateaFreshInput.DelegateReply(observation.Notices),
             _ => new GalateaFreshInput.PlayerAction(observation.PlayerText, GalateaDelegateTestConfiguration.PlayerSender)
         };

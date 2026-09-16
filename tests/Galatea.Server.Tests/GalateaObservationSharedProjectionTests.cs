@@ -29,6 +29,66 @@ public sealed class GalateaObservationSharedProjectionTests {
     }
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(7)]
+    [InlineData(525_600)]
+    public void V2HeartbeatAcceptsConfiguredIntervalAndPreservesProjection(int intervalMinutes) {
+        JsonObject input = Observation("heartbeat-activation");
+        input["action"]!["externalIntervalMinutes"] = intervalMinutes;
+        SessionInputContent content = Content(input, GalateaObservationSchema.V2SchemaId);
+
+        string projection = GalateaObservationInputProjector.Instance.Project(content);
+
+        Assert.True(JsonElement.DeepEquals(content.JsonValue, MdJsonSerializer.Read(projection)));
+        Assert.Equal(intervalMinutes, GalateaObservationContent.ReadPlayerTurn(content).HeartbeatIntervalMinutes);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(525_601)]
+    public void V2HeartbeatRejectsOutOfRangeInterval(int intervalMinutes) {
+        JsonObject input = Observation("heartbeat-activation");
+        input["action"]!["externalIntervalMinutes"] = intervalMinutes;
+        Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(
+            Content(input, GalateaObservationSchema.V2SchemaId)));
+    }
+
+    [Fact]
+    public void V2HeartbeatRejectsNonIntegerOtherKindsAndUnknownFields() {
+        JsonObject fractional = Observation("heartbeat-activation");
+        fractional["action"]!["externalIntervalMinutes"] = 7.5;
+        Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(
+            Content(fractional, GalateaObservationSchema.V2SchemaId)));
+
+        JsonObject overflow = Observation("heartbeat-activation");
+        overflow["action"]!["externalIntervalMinutes"] = 3_000_000_000L;
+        Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(
+            Content(overflow, GalateaObservationSchema.V2SchemaId)));
+
+        Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(
+            Content(Observation("player-action"), GalateaObservationSchema.V2SchemaId)));
+
+        JsonObject unknown = Observation("heartbeat-activation");
+        unknown["unknown"] = true;
+        Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(
+            Content(unknown, GalateaObservationSchema.V2SchemaId)));
+    }
+
+    [Fact]
+    public void V1HeartbeatRemainsStrictAndReopensWithHistoricalTenMinuteNarrative() {
+        SessionInputContent content = Content(Observation("heartbeat-activation"));
+        PlayerTurnObservation observed = GalateaObservationContent.ReadPlayerTurn(content);
+
+        Assert.Equal(10, observed.HeartbeatIntervalMinutes);
+        Assert.Contains("十分钟", PlayerTurnObservationEnvelope.Wrap(observed), StringComparison.Ordinal);
+
+        JsonObject invalid = Observation("heartbeat-activation");
+        invalid["action"]!["externalIntervalMinutes"] = 11;
+        Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(Content(invalid)));
+    }
+
+    [Theory]
     [InlineData("reply")]
     [InlineData("delivery-failure")]
     [InlineData("note-save-receipt")]
@@ -43,7 +103,7 @@ public sealed class GalateaObservationSharedProjectionTests {
         Assert.True(JsonElement.DeepEquals(content.JsonValue, MdJsonSerializer.Read(projection)));
         Assert.Single(GalateaObservationContent.ReadPlayerTurn(content).Notices);
         Assert.Contains(Body, projection, StringComparison.Ordinal);
-        Assert.Equal(GalateaObservationSchema.ExternalStringPaths(content.JsonValue), GalateaObservationContent.ExternalStringPaths(content.JsonValue));
+        Assert.Equal(GalateaObservationSchema.ExternalStringPaths(content.SchemaId, content.JsonValue), GalateaObservationContent.ExternalStringPaths(content.SchemaId, content.JsonValue));
     }
 
     [Theory]
@@ -150,7 +210,7 @@ public sealed class GalateaObservationSharedProjectionTests {
         }
         SessionInputContent content = Content(input);
         Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(content));
-        Assert.ThrowsAny<Exception>(() => GalateaObservationContent.Validate(content.JsonValue));
+        Assert.ThrowsAny<Exception>(() => GalateaObservationContent.Validate(content));
     }
 
     [Fact]
@@ -177,7 +237,8 @@ public sealed class GalateaObservationSharedProjectionTests {
         }
     }
 
-    private static SessionInputContent Content(JsonObject value) => SessionInputContent.Structured(GalateaObservationSchema.SchemaId, JsonSerializer.SerializeToElement(value));
+    private static SessionInputContent Content(JsonObject value, string schemaId = GalateaObservationSchema.V1SchemaId)
+        => SessionInputContent.Structured(schemaId, JsonSerializer.SerializeToElement(value));
     private static JsonObject Sender(string kind, string id, string name) => new() { ["kind"] = kind, ["id"] = id, ["name"] = name };
     private static JsonObject Observation(string kind) {
         bool runtime = kind is "heartbeat-activation" or "delegate-reply";

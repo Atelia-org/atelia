@@ -1,4 +1,5 @@
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.Input;
 using Atelia.Galatea.Server.Mailbox;
 
 namespace Atelia.Galatea.Server;
@@ -47,16 +48,20 @@ internal abstract record GalateaFreshInput {
 
     internal sealed record HeartbeatActivation : GalateaFreshInput {
         // Accepted periodic-activation meaning, not a measurement of wall-clock downtime.
-        internal const int ExternalIntervalMinutes = Atelia.Galatea.Input.GalateaObservationLimits.ExternalIntervalMinutes;
-        internal HeartbeatActivation(GalateaCharacterName characterName) {
+        internal HeartbeatActivation(GalateaCharacterName characterName, int intervalMinutes) {
             CharacterName = characterName
                 ?? throw new ArgumentNullException(nameof(characterName));
+            if (intervalMinutes is < 1 or > GalateaObservationLimits.MaximumExternalIntervalMinutes) {
+                throw new ArgumentOutOfRangeException(nameof(intervalMinutes));
+            }
+            IntervalMinutes = intervalMinutes;
         }
 
         internal GalateaCharacterName CharacterName { get; }
+        internal int IntervalMinutes { get; }
         internal override string DisplayText =>
             PlayerTurnObservationEnvelope.RenderHeartbeatActivationBody(
-                CharacterName
+                CharacterName, IntervalMinutes
             );
     }
 

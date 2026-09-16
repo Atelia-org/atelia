@@ -1,5 +1,6 @@
 using System.Text;
 using System.Globalization;
+using Atelia.Galatea.Input;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.MemoPod;
@@ -259,6 +260,7 @@ internal enum PlayerTurnObservationTriggerKind {
 internal sealed class PlayerTurnObservation {
     private readonly string? _playerText;
     private readonly GalateaCharacterName? _heartbeatCharacterName;
+    private readonly int? _heartbeatIntervalMinutes;
 
     internal PlayerTurnObservation(
         string playerText,
@@ -343,6 +345,7 @@ internal sealed class PlayerTurnObservation {
         DateTimeOffset? externalLocalTimestamp,
         IEnumerable<PlayerTurnNotice>? notices,
         GalateaCharacterName? heartbeatCharacterName = null,
+        int? heartbeatIntervalMinutes = null,
         bool usesHistoricalPlayerActionDialect = false,
         IEnumerable<PlayerTurnRecall>? recalls = null
     ) {
@@ -366,15 +369,18 @@ internal sealed class PlayerTurnObservation {
             : FreezeNotices(notices);
         switch (triggerKind) {
             case PlayerTurnObservationTriggerKind.DelegateReply:
-                if (heartbeatCharacterName is not null) {
+                if (heartbeatCharacterName is not null || heartbeatIntervalMinutes is not null) {
                     throw new ArgumentException(
-                        "DelegateReply must not contain a heartbeat character name.",
+                        "DelegateReply must not contain heartbeat facts.",
                         nameof(heartbeatCharacterName)
                     );
                 }
                 break;
             case PlayerTurnObservationTriggerKind.HeartbeatActivation:
                 ArgumentNullException.ThrowIfNull(heartbeatCharacterName);
+                if (heartbeatIntervalMinutes is not (>= 1 and <= GalateaObservationLimits.MaximumExternalIntervalMinutes)) {
+                    throw new ArgumentOutOfRangeException(nameof(heartbeatIntervalMinutes));
+                }
                 if (frozen.Any(static notice =>
                         notice is not PlayerTurnNotice.NoteSaveReceipt)) {
                     throw new ArgumentException(
@@ -395,6 +401,7 @@ internal sealed class PlayerTurnObservation {
 
         TriggerKind = triggerKind;
         _heartbeatCharacterName = heartbeatCharacterName;
+        _heartbeatIntervalMinutes = heartbeatIntervalMinutes;
         ExternalLocalTimestamp = externalLocalTimestamp;
         Notices = frozen;
         Recalls = FreezeRecalls(recalls);
@@ -424,12 +431,14 @@ internal sealed class PlayerTurnObservation {
         DateTimeOffset externalLocalTimestamp,
         GalateaCharacterName characterName,
         IEnumerable<PlayerTurnNotice>? notices = null,
-        IEnumerable<PlayerTurnRecall>? recalls = null
+        IEnumerable<PlayerTurnRecall>? recalls = null,
+        int intervalMinutes = GalateaObservationLimits.ExternalIntervalMinutes
     ) => new(
         PlayerTurnObservationTriggerKind.HeartbeatActivation,
         externalLocalTimestamp,
         notices,
         heartbeatCharacterName: characterName,
+        heartbeatIntervalMinutes: intervalMinutes,
         recalls: recalls
     );
 
@@ -529,7 +538,7 @@ internal sealed class PlayerTurnObservation {
             ),
             PlayerTurnObservationTriggerKind.HeartbeatActivation => new(
                 TriggerKind, ExternalLocalTimestamp, notices,
-                HeartbeatCharacterName, recalls: recalls
+                HeartbeatCharacterName, HeartbeatIntervalMinutes, recalls: recalls
             ),
             _ => throw new InvalidOperationException("Unknown Observation trigger.")
         };
@@ -544,6 +553,10 @@ internal sealed class PlayerTurnObservation {
         _heartbeatCharacterName
         ?? throw new InvalidOperationException(
             $"{TriggerKind} has no heartbeat character name."
+        );
+    internal int HeartbeatIntervalMinutes => _heartbeatIntervalMinutes
+        ?? throw new InvalidOperationException(
+            $"{TriggerKind} has no heartbeat interval."
         );
     internal DateTimeOffset? ExternalLocalTimestamp { get; }
     internal IReadOnlyList<PlayerTurnRecall> Recalls { get; }
@@ -578,7 +591,9 @@ internal static class PlayerTurnObservationEnvelope {
     internal const string HeartbeatActivationHeading =
         "角色自主活动时机";
     private const string HeartbeatActivationBodyPrefix =
-        "外层世界里，又有十分钟流逝。此刻，";
+        "外层世界里，又有";
+    private const string HeartbeatActivationBodyIntervalSuffix =
+        "分钟流逝。此刻，";
     private const string HeartbeatActivationBodySuffix =
         "拥有一段由自己支配的时间：可以留意正在变化的局势，把握稍纵即逝的机会，或推进自己认为重要的事。";
     /// <summary>
@@ -587,10 +602,6 @@ internal static class PlayerTurnObservationEnvelope {
     /// character may use, rather than as a turn-system event or a wake-up
     /// from passive suspension.
     /// </summary>
-    internal const string HeartbeatActivationBodyTemplate =
-        HeartbeatActivationBodyPrefix
-        + GalateaPromptTemplate.CharacterNameToken
-        + HeartbeatActivationBodySuffix;
     internal const string DelegateReplyDisplayText =
         "本轮由 Codex 回信触发。";
     internal const string ExternalLocalTimestampPrefix =
@@ -654,12 +665,25 @@ internal static class PlayerTurnObservationEnvelope {
     );
 
     internal static string RenderHeartbeatActivationBody(
-        GalateaCharacterName characterName
-    ) => GalateaPromptTemplate.Render(
-        HeartbeatActivationBodyTemplate,
-        characterName,
-        MaximumRenderedUtf8Bytes
-    );
+        GalateaCharacterName characterName,
+        int intervalMinutes
+    ) {
+        if (intervalMinutes is < 1 or > GalateaObservationLimits.MaximumExternalIntervalMinutes) {
+            throw new ArgumentOutOfRangeException(nameof(intervalMinutes));
+        }
+        string intervalText = intervalMinutes == GalateaObservationLimits.ExternalIntervalMinutes
+            ? "十"
+            : intervalMinutes.ToString(CultureInfo.InvariantCulture);
+        return GalateaPromptTemplate.Render(
+            HeartbeatActivationBodyPrefix
+            + intervalText
+            + HeartbeatActivationBodyIntervalSuffix
+            + GalateaPromptTemplate.CharacterNameToken
+            + HeartbeatActivationBodySuffix,
+            characterName,
+            MaximumRenderedUtf8Bytes
+        );
+    }
 
     internal static string Wrap(PlayerTurnObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
@@ -703,7 +727,8 @@ internal static class PlayerTurnObservationEnvelope {
         else if (observation.TriggerKind
                 is PlayerTurnObservationTriggerKind.HeartbeatActivation) {
             string heartbeatBody = RenderHeartbeatActivationBody(
-                observation.HeartbeatCharacterName
+                observation.HeartbeatCharacterName,
+                observation.HeartbeatIntervalMinutes
             );
             AppendSection(
                 builder,
@@ -824,6 +849,7 @@ internal static class PlayerTurnObservationEnvelope {
         }
 
         GalateaCharacterName? heartbeatCharacterName = null;
+        int? heartbeatIntervalMinutes = null;
         if (stored.AsSpan(position).StartsWith(
                 "## " + HeartbeatActivationHeading + "\n\n",
                 StringComparison.Ordinal)) {
@@ -835,10 +861,12 @@ internal static class PlayerTurnObservationEnvelope {
                     out string body)
                 || !TryParseHeartbeatActivationBody(
                     body,
-                    out GalateaCharacterName characterName)) {
+                    out GalateaCharacterName characterName,
+                    out int intervalMinutes)) {
                 return false;
             }
             heartbeatCharacterName = characterName;
+            heartbeatIntervalMinutes = intervalMinutes;
         }
         var recalls = new List<PlayerTurnRecall>();
         var notices = new List<PlayerTurnNotice>();
@@ -890,7 +918,8 @@ internal static class PlayerTurnObservationEnvelope {
         }
         PlayerTurnObservation parsed = heartbeatCharacterName is not null
             ? PlayerTurnObservation.CreateHeartbeatActivation(
-                timestamp, heartbeatCharacterName, notices, recalls)
+                timestamp, heartbeatCharacterName, notices, recalls,
+                heartbeatIntervalMinutes!.Value)
             : PlayerTurnObservation.CreateDelegateReply(timestamp, notices, recalls);
 
         if (!string.Equals(stored, Wrap(parsed), StringComparison.Ordinal)) {
@@ -902,27 +931,39 @@ internal static class PlayerTurnObservationEnvelope {
 
     private static bool TryParseHeartbeatActivationBody(
         string body,
-        out GalateaCharacterName characterName
+        out GalateaCharacterName characterName,
+        out int intervalMinutes
     ) {
         characterName = null!;
+        intervalMinutes = default;
         if (!body.StartsWith(
                 HeartbeatActivationBodyPrefix,
                 StringComparison.Ordinal)
             || !body.EndsWith(
                 HeartbeatActivationBodySuffix,
-                StringComparison.Ordinal)
-            || body.Length <= HeartbeatActivationBodyPrefix.Length
-                + HeartbeatActivationBodySuffix.Length) {
+                StringComparison.Ordinal)) {
             return false;
         }
-        string candidate = body[
-            HeartbeatActivationBodyPrefix.Length..
-            ^HeartbeatActivationBodySuffix.Length
-        ];
+        int intervalEnd = body.IndexOf(HeartbeatActivationBodyIntervalSuffix,
+            HeartbeatActivationBodyPrefix.Length, StringComparison.Ordinal);
+        if (intervalEnd <= HeartbeatActivationBodyPrefix.Length) { return false; }
+        string intervalText = body[HeartbeatActivationBodyPrefix.Length..intervalEnd];
+        if (intervalText == "十") {
+            intervalMinutes = GalateaObservationLimits.ExternalIntervalMinutes;
+        }
+        else if (!int.TryParse(intervalText, NumberStyles.None, CultureInfo.InvariantCulture, out intervalMinutes)
+            || intervalMinutes is < 1 or > GalateaObservationLimits.MaximumExternalIntervalMinutes
+            || !string.Equals(intervalText, intervalMinutes.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)) {
+            return false;
+        }
+        int nameStart = intervalEnd + HeartbeatActivationBodyIntervalSuffix.Length;
+        int nameLength = body.Length - nameStart - HeartbeatActivationBodySuffix.Length;
+        if (nameLength <= 0) { return false; }
+        string candidate = body.Substring(nameStart, nameLength);
         characterName = new GalateaCharacterName(candidate);
         return string.Equals(
             body,
-            RenderHeartbeatActivationBody(characterName),
+            RenderHeartbeatActivationBody(characterName, intervalMinutes),
             StringComparison.Ordinal
         );
     }
@@ -1155,7 +1196,8 @@ internal static class PlayerTurnObservationEnvelope {
                 DelegateReplyDisplayText,
             PlayerTurnObservationTriggerKind.HeartbeatActivation =>
                 RenderHeartbeatActivationBody(
-                    observation.HeartbeatCharacterName
+                    observation.HeartbeatCharacterName,
+                    observation.HeartbeatIntervalMinutes
                 ),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(observation)
@@ -1421,8 +1463,8 @@ internal static class PlayerTurnObservationClassifier {
             return true;
         }
         if (stored.IsStructured) {
-            if (stored.SchemaId == GalateaObservationContent.SchemaId) {
-                GalateaObservationContent.Validate(stored.JsonValue);
+            if (GalateaObservationContent.IsSupportedSchemaId(stored.SchemaId)) {
+                GalateaObservationContent.Validate(stored);
                 PlayerTurnObservationTriggerKind kind = stored.JsonValue.GetProperty("kind").GetString() switch {
                     "heartbeat-activation" => PlayerTurnObservationTriggerKind.HeartbeatActivation,
                     "delegate-reply" => PlayerTurnObservationTriggerKind.DelegateReply,

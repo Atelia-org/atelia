@@ -89,7 +89,7 @@ public sealed class GalateaStructuredInputTests {
     [InlineData("{\"v\":1,\"kind\":\"player-action\",\"extra\":1}")]
     public void DomainRead_RejectsDuplicateOrUnknownFields(string json) {
         using JsonDocument document = JsonDocument.Parse(json);
-        Assert.Throws<InvalidDataException>(() => GalateaObservationContent.Validate(document.RootElement));
+        Assert.Throws<InvalidDataException>(() => GalateaObservationContent.Validate(GalateaObservationContent.V1SchemaId, document.RootElement));
     }
 
     [Fact]

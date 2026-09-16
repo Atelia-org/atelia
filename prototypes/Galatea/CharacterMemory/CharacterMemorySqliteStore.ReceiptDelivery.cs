@@ -148,8 +148,8 @@ internal sealed partial class CharacterMemorySqliteStore {
         SessionInputContent content;
         try { content = JsonSerializer.Deserialize<SessionInputContent>(bytes) ?? throw Corrupt("Bound input is null."); }
         catch (JsonException exception) { throw Corrupt("Bound input is invalid machine JSON: " + exception.GetType().Name); }
-        if (!content.IsStructured || content.SchemaId != GalateaObservationContent.SchemaId) { throw Corrupt("New receipt bindings require a structured Galatea Observation."); }
-        GalateaObservationContent.Validate(content.JsonValue);
+        if (!content.IsStructured || !GalateaObservationContent.IsSupportedSchemaId(content.SchemaId)) { throw Corrupt("New receipt bindings require a structured Galatea Observation."); }
+        GalateaObservationContent.Validate(content);
         return content;
     }
 

@@ -2010,7 +2010,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         GalateaLiveTurn turn = host.StartTurn(
             new GalateaFreshInput.HeartbeatActivation(
-                host.Character.CharacterName
+                host.Character.CharacterName,
+                host.Character.AutonomyIntervalMinutes
             ),
             options
         );
@@ -2925,7 +2926,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         PlayerTurnObservation? preliminaryPlayerObservation = fresh switch {
             GalateaFreshInput.PlayerAction player => new PlayerTurnObservation(player.Text, observationTimestamp, player.Notices),
             GalateaFreshInput.DelegateReply reply => PlayerTurnObservation.CreateDelegateReply(observationTimestamp, reply.Notices),
-            GalateaFreshInput.HeartbeatActivation activation => PlayerTurnObservation.CreateHeartbeatActivation(observationTimestamp, activation.CharacterName),
+            GalateaFreshInput.HeartbeatActivation activation => PlayerTurnObservation.CreateHeartbeatActivation(
+                observationTimestamp, activation.CharacterName,
+                intervalMinutes: activation.IntervalMinutes),
             GalateaFreshInput.InboundMail => null,
             _ => throw new InvalidOperationException("Unknown fresh input kind.")
         };

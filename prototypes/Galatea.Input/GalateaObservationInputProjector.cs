@@ -10,9 +10,9 @@ public sealed class GalateaObservationInputProjector : ISessionInputProjector {
     public string Project(SessionInputContent input) {
         ArgumentNullException.ThrowIfNull(input);
         if (!input.IsStructured) { return input.TextValue; }
-        if (input.SchemaId != GalateaObservationSchema.SchemaId) {
+        if (!GalateaObservationSchema.IsSupportedSchemaId(input.SchemaId)) {
             throw new NotSupportedException("Unsupported Galatea Observation schema: " + input.SchemaId);
         }
-        return MdJsonSerializer.Write(input.JsonValue, GalateaObservationSchema.ExternalStringPaths(input.JsonValue));
+        return MdJsonSerializer.Write(input.JsonValue, GalateaObservationSchema.ExternalStringPaths(input.SchemaId, input.JsonValue));
     }
 }

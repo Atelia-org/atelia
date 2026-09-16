@@ -224,7 +224,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
                 string content = Assert.IsType<string>(request.PromptPrefix.SharedContextMessages
                     .OfType<ObservationMessage>().Last().Content);
                 PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(
-                    SessionInputContent.Structured(GalateaObservationContent.SchemaId, MdJsonSerializer.Read(content)));
+                    SessionInputContent.Structured(GalateaObservationContent.V1SchemaId, MdJsonSerializer.Read(content)));
                 Assert.Equal(NoteText, Assert.Single(Assert.Single(observation.Notices
                     .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection!.ExactTexts));
                 Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));

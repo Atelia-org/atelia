@@ -13,7 +13,8 @@ namespace Atelia.Galatea.Server;
 
 /// <summary>Stable input facts. Encoding, decoding and proofs do not invoke an LLM renderer.</summary>
 internal static class GalateaObservationContent {
-    internal const string SchemaId = GalateaObservationSchema.SchemaId;
+    internal const string V1SchemaId = GalateaObservationSchema.V1SchemaId;
+    internal const string V2SchemaId = GalateaObservationSchema.V2SchemaId;
     internal const int MaximumContentUtf8Bytes = GalateaObservationLimits.MaximumContentUtf8Bytes;
     internal static GalateaSenderSnapshot RuntimeSender { get; } = new("runtime", "galatea", "Galatea runtime");
 
@@ -24,7 +25,7 @@ internal static class GalateaObservationContent {
         if (timestamp.Ticks % TimeSpan.TicksPerSecond != 0) {
             throw new ArgumentException("Observation time must be truncated to whole seconds.", nameof(timestamp));
         }
-        return Encode("player-action", sender, timestamp, new { text }, [], []);
+        return Encode(V1SchemaId, "player-action", sender, timestamp, new { text }, [], []);
     }
 
     internal static SessionInputContent Create(
@@ -39,13 +40,13 @@ internal static class GalateaObservationContent {
             _ => []
         };
         return fresh switch {
-            GalateaFreshInput.PlayerAction player => Encode("player-action", player.Sender, timestamp,
+            GalateaFreshInput.PlayerAction player => Encode(V1SchemaId, "player-action", player.Sender, timestamp,
                 new { text = player.Text }, selected, recalls ?? []),
-            GalateaFreshInput.HeartbeatActivation => Encode("heartbeat-activation", RuntimeSender, timestamp,
-                new { character = SenderJson(character), externalIntervalMinutes = GalateaFreshInput.HeartbeatActivation.ExternalIntervalMinutes }, selected, recalls ?? []),
-            GalateaFreshInput.DelegateReply => Encode("delegate-reply", RuntimeSender, timestamp,
+            GalateaFreshInput.HeartbeatActivation heartbeat => Encode(V2SchemaId, "heartbeat-activation", RuntimeSender, timestamp,
+                new { character = SenderJson(character), externalIntervalMinutes = heartbeat.IntervalMinutes }, selected, recalls ?? []),
+            GalateaFreshInput.DelegateReply => Encode(V1SchemaId, "delegate-reply", RuntimeSender, timestamp,
                 new { }, selected, recalls ?? []),
-            GalateaFreshInput.InboundMail mail => Encode("inbound-mail",
+            GalateaFreshInput.InboundMail mail => Encode(V1SchemaId, "inbound-mail",
                 mail.Sender ?? mail.InjectedBy ?? throw new InvalidDataException("Inbound mail requires its accepted sender identity."),
                 timestamp, new {
                     messageId = mail.Message.MessageId, from = mail.Message.From, to = mail.Message.To,
@@ -56,15 +57,15 @@ internal static class GalateaObservationContent {
         };
     }
 
-    private static SessionInputContent Encode(string kind, GalateaSenderSnapshot sender, DateTimeOffset timestamp,
+    private static SessionInputContent Encode(string schemaId, string kind, GalateaSenderSnapshot sender, DateTimeOffset timestamp,
         object action, IReadOnlyList<PlayerTurnNotice> notices, IReadOnlyList<PlayerTurnRecall> recalls) {
         JsonElement value = JsonSerializer.SerializeToElement(new {
             v = 1, kind, sender = SenderJson(sender),
             externalLocalTimestamp = timestamp.ToString("O", CultureInfo.InvariantCulture), action,
             notices = notices.Select(NoticeJson).ToArray(), recalls = recalls.Select(RecallJson).ToArray()
         });
-        Validate(value);
-        return SessionInputContent.Structured(SchemaId, value);
+        Validate(schemaId, value);
+        return SessionInputContent.Structured(schemaId, value);
     }
 
     private static object SenderJson(GalateaSenderSnapshot sender) => new { kind = sender.Kind, id = sender.Id, name = sender.Name };
@@ -125,7 +126,13 @@ internal static class GalateaObservationContent {
         };
     }
 
-    internal static void Validate(JsonElement value) => GalateaObservationSchema.Validate(value);
+    internal static bool IsSupportedSchemaId(string? schemaId) => GalateaObservationSchema.IsSupportedSchemaId(schemaId);
+    internal static void Validate(string? schemaId, JsonElement value) => GalateaObservationSchema.Validate(schemaId, value);
+    internal static void Validate(SessionInputContent content) {
+        ArgumentNullException.ThrowIfNull(content);
+        if (!content.IsStructured) { throw new InvalidDataException("Expected structured Galatea Observation content."); }
+        Validate(content.SchemaId, content.JsonValue);
+    }
 
     internal static PlayerTurnNotice ReadNotice(JsonElement value) {
         string kind = GalateaObservationSchema.ValidateNotice(value);
@@ -171,8 +178,8 @@ internal static class GalateaObservationContent {
 
     internal static bool TryReadPlayerText(SessionInputContent content, out string text) {
         text = string.Empty;
-        if (!content.IsStructured || content.SchemaId != SchemaId) { return false; }
-        Validate(content.JsonValue);
+        if (!content.IsStructured || !IsSupportedSchemaId(content.SchemaId)) { return false; }
+        Validate(content);
         if (content.JsonValue.GetProperty("kind").GetString() != "player-action") { return false; }
         text = content.JsonValue.GetProperty("action").GetProperty("text").GetString()!;
         return true;
@@ -183,9 +190,9 @@ internal static class GalateaObservationContent {
             return PlayerTurnObservationEnvelope.TryUnwrap(content.TextValue, out PlayerTurnObservation old)
                 ? old : throw new InvalidDataException("Unsupported legacy player-turn Observation.");
         }
-        if (content.SchemaId != SchemaId) { throw new InvalidDataException("Unsupported Observation schema."); }
+        if (!IsSupportedSchemaId(content.SchemaId)) { throw new InvalidDataException("Unsupported Observation schema."); }
         JsonElement value = content.JsonValue;
-        Validate(value);
+        Validate(content);
         DateTimeOffset timestamp = DateTimeOffset.ParseExact(value.GetProperty("externalLocalTimestamp").GetString()!, "O", CultureInfo.InvariantCulture);
         PlayerTurnNotice[] notices = value.GetProperty("notices").EnumerateArray().Select(ReadNotice).ToArray();
         PlayerTurnRecall[] recalls = value.GetProperty("recalls").EnumerateArray().Select(ReadRecall).ToArray();
@@ -193,16 +200,17 @@ internal static class GalateaObservationContent {
         return value.GetProperty("kind").GetString() switch {
             "player-action" => new(action.GetProperty("text").GetString()!, timestamp, notices, recalls),
             "heartbeat-activation" => PlayerTurnObservation.CreateHeartbeatActivation(timestamp,
-                new GalateaCharacterName(action.GetProperty("character").GetProperty("name").GetString()!), notices, recalls),
+                new GalateaCharacterName(action.GetProperty("character").GetProperty("name").GetString()!), notices, recalls,
+                action.GetProperty("externalIntervalMinutes").GetInt32()),
             "delegate-reply" => PlayerTurnObservation.CreateDelegateReply(timestamp, notices, recalls),
             _ => throw new InvalidDataException("Inbound mail is not a player-turn Observation.")
         };
     }
 
-    internal static IReadOnlyList<string> ExternalStringPaths(JsonElement value) => GalateaObservationSchema.ExternalStringPaths(value);
+    internal static IReadOnlyList<string> ExternalStringPaths(string? schemaId, JsonElement value) => GalateaObservationSchema.ExternalStringPaths(schemaId, value);
 
     internal static string DisplayText(SessionInputContent content) {
-        Validate(content.JsonValue);
+        Validate(content);
         JsonElement value = content.JsonValue;
         JsonElement action = value.GetProperty("action");
         return value.GetProperty("kind").GetString() == "inbound-mail"
@@ -215,8 +223,8 @@ internal static class GalateaObservationContent {
             return GalateaMailboxObservationEnvelope.TryUnwrap(content.TextValue, out MailboxMessage legacy)
                 ? legacy : throw new InvalidDataException("Unsupported legacy mailbox input.");
         }
-        if (content.SchemaId != SchemaId) { throw new InvalidDataException("Unsupported mailbox schema."); }
-        Validate(content.JsonValue);
+        if (content.SchemaId != V1SchemaId) { throw new InvalidDataException("Unsupported mailbox schema."); }
+        Validate(content);
         if (content.JsonValue.GetProperty("kind").GetString() != "inbound-mail") { throw new InvalidDataException("Expected inbound-mail input."); }
         return ReadMailbox(content.JsonValue.GetProperty("action"));
     }

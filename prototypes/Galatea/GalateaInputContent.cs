@@ -46,7 +46,8 @@ internal sealed class GalateaInputProjector : ISessionInputProjector {
         ArgumentNullException.ThrowIfNull(input);
         if (!input.IsStructured) { return input.TextValue; }
         switch (input.SchemaId) {
-            case GalateaObservationContent.SchemaId:
+            case GalateaObservationContent.V1SchemaId:
+            case GalateaObservationContent.V2SchemaId:
                 return GalateaObservationInputProjector.Instance.Project(input);
             case GalateaSystemInstructionContent.SchemaId:
                 return GalateaSystemInstructionContent.Project(input.JsonValue);

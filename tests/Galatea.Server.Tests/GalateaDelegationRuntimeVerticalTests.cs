@@ -302,7 +302,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         GalateaLiveTurn turn = session.StartTurn(
             new GalateaFreshInput.HeartbeatActivation(
-                session.Character.CharacterName
+                session.Character.CharacterName, 10
             ),
             new GalateaTurnOptions(main.Id)
         );
@@ -1684,7 +1684,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         string content = Assert.IsType<string>(request.PromptPrefix
             .SharedContextMessages.OfType<ObservationMessage>().Last().Content);
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(
-            SessionInputContent.Structured(GalateaObservationContent.SchemaId, MdJsonSerializer.Read(content)));
+            SessionInputContent.Structured(GalateaObservationContent.V1SchemaId, MdJsonSerializer.Read(content)));
         Assert.Equal("memory useful for the reply", Assert.Single(observation.Recalls).ExactText);
     }
 
