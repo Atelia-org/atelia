@@ -19,6 +19,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
     GalateaAcceptedTurnRunner runner
 ) {
     private readonly ConcurrentDictionary<string, string> _attachFailures = new(StringComparer.Ordinal);
+    internal Action<string>? BeforeReadyReplyCutoffForTest { get; set; }
 
     internal GalateaAgentStatusDto ReadStatus(string characterId) {
         bool configured = host.TryGetCharacter(characterId, out GalateaCharacterConfig? character);
@@ -192,6 +193,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                 throw new InvalidOperationException("The configured per-character default connection is unavailable.");
             }
             await host.PrepareFreshTurnAdmissionAsync(session, recovery, ct).ConfigureAwait(false);
+            BeforeReadyReplyCutoffForTest?.Invoke(characterId);
             GalateaReadyReplyTurnStartResult reply = host.StartReadyReplyTurn(session, new(connection.Id));
             string origin;
             if (reply is GalateaReadyReplyTurnStartResult.Started started) {

@@ -51,6 +51,140 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
+    public async Task ZeroIntervalActiveLease_ColdRestartAttachesButDoesNotReplayRecoveryBoundary() {
+        var firstFactory = new TrackingCompletionClientFactory();
+        GalateaTestHost first = GalateaTestHost.Create(
+            firstFactory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            deleteFilesOnDispose: false,
+            delegateTransport: NoDispatchTransport.Instance
+        );
+        GalateaTestHost? restarted = null;
+        try {
+            GalateaHostService firstService = first.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            CharacterSessionHost firstSession = await firstService.GetSessionAsync(
+                "alice", CancellationToken.None
+            );
+            GalateaReplyNoticeSnapshot uncertain = SeedReadyReply(
+                firstSession.DelegationHandle!.Store,
+                "unconfirmed reply",
+                resultUnconfirmed: true
+            );
+            _ = firstSession.DelegationHandle.Store.BeginReplyLeaseMembership(
+                "cold-active-lease",
+                PlayerTurnObservationEnvelope
+                    .DelegateReplyLeasePlayerTextDiscriminator,
+                [new(uncertain.NoticeId, uncertain.Revision)]
+            );
+            await firstSession.TurnLock.WaitAsync();
+            try {
+                firstSession.Engine.AppendObservation(
+                    GalateaUserMessageEnvelope.Wrap("pending recovery")
+                );
+            }
+            finally { firstSession.TurnLock.Release(); }
+            Assert.Equal(
+                GalateaAutomaticWakeReason.ActiveReplyLease,
+                firstService.DelegationSupervisor.ReadAutomaticWakeReason(
+                    "alice"
+                )
+            );
+            await first.DisposeAsync();
+
+            var restartFactory = new TrackingCompletionClientFactory();
+            restarted = first.CreateRestarted(
+                restartFactory,
+                DisabledGalateaUserMessageNormalizer.Instance,
+                NoDispatchTransport.Instance
+            );
+            GalateaHostService restartedService = restarted.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            GalateaAutomaticTurnCoordinator coordinator = restarted.Factory
+                .Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
+            Assert.Null(restartedService.ReadAttachedSession("alice"));
+            Assert.Equal(
+                GalateaAutomaticWakeReason.ActiveReplyLease,
+                restartedService.DelegationSupervisor.ReadAutomaticWakeReason(
+                    "alice"
+                )
+            );
+
+            GalateaAutomaticTurnResult.Blocked blocked = Assert.IsType<
+                GalateaAutomaticTurnResult.Blocked>(
+                    await coordinator.TryPulseAsync("alice", CancellationToken.None)
+                );
+
+            Assert.Equal("recovery-required", blocked.Code);
+            CharacterSessionHost restartedSession = Assert.IsType<
+                CharacterSessionHost>(restartedService.ReadAttachedSession("alice"));
+            GalateaDelegationStateSnapshot durable = restartedSession
+                .DelegationHandle!.Store.ReadSnapshot();
+            Assert.Null(durable.ActiveLease);
+            GalateaReplyNoticeSnapshot retained = Assert.Single(durable.Notices);
+            Assert.Equal(GalateaReplyNoticeState.Ready, retained.State);
+            Assert.Equal("RESULT_UNCONFIRMED", retained.Code);
+            Assert.Equal(0, restartFactory.Client.DispatchCallCount);
+            Assert.Null(restartedSession.GetCurrentTurn());
+        }
+        finally {
+            if (restarted is not null) {
+                await restarted.DisposeAsync();
+            }
+            else {
+                await first.DisposeAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ZeroIntervalPulse_WhenReadyIsConsumedAfterProbe_DoesNotStartHeartbeat() {
+        var completionFactory = new TrackingCompletionClientFactory();
+        await using var fixture = GalateaTestHost.Create(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = fixture.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        GalateaAutomaticTurnCoordinator coordinator = fixture.Factory.Services
+            .GetRequiredService<GalateaAutomaticTurnCoordinator>();
+        CharacterSessionHost session = await service.GetSessionAsync(
+            "alice", CancellationToken.None
+        );
+        SeedReadyReply(session.DelegationHandle!.Store, "raced reply");
+        Assert.Equal(
+            GalateaAutomaticWakeReason.ReadyNotice,
+            service.DelegationSupervisor.ReadAutomaticWakeReason("alice")
+        );
+        coordinator.BeforeReadyReplyCutoffForTest = _ =>
+            ConsumeReadyReplyAsOtherWinner(
+                session.DelegationHandle.Store,
+                session.Engine
+            );
+
+        try {
+            GalateaAutomaticTurnResult.Status result = Assert.IsType<
+                GalateaAutomaticTurnResult.Status>(
+                    await coordinator.TryPulseAsync("alice", CancellationToken.None)
+                );
+            Assert.Equal("waiting", result.Value.State);
+        }
+        finally {
+            coordinator.BeforeReadyReplyCutoffForTest = null;
+        }
+
+        Assert.Null(session.GetCurrentTurn());
+        Assert.Null(session.DelegationHandle.Store.ReadSnapshot().ActiveLease);
+        Assert.Equal(
+            GalateaReplyNoticeState.Consumed,
+            Assert.Single(session.DelegationHandle.Store.ReadSnapshot().Notices)
+                .State
+        );
+        Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+        Assert.Null(session.AutonomyCadence);
+    }
+
+    [Fact]
     public async Task ReadyReplyTurn_WhenTurnFailed_DoesNotClaimOrAbandon() {
         var completionFactory = new TrackingCompletionClientFactory();
         var normalizer = new TrackingNormalizer();
@@ -904,9 +1038,10 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         ApiKey: "test-key"
     );
 
-    private static void SeedReadyReply(
+    private static GalateaReplyNoticeSnapshot SeedReadyReply(
         GalateaDelegationSqliteStore store,
-        string reply
+        string reply,
+        bool resultUnconfirmed = false
     ) {
         GalateaDelegationCaptureResult captured = store.CaptureActionBatch(
             new GalateaDelegationCaptureRequest(
@@ -948,13 +1083,63 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             mail.Revision,
             snapshot.Route.Revision
         , GalateaDelegationTestInputs.Commitment(store, mail.DispatchId));
-        _ = store.RecordCompletedMail(
-            started.DispatchId,
-            started.Revision,
-            "seed-thread",
-            "seed-turn",
-            reply
+        return resultUnconfirmed
+            ? store.FinishMailLocally(
+                started.DispatchId,
+                started.Revision,
+                store.ReadSnapshot().Route.Revision,
+                "RESULT_UNCONFIRMED",
+                resetBinding: true
+            )
+            : store.RecordCompletedMail(
+                started.DispatchId,
+                started.Revision,
+                "seed-thread",
+                "seed-turn",
+                reply
+            );
+    }
+
+    private static void ConsumeReadyReplyAsOtherWinner(
+        GalateaDelegationSqliteStore store,
+        SessionJournalEngine engine
+    ) {
+        GalateaReplyNoticeSnapshot notice = Assert.Single(
+            store.ReadSnapshot().Notices,
+            static value => value.State == GalateaReplyNoticeState.Ready
         );
+        const string playerText = PlayerTurnObservationEnvelope
+            .DelegateReplyLeasePlayerTextDiscriminator;
+        GalateaReplyLeaseSnapshot lease = store.BeginReplyLeaseMembership(
+            "racing-winner",
+            playerText,
+            [new(notice.NoticeId, notice.Revision)]
+        );
+        GalateaDurableReplyLease durable = new(
+            store,
+            lease.LeaseId,
+            lease.Revision
+        );
+        SessionInputContent input = GalateaObservationContent.Create(
+            new GalateaFreshInput.DelegateReply(durable.ReadNotices()),
+            DateTimeOffset.UnixEpoch,
+            GalateaDelegationTestInputs.Sender(store, "Galatea")
+        );
+        string head = EventAddressTextCodec.Format(Assert.IsType<EventAddress>(
+            engine.ReadCurrentHead()
+        ));
+        lease = store.BindReplyLeaseObservationBase(
+            lease.LeaseId,
+            lease.Revision,
+            head,
+            input
+        );
+        lease = store.RecordLeaseObservationCommitted(
+            lease.LeaseId,
+            lease.Revision,
+            head
+        );
+        store.ConsumeReplyLease(lease.LeaseId, lease.Revision, head);
     }
 
     private static EventAddress AppendPendingObservation(
@@ -1176,6 +1361,34 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             Interlocked.Increment(ref _createCallCount);
             return Client;
         }
+    }
+
+    private sealed class NoDispatchTransport
+        : IGalateaDurableDelegateTransport {
+        internal static NoDispatchTransport Instance { get; } = new();
+
+        public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(
+            GalateaEnsureDelegateBindingRequest request,
+            CancellationToken ct
+        ) => throw new Xunit.Sdk.XunitException(
+            "The recovery test must not create a durable delegate binding."
+        );
+
+        public Task<GalateaDelegateTurnAccepted> StartTurnAsync(
+            GalateaStartDelegateTurnRequest request,
+            CancellationToken ct
+        ) => throw new Xunit.Sdk.XunitException(
+            "The recovery test must not dispatch a durable delegate turn."
+        );
+
+        public Task<GalateaDelegateDispatchInspection> InspectDispatchAsync(
+            GalateaInspectDelegateDispatchRequest request,
+            CancellationToken ct
+        ) => throw new Xunit.Sdk.XunitException(
+            "The recovery test must not inspect a durable delegate turn."
+        );
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class TrackingCompletionClient(string responseText)
