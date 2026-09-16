@@ -1039,6 +1039,111 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task OverlayFrozenReuseRejectsSameColumnReplacementWithoutDispatch() {
+        Fixture fixture = CreateOverlayFixture(initialTurns: 1, laterTurns: 0);
+        Assert.NotNull(fixture.BaseRecipe);
+        Assert.NotNull(fixture.RetroRecipe);
+        HistoryRowId row = fixture.Rows[0].Descriptor.RowId;
+        CellId frozenReuse;
+        CellId replacement;
+        using (fixture.Journal) {
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await manager.Manager.BuildAsync(
+                        CandidateRequest(fixture.BaseRecipe.Digest),
+                        new RecordingExecutor()));
+                Assert.IsType<RecapGridBuildResult.Incomplete>(
+                    await manager.Manager.BuildAsync(
+                        CandidateRequest(fixture.Recipe.Digest),
+                        new DelegateExecutor((batch, _) =>
+                            new RecapCellBatchExecutionResult.Completed([
+                                new RecapCellExecutionOutcome.Failed(
+                                    Assert.Single(batch.OrderedMissingWork).Slot,
+                                    "stop-after-row-work", "leave frozen work")
+                            ]))));
+            }
+            using (RecapGridManagerHandle coldManager = OpenManager(fixture)) {
+                RecapGridBuildProgressResult.Frontier cold = Assert.IsType<
+                    RecapGridBuildProgressResult.Frontier>(
+                    coldManager.Manager.InspectBuildProgress(
+                        CandidateRequest(fixture.Recipe.Digest)));
+                Assert.Equal("case.evidence", Assert.Single(cold.OrderedMissing)
+                    .LogicalColumnId.Value);
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await coldManager.Manager.BuildAsync(
+                        CandidateRequest(fixture.RetroRecipe.Digest),
+                        new RecordingExecutor()));
+            }
+            using (RecapGridStoreReaderHandle sourceReader = OpenStoreReader(fixture)) {
+                RowWork frozen = Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+                    sourceReader.Reader.ReadRowWork(new RowWorkKey(
+                        fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                        fixture.Recipe.Digest, row))).Value;
+                frozenReuse = frozen.OrderedAssignments.Single(assignment =>
+                    assignment.LogicalColumnId.Value == "case.culprit").ReusedCellId!.Value;
+                RecapRowView retro = Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                    sourceReader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                        fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                        fixture.RetroRecipe.Digest, row))).Value;
+                replacement = retro.OrderedCells.Single(cell =>
+                    cell.LogicalColumnId.Value == "case.culprit").CellId;
+            }
+            string database = Path.Combine(fixture.Path, "derived", "recap-grid",
+                "v1", "grid.sqlite");
+            Type connectionType = Type.GetType(
+                "Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite",
+                throwOnError: true)!;
+            using (var connection = (DbConnection)Activator.CreateInstance(
+                       connectionType,
+                       $"Data Source={database};Mode=ReadWrite;Pooling=False;Foreign Keys=False")!) {
+                connection.Open();
+                using DbCommand command = connection.CreateCommand();
+                command.CommandText = """
+                    UPDATE row_view_member SET cell_id = $replacement
+                    WHERE row_result_id = (
+                        SELECT row_result_id FROM row_view
+                        WHERE ref_id = $ref AND timeline_id = $timeline
+                          AND recipe_digest = $recipe AND history_row_id = $row)
+                      AND logical_column_id = 'case.culprit';
+                    """;
+                foreach ((string name, object value) in new[] {
+                    ("$replacement", (object)replacement.Value),
+                    ("$ref", fixture.TimelineHead.RefId.ToHexString()),
+                    ("$timeline", fixture.TimelineHead.TimelineId.Value),
+                    ("$recipe", fixture.BaseRecipe.Digest.Value),
+                    ("$row", row.Value)
+                }) {
+                    DbParameter parameter = command.CreateParameter();
+                    parameter.ParameterName = name;
+                    parameter.Value = value;
+                    command.Parameters.Add(parameter);
+                }
+                Assert.Equal(1, command.ExecuteNonQuery());
+            }
+            var executor = new RecordingExecutor();
+            using RecapGridManagerHandle reopened = OpenManager(fixture);
+            RecapGridBuildResult.OverlaySourceIncompatible result = Assert.IsType<
+                RecapGridBuildResult.OverlaySourceIncompatible>(
+                await reopened.Manager.BuildAsync(
+                    CandidateRequest(fixture.Recipe.Digest), executor));
+            Assert.Equal(fixture.Recipe.Digest, result.RootRecipeDigest);
+            Assert.Equal(row, result.RowId);
+            Assert.Equal("case.culprit", result.LogicalColumnId.Value);
+            Assert.Equal("FrozenReuseMissingFromExactBaseView", result.Reason);
+            Assert.Equal(0, result.Metrics.NewCalls);
+            Assert.Empty(executor.Batches);
+            using RecapGridStoreReaderHandle reader = OpenStoreReader(fixture);
+            RowWork unchanged = Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+                reader.Reader.ReadRowWork(new RowWorkKey(
+                    fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                    fixture.Recipe.Digest, row))).Value;
+            Assert.Equal(frozenReuse, unchanged.OrderedAssignments.Single(
+                assignment => assignment.LogicalColumnId.Value == "case.culprit")
+                    .ReusedCellId);
+        }
+    }
+
+    [Fact]
     public async Task OverlayBootstrapAnchorSkipsBaseForNewerSuffix() {
         Fixture fixture = CreateOverlayFixture(
             initialTurns: 1,

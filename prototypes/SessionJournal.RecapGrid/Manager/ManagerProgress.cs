@@ -277,6 +277,10 @@ public sealed partial class RecapGridManager {
         RecapGridBuildResult.ProducerPolicyRequired value
             => new RecapGridBuildProgressResult.ProducerPolicyRequired(
                 value.RootRecipeDigest, value.RowId),
+        RecapGridBuildResult.OverlaySourceIncompatible value
+            => new RecapGridBuildProgressResult.OverlaySourceIncompatible(
+                value.RootRecipeDigest, value.RowId, value.LogicalColumnId,
+                value.Reason),
         RecapGridBuildResult.ThroughRowNotSelected value
             => new RecapGridBuildProgressResult.ThroughRowNotSelected(value.RowId),
         RecapGridBuildResult.BudgetExceeded value

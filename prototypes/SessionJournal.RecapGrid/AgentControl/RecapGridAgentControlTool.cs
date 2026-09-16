@@ -316,6 +316,12 @@ internal sealed class RecapGridAgentControlTool {
                             "producer-policy-required",
                             $"{value.RootRecipeDigest.Value}:{value.RowId.Value}"
                         ),
+                    RecapGridBuildProgressResult.OverlaySourceIncompatible value
+                        => Failed(
+                            "overlay-source-incompatible",
+                            $"{value.RootRecipeDigest.Value}:{value.RowId.Value}:"
+                                + $"{value.LogicalColumnId.Value}:{value.Reason}"
+                        ),
                     RecapGridBuildProgressResult.ThroughRowNotSelected
                         => Failed(
                             "through-row-not-selected",

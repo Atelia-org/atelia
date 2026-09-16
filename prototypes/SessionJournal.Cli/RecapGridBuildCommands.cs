@@ -363,6 +363,8 @@ internal static partial class RecapGridCommands {
             RecapGridBuildResult.NoActiveRecipe => "no-active-recipe",
             RecapGridBuildResult.RecipeAbsent => "recipe-absent",
             RecapGridBuildResult.ProducerPolicyRequired => "producer-policy-required",
+            RecapGridBuildResult.OverlaySourceIncompatible
+                => "overlay-source-incompatible",
             RecapGridBuildResult.ThroughRowNotSelected
                 => "through-row-not-selected",
             RecapGridBuildResult.BudgetExceeded => "budget-exceeded",
@@ -405,6 +407,8 @@ internal static partial class RecapGridCommands {
             RecapGridBuildProgressResult.RecipeAbsent => "recipe-absent",
             RecapGridBuildProgressResult.ProducerPolicyRequired
                 => "producer-policy-required",
+            RecapGridBuildProgressResult.OverlaySourceIncompatible
+                => "overlay-source-incompatible",
             RecapGridBuildProgressResult.ThroughRowNotSelected
                 => "through-row-not-selected",
             RecapGridBuildProgressResult.BudgetExceeded => "budget-exceeded",

@@ -381,6 +381,13 @@ public abstract record RecapGridBuildResult {
         HistoryRowId RowId
     ) : RecapGridBuildResult;
 
+    public sealed record OverlaySourceIncompatible(
+        GridBuildRecipeDigest RootRecipeDigest,
+        HistoryRowId RowId,
+        LogicalColumnId LogicalColumnId,
+        string Reason
+    ) : RecapGridBuildResult;
+
     public sealed record ThroughRowNotSelected(HistoryRowId RowId)
         : RecapGridBuildResult;
 
@@ -573,6 +580,13 @@ public abstract record RecapGridBuildProgressResult {
     public sealed record ProducerPolicyRequired(
         GridBuildRecipeDigest RootRecipeDigest,
         HistoryRowId RowId
+    ) : RecapGridBuildProgressResult;
+
+    public sealed record OverlaySourceIncompatible(
+        GridBuildRecipeDigest RootRecipeDigest,
+        HistoryRowId RowId,
+        LogicalColumnId LogicalColumnId,
+        string Reason
     ) : RecapGridBuildProgressResult;
 
     public sealed record ThroughRowNotSelected(HistoryRowId RowId)

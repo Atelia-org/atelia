@@ -66,6 +66,9 @@ public sealed partial class RecapGridManager {
                 work
             );
         }
+        catch (OverlaySourceIncompatibleException exception) {
+            return (null, exception.Result);
+        }
         catch (Exception exception) when (IsContractFailure(exception)) {
             return (null, Invalid("RowWorkAssignmentDerivationInvalid", exception.Message));
         }
@@ -85,6 +88,9 @@ public sealed partial class RecapGridManager {
                 assignments = DeriveAssignments(
                     plan, descriptor, isOverlayBootstrap, baseRow,
                     producerTarget, work);
+            }
+            catch (OverlaySourceIncompatibleException exception) {
+                return (null, exception.Result);
             }
             catch (Exception exception) when (IsContractFailure(exception)) {
                 return (null, Invalid("RowWorkAssignmentDerivationInvalid", exception.Message));
@@ -185,8 +191,16 @@ public sealed partial class RecapGridManager {
         for (int index = 0; index < assignments.Length; index++) {
             BuildTargetColumn target =
                 producerTarget.OrderedColumns[index];
-            if (!overlayBootstrap
-                || recomputed.Contains(target.LogicalColumnId)) {
+            bool mustReuse = overlayBootstrap
+                && !recomputed.Contains(target.LogicalColumnId);
+            RowWorkAssignment? frozen = work is null
+                ? null
+                : work.OrderedAssignments[index];
+            if (!mustReuse) {
+                if (frozen is not null && !frozen.IsEvaluate) {
+                    throw Incompatible(plan, descriptor,
+                        target.LogicalColumnId, "FrozenAssignmentMustEvaluate");
+                }
                 assignments[index] = new RowBuildAssignment.Evaluate(
                     work is null
                         ? new CellSlot(plan.Recipe.Digest, descriptor.RowId, target.LogicalColumnId)
@@ -194,15 +208,33 @@ public sealed partial class RecapGridManager {
                 );
                 continue;
             }
-            if (!reusable!.TryGetValue(
-                    target.LogicalColumnId,
-                    out RecapCellArtifact? cell)
+            if (frozen is not null && frozen.IsEvaluate) {
+                throw Incompatible(plan, descriptor,
+                    target.LogicalColumnId, "FrozenAssignmentMustReuse");
+            }
+            RecapCellArtifact? cell;
+            if (frozen?.ReusedCellId is { } frozenCellId) {
+                cell = baseRow!.Cells.SingleOrDefault(
+                    candidate => candidate.Id == frozenCellId);
+                if (cell is null) {
+                    throw Incompatible(plan, descriptor,
+                        target.LogicalColumnId,
+                        "FrozenReuseMissingFromExactBaseView");
+                }
+            }
+            else if (!reusable!.TryGetValue(
+                         target.LogicalColumnId,
+                         out cell)) {
+                throw Incompatible(plan, descriptor,
+                    target.LogicalColumnId, "BaseViewMissingLogicalColumn");
+            }
+            if (cell.LogicalColumnId != target.LogicalColumnId
                 || cell.DefinitionDigest != target.DefinitionDigest
-                || cell.Slot.HistoryRowId
-                    != descriptor.RowId) {
-                throw new InvalidOperationException(
-                    "The overlay base view lacks an exact reusable cell."
-                );
+                || cell.Slot.HistoryRowId != descriptor.RowId) {
+                throw Incompatible(plan, descriptor, target.LogicalColumnId,
+                    frozen is null
+                        ? "BaseViewCellDoesNotMatchOverlayTarget"
+                        : "FrozenReuseDoesNotMatchOverlayTarget");
             }
             assignments[index] = new RowBuildAssignment.Reuse(
                 target.LogicalColumnId,
@@ -210,6 +242,21 @@ public sealed partial class RecapGridManager {
             );
         }
         return assignments;
+    }
+
+    private static OverlaySourceIncompatibleException Incompatible(
+        FrozenRecipePlan plan,
+        HistorySegmentDescriptor descriptor,
+        LogicalColumnId logicalColumnId,
+        string reason
+    ) => new(new RecapGridBuildResult.OverlaySourceIncompatible(
+        plan.Recipe.Digest, descriptor.RowId, logicalColumnId, reason));
+
+    private sealed class OverlaySourceIncompatibleException(
+        RecapGridBuildResult.OverlaySourceIncompatible result
+    ) : Exception(result.Reason) {
+        internal RecapGridBuildResult.OverlaySourceIncompatible Result { get; }
+            = result;
     }
 
     private static RecapGridBuildResult? ValidateNewWorkProducerTarget(

@@ -243,6 +243,11 @@ public sealed class AgentControlVerticalTests : IDisposable {
             (new RecapGridBuildProgressResult.ProducerPolicyRequired(
                 recipe, new HistoryRowId(new string('b', 64))),
                 "producer-policy-required"),
+            (new RecapGridBuildProgressResult.OverlaySourceIncompatible(
+                recipe, new HistoryRowId(new string('b', 64)),
+                new LogicalColumnId("case.culprit"),
+                "FrozenReuseMissingFromExactBaseView"),
+                "overlay-source-incompatible"),
             (new RecapGridBuildProgressResult.StaleTimelineHead(timelineHead),
                 "stale-timeline-head")
         ];

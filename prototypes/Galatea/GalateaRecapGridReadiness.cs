@@ -437,6 +437,17 @@ internal static class GalateaRecapGridReadiness {
                     "producer-policy-required",
                     $"{required.RootRecipeDigest.Value}:{required.RowId.Value}"
                 ),
+            RecapGridBuildProgressResult.OverlaySourceIncompatible incompatible
+                => Exact(
+                    "blocked",
+                    capturedRawHead,
+                    metrics,
+                    "overlay-source-incompatible",
+                    $"{incompatible.RootRecipeDigest.Value}:"
+                        + $"{incompatible.RowId.Value}:"
+                        + $"{incompatible.LogicalColumnId.Value}:"
+                        + incompatible.Reason
+                ),
             RecapGridBuildProgressResult.ThroughRowNotSelected missing
                 => Exact(
                     "invalid",

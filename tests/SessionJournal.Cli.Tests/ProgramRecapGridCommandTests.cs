@@ -861,6 +861,9 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         );
         Assert.Equal(2, nonemptyRecipe.SchemaVersion);
         Assert.Equal(activeBase.Digest, nonemptyRecipe.OriginRootRecipeDigest);
+        Assert.NotEqual(activeBase.Digest, nonemptyRecipe.Digest);
+        Assert.Equal(activeBase.Digest,
+            ReadControlHead(refId.ToHexString()).ActiveRecipeDigest);
         using HistoryTimelineReaderHandle timeline = Assert.IsType<
             HistoryTimelineReaderOpenResult.Opened
         >(HistoryTimelineMaintenance.OpenReader(_root, refId)).Handle;

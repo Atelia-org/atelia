@@ -1750,6 +1750,11 @@ public sealed class RecapGridOnlineContextHandle :
             => Unavailable(RecapGridOnlineComponent.Manager,
                 "ProducerPolicyRequired",
                 $"{value.RootRecipeDigest.Value}:{value.RowId.Value}"),
+        RecapGridBuildProgressResult.OverlaySourceIncompatible value
+            => Unavailable(RecapGridOnlineComponent.Manager,
+                "OverlaySourceIncompatible",
+                $"{value.RootRecipeDigest.Value}:{value.RowId.Value}:"
+                    + $"{value.LogicalColumnId.Value}:{value.Reason}"),
         RecapGridBuildProgressResult.ThroughRowNotSelected
             => Unavailable(RecapGridOnlineComponent.Timeline,
                 "ThroughRowNotSelected", "The requested row is not selected."),
@@ -1801,6 +1806,11 @@ public sealed class RecapGridOnlineContextHandle :
             => Unavailable(RecapGridOnlineComponent.Manager,
                 "ProducerPolicyRequired",
                 $"{value.RootRecipeDigest.Value}:{value.RowId.Value}"),
+        RecapGridBuildResult.OverlaySourceIncompatible value
+            => Unavailable(RecapGridOnlineComponent.Manager,
+                "OverlaySourceIncompatible",
+                $"{value.RootRecipeDigest.Value}:{value.RowId.Value}:"
+                    + $"{value.LogicalColumnId.Value}:{value.Reason}"),
         RecapGridBuildResult.ThroughRowNotSelected
             => Unavailable(RecapGridOnlineComponent.Timeline,
                 "ThroughRowNotSelected", "The requested row is not selected."),
