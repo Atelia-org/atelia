@@ -124,10 +124,14 @@
   proposed work 冒充成持久化工作；完整/fulfilled 的逐行 producer export 仍是
   G5 的范围。`control promote` 成功 JSON 明确标为
   `adoptionScope: "proof-through-row-only"` 且
-  `candidateTailMayRemain: true`：采用只改变 Control.ActiveRecipeDigest，
+  `candidateTailDebtAtProof`；它只在 proof 的 frozen Timeline head 高于
+  proof through row 时为 true。采用只改变 Control.ActiveRecipeDigest，
   不表示 candidate 已覆盖 Timeline current head，也不改 raw/timeline/grid。
-  `CommitIndeterminate` 继续输出稳定 `nextAction: "inspect"`；reopen 必须以
-  当前 Control 判断 AlreadyCurrent 或重新 proof→CAS，不能盲重放。
+  `CommitIndeterminate` 的 CLI 合同继续输出稳定 `nextAction: "inspect"`
+  且不输出成功字段；direct Control settlement 与 AgentControl durable
+  receipt/reopen 是既有证据。CLI publish-after-fault→reopen→AlreadyActive
+  的完整跨层 E2E 没有安全的局部 fault hook，仍未在本包执行；reopen 必须以当前
+  Control 判断 AlreadyCurrent 或重新 proof→CAS，不能盲重放。
 - Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。

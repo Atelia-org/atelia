@@ -85,14 +85,19 @@ internal static partial class RecapGridCommands {
                         proof.RecipeDigest,
                         RecapGridControlActivationPurpose.Promotion
                     );
-                return PrintPromotionActivation(activated, request.ThroughRowId);
+                return PrintPromotionActivation(
+                    activated,
+                    proof.ThroughRowId,
+                    proof.TimelineHead.HeadRowId != proof.ThroughRowId
+                );
             }
         }
     }
 
     internal static int PrintPromotionActivation(
         RecapGridControlActivateResult result,
-        HistoryRowId? throughRowId
+        HistoryRowId throughRowId,
+        bool candidateTailDebtAtProof
     ) => result switch {
         RecapGridControlActivateResult.Applied applied => Print(
             "control.promote",
@@ -101,7 +106,7 @@ internal static partial class RecapGridCommands {
                 activation = applied,
                 adoptedThroughRowId = throughRowId,
                 adoptionScope = "proof-through-row-only",
-                candidateTailMayRemain = true
+                candidateTailDebtAtProof
             }
         ),
         RecapGridControlActivateResult.AlreadyActive active => Print(
@@ -111,7 +116,7 @@ internal static partial class RecapGridCommands {
                 activation = active,
                 adoptedThroughRowId = throughRowId,
                 adoptionScope = "proof-through-row-only",
-                candidateTailMayRemain = true
+                candidateTailDebtAtProof
             }
         ),
         _ => PrintControlActivate("control.promote", result)

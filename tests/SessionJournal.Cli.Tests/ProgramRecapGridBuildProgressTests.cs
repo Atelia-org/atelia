@@ -202,13 +202,18 @@ public sealed partial class ProgramRecapGridCommandTests {
 
         RefId refId = RefId.ParseHex(fixture.RefId).Value;
         HistoryTimelineSelectedRow h5;
+        HistoryTimelineSelectedRow h10;
         using (HistoryTimelineReaderHandle timeline = Assert.IsType<
                    HistoryTimelineReaderOpenResult.Opened
                >(HistoryTimelineMaintenance.OpenReader(_root, refId)).Handle) {
-            h5 = Assert.IsType<HistoryTimelinePathPageResult.Page>(
+            IReadOnlyList<HistoryTimelineSelectedRow> rows = Assert.IsType<
+                HistoryTimelinePathPageResult.Page>(
                 timeline.Reader.ReadSelectedPathPage(
                     fixture.TimelineHead, maximumRows: 10)
-            ).Value.Rows[4];
+            ).Value.Rows;
+            h5 = rows[4];
+            h10 = Assert.Single(rows, row =>
+                row.Descriptor.RowId == fixture.TimelineHead.HeadRowId);
         }
         GridBuildRecipe candidate = GridBuildRecipe.CreateFull(
             fixture.TimelineHead.TimelineId, h5.Descriptor.RowId,
@@ -244,12 +249,44 @@ public sealed partial class ProgramRecapGridCommandTests {
         Assert.Equal("applied", report.GetProperty("status").GetString());
         Assert.Equal(h5.Descriptor.RowId.Value, report.GetProperty("detail")
             .GetProperty("adoptedThroughRowId").GetProperty("Value").GetString());
+        Assert.True(report.GetProperty("detail")
+            .GetProperty("candidateTailDebtAtProof").GetBoolean());
         using RecapGridControlHandle reopened = Assert.IsType<
             RecapGridControlOpenResult.Opened
         >(RecapGridControlFactory.Open(_root, refId, fixture.Admission)).Handle;
         Assert.Equal(candidate.Digest, Assert.IsType<
             RecapGridControlSnapshotResult.Available
         >(reopened.Reader.ReadSnapshot()).Snapshot.Head.ActiveRecipeDigest);
+
+        GridBuildRecipe throughHead = GridBuildRecipe.CreateFull(
+            fixture.TimelineHead.TimelineId, h10.Descriptor.RowId,
+            fixture.Recipe.Target, candidate.Digest);
+        ControlHeadRef nextHead = Assert.IsType<
+            RecapGridControlSnapshotResult.Available
+        >(reopened.Reader.ReadSnapshot()).Snapshot.Head;
+        Assert.IsType<RecapGridControlPutResult.Stored>(
+            reopened.Coordinator.PutBuildRecipe(
+                nextHead, fixture.TimelineHead, throughHead, h10.Witness));
+        string[] headBuild = [
+            "build", "--input", _root, "--confirm-ref", fixture.RefId,
+            "--recipe", throughHead.Digest.Value,
+            "--max-recipe-row-steps", "64", "--max-new-calls", "64",
+            "--max-elapsed-ms", "30000", "--routes", fixture.RoutesPath,
+            "--connections", fixture.ConnectionsPath
+        ];
+        Assert.Equal(0, RunWithFactory(factory, headBuild));
+        (int headCode, JsonElement headReport) = RunCaptured(
+            "control", "promote", "--input", _root,
+            "--confirm-ref", fixture.RefId, "--admission", admission,
+            "--recipe", throughHead.Digest.Value,
+            "--max-recipe-row-steps", "64", "--max-new-calls", "0",
+            "--max-elapsed-ms", "30000");
+        Assert.Equal(0, headCode);
+        JsonElement headDetail = headReport.GetProperty("detail");
+        Assert.Equal(fixture.TimelineHead.HeadRowId!.Value.Value, headDetail
+            .GetProperty("adoptedThroughRowId").GetProperty("Value").GetString());
+        Assert.False(headDetail.GetProperty("candidateTailDebtAtProof")
+            .GetBoolean());
     }
 
     private BuildProgressFixture PrepareBuildProgressFixture(int turns = 2) {

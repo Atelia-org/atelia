@@ -10,14 +10,15 @@ namespace Atelia.SessionJournal.Cli.Tests;
 [Collection(ConsoleSerialCollection.Name)]
 public sealed class RecapGridProgressContractTests {
     [Fact]
-    public void PromotionSuccessStatesThatItsProofMayLeaveTailDebt() {
+    public void PromotionSuccessStatesExactProofScopeAndNoTailDebt() {
         TextWriter original = Console.Out;
         using var output = new StringWriter();
         try {
             Console.SetOut(output);
             Assert.Equal(0, RecapGridCommands.PrintPromotionActivation(
                 new RecapGridControlActivateResult.Applied(default!),
-                null
+                default,
+                candidateTailDebtAtProof: false
             ));
         }
         finally {
@@ -28,7 +29,33 @@ public sealed class RecapGridProgressContractTests {
         JsonElement detail = report.RootElement.GetProperty("detail");
         Assert.Equal("proof-through-row-only",
             detail.GetProperty("adoptionScope").GetString());
-        Assert.True(detail.GetProperty("candidateTailMayRemain").GetBoolean());
+        Assert.False(detail.GetProperty("candidateTailDebtAtProof").GetBoolean());
+    }
+
+    [Fact]
+    public void PromotionIndeterminateRetainsInspectOnlyRecoveryContract() {
+        TextWriter original = Console.Out;
+        using var output = new StringWriter();
+        try {
+            Console.SetOut(output);
+            Assert.Equal(2, RecapGridCommands.PrintPromotionActivation(
+                new RecapGridControlActivateResult.CommitIndeterminate(
+                    default!, null),
+                default,
+                candidateTailDebtAtProof: true
+            ));
+        }
+        finally {
+            Console.SetOut(original);
+        }
+
+        using JsonDocument report = JsonDocument.Parse(output.ToString());
+        JsonElement detail = report.RootElement.GetProperty("detail");
+        Assert.Equal("commit-indeterminate",
+            report.RootElement.GetProperty("status").GetString());
+        Assert.Equal("inspect", detail.GetProperty("nextAction").GetString());
+        Assert.False(detail.TryGetProperty("adoptedThroughRowId", out _));
+        Assert.False(detail.TryGetProperty("candidateTailDebtAtProof", out _));
     }
 
     [Fact]
