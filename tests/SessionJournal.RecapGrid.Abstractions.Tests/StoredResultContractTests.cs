@@ -101,6 +101,26 @@ public sealed class StoredResultContractTests {
     }
 
     [Fact]
+    public void ProposedProducerIsInternalAndDoesNotRelaxPublicTargetExactness() {
+        GridBuildRecipe recipe = Recipe("alpha");
+        BuildTarget p1 = BuildTarget.Create([
+            new BuildTargetColumn(new LogicalColumnId("alpha"),
+                new MaintainerDefinitionDigest(new string('e', 64)))
+        ]);
+        RowViewCoordinate p1Coordinate = new(new RefId(1), Timeline, Row('a'),
+            recipe.Digest, p1.Digest, null, null, true);
+        RowBuildAssignment[] assignments = [new RowBuildAssignment.Evaluate(
+            new CellSlot(recipe.Digest, Row('a'), new LogicalColumnId("alpha")))];
+
+        Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(recipe,
+            p1Coordinate, assignments));
+        RowBuildSpec proposed = RowBuildSpec.CreateFullProposed(recipe,
+            p1Coordinate, assignments, p1);
+        Assert.Null(proposed.Work);
+        Assert.Equal(p1.Digest, proposed.TargetDigest);
+    }
+
+    [Fact]
     public void OverlayReusesExactBaseCellWithoutChangingItsSourceSlot() {
         GridBuildRecipe basis = Recipe("alpha", "beta");
         GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(basis, Row('a'), basis.Target, [new LogicalColumnId("alpha")]);

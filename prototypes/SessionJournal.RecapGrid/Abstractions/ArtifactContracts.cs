@@ -185,8 +185,20 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         IEnumerable<RowBuildAssignment> orderedAssignments,
-        RowWork? work = null,
-        BuildTarget? proposedProducerTarget = null
+        RowWork? work = null
+    ) => CreateFullCore(recipe, coordinate, orderedAssignments, work, null);
+
+    internal static RowBuildSpec CreateFullProposed(
+        GridBuildRecipe recipe, RowViewCoordinate coordinate,
+        IEnumerable<RowBuildAssignment> orderedAssignments,
+        BuildTarget proposedProducerTarget
+    ) => CreateFullCore(recipe, coordinate, orderedAssignments, work: null,
+        proposedProducerTarget);
+
+    private static RowBuildSpec CreateFullCore(
+        GridBuildRecipe recipe, RowViewCoordinate coordinate,
+        IEnumerable<RowBuildAssignment> orderedAssignments, RowWork? work,
+        BuildTarget? proposedProducerTarget
     ) {
         if (recipe?.Kind != GridBuildRecipeKind.Full) {
             throw new ArgumentException(
@@ -214,8 +226,7 @@ public sealed class RowBuildSpec {
             recipe,
             coordinate,
             assignments,
-            work,
-            proposedProducerTarget
+            work, proposedProducerTarget
         );
     }
 
@@ -223,8 +234,21 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         IEnumerable<RowBuildAssignment> orderedAssignments,
-        RowWork? work = null,
-        BuildTarget? proposedProducerTarget = null
+        RowWork? work = null
+    ) => CreateOverlayBootstrapCore(recipe, coordinate, orderedAssignments,
+        work, null);
+
+    internal static RowBuildSpec CreateOverlayBootstrapProposed(
+        GridBuildRecipe recipe, RowViewCoordinate coordinate,
+        IEnumerable<RowBuildAssignment> orderedAssignments,
+        BuildTarget proposedProducerTarget
+    ) => CreateOverlayBootstrapCore(recipe, coordinate, orderedAssignments,
+        work: null, proposedProducerTarget);
+
+    private static RowBuildSpec CreateOverlayBootstrapCore(
+        GridBuildRecipe recipe, RowViewCoordinate coordinate,
+        IEnumerable<RowBuildAssignment> orderedAssignments, RowWork? work,
+        BuildTarget? proposedProducerTarget
     ) {
         if (recipe?.Kind != GridBuildRecipeKind.Overlay) {
             throw new ArgumentException(
@@ -263,8 +287,7 @@ public sealed class RowBuildSpec {
             recipe,
             coordinate,
             assignments,
-            work,
-            proposedProducerTarget
+            work, proposedProducerTarget
         );
     }
 
@@ -272,8 +295,20 @@ public sealed class RowBuildSpec {
         GridBuildRecipe recipe,
         RowViewCoordinate coordinate,
         IEnumerable<RowBuildAssignment> orderedAssignments,
-        RowWork? work = null,
-        BuildTarget? proposedProducerTarget = null
+        RowWork? work = null
+    ) => CreateNormalCore(recipe, coordinate, orderedAssignments, work, null);
+
+    internal static RowBuildSpec CreateNormalProposed(
+        GridBuildRecipe recipe, RowViewCoordinate coordinate,
+        IEnumerable<RowBuildAssignment> orderedAssignments,
+        BuildTarget proposedProducerTarget
+    ) => CreateNormalCore(recipe, coordinate, orderedAssignments, work: null,
+        proposedProducerTarget);
+
+    private static RowBuildSpec CreateNormalCore(
+        GridBuildRecipe recipe, RowViewCoordinate coordinate,
+        IEnumerable<RowBuildAssignment> orderedAssignments, RowWork? work,
+        BuildTarget? proposedProducerTarget
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
         if (!coordinate.BootstrapCompleted) {
@@ -296,8 +331,7 @@ public sealed class RowBuildSpec {
             recipe,
             coordinate,
             assignments,
-            work,
-            proposedProducerTarget
+            work, proposedProducerTarget
         );
     }
 
@@ -310,6 +344,11 @@ public sealed class RowBuildSpec {
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
         ArgumentNullException.ThrowIfNull(coordinate);
+        if (work is not null && proposedProducerTarget is not null) {
+            throw new ArgumentException(
+                "A RowBuildSpec cannot combine persisted and proposed producer targets."
+            );
+        }
         BuildTarget actualTarget = work?.ProducerTarget
             ?? proposedProducerTarget ?? recipe.Target;
         if (coordinate.TimelineId != recipe.TimelineId

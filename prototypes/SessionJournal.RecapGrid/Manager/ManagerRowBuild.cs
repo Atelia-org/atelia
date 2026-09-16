@@ -95,29 +95,39 @@ public sealed partial class RecapGridManager {
                         == descriptor.RowId
             );
             RowBuildSpec spec = plan.Recipe.Kind switch {
-                GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
+                GridBuildRecipeKind.Full when work is null => RowBuildSpec.CreateFullProposed(
                     plan.Recipe,
                     coordinate,
                     assignments,
-                    work,
-                    proposedProducerTarget: plan.ProducerTarget
+                    plan.ProducerTarget
                 ),
+                GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
+                    plan.Recipe, coordinate, assignments, work
+                ),
+                GridBuildRecipeKind.Overlay
+                    when isOverlayBootstrap && work is null
+                    => RowBuildSpec.CreateOverlayBootstrapProposed(
+                        plan.Recipe, coordinate, assignments, plan.ProducerTarget
+                    ),
                 GridBuildRecipeKind.Overlay
                     when isOverlayBootstrap
                     => RowBuildSpec.CreateOverlayBootstrap(
-                    plan.Recipe,
-                    coordinate,
-                    assignments,
-                    work,
-                    proposedProducerTarget: plan.ProducerTarget
+                        plan.Recipe,
+                        coordinate,
+                        assignments,
+                    work
+                ),
+                GridBuildRecipeKind.Overlay
+                    when work is null
+                    => RowBuildSpec.CreateNormalProposed(
+                        plan.Recipe, coordinate, assignments, plan.ProducerTarget
                     ),
                 GridBuildRecipeKind.Overlay
                     => RowBuildSpec.CreateNormal(
-                    plan.Recipe,
-                    coordinate,
-                    assignments,
-                    work,
-                    proposedProducerTarget: plan.ProducerTarget
+                        plan.Recipe,
+                        coordinate,
+                        assignments,
+                    work
                     ),
                 _ => throw new InvalidOperationException(
                     "The recipe kind is unsupported."
