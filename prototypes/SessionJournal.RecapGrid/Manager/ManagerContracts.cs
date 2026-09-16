@@ -522,15 +522,25 @@ public sealed record RecapGridRecipeRowWork {
     internal RecapGridRecipeRowWork(
         HistoryRowId rowId,
         GridBuildRecipeDigest recipeDigest,
+        BuildTargetDigest producerTargetDigest,
+        RowWorkId? workId,
         bool isOverlayBootstrap
     ) {
         RowId = rowId;
         RecipeDigest = recipeDigest;
+        ProducerTargetDigest = producerTargetDigest;
+        WorkId = workId;
         IsOverlayBootstrap = isOverlayBootstrap;
     }
 
     public HistoryRowId RowId { get; }
     public GridBuildRecipeDigest RecipeDigest { get; }
+    /// <summary>
+    /// The actual target for this row. A proposed work has no durable
+    /// <see cref="WorkId"/> yet.
+    /// </summary>
+    public BuildTargetDigest ProducerTargetDigest { get; }
+    public RowWorkId? WorkId { get; }
     public bool IsOverlayBootstrap { get; }
 }
 

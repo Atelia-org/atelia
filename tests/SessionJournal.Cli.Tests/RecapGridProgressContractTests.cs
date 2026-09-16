@@ -1,12 +1,36 @@
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Manager;
+using System.Text.Json;
 using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
 
 [Collection(ConsoleSerialCollection.Name)]
 public sealed class RecapGridProgressContractTests {
+    [Fact]
+    public void PromotionSuccessStatesThatItsProofMayLeaveTailDebt() {
+        TextWriter original = Console.Out;
+        using var output = new StringWriter();
+        try {
+            Console.SetOut(output);
+            Assert.Equal(0, RecapGridCommands.PrintPromotionActivation(
+                new RecapGridControlActivateResult.Applied(default!),
+                null
+            ));
+        }
+        finally {
+            Console.SetOut(original);
+        }
+
+        using JsonDocument report = JsonDocument.Parse(output.ToString());
+        JsonElement detail = report.RootElement.GetProperty("detail");
+        Assert.Equal("proof-through-row-only",
+            detail.GetProperty("adoptionScope").GetString());
+        Assert.True(detail.GetProperty("candidateTailMayRemain").GetBoolean());
+    }
+
     [Fact]
     public void FrontierReportKeepsExactJsonPropertyNamesAndOrder() {
         var authority = (RecapGridBuildProgressAuthority)
@@ -22,6 +46,8 @@ public sealed class RecapGridProgressContractTests {
             typeof(RecapGridRecipeRowWork),
             default(HistoryRowId),
             default(GridBuildRecipeDigest),
+            default(BuildTargetDigest),
+            null,
             true
         );
         var missing = (RecapGridMissingAssignmentProgress)
@@ -63,6 +89,8 @@ public sealed class RecapGridProgressContractTests {
                 "\"NextWork\":{" +
                 "\"RowId\":{\"Value\":null}," +
                 "\"RecipeDigest\":{\"Value\":null}," +
+                "\"ProducerTargetDigest\":{\"Value\":null}," +
+                "\"WorkId\":null," +
                 "\"IsOverlayBootstrap\":true}," +
                 "\"PendingRecipeRows\":2," +
                 "\"OrderedMissing\":[{" +
@@ -96,6 +124,9 @@ public sealed class RecapGridProgressContractTests {
                     && parameters.Zip(arguments).All(static pair =>
                         pair.Second is null
                             ? !pair.First.ParameterType.IsValueType
+                                || Nullable.GetUnderlyingType(
+                                    pair.First.ParameterType
+                                ) is not null
                             : pair.First.ParameterType.IsInstanceOfType(
                                 pair.Second
                             )

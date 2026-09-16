@@ -85,13 +85,37 @@ internal static partial class RecapGridCommands {
                         proof.RecipeDigest,
                         RecapGridControlActivationPurpose.Promotion
                     );
-                return PrintControlActivate(
-                    "control.promote",
-                    activated
-                );
+                return PrintPromotionActivation(activated, request.ThroughRowId);
             }
         }
     }
+
+    internal static int PrintPromotionActivation(
+        RecapGridControlActivateResult result,
+        HistoryRowId? throughRowId
+    ) => result switch {
+        RecapGridControlActivateResult.Applied applied => Print(
+            "control.promote",
+            "applied",
+            new {
+                activation = applied,
+                adoptedThroughRowId = throughRowId,
+                adoptionScope = "proof-through-row-only",
+                candidateTailMayRemain = true
+            }
+        ),
+        RecapGridControlActivateResult.AlreadyActive active => Print(
+            "control.promote",
+            "already-active",
+            new {
+                activation = active,
+                adoptedThroughRowId = throughRowId,
+                adoptionScope = "proof-through-row-only",
+                candidateTailMayRemain = true
+            }
+        ),
+        _ => PrintControlActivate("control.promote", result)
+    };
 
     private static async ValueTask<int> BuildAsync(
         CliOptions options,

@@ -39,6 +39,9 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             Assert.Equal(0, captureCalls);
             Assert.Equal(fixture.Rows[0].Descriptor.RowId, progress.RowId);
             Assert.Equal(fixture.Recipe.Digest, progress.RecipeDigest);
+            Assert.Equal(fixture.Recipe.Target.Digest,
+                progress.NextWork.ProducerTargetDigest);
+            Assert.Null(progress.NextWork.WorkId);
             RecapGridMissingAssignmentProgress missing = Assert.Single(
                 progress.OrderedMissing
             );
@@ -304,6 +307,14 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                             new RecapCellBatchExecutionResult.RejectedBeforeDispatch(
                                 "stop", "Persist P1 work before dispatch."))));
             }
+            using (RecapGridManagerHandle inspected = OpenManager(fixture)) {
+                RecapGridBuildProgressResult.Frontier frontier = Assert.IsType<
+                    RecapGridBuildProgressResult.Frontier
+                >(inspected.Manager.InspectBuildProgress(Request(p2)));
+                Assert.Equal(fixture.Recipe.Digest, frontier.RecipeDigest);
+                Assert.Equal(p1.Digest, frontier.NextWork.ProducerTargetDigest);
+                Assert.NotNull(frontier.NextWork.WorkId);
+            }
             var nullPolicyExecutor = new RecordingExecutor();
             using (RecapGridManagerHandle resumed = OpenManager(fixture)) {
                 Assert.IsType<RecapGridBuildResult.ProducerPolicyRequired>(
@@ -340,6 +351,117 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             Assert.Equal(fixture.Rows[0].Descriptor.RowId,
                 second.PreviousHistoryRowId);
             Assert.Equal(firstView.Id, second.PreviousRowResultId);
+        }
+    }
+
+    [Fact]
+    public async Task PrefixPromotionLeavesNewRootTailAsItsOwnPolicyDebt() {
+        Fixture fixture = CreateFullFixture(turns: 10, zeroColumns: false);
+        (FamilyDefinition family, _) = Values();
+        MaintainerDefinitionRevision bDefinition = Definition(
+            family, "case.culprit", "b", "B producer");
+        BuildTarget bTarget = BuildTarget.Create([
+            new BuildTargetColumn(bDefinition.LogicalColumnId, bDefinition.Digest)
+        ]);
+        HistoryTimelineSelectedRow h5;
+        using (HistoryTimelineReaderHandle timeline = Assert.IsType<
+                   HistoryTimelineReaderOpenResult.Opened
+               >(HistoryTimelineMaintenance.OpenReader(
+                   fixture.Path, fixture.TimelineHead.RefId)).Handle) {
+            h5 = Assert.IsType<HistoryTimelineReaderRowResult.Selected>(
+                timeline.Reader.ReadSelectedRow(
+                    fixture.TimelineHead, fixture.Rows[4].Descriptor.RowId)
+            ).Row;
+        }
+        HistoryTimelineSelectedRow h6 = fixture.Rows[5];
+        HistoryTimelineSelectedRow h10 = fixture.Rows[9];
+        GridBuildRecipe b = GridBuildRecipe.CreateFull(
+            fixture.TimelineHead.TimelineId,
+            h5.Descriptor.RowId,
+            bTarget,
+            fixture.Recipe.Digest);
+        using (fixture.Journal) {
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await manager.Manager.BuildAsync(
+                        Request(fixture.Recipe.Target), new RecordingExecutor()));
+            }
+            using (RecapGridControlHandle control = OpenControl(fixture)) {
+                ControlHeadRef head = Assert.IsType<
+                    RecapGridControlSnapshotResult.Available
+                >(control.Reader.ReadSnapshot()).Snapshot.Head;
+                head = Assert.IsType<RecapGridControlPutResult.Stored>(
+                    control.Coordinator.PutMaintainerDefinition(head, bDefinition)
+                ).Head;
+                RecapGridControlPutResult put = control.Coordinator.PutBuildRecipe(
+                    head, fixture.TimelineHead, b, h5.Witness);
+                Assert.True(put is RecapGridControlPutResult.Stored,
+                    put.ToString());
+            }
+            var bThroughH5 = new RecapGridBuildRequest(
+                new RecapGridBuildSelection.ExplicitCandidate(b.Digest),
+                h5.Descriptor.RowId,
+                Request(bTarget).Budget);
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                Assert.IsType<RecapGridBuildResult.FulfilledThrough>(
+                    await manager.Manager.BuildAsync(bThroughH5,
+                        new RecordingExecutor()));
+                RecapGridBuildProgressResult.Complete complete = Assert.IsType<
+                    RecapGridBuildProgressResult.Complete
+                >(manager.Manager.InspectBuildProgress(bThroughH5));
+                Assert.NotNull(complete.Proof);
+            }
+            using (RecapGridControlHandle control = OpenControl(fixture)) {
+                ControlHeadRef before = Assert.IsType<
+                    RecapGridControlSnapshotResult.Available
+                >(control.Reader.ReadSnapshot()).Snapshot.Head;
+                Assert.Equal(fixture.Recipe.Digest, before.ActiveRecipeDigest);
+                RecapGridPromotableProof proof;
+                using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                    proof = Assert.IsType<RecapGridBuildProgressResult.Complete>(
+                        manager.Manager.InspectBuildProgress(bThroughH5)).Proof!;
+                }
+                Assert.IsType<RecapGridControlActivateResult.Applied>(
+                    control.Coordinator.CompareExchangeActiveRecipe(
+                        proof.ControlHead, proof.TimelineHead, proof.RecipeDigest,
+                        RecapGridControlActivationPurpose.Promotion));
+            }
+            using (RecapGridStoreReaderHandle prefixReader = OpenStoreReader(fixture)) {
+                Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+                    prefixReader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                        fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                        b.Digest, h6.Descriptor.RowId)));
+                Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                    prefixReader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                        fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                        fixture.Recipe.Digest, h10.Descriptor.RowId)));
+            }
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                RecapGridBuildResult.ProducerPolicyRequired required = Assert.IsType<
+                    RecapGridBuildResult.ProducerPolicyRequired
+                >(await manager.Manager.BuildAsync(WithoutProducerPolicy(),
+                    new RecordingExecutor()));
+                Assert.Equal(b.Digest, required.RootRecipeDigest);
+                Assert.Equal(h6.Descriptor.RowId, required.RowId);
+                Assert.IsType<RecapGridBuildResult.Fulfilled>(
+                    await manager.Manager.BuildAsync(Request(bTarget),
+                        new RecordingExecutor()));
+            }
+            using RecapGridStoreReaderHandle finalReader = OpenStoreReader(fixture);
+            RecapRowView bH5 = Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                finalReader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                    fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                    b.Digest, h5.Descriptor.RowId))).Value;
+            RecapRowView bH6 = Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                finalReader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                    fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                    b.Digest, h6.Descriptor.RowId))).Value;
+            RecapRowView aH10 = Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                finalReader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                    fixture.TimelineHead.RefId, fixture.TimelineHead.TimelineId,
+                    fixture.Recipe.Digest, h10.Descriptor.RowId))).Value;
+            Assert.Equal(bH5.Id, bH6.PreviousRowResultId);
+            Assert.NotEqual(aH10.Id, bH6.PreviousRowResultId);
         }
     }
 

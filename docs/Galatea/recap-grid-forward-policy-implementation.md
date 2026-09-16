@@ -114,6 +114,20 @@
   RowWork 尚不存在时也 typed 拒绝并保持 missing。V5 work-addressed cell 与
   strict legacy base-slot 两种 Evaluate 形状都可作为已导入 complete row 的
   provenance；tail Manager 聚焦：2 passed。
+- G4b2：H10 complete 的 A 与 Full V2 candidate B（`OriginRoot=A`）的
+  H5 prefix 合成仓回归已验证：B/H5 proof 的 promotion 后 active=B，B/H6
+  仍无 view；live 无 policy 在 H6 返回 `ProducerPolicyRequired`，提供 B
+  policy 后 H6 exact prior=B/H5、不是 A/H10。CLI 回归实际执行
+  `control promote --through-row H5`，并核对 active=B。`progress` 的 `NextWork` 现在同时报告 adopted/root
+  `RecipeDigest`、该行的 `ProducerTargetDigest`，以及仅在 RowWork 已持久化时
+  非空的 `WorkId`。因此 mixed root 不会把 root 冒充为 producer，也不会把
+  proposed work 冒充成持久化工作；完整/fulfilled 的逐行 producer export 仍是
+  G5 的范围。`control promote` 成功 JSON 明确标为
+  `adoptionScope: "proof-through-row-only"` 且
+  `candidateTailMayRemain: true`：采用只改变 Control.ActiveRecipeDigest，
+  不表示 candidate 已覆盖 Timeline current head，也不改 raw/timeline/grid。
+  `CommitIndeterminate` 继续输出稳定 `nextAction: "inspect"`；reopen 必须以
+  当前 Control 判断 AlreadyCurrent 或重新 proof→CAS，不能盲重放。
 - Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。
@@ -124,8 +138,8 @@
 ## 尚未完成
 
 G3 尚缺“历史未完成 family 按实际 work 路由”的完整纵向回归与全部冻结恢复
-覆盖；G4a 已收口显式 live producer policy，G4 仍缺 Full/Overlay
-candidate 与 promotion/prefix 完整矩阵；G5 尚缺 V4 partial、Overlay
+覆盖；G4a/G4b2 已收口显式 live producer policy、prefix promotion 与报告合同；
+G5 尚缺 V4 partial、Overlay
 共享 cell、多 ref、crash/reopen、export/restore 的完整无损矩阵；A1--A15
 完整/规模验收尚未完成。本记录不能作为服务部署、真实 `.atelia/galatea` 迁移
 或 NuGet 发布的授权。

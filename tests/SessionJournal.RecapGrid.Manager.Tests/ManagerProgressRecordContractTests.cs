@@ -67,11 +67,15 @@ public sealed class ManagerProgressRecordContractTests {
         var first = new RecapGridRecipeRowWork(
             default,
             default,
+            default,
+            null,
             true
         );
         var second = new RecapGridRecipeRowWork(
             default,
             default,
+            default,
+            null,
             true
         );
         RecapGridRecipeRowWork clone = first with { };
@@ -82,6 +86,7 @@ public sealed class ManagerProgressRecordContractTests {
         Assert.Equal(first, clone);
         Assert.Equal(
             "RecapGridRecipeRowWork { RowId = , RecipeDigest = , "
+                + "ProducerTargetDigest = , WorkId = , "
                 + "IsOverlayBootstrap = True }",
             first.ToString()
         );

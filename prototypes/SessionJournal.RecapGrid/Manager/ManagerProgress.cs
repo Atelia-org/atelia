@@ -166,6 +166,8 @@ public sealed partial class RecapGridManager {
                     new RecapGridRecipeRowWork(
                         unit.Selected.Descriptor.RowId,
                         unit.Plan.Recipe.Digest,
+                        derived.Spec.TargetDigest,
+                        derived.Spec.Work?.WorkId,
                         unit.IsOverlayBootstrap
                     ),
                     progression.OrderedUnits.Count,

@@ -91,6 +91,8 @@ public sealed class ManagerPublicSurfaceTests {
             [
                 ("RowId", typeof(HistoryRowId)),
                 ("RecipeDigest", typeof(GridBuildRecipeDigest)),
+                ("ProducerTargetDigest", typeof(BuildTargetDigest)),
+                ("WorkId", typeof(RowWorkId?)),
                 ("IsOverlayBootstrap", typeof(bool))
             ]
         );

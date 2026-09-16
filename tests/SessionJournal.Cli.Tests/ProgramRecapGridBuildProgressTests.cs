@@ -8,6 +8,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
+using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using Xunit;
 
@@ -192,8 +193,67 @@ public sealed partial class ProgramRecapGridCommandTests {
         Assert.Equal(0, factory.CreateCount);
     }
 
-    private BuildProgressFixture PrepareBuildProgressFixture() {
-        CreateJournal(turns: 2);
+    [Fact]
+    public void ControlPromoteAcceptsPrefixThroughRowForCompletedFullV2Candidate() {
+        BuildProgressFixture fixture = PrepareBuildProgressFixture(turns: 10);
+        var factory = new GatedBuildFactory();
+        factory.Release.TrySetResult();
+        Assert.Equal(0, RunWithFactory(factory, fixture.Arguments(64)));
+
+        RefId refId = RefId.ParseHex(fixture.RefId).Value;
+        HistoryTimelineSelectedRow h5;
+        using (HistoryTimelineReaderHandle timeline = Assert.IsType<
+                   HistoryTimelineReaderOpenResult.Opened
+               >(HistoryTimelineMaintenance.OpenReader(_root, refId)).Handle) {
+            h5 = Assert.IsType<HistoryTimelinePathPageResult.Page>(
+                timeline.Reader.ReadSelectedPathPage(
+                    fixture.TimelineHead, maximumRows: 10)
+            ).Value.Rows[4];
+        }
+        GridBuildRecipe candidate = GridBuildRecipe.CreateFull(
+            fixture.TimelineHead.TimelineId, h5.Descriptor.RowId,
+            fixture.Recipe.Target, fixture.Recipe.Digest);
+        using (RecapGridControlHandle control = Assert.IsType<
+                   RecapGridControlOpenResult.Opened
+               >(RecapGridControlFactory.Open(_root, refId, fixture.Admission)).Handle) {
+            ControlHeadRef head = Assert.IsType<RecapGridControlSnapshotResult.Available>(
+                control.Reader.ReadSnapshot()).Snapshot.Head;
+            _ = Assert.IsType<RecapGridControlPutResult.Stored>(
+                control.Coordinator.PutBuildRecipe(
+                    head, fixture.TimelineHead, candidate, h5.Witness));
+        }
+        string[] candidateBuild = [
+            "build", "--input", _root, "--confirm-ref", fixture.RefId,
+            "--recipe", candidate.Digest.Value,
+            "--through-row", h5.Descriptor.RowId.Value,
+            "--max-recipe-row-steps", "64", "--max-new-calls", "64",
+            "--max-elapsed-ms", "30000", "--routes", fixture.RoutesPath,
+            "--connections", fixture.ConnectionsPath
+        ];
+        Assert.Equal(0, RunWithFactory(factory, candidateBuild));
+        string admission = Path.Combine(_root, "prefix-promote-admission.json");
+        File.WriteAllBytes(admission, fixture.Admission.ToCanonicalBytes());
+        (int code, JsonElement report) = RunCaptured(
+            "control", "promote", "--input", _root,
+            "--confirm-ref", fixture.RefId, "--admission", admission,
+            "--recipe", candidate.Digest.Value,
+            "--through-row", h5.Descriptor.RowId.Value,
+            "--max-recipe-row-steps", "64", "--max-new-calls", "0",
+            "--max-elapsed-ms", "30000");
+        Assert.Equal(0, code);
+        Assert.Equal("applied", report.GetProperty("status").GetString());
+        Assert.Equal(h5.Descriptor.RowId.Value, report.GetProperty("detail")
+            .GetProperty("adoptedThroughRowId").GetProperty("Value").GetString());
+        using RecapGridControlHandle reopened = Assert.IsType<
+            RecapGridControlOpenResult.Opened
+        >(RecapGridControlFactory.Open(_root, refId, fixture.Admission)).Handle;
+        Assert.Equal(candidate.Digest, Assert.IsType<
+            RecapGridControlSnapshotResult.Available
+        >(reopened.Reader.ReadSnapshot()).Snapshot.Head.ActiveRecipeDigest);
+    }
+
+    private BuildProgressFixture PrepareBuildProgressFixture(int turns = 2) {
+        CreateJournal(turns);
         string refText = InitializeTimeline(maxRawEvents: 64);
         Assert.Equal(0, Run("timeline", "sync", "--input", _root, "--confirm-ref", refText, "--max-rows", "64"));
         RefId refId = RefId.ParseHex(refText).Value;
@@ -241,7 +301,9 @@ public sealed partial class ProgramRecapGridCommandTests {
               }]
             }
             """);
-        return new BuildProgressFixture(_root, refText, recipe, checked((int)head.SelectedPathCount), routesPath, connectionsPath);
+        return new BuildProgressFixture(_root, refText, recipe, head,
+            checked((int)head.SelectedPathCount), routesPath, connectionsPath,
+            admission);
     }
 
     private static void WriteFormattedBuildRoutes(string path, RecapGridRouteManifest manifest) {
@@ -250,8 +312,10 @@ public sealed partial class ProgramRecapGridCommandTests {
         Assert.Contains("\n", File.ReadAllText(path));
     }
 
-    private sealed record BuildProgressFixture(string Path, string RefId, GridBuildRecipe Recipe,
-        int RowCount, string RoutesPath, string ConnectionsPath) {
+    private sealed record BuildProgressFixture(string Path, string RefId,
+        GridBuildRecipe Recipe, TimelineHeadRef TimelineHead, int RowCount,
+        string RoutesPath, string ConnectionsPath,
+        RecapGridControlAdmission Admission) {
         internal string[] Arguments(int maximumCalls) => ["build", "--input", Path, "--confirm-ref", RefId,
             "--recipe", Recipe.Digest.Value, "--max-recipe-row-steps", "64", "--max-new-calls", maximumCalls.ToString(),
             "--max-elapsed-ms", "30000", "--routes", RoutesPath, "--connections", ConnectionsPath];
