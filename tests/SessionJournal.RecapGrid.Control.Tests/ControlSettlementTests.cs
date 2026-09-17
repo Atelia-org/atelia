@@ -118,6 +118,97 @@ public sealed partial class ControlVerticalTests {
     }
 
     [Fact]
+    public void PromotionLostResponseReopensAsAlreadyActiveWithoutRepublish() {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateTimeline(path);
+        Values values = ValuesFor(path, journal);
+        ControlHeadRef head = Assert.IsType<
+            RecapGridControlCreateResult.Created
+        >(RecapGridControlFactory.Create(
+            path,
+            journal.BranchRefId,
+            values.Admission
+        )).Head;
+        using (RecapGridControlHandle setup = Assert.IsType<
+                   RecapGridControlOpenResult.Opened
+               >(RecapGridControlFactory.Open(
+                   path,
+                   journal.BranchRefId,
+                   values.Admission
+               )).Handle) {
+            head = Assert.IsType<RecapGridControlPutResult.Stored>(
+                setup.Coordinator.PutFamilyDefinition(
+                    head,
+                    values.Family
+                )
+            ).Head;
+            head = Assert.IsType<RecapGridControlPutResult.Stored>(
+                setup.Coordinator.PutMaintainerDefinition(
+                    head,
+                    values.Definition
+                )
+            ).Head;
+            head = Assert.IsType<RecapGridControlPutResult.Stored>(
+                setup.Coordinator.PutBuildRecipe(
+                    head,
+                    values.TimelineHead,
+                    values.Recipe,
+                    null
+                )
+            ).Head;
+        }
+
+        var afterPublish = new ControlPersistenceTestHooks(
+            AfterStatePublish: static _ => throw new IOException(
+                "injected lost promotion response"
+            )
+        );
+        using (RecapGridControlHandle uncertain = Assert.IsType<
+                   RecapGridControlOpenResult.Opened
+               >(RecapGridControlFactory.OpenForTest(
+                   path,
+                   journal.BranchRefId,
+                   values.Admission,
+                   afterPublish
+               )).Handle) {
+            RecapGridControlActivateResult.CommitIndeterminate result =
+                Assert.IsType<
+                    RecapGridControlActivateResult.CommitIndeterminate
+                >(uncertain.Coordinator.CompareExchangeActiveRecipe(
+                    head,
+                    values.TimelineHead,
+                    values.Recipe.Digest,
+                    RecapGridControlActivationPurpose.Promotion
+                ));
+            Assert.Equal(result.Intended, result.Observed);
+        }
+
+        using RecapGridControlHandle reopened = Assert.IsType<
+            RecapGridControlOpenResult.Opened
+        >(RecapGridControlFactory.Open(
+            path,
+            journal.BranchRefId,
+            values.Admission
+        )).Handle;
+        ControlHeadRef published = Assert.IsType<
+            RecapGridControlSnapshotResult.Available
+        >(reopened.Reader.ReadSnapshot()).Snapshot.Head;
+        Assert.Equal(values.Recipe.Digest, published.ActiveRecipeDigest);
+        RecapGridControlActivateResult.AlreadyActive replay = Assert.IsType<
+            RecapGridControlActivateResult.AlreadyActive
+        >(reopened.Coordinator.CompareExchangeActiveRecipe(
+            published,
+            values.TimelineHead,
+            values.Recipe.Digest,
+            RecapGridControlActivationPurpose.Promotion
+        ));
+        Assert.Equal(published, replay.Head);
+        Assert.Equal(published, Assert.IsType<
+            RecapGridControlSnapshotResult.Available
+        >(reopened.Reader.ReadSnapshot()).Snapshot.Head);
+    }
+
+    [Fact]
     public void PrePublishFailureLeavesCanonicalStateExact() {
         string path = NewPath();
         using SessionJournalEngine journal = CreateTimeline(path);

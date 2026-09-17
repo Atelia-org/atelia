@@ -10,6 +10,7 @@ using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Runtime;
+using Atelia.SessionJournal.RecapGrid.Store;
 using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
@@ -235,9 +236,101 @@ public sealed partial class ProgramRecapGridCommandTests {
             "--max-elapsed-ms", "30000", "--routes", fixture.RoutesPath,
             "--connections", fixture.ConnectionsPath
         ];
-        Assert.Equal(0, RunWithFactory(factory, candidateBuild));
+        int callsBeforeCandidate = factory.RequestCount;
+        factory.FailRequestNumberOnce = callsBeforeCandidate + 2;
+        (int failedBuildCode, JsonElement failedBuild) =
+            RunCapturedWithFactory(factory, candidateBuild);
+        Assert.Equal(2, failedBuildCode);
+        Assert.Equal("incomplete",
+            failedBuild.GetProperty("status").GetString());
+        Assert.Equal(callsBeforeCandidate + 2, factory.RequestCount);
+        Assert.Equal(fixture.Recipe.Digest,
+            ReadControlHead(fixture.RefId).ActiveRecipeDigest);
+
+        List<RecapGridStoreExportItem> ReadCandidateWorks() {
+            var works = new List<RecapGridStoreExportItem>();
+            RecapGridStoreExportCursor? cursor = null;
+            do {
+                RecapGridStoreExportPage page = Assert.IsType<
+                    RecapGridStoreExportResult.Page
+                >(RecapGridStoreMaintenance.Export(
+                    _root,
+                    cursor,
+                    includeContent: true
+                )).Value;
+                foreach (RecapGridStoreExportItem item in page.Items.Where(
+                             static item => item.Kind == "row-work")) {
+                    using JsonDocument work = JsonDocument.Parse(
+                        Assert.IsType<byte[]>(item.Json));
+                    if (string.Equals(
+                            work.RootElement.GetProperty("rootRecipeDigest")
+                                .GetString(),
+                            candidate.Digest.Value,
+                            StringComparison.Ordinal)) {
+                        works.Add(item);
+                    }
+                }
+                if (!page.Incomplete) { break; }
+                cursor = Assert.IsType<RecapGridStoreExportCursor>(
+                    page.NextCursor);
+            } while (true);
+            return works;
+        }
+        RecapGridStoreExportItem frozenWork = Assert.Single(
+            ReadCandidateWorks());
+        (int resumedBuildCode, JsonElement resumedBuild) =
+            RunCapturedWithFactory(factory, candidateBuild);
+        Assert.Equal(0, resumedBuildCode);
+        Assert.Equal("fulfilled-through",
+            resumedBuild.GetProperty("status").GetString());
+        List<RecapGridStoreExportItem> completedWorks = ReadCandidateWorks();
+        int expectedCandidateCells = 0;
+        foreach (RecapGridStoreExportItem item in completedWorks) {
+            using JsonDocument work = JsonDocument.Parse(
+                Assert.IsType<byte[]>(item.Json));
+            expectedCandidateCells += work.RootElement
+                .GetProperty("orderedAssignments").GetArrayLength();
+        }
+        Assert.Equal(
+            expectedCandidateCells - 1,
+            resumedBuild.GetProperty("detail").GetProperty("result")
+                .GetProperty("Metrics").GetProperty("NewCalls").GetInt32()
+        );
+        Assert.Equal(
+            callsBeforeCandidate + expectedCandidateCells + 1,
+            factory.RequestCount
+        );
+        RecapGridStoreExportItem resumedWork = Assert.Single(
+            completedWorks,
+            work => string.Equals(
+                work.Key, frozenWork.Key, StringComparison.Ordinal)
+        );
+        Assert.Equal(
+            Assert.IsType<byte[]>(frozenWork.Json),
+            Assert.IsType<byte[]>(resumedWork.Json)
+        );
+        Assert.Equal(fixture.Recipe.Digest,
+            ReadControlHead(fixture.RefId).ActiveRecipeDigest);
+
         string admission = Path.Combine(_root, "prefix-promote-admission.json");
         File.WriteAllBytes(admission, fixture.Admission.ToCanonicalBytes());
+        using (RecapGridControlHandle lostResponse = Assert.IsType<
+                   RecapGridControlOpenResult.Opened
+               >(RecapGridControlFactory.Open(
+                   _root, refId, fixture.Admission)).Handle) {
+            ControlHeadRef head = Assert.IsType<
+                RecapGridControlSnapshotResult.Available
+            >(lostResponse.Reader.ReadSnapshot()).Snapshot.Head;
+            _ = lostResponse.Coordinator.CompareExchangeActiveRecipe(
+                head,
+                fixture.TimelineHead,
+                candidate.Digest,
+                RecapGridControlActivationPurpose.Promotion
+            );
+        }
+        ControlHeadRef publishedHead = ReadControlHead(fixture.RefId);
+        Assert.Equal(candidate.Digest, publishedHead.ActiveRecipeDigest);
+        DomainSnapshot beforeLostResponseRecovery = SnapshotDomains();
         (int code, JsonElement report) = RunCaptured(
             "control", "promote", "--input", _root,
             "--confirm-ref", fixture.RefId, "--admission", admission,
@@ -246,11 +339,14 @@ public sealed partial class ProgramRecapGridCommandTests {
             "--max-recipe-row-steps", "64", "--max-new-calls", "0",
             "--max-elapsed-ms", "30000");
         Assert.Equal(0, code);
-        Assert.Equal("applied", report.GetProperty("status").GetString());
+        Assert.Equal("already-active",
+            report.GetProperty("status").GetString());
         Assert.Equal(h5.Descriptor.RowId.Value, report.GetProperty("detail")
             .GetProperty("adoptedThroughRowId").GetProperty("Value").GetString());
         Assert.True(report.GetProperty("detail")
             .GetProperty("candidateTailDebtAtProof").GetBoolean());
+        AssertDomainsEqual(beforeLostResponseRecovery, SnapshotDomains());
+        Assert.Equal(publishedHead, ReadControlHead(fixture.RefId));
         using RecapGridControlHandle reopened = Assert.IsType<
             RecapGridControlOpenResult.Opened
         >(RecapGridControlFactory.Open(_root, refId, fixture.Admission)).Handle;
@@ -387,6 +483,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         internal int CreateCount;
         internal int RequestCount;
         internal int DisposeCount;
+        internal int FailRequestNumberOnce;
         public ICompletionClient Create(CompletionConnectionConfig connection) {
             Interlocked.Increment(ref CreateCount);
             return new Client(this);
@@ -399,8 +496,14 @@ public sealed partial class ProgramRecapGridCommandTests {
                 int count = Interlocked.Increment(ref owner.RequestCount);
                 if (count == 1) { owner.Entered.TrySetResult(); await owner.Release.Task.WaitAsync(cancellationToken); }
                 Assert.Empty(request.PromptPrefix.OutputContract.Tools);
-                using JsonDocument work = JsonDocument.Parse(Assert.IsType<string>(Assert.IsType<ObservationMessage>(
-                    Assert.Single(request.TailMessages)).Content));
+                string workInput = Assert.IsType<string>(
+                    Assert.IsType<ObservationMessage>(
+                        Assert.Single(request.TailMessages)).Content);
+                if (Interlocked.CompareExchange(
+                        ref owner.FailRequestNumberOnce, 0, count) == count) {
+                    throw new IOException("injected one-shot provider failure");
+                }
+                using JsonDocument work = JsonDocument.Parse(workInput);
                 string column = work.RootElement.GetProperty("logicalColumnId").GetString()!;
                 return new CompletionResult(new ActionMessage([new ActionBlock.Text("Synthetic " + column + " recap.")]),
                     new CompletionDescriptor(Name, ApiSpecId, request.ModelId));
