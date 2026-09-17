@@ -41,15 +41,20 @@ public sealed class GalateaServerAgentRuntimeTests {
         var host = services.GetRequiredService<GalateaHostService>();
         var coordinator = services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         var loop = services.GetServices<IHostedService>().OfType<GalateaServerAgentHostedService>().Single();
+        long? due = null;
         await UntilAsync(() => {
             GalateaAgentStatusDto status = coordinator.ReadStatus("alice");
-            return status.State == "waiting"
-                && status.NextActivationAtUnixTimeMilliseconds is not null;
+            if (status.State != "waiting"
+                || status.NextActivationAtUnixTimeMilliseconds is not { } next) {
+                return false;
+            }
+            due = next;
+            return true;
         });
         Assert.NotNull(host.ReadAttachedSession("alice"));
         Assert.Null(host.ReadAttachedSession("bob"));
         Assert.Equal(0, completion.Calls);
-        long? due = coordinator.ReadStatus("alice").NextActivationAtUnixTimeMilliseconds;
+        Assert.NotNull(due);
 
         var pulsed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         loop.PulseCompletedForTest = id => { if (id == "alice") { pulsed.TrySetResult(); } };
@@ -57,9 +62,12 @@ public sealed class GalateaServerAgentRuntimeTests {
         await pulsed.Task.WaitAsync(Deadline);
         // Admission is now an observable transient state with no cadence deadline.
         // Inspect the settled Alice pulse, not Bob's completion or an in-flight admission.
-        await UntilAsync(() => coordinator.ReadStatus("alice").State == "waiting");
+        await UntilAsync(() => {
+            GalateaAgentStatusDto status = coordinator.ReadStatus("alice");
+            return status.State == "waiting"
+                && status.NextActivationAtUnixTimeMilliseconds == due;
+        });
         Assert.Equal(0, completion.Calls);
-        Assert.Equal(due, coordinator.ReadStatus("alice").NextActivationAtUnixTimeMilliseconds);
 
         clock.Advance(TimeSpan.FromSeconds(1));
         // The next cheap check is at 10m09s after the delayed previous pulse.
