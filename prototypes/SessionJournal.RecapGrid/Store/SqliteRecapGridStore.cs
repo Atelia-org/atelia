@@ -356,6 +356,28 @@ internal sealed class SqliteRecapGridStore {
         return ReadRowWorkCore(connection, transaction: null, key);
     }
 
+    internal RowWork? ReadRowViewWork(RowResultId rowResultId) {
+        if (rowResultId.Value is null) {
+            throw new ArgumentException(
+                "RowResultId must not be default.",
+                nameof(rowResultId)
+            );
+        }
+        using SqliteConnection connection = OpenVerifiedConnection();
+        RowWorkId? workId = ReadRowViewWorkId(
+            connection,
+            transaction: null,
+            rowResultId
+        );
+        return workId is null
+            ? null
+            : ReadRowWorkByIdCore(
+                connection,
+                transaction: null,
+                workId.Value
+            );
+    }
+
     internal RecapGridRowWorkPutResult PutRowWork(RowWork proposed) {
         ArgumentNullException.ThrowIfNull(proposed);
         if (_readOnly) {

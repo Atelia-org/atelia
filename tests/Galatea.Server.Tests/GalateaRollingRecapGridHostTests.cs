@@ -30,6 +30,18 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
 
     [Fact]
+    public void DefaultPolicyRejectsMismatchedRegistrationBundle() {
+        P1Target target = CreateDifferentCurrentP1Target();
+        P1Target other = CreateSameFamilyTwoColumnP1Target();
+
+        Assert.Throws<ArgumentException>(() =>
+            GalateaRecapGridDefaultPolicy.ForTarget(
+                target.Target,
+                other.Bundle
+            ));
+    }
+
+    [Fact]
     public async Task FormalAsset_RollsSharedPriorAndKeepThroughRealHost() {
         RollingRepository fixture = CreateRollingRepository();
         var factory = new RoutedCompletionFactory(
@@ -376,7 +388,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     [Fact]
     public async Task CompletedP0ReadinessAndMaterializationIgnoreCurrentP1() {
         P1Target currentP1 = CreateSameFamilyTwoColumnP1Target();
-        RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
+        RollingRepository fixture = CreateRollingRepository();
         var seedFactory = new RoutedCompletionFactory("seed", static request =>
             RecapReply.Updated("p0-" + request.LogicalColumnId));
         RecapGridCompletionHost seedCompletion = CreateCompletionHost(
@@ -408,6 +420,11 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal(2, r0Before.Cells.Length);
         ControlHeadRef controlBefore = ReadControlSnapshot(fixture).Head;
         Assert.Equal(fixture.Recipe.Digest, controlBefore.ActiveRecipeDigest);
+        Assert.DoesNotContain(
+            ReadControlSnapshot(fixture).Definitions,
+            definition => currentP1.Target.OrderedColumns.Any(column =>
+                column.DefinitionDigest == definition.Digest)
+        );
         string storePath = Path.Combine(fixture.Path, "derived", "recap-grid",
             "v1", "grid.sqlite");
         byte[] storeBefore = File.ReadAllBytes(storePath);
@@ -424,7 +441,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             new GalateaRecapGridComposition(readCompletion,
                 RecapGridOnlineLimits.Production, _estimator),
-            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target)))) {
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(
+                currentP1.Target,
+                currentP1.Bundle)))) {
             CharacterSessionHost reopened = await service.GetSessionAsync("alice",
                 CancellationToken.None);
 
@@ -448,6 +467,11 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             Assert.Empty(readFactory.Recap.Invocations);
             Assert.Equal(0, readFactory.Agent.DispatchCallCount);
             Assert.Equal(controlBefore, ReadControlSnapshot(fixture).Head);
+            Assert.DoesNotContain(
+                ReadControlSnapshot(fixture).Definitions,
+                definition => currentP1.Target.OrderedColumns.Any(column =>
+                    column.DefinitionDigest == definition.Digest)
+            );
             Assert.Equal(storeBefore, File.ReadAllBytes(storePath));
         }
 
@@ -464,7 +488,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             new GalateaRecapGridComposition(p1Completion,
                 PartialFailureLimits(), _estimator),
-            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target)))) {
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(
+                currentP1.Target,
+                currentP1.Bundle)))) {
             CharacterSessionHost reopened = await p1Service.GetSessionAsync(
                 "alice", CancellationToken.None);
             GalateaLiveTurn turn = p1Service.StartTurn(
@@ -575,9 +601,17 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal(r0Before.Work.ToCanonicalBytes(),
             r0After.Work.ToCanonicalBytes());
         Assert.Equal(r0Before.Cells, r0After.Cells);
-        Assert.Equal(controlBefore, ReadControlSnapshot(fixture).Head);
+        RecapGridControlSnapshot controlAfter = ReadControlSnapshot(fixture);
+        Assert.NotEqual(controlBefore, controlAfter.Head);
         Assert.Equal(fixture.Recipe.Digest,
-            ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
+            controlAfter.Head.ActiveRecipeDigest);
+        Assert.All(
+            currentP1.Target.OrderedColumns,
+            column => Assert.Contains(
+                controlAfter.Definitions,
+                definition => definition.Digest == column.DefinitionDigest
+            )
+        );
     }
 
     [Theory]
@@ -587,7 +621,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         string failpointName
     ) {
         P1Target currentP1 = CreateDifferentCurrentP1Target();
-        RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
+        RollingRepository fixture = CreateRollingRepository();
         IReadOnlyList<CompletionConnectionConfig> connections =
             ModelAConnections();
         var boundaryFactory = new RoutedCompletionFactory(
@@ -604,6 +638,12 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         );
         Assert.Equal(fixture.Recipe.Digest,
             ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
+        RecapGridControlSnapshot controlBefore = ReadControlSnapshot(fixture);
+        Assert.DoesNotContain(
+            controlBefore.Definitions,
+            definition => currentP1.Target.OrderedColumns.Any(column =>
+                column.DefinitionDigest == definition.Digest)
+        );
 
         var recoveryFactory = new RoutedCompletionFactory(
             "recovered agent",
@@ -625,7 +665,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 RecapGridOnlineLimits.Production,
                 _estimator
             ),
-            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target))
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(
+                currentP1.Target,
+                currentP1.Bundle))
         );
         CharacterSessionHost session = await service.GetSessionAsync(
             "alice",
@@ -648,14 +690,19 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         }
         Assert.Empty(recoveryFactory.Recap.Invocations);
         Assert.Equal(0, routeLoads);
-        Assert.Equal(fixture.Recipe.Digest,
-            ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
+        RecapGridControlSnapshot controlAfter = ReadControlSnapshot(fixture);
+        Assert.Equal(controlBefore.Head, controlAfter.Head);
+        Assert.DoesNotContain(
+            controlAfter.Definitions,
+            definition => currentP1.Target.OrderedColumns.Any(column =>
+                column.DefinitionDigest == definition.Digest)
+        );
     }
 
     [Fact]
     public async Task ActiveFormalRecipeToolContinuationSealsDurableToolTail() {
         P1Target currentP1 = CreateDifferentCurrentP1Target();
-        RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
+        RollingRepository fixture = CreateRollingRepository();
         var seedFactory = new RoutedCompletionFactory(
             "seed agent",
             static request => RecapReply.Updated(
@@ -690,6 +737,11 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 static value => value.Slot)
             .ToArray();
         Assert.Equal(2, healthyKeys.Length);
+        Assert.DoesNotContain(
+            ReadControlSnapshot(fixture).Definitions,
+            definition => currentP1.Target.OrderedColumns.Any(column =>
+                column.DefinitionDigest == definition.Digest)
+        );
 
         RecapGridAgentControlProfile profile =
             RecapGridAgentControlProfile.Create(
@@ -721,6 +773,14 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 Assert.NotNull(session);
                 Assert.NotNull(durableToolResultHead);
                 Assert.Empty(recoveryFactory.Recap.Invocations);
+                Assert.All(
+                    currentP1.Target.OrderedColumns,
+                    column => Assert.Contains(
+                        ReadControlSnapshot(fixture).Definitions,
+                        definition => definition.Digest
+                            == column.DefinitionDigest
+                    )
+                );
             },
             profile,
             currentP1.Bundle.Families.Single().Digest
@@ -728,7 +788,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         var recoveryPolicies = new Dictionary<string,
             GalateaRecapGridDefaultPolicy>(StringComparer.Ordinal) {
             ["alice"] = GalateaRecapGridDefaultPolicy.ForTarget(
-                currentP1.Target)
+                currentP1.Target,
+                currentP1.Bundle)
         };
         await using var service = new GalateaHostService(
             Config(fixture.Path, ModelAConnections()),

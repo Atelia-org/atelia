@@ -590,17 +590,43 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 target = work.ProducerTarget;
                 assignments = work.OrderedAssignments;
                 rowWork = work;
+                RecapGridStoreReadResult<RowWork> linked =
+                    reader.ReadViewWork(view.Id);
+                if (linked is not RecapGridStoreReadResult<
+                        RowWork>.Found linkedWork
+                    || linkedWork.Value.WorkId != work.WorkId) {
+                    return linked switch {
+                        RecapGridStoreReadResult<RowWork>.Missing => Invalid(
+                            RecapGridContextComponent.Store,
+                            "RowWorkLinkMissing",
+                            "A V5 RowView must link its persisted RowWork."
+                        ),
+                        RecapGridStoreReadResult<RowWork>.Found => Invalid(
+                            RecapGridContextComponent.Store,
+                            "RowWorkLinkMismatch",
+                            "A V5 RowView links a different RowWork."
+                        ),
+                        RecapGridStoreReadResult<RowWork>.Busy
+                            => new RecapGridContextResolveResult.Busy(
+                                RecapGridContextComponent.Store),
+                        RecapGridStoreReadResult<RowWork>.Disposed
+                            => new RecapGridContextResolveResult.Disposed(
+                                RecapGridContextComponent.Store),
+                        RecapGridStoreReadResult<RowWork>.Invalid invalid
+                            => Invalid(RecapGridContextComponent.Store,
+                                invalid.Code, invalid.Detail),
+                        _ => Invalid(RecapGridContextComponent.Store,
+                            "RowWorkLinkReadOutcomeInvalid",
+                            "The Store returned an unknown RowWork link outcome.")
+                    };
+                }
                 break;
             case RecapGridStoreReadResult<RowWork>.Missing:
-                // V4 facts have no persisted pre-dispatch work. Their stored
-                // recipe target remains their actual producer evidence.
-                if (view.TargetDigest != recipe.Target.Digest) {
-                    return Invalid(RecapGridContextComponent.Store,
-                        "LegacyRowViewTargetMismatch",
-                        "A legacy RowView must match its stored recipe target.");
-                }
-                target = recipe.Target;
-                break;
+                return Invalid(
+                    RecapGridContextComponent.Store,
+                    "RowWorkMissing",
+                    "A V5 RowView must have its persisted RowWork."
+                );
             case RecapGridStoreReadResult<RowWork>.Busy:
                 return new RecapGridContextResolveResult.Busy(
                     RecapGridContextComponent.Store);

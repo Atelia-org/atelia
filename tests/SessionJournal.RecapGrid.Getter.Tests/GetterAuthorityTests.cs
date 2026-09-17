@@ -444,6 +444,44 @@ public sealed partial class GetterVerticalTests {
         Assert.Equal("GridStoreInvalid", invalid.Code);
     }
 
+    [Fact]
+    public async Task V5SelectedRowWithoutPersistedWorkFailsClosed() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 1);
+        HistoryRowId row = Assert.Single(fixture.Rows).Descriptor.RowId;
+        ExecuteStoreSql(
+            fixture.Path,
+            "PRAGMA foreign_keys=OFF; DELETE FROM row_work WHERE history_row_id=$row;",
+            ("$row", row.Value)
+        );
+
+        using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
+        RecapGridContextResolveResult.Invalid invalid = Assert.IsType<
+            RecapGridContextResolveResult.Invalid>(getter.Resolve(
+                fixture.Journal.ReadCurrentHead()!.Value,
+                0
+            ));
+        Assert.Equal(RecapGridContextComponent.Store, invalid.Component);
+        Assert.Equal("RowWorkMissing", invalid.Code);
+    }
+
+    [Fact]
+    public async Task V5SelectedRowWithoutPhysicalWorkLinkFailsClosed() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 1);
+        ExecuteStoreSql(
+            fixture.Path,
+            "PRAGMA foreign_keys=OFF; UPDATE row_view SET work_id=NULL;"
+        );
+
+        using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
+        RecapGridContextResolveResult.Invalid invalid = Assert.IsType<
+            RecapGridContextResolveResult.Invalid>(getter.Resolve(
+                fixture.Journal.ReadCurrentHead()!.Value,
+                0
+            ));
+        Assert.Equal(RecapGridContextComponent.Store, invalid.Component);
+        Assert.Equal("RowWorkLinkMissing", invalid.Code);
+    }
+
     private static void ForgeActiveRecipe(
         Fixture fixture,
         MaintainerDefinitionRevision additionalDefinition,

@@ -2,6 +2,8 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Online;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
@@ -78,6 +80,8 @@ internal sealed class GalateaRecapGridComposition
                     "Unknown RecapGrid agent binding outcome.")
             };
         }
+        cancellationToken.ThrowIfCancellationRequested();
+        RegisterDefaultPolicy(engine, defaultPolicy);
         RecapGridOnlineOpenResult opened = RecapGridOnlineFactory.Open(
             engine,
             _completion.Executor,
@@ -213,6 +217,7 @@ internal sealed class GalateaRecapGridComposition
                 "recap-grid-connection-absent"
             );
         }
+        RegisterDefaultPolicy(engine, defaultPolicy);
         RecapGridOnlineOpenResult onlineOpened = RecapGridOnlineFactory.Open(
             engine,
             _completion.Executor,
@@ -264,6 +269,199 @@ internal sealed class GalateaRecapGridComposition
     }
 
     public ValueTask DisposeAsync() => _completion.DisposeAsync();
+
+    private static void RegisterDefaultPolicy(
+        SessionJournalEngine engine,
+        GalateaRecapGridDefaultPolicy defaultPolicy
+    ) {
+        RecapGridControlRegistrationBundle? bundle =
+            defaultPolicy.RegistrationBundle;
+        if (bundle is null) {
+            return;
+        }
+        if (IsDefaultPolicyRegistered(engine, bundle)) {
+            return;
+        }
+        var admission = new RecapGridControlAdmission(
+            RecapGridControlPermission.RegisterFamily
+                | RecapGridControlPermission.RegisterDefinition,
+            bundle.Families.Select(static family => family.Digest),
+            bundle.Definitions.Select(static definition =>
+                definition.Capability.CapabilityFingerprint),
+            bundle.Definitions.Select(static definition =>
+                definition.Target.Carrier),
+            bundle.Definitions.Select(static definition =>
+                definition.LogicalColumnId.Value),
+            maximumBootstrapRows: 0,
+            maximumProjectedCalls: 0
+        );
+        bool indeterminate = false;
+        {
+            RecapGridControlOpenResult opened = RecapGridControlFactory.Open(
+                engine.Path,
+                engine.BranchRefId,
+                admission
+            );
+            if (opened is not RecapGridControlOpenResult.Opened available) {
+                throw PolicyRegistrationFailure(opened);
+            }
+            using RecapGridControlHandle control = available.Handle;
+            RecapGridControlSnapshotResult read = control.Reader.ReadSnapshot();
+            if (read is not RecapGridControlSnapshotResult.Available current) {
+                throw PolicyRegistrationFailure(read);
+            }
+            ControlHeadRef head = current.Snapshot.Head;
+            foreach (FamilyDefinition family in bundle.Families) {
+                if (HasExactFamily(current.Snapshot, family)) {
+                    continue;
+                }
+                if (!TryRequireRegistered(
+                        control.Coordinator.PutFamilyDefinition(head, family),
+                        out head)) {
+                    indeterminate = true;
+                    break;
+                }
+            }
+            if (!indeterminate) {
+                foreach (MaintainerDefinitionRevision definition
+                         in bundle.Definitions) {
+                    if (HasExactDefinition(current.Snapshot, definition)) {
+                        continue;
+                    }
+                    if (!TryRequireRegistered(
+                            control.Coordinator.PutMaintainerDefinition(
+                                head,
+                                definition
+                            ),
+                            out head)) {
+                        indeterminate = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (indeterminate) {
+            if (IsDefaultPolicyRegistered(engine, bundle)) {
+                return;
+            }
+            throw new GalateaTurnException(
+                "RecapGrid默认策略注册结果不确定；必须重新读取后再尝试。",
+                "recap-grid-policy-registration-indeterminate"
+            );
+        }
+    }
+
+    private static bool IsDefaultPolicyRegistered(
+        SessionJournalEngine engine,
+        RecapGridControlRegistrationBundle bundle
+    ) {
+        RecapGridControlReaderOpenResult opened = RecapGridControlFactory
+            .OpenReader(engine.Path, engine.BranchRefId);
+        if (opened is not RecapGridControlReaderOpenResult.Opened available) {
+            throw PolicyRegistrationFailure(opened);
+        }
+        using RecapGridControlReaderHandle control = available.Handle;
+        RecapGridControlSnapshotResult read = control.Reader.ReadSnapshot();
+        if (read is not RecapGridControlSnapshotResult.Available current) {
+            throw PolicyRegistrationFailure(read);
+        }
+        return bundle.Families.All(family =>
+                HasExactFamily(current.Snapshot, family))
+            && bundle.Definitions.All(definition =>
+                HasExactDefinition(current.Snapshot, definition));
+    }
+
+    private static bool HasExactFamily(
+        RecapGridControlSnapshot snapshot,
+        FamilyDefinition expected
+    ) {
+        FamilyDefinition? existing = snapshot.Families.SingleOrDefault(
+            family => family.Digest == expected.Digest);
+        if (existing is null) {
+            return false;
+        }
+        if (!existing.ToCanonicalBytes().SequenceEqual(
+                expected.ToCanonicalBytes())) {
+            throw PolicyRegistrationFailure("FamilyDigestCollision");
+        }
+        return true;
+    }
+
+    private static bool HasExactDefinition(
+        RecapGridControlSnapshot snapshot,
+        MaintainerDefinitionRevision expected
+    ) {
+        MaintainerDefinitionRevision? existing = snapshot.Definitions
+            .SingleOrDefault(definition =>
+                definition.Digest == expected.Digest);
+        if (existing is null) {
+            return false;
+        }
+        if (!existing.ToCanonicalBytes().SequenceEqual(
+                expected.ToCanonicalBytes())) {
+            throw PolicyRegistrationFailure("DefinitionDigestCollision");
+        }
+        return true;
+    }
+
+    private static bool TryRequireRegistered(
+        RecapGridControlPutResult result,
+        out ControlHeadRef head
+    ) {
+        switch (result) {
+            case RecapGridControlPutResult.Stored stored:
+                head = stored.Head;
+                return true;
+            case RecapGridControlPutResult.AlreadyPresent present:
+                head = present.Head;
+                return true;
+            case RecapGridControlPutResult.CommitIndeterminate value:
+                head = value.Intended;
+                return false;
+            default:
+                throw PolicyRegistrationFailure(result);
+        }
+    }
+
+    private static GalateaTurnException PolicyRegistrationFailure(
+        object result
+    ) => new(
+        $"RecapGrid默认策略注册失败：{result switch {
+            string detail => detail,
+            RecapGridControlPutResult.Unauthorized value
+                => $"Unauthorized:{value.Rule}",
+            RecapGridControlPutResult.StaleControlHead
+                => "StaleControlHead",
+            RecapGridControlPutResult.StaleTimelineHead
+                => "StaleTimelineHead",
+            RecapGridControlPutResult.Busy => "Busy",
+            RecapGridControlPutResult.TimelineUnsupportedSchema value
+                => $"TimelineSchema:{value.SchemaVersion}",
+            RecapGridControlPutResult.Disposed => "Disposed",
+            RecapGridControlPutResult.LimitExceeded value
+                => $"Limit:{value.Limit}",
+            RecapGridControlPutResult.Invalid value
+                => $"Invalid:{value.Code}",
+            RecapGridControlOpenResult.TimelineUnsupportedSchema value
+                => $"TimelineSchema:{value.SchemaVersion}",
+            RecapGridControlOpenResult.UnsupportedSchema value
+                => $"ControlSchema:{value.SchemaVersion}",
+            RecapGridControlOpenResult.Invalid value
+                => $"Invalid:{value.Code}",
+            RecapGridControlReaderOpenResult.TimelineUnsupportedSchema value
+                => $"TimelineSchema:{value.SchemaVersion}",
+            RecapGridControlReaderOpenResult.UnsupportedSchema value
+                => $"ControlSchema:{value.SchemaVersion}",
+            RecapGridControlReaderOpenResult.Invalid value
+                => $"Invalid:{value.Code}",
+            RecapGridControlSnapshotResult.UnsupportedSchema value
+                => $"ControlSchema:{value.SchemaVersion}",
+            RecapGridControlSnapshotResult.Invalid value
+                => $"Invalid:{value.Code}",
+            _ => result.GetType().Name
+        }}",
+        "recap-grid-policy-registration-failed"
+    );
 
     private static RecapGridOnlineMaintenanceEvidence? ExtractEvidence(
         RecapGridOnlinePassResult result
