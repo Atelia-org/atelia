@@ -41,7 +41,11 @@ public sealed class GalateaServerAgentRuntimeTests {
         var host = services.GetRequiredService<GalateaHostService>();
         var coordinator = services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         var loop = services.GetServices<IHostedService>().OfType<GalateaServerAgentHostedService>().Single();
-        await UntilAsync(() => coordinator.ReadStatus("alice").State == "waiting");
+        await UntilAsync(() => {
+            GalateaAgentStatusDto status = coordinator.ReadStatus("alice");
+            return status.State == "waiting"
+                && status.NextActivationAtUnixTimeMilliseconds is not null;
+        });
         Assert.NotNull(host.ReadAttachedSession("alice"));
         Assert.Null(host.ReadAttachedSession("bob"));
         Assert.Equal(0, completion.Calls);
