@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Galatea.Prompts;
@@ -794,6 +795,125 @@ public sealed class GalateaSessionProvisioningTests {
             Path.GetDirectoryName(host.ConfigPath)!,
             "recap-grid-routes.json"
         )));
+    }
+
+    [Fact]
+    public async Task MissingCreateIfMissing_EmptyHistoricalProfilesBootstrapCodeOwnedBundleWithoutProvider() {
+        var factory = new TwoTurnCompletionFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        string configDirectory = Path.GetDirectoryName(host.ConfigPath)!;
+        string decoyPath = Path.Combine(
+            configDirectory,
+            "recap-grid-profile.json"
+        );
+        byte[] decoyBytes = "{ definitely-not-a-profile"u8.ToArray();
+        File.WriteAllBytes(decoyPath, decoyBytes);
+
+        JsonObject root = Assert.IsType<JsonObject>(
+            JsonNode.Parse(File.ReadAllText(host.ConfigPath))
+        );
+        JsonObject runtime = Assert.IsType<JsonObject>(root["runtime"]);
+        JsonObject recapGrid = Assert.IsType<JsonObject>(
+            runtime["recapGrid"]
+        );
+        recapGrid["historicalAgentControlProfileFiles"] =
+            new JsonArray();
+        File.WriteAllText(
+            host.ConfigPath,
+            root.ToJsonString(new JsonSerializerOptions(
+                JsonSerializerDefaults.Web
+            ))
+        );
+
+        GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
+        GalateaRecapGridRuntimeConfig loadedRecap = Assert.IsType<
+            GalateaRecapGridRuntimeConfig
+        >(config.RecapGrid);
+        Assert.Null(loadedRecap.HistoricalAgentControlProfiles);
+        Assert.Equal("test", loadedRecap.Maintenance.ConnectionId);
+        Assert.Equal(1, loadedRecap.Maintenance.MaximumConcurrency);
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(900_000),
+            loadedRecap.Maintenance.DispatchTimeout
+        );
+
+        int routeLoads = 0;
+        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
+            () => {
+                Interlocked.Increment(ref routeLoads);
+                throw new InvalidOperationException(
+                    "Code-owned bootstrap must not load recap routes."
+                );
+            },
+            new CompletionConnectionsFileConfig(
+                config.Connections,
+                Assert.Single(config.Characters).DefaultConnectionId
+            ),
+            factory,
+            inputProjector: GalateaInputProjector.Instance
+        );
+        var composition = new GalateaRecapGridComposition(
+            completion,
+            estimators: [new O200kBaseHistoryUnitLoadEstimator()]
+        );
+        await using var service = new GalateaHostService(
+            config,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            composition
+        );
+
+        CharacterSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        Assert.True(Directory.Exists(host.SessionDirectory));
+        AssertFirstTurnReadyRepository(session.Engine);
+        GalateaRecapGridDefaultPolicy expected =
+            GalateaRecapGridDefaultPolicy.ForCharacter(
+                new GalateaCharacterName("Galatea")
+            );
+        using RecapGridControlReaderHandle control = Assert.IsType<
+            RecapGridControlReaderOpenResult.Opened
+        >(RecapGridControlFactory.OpenReader(
+            session.Engine.Path,
+            session.Engine.BranchRefId
+        )).Handle;
+        RegisteredGridRecipe active = Assert.IsType<RegisteredGridRecipe>(
+            Assert.IsType<RecapGridControlSnapshotResult.Available>(
+                control.Reader.ReadSnapshot()
+            ).Snapshot.ActiveRecipe
+        );
+        Assert.Equal(expected.TargetDigest, active.Recipe.Target.Digest);
+
+        RecentTurnsResponseDto recent = await service.GetRecentTurnsAsync(
+            session,
+            CancellationToken.None
+        );
+        Assert.Empty(recent.Turns);
+        RecapGridReadinessSnapshotDto readiness = Assert.IsType<
+            RecapGridReadinessSnapshotDto
+        >(recent.RecapGridReadiness);
+        Assert.Equal("exact", readiness.Freshness);
+        Assert.Equal("raw-only", readiness.State);
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.Client.MainDispatchCallCount);
+        Assert.Equal(0, factory.Client.RecapDispatchCallCount);
+        Assert.Equal(0, routeLoads);
+        Assert.Equal(decoyBytes, File.ReadAllBytes(decoyPath));
+        Assert.False(File.Exists(Path.Combine(
+            configDirectory,
+            "recap-grid-routes.json"
+        )));
+        Assert.Empty(Directory.EnumerateDirectories(
+            host.RootDirectory,
+            ".galatea-session-*.staging",
+            SearchOption.TopDirectoryOnly
+        ));
     }
 
     [Fact]
