@@ -1,6 +1,6 @@
 # RecapGrid forward-policy 实施验收记录
 
-状态：**进行中；不得据此安排真实实例升级。**
+状态：**G1--G5 已实现；G6/A1--A15 总审计进行中。不得据此安排真实实例升级。**
 
 本记录只陈述当前工作树的已验证局部，不替代
 [设计](recap-grid-forward-policy-refactor-plan.md)或
@@ -8,24 +8,35 @@
 
 ## 已实现并验证
 
-- G5c1（仅 Store apply durability）：V4→V5 apply 先 copy exact-name regular
-  V4 backup，`Flush(true)` 加 parent-directory fsync，并重新执行 V4
-  identity/integrity/foreign-key/counter/partial-proof 校验及 SHA-256+length
-  witness；temporary V5 只从该已验证 backup snapshot 构造并以 Store full
-  verifier 严格验证。replace 前重新 strict-verify active 并要求 identity、
-  counters 和 physical witness 全等；不等返回 typed pre-commit failure，
-  active 不动。replace 后再 fsync directory 并 strict verify V5。成功结果带
-  backup 与 active 的 identity、counters、physical witness，不再只报路径。
-- G5c1：replace 成功后的 directory fsync、strict verify 或测试中断均返回
-  typed `CommitIndeterminate`（保留已验证 backup evidence、best-effort
-  observed active schema/identity/witness 与唯一 next action：先
-  inspect/verify），不降格为 `Invalid`，也不自动 retry/restore。replace 前
-  失败仍保持 V4、清理 temporary，backup 即使保留也不冒称升级成功。
-  public `UpgradeV4` 没有 hook；内部 `UpgradeV4ForTest` 仅有 temporary
-  verified、backup durable、replace/directory fsync、verify 五个 failpoint。
-  Store crash harness 已预留 `upgrade-v4` 同名 failpoint 入口；本包只有
-  in-process hooks/harness interface，未宣称 A13 cold-process crash 验收完成，
-  仍只使用合成 stopped repository fixture，未触碰真实实例。
+- G5 完成显式、provider-free V4→V5 工具链。CLI 默认 dry-run；apply 先创建并
+  fsync exact-name V4 backup，再从该 durable snapshot 构造 strict-verified V5
+  temporary。replace 前同时重验 backup/active 的 identity、counters 与
+  SHA-256+length witness；replace 后 directory fsync 并 full verify。健康 V5
+  重跑返回 `AlreadyCurrent`。对应提交：`2fb46dc9`、`eb0ec13f`、`7931a8fc`、
+  `29336e20`。
+- G5 complete/partial proof：V4 complete row 重建实际 RowWork；partial 通过
+  exact Control/Timeline scope 求得唯一 actual producer、exact prior 与
+  assignments，再由 Store 逐项验证。Full、Overlay shared cell、active/inactive
+  candidate、historical timeline 与 multi-ref 均保留旧 IDs/内容/producer；orphan
+  或无法证明的 partial typed 拒绝且零 mutation。CLI fixtures 同时断言 raw
+  Journal、Timeline/Cadence/Control bytes 不变。对应提交：`6f3cc091`、
+  `a23d832d`、`3cfd8ee5`、`71daa988`、`0ef9a70e`、`6f577b0d`。
+- G5 backup/restore：新增 `prepare-restore-store-v4` 与
+  `restore-store-v4`。prepare strict-verify active V5 与 exact V4 backup；restore
+  要求 active/backup 双 physical witness，replace 前再次重验两侧。成功返回
+  `Restored`，相同 V4 重放返回 `AlreadyRestored`；恢复后保持 V4，不隐式向前
+  迁移，operator 必须显式再 upgrade。对应提交：`b7de173e`、`7ad721e6`。
+- G5 durability：upgrade full/partial 的 10 个、restore full/partial 的 8 个
+  真实子进程 `Environment.FailFast` phase case 已覆盖。pre-replace 只允许原 V4，
+  post-replace 只允许严格 V4/V5；恢复 crash 后还能显式再 upgrade。post-replace
+  无法确认 settlement 时返回 `CommitIndeterminate`，携带 evidence 与唯一 inspect
+  next action，不自动 retry/restore。对应提交：`1881e67b`、`2e7d95bc`。
+- G5 verify/export：full verify 与 export 都闭合检查 RowWork canonical/physical
+  projection、actual producer、exact prior、Overlay reuse、cell/row WorkId；export
+  新增 `row-work` item 与 typed V2 cursor，保留旧三种 V2 cursor。257 个 zero-cell
+  work 分页和 4,097 个 actual work/cell/row drain 已覆盖。对应提交：`3f8efe1a`、
+  `8d680417`。正式模型见
+  [Store V5 合同](../SessionJournal/current/contracts/recap-grid-store-sqlite-v5.md)。
 
 - G5a：HistoryTimeline 与 RecapGrid Control 增加 maintenance-only 的
   canonical exact-scope inventory / `(RefId, TimelineId)` read-only reader；
@@ -165,15 +176,28 @@
 - Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。
-- V4→V5 complete row / Overlay shared-cell / orphan partial migration 聚焦：3
-  passed；Store exact external RowWork proof partial：1 passed；Store 完整：77
-  passed；Store PublicSurface：5 passed。
+- G5 CLI exact-scope 迁移组：6 passed（active/inactive partial、historical
+  Timeline、Overlay bootstrap/post-bootstrap、orphan、multi-ref），multi-ref 独立
+  复验：1 passed；结果见 `recap-grid-v4-upgrade-group.trx` 与
+  `recap-grid-v4-multiref.trx`。
+- G5 Store 完整 Release：136 passed，包含 upgrade/restore 18 个 cold-process
+  fail-fast case、双 witness、`AlreadyCurrent`、RowWork verify/export/cursor 以及
+  4,097 actual work rows；`review-g5c4-store-full.trx`。4,097 聚焦复验另为
+  1 passed；`review-g5c4-4097.trx`。Store PublicSurface 在 restore surface 引入前
+  的最近可追溯结果为 6 passed；当前完整 public surface 留给 G6 统一重跑，不用
+  旧计数冒充当前全量。
+
+G5 已知残余（不改变已实现合同）：
+
+- dry-run 正常返回时 active authority bytes 不变，但会在 Store 同目录构造、验证并
+  清理 temporary；进程 crash 可能留下 residue，需要人工 inspect。
+- export 的 cell phase 在极端多列下可能重复解码同一 RowWork，是诊断性能风险。
+- restore pre-replace temporary 删除失败目前只有有限 P2 可诊断性，operator 仍须检查
+  同目录 sidecar/residue。
 
 ## 尚未完成
 
-G3 尚缺“历史未完成 family 按实际 work 路由”的完整纵向回归与全部冻结恢复
-覆盖；G4a/G4b2 已收口显式 live producer policy、prefix promotion 与报告合同；
-G5 尚缺 V4 partial、Overlay
-共享 cell、多 ref、crash/reopen、export/restore 的完整无损矩阵；A1--A15
-完整/规模验收尚未完成。本记录不能作为服务部署、真实 `.atelia/galatea` 迁移
-或 NuGet 发布的授权。
+G1--G5 的实现与分片证据已完成；G6 仍须串行完成全部受影响项目、PublicSurface、
+4,097/65,537 规模回归及 A1--A15 逐项审计，并核对当前并行尾修后的最终 diff。
+在这些闸门结束前不能把本记录标为整体完成。本记录不能作为服务部署、真实
+`.atelia/galatea` 迁移或 NuGet 发布的授权；本轮未访问或修改真实实例。

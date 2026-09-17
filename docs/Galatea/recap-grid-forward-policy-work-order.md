@@ -1,6 +1,8 @@
 # RecapGrid forward policy：Terra 实施工作单
 
-状态：**可供后续实施任务采用；本轮未开始施工。** 产品原则已由用户认可，具体技术选择见设计及辩证裁决。
+状态：**G1--G5 已实现，G6 集成/规模/A1--A15 总审计进行中；未迁移真实实例。**
+当前分片证据、测试计数与残余见[实施验收记录](recap-grid-forward-policy-implementation.md)。
+产品原则已由用户认可，具体技术选择见设计及辩证裁决。
 本文件是实现顺序与完成合同；[设计方案](recap-grid-forward-policy-refactor-plan.md)是单一技术说明，不另维护竞争设计。
 
 ## 开始前

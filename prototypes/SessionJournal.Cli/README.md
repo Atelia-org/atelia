@@ -42,7 +42,7 @@ EventJournal `MoveRef`，并重新验证。不要手工覆盖 `.rbf` 文件。
 正式 RecapGrid operator surface：
 
 ```text
-recap-grid inspect|verify|export|reset ...
+recap-grid inspect|verify|export|reset|upgrade-store-v5|prepare-restore-store-v4|restore-store-v4 ...
 recap-grid scaffold ...
 recap-grid init ...
 recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon|upgrade-schema-v2 ...
@@ -154,6 +154,7 @@ dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid prog
 
 dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid build \
   --input '<session-repository>' --branch '<branch>' --confirm-ref '<refId>' --live \
+  --producer-target '<配置目录>/recap-grid-producer-target.canonical' \
   --routes '<配置目录>/recap-grid-routes.json' --connections '<配置目录>/connections.json' \
   --max-recipe-row-steps 100 --max-new-calls 4 --max-elapsed-ms 600000 \
   > build-result.json 2> build-progress.log
@@ -161,6 +162,10 @@ dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid buil
 
 示例的 4 次调用和 10 分钟是显式预算，不承诺足以完成任意历史。已有准备好的 CLI build 才使用 `--no-build`；
 直接运行 CLI DLL 也可避免构建日志混入 stdout。不重定向 stderr 时，可直接观察即时进度。
+`progress` 是纯读诊断，不能接收 policy 或持久化新 RowWork；若 frontier 尚无 work，它会返回
+`producer-policy-required`。实际选择新 live work 必须改用 `build --live` 并显式提供 canonical
+`--producer-target`，没有 current-default、active-root-target 或 route fallback。已有 RowWork 则始终优先，
+本次 target 不会覆盖其 frozen producer。
 
 stderr 进度统一以 `[recap-build]` 开头，按工作身份关联并发调用：
 
@@ -189,17 +194,42 @@ Hosting的provider-free exact route inspection只报告configured connection/mod
 Family、Definition、Recipe 或 CellSlot。Cell/Row 使用 Store 分配的普通结果 ID。
 Runtime 日志直接携带 Slot、StoreIdentity 与必要前驱 ID，不再记录 EvaluationKey/PriorProjection digest。
 
-Grid Store 当前为 SQLite schema v4，物理槽位仍是 `derived/recap-grid/v1/grid.sqlite`。
-同 `CellSlot(recipe, history row, column)` 保留首个结果；不同 recipe 不自动共享同正文缓存，
-Overlay 通过原 CellId/Slot 显式复用。SQL 列与成员关系是唯一持久数据，导出 JSON 只是临时投影：
-输出使用 `jsonBase64/fulfilledRowResultId`，selection 使用 `rowResultId`；cursor wire v2 拒绝旧 v1；fulfilled through 使用 HistoryRowId，不能把旧 descriptor digest 当同长 RowId。
-Getter provenance 为 `priorSourceAligned` 与行/cell/member/实际正文 UTF-8 bytes 计数，合法 Overlay 的
-来源不同不拒绝正文。具体模型见 [Store v4 说明](../../docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v4.md)。
+Grid Store 当前为 SQLite schema V5，物理槽位仍是 `derived/recap-grid/v1/grid.sqlite`。
+`(Ref, Timeline, root recipe, HistoryRow)` 下唯一 RowWork 冻结 actual producer、exact prior 与
+Evaluate/Reuse assignments；新 cell/row 以 WorkId 关联，Overlay 精确复用冻结的 CellId。SQL 与
+RowWork canonical 是持久权威，导出 JSON 只是有界诊断投影；cursor wire 仍为 V2，并新增
+`row-work` phase。verify/export 均闭合核对 work、cell、row、producer、prior 与 reuse source。
+具体模型见 [Store V5 合同](../../docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v5.md)；
+[V4 合同](../../docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v4.md)只保留历史事实。
 
-普通打开旧 Store schema 返回 Unsupported，不自动迁移、Reset 或调用模型。全部重构完成后才统一清旧 Recap
-并重建：先在旧库仍可读时正常收敛相关 pending promotion 与 Recipes 非空 registration，再停服备份、
-在隔离副本完成所需 Timeline 升级，最后用已有显式离线 Reset 初始化新库。
-Timeline/Cadence、Control 与 Journal/Prepared 保留；本代码切片不执行真实数据处置。
+普通打开 V4 返回 Unsupported，不隐式迁移、Reset 或调用模型。V4→V5 是 stopped repository / 隔离
+副本上的显式离线流程，默认命令只 dry-run：
+
+```bash
+# 会在同目录构造、验证再清理 temporary；正常返回时 active authority bytes 不变。
+dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid upgrade-store-v5 \
+  --input '<stopped-repository-copy>'
+
+# 显式 apply 创建并 fsync exact V4 backup，再原子替换、fsync、strict verify V5。
+dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid upgrade-store-v5 \
+  --input '<stopped-repository-copy>' --apply
+
+# 从 apply JSON 的 BackupPath 选定 exact backup；prepare 返回 active/backup 两侧 witness。
+dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid prepare-restore-store-v4 \
+  --input '<stopped-repository-copy>' --backup '<absolute-exact-v4-backup>'
+
+dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid restore-store-v4 \
+  --input '<stopped-repository-copy>' --backup '<absolute-exact-v4-backup>' \
+  --confirm-active-length '<n>' --confirm-active-sha256 '<hex>' \
+  --confirm-backup-length '<n>' --confirm-backup-sha256 '<hex>'
+```
+
+upgrade/prepare/restore 都取得 Store exclusive lease，拒绝 sidecar、symlink/foreign path 与 witness
+漂移。apply 重跑健康 V5 得到 `already-current`；restore 重跑已恢复的 exact V4 得到
+`already-restored`。replace 后不确定返回 `commit-indeterminate`，必须先 inspect/verify，不能自动
+retry/restore。恢复成功后 active 是 V4，必须由 operator 检查后显式再 upgrade；不会自动 forward。
+升级/恢复只写 Store，raw Journal、Timeline、Cadence 与 Control 不迁写。crash 遗留 temporary 需要人工
+inspect；restore 的 pre-replace temporary 删除失败目前只有有限 P2 诊断。该工具尚未用于真实实例。
 
 `run-online-turn` 是唯一正式 online CLI。Prepared 按 frozen identity exact bind；
 启动时strict config/connections已经冻结；Started/Refuse早于本次current connection
