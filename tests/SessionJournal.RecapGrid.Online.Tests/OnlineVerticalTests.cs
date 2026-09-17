@@ -294,6 +294,7 @@ public sealed class OnlineVerticalTests : IDisposable {
             RecapGridOnlineFactory.Open(
                 writer,
                 executor,
+                recipe.Target,
                 RecapGridOnlineLimits.Production,
                 _estimator)
         ).Handle;
@@ -337,14 +338,14 @@ public sealed class OnlineVerticalTests : IDisposable {
             maxRawEvents: 3,
             minimumRecentHistoryLoad: 30);
         var executor = new FillingExecutor();
-        await using RecapGridOnlineContextHandle online = Assert.IsType<
+        await using RecapGridOnlineContextHandle primingOnline = Assert.IsType<
             RecapGridOnlineOpenResult.Opened>(
             RecapGridOnlineFactory.Open(writer, executor,
                 RecapGridOnlineLimits.Production, _estimator)
         ).Handle;
         EventAddress boundary = writer.ReadCurrentHead()!.Value;
         var agent = new CountingTextCompletionClient();
-        writer.UseRuntime(Runtime(online, agent));
+        writer.UseRuntime(Runtime(primingOnline, agent));
         boundary = await SendThroughMaintenanceAsync(
             writer, boundary, "seal the offline Timeline");
         Assert.Equal(0, executor.CallCount);
@@ -409,27 +410,40 @@ public sealed class OnlineVerticalTests : IDisposable {
                     RecapGridControlActivationPurpose.Direct));
         }
 
-        boundary = await SendThroughMaintenanceAsync(
-            writer,
-            boundary,
-            "build recap from the offline-sealed Timeline");
-        int firstBuildCalls = executor.CallCount;
-        Assert.True(firstBuildCalls > 0);
-        Assert.IsType<RecapGridOnlinePassResult.Ready>(
-            await online.PreparePassAsync(
-                writer.ReadView,
-                new SessionContextLifecycleRequest(
-                    new SessionContextSelectionRequest(boundary, 0),
-                    SessionExecutionPhase.AwaitingAgentAction,
-                    SessionContextLifecycleTrigger.ObservationAccepted)));
-        Assert.Equal(firstBuildCalls, executor.CallCount);
-        using RecapGridContextHandle getter = Assert.IsType<
-            RecapGridContextOpenResult.Opened>(
-                RecapGridContextFactory.Open(
+        await primingOnline.DisposeAsync();
+        RecapGridOnlineContextHandle online = Assert.IsType<
+            RecapGridOnlineOpenResult.Opened>(
+            RecapGridOnlineFactory.Open(
+                writer,
+                executor,
+                recipe.Target,
+                RecapGridOnlineLimits.Production,
+                _estimator)).Handle;
+        await using (online) {
+            writer.UseRuntime(Runtime(online, agent));
+
+            boundary = await SendThroughMaintenanceAsync(
+                writer,
+                boundary,
+                "build recap from the offline-sealed Timeline");
+            int firstBuildCalls = executor.CallCount;
+            Assert.True(firstBuildCalls > 0);
+            Assert.IsType<RecapGridOnlinePassResult.Ready>(
+                await online.PreparePassAsync(
                     writer.ReadView,
-                    _estimator)).Handle;
-        Assert.IsType<RecapGridContextResolveResult.Selected>(
-            getter.Resolve(boundary, nthPrevious: 0));
+                    new SessionContextLifecycleRequest(
+                        new SessionContextSelectionRequest(boundary, 0),
+                        SessionExecutionPhase.AwaitingAgentAction,
+                        SessionContextLifecycleTrigger.ObservationAccepted)));
+            Assert.Equal(firstBuildCalls, executor.CallCount);
+            using RecapGridContextHandle getter = Assert.IsType<
+                RecapGridContextOpenResult.Opened>(
+                    RecapGridContextFactory.Open(
+                        writer.ReadView,
+                        _estimator)).Handle;
+            Assert.IsType<RecapGridContextResolveResult.Selected>(
+                getter.Resolve(boundary, nthPrevious: 0));
+        }
     }
 
     [Theory]
@@ -511,6 +525,15 @@ public sealed class OnlineVerticalTests : IDisposable {
                     RecapGridControlActivationPurpose.Direct));
         }
 
+        await online.DisposeAsync();
+        online = Assert.IsType<RecapGridOnlineOpenResult.Opened>(
+            RecapGridOnlineFactory.Open(
+                writer,
+                executor,
+                recipe.Target,
+                RecapGridOnlineLimits.Production,
+                _estimator)).Handle;
+
         TimelineHeadRef beforeMaintenance = ReadTimelineHead(writer);
         Task<RecapGridOnlinePassResult> operation = online.PreparePassAsync(
             writer.ReadView,
@@ -545,6 +568,7 @@ public sealed class OnlineVerticalTests : IDisposable {
                          RecapGridOnlineFactory.Open(
                              writer,
                              new RejectingExecutor(),
+                             recipe.Target,
                              RecapGridOnlineLimits.Production,
                              _estimator)).Handle) {
             Assert.IsType<RecapGridOnlinePassResult.Ready>(
@@ -800,6 +824,28 @@ public sealed class OnlineVerticalTests : IDisposable {
         Assert.IsType<RecapGridOnlinePassResult.RawHistoryAuthorized>(result);
         Assert.Equal(boundary, writer.ReadCurrentHead());
         Assert.Equal(0, executor.CallCount);
+    }
+
+    [Fact]
+    public async Task ActiveRecipeDebtWithoutProducerPolicyFailsClosed() {
+        await using ActiveOnlineFixture fixture = await CreateActiveFixtureAsync(
+            turns: 1,
+            zeroColumns: false,
+            maximumNewCalls: RecapGridLimits.MaximumColumnCount,
+            maximumElapsed: TimeSpan.FromMinutes(1));
+        await fixture.ReopenOnlineAsync(
+            producerTarget: null,
+            estimator: _estimator);
+
+        RecapGridOnlinePassResult.Unavailable unavailable = Assert.IsType<
+            RecapGridOnlinePassResult.Unavailable>(
+                await fixture.Online.PreparePassAsync(
+                    fixture.Writer.ReadView,
+                    IdleRequest(fixture.Writer.ReadCurrentHead()!.Value)));
+
+        Assert.Equal(RecapGridOnlineComponent.Manager, unavailable.Component);
+        Assert.Equal("ProducerPolicyRequired", unavailable.Code);
+        Assert.Equal(0, fixture.Executor.CallCount);
     }
 
     [Fact]
@@ -1090,6 +1136,7 @@ public sealed class OnlineVerticalTests : IDisposable {
                          RecapGridOnlineFactory.Open(
                              writer,
                              executor,
+                             fixture.Recipe.Target,
                              RecapGridOnlineLimits.Production,
                              _estimator)).Handle) {
             RecapGridOnlinePassResult.MaintenanceContinuation repaired =
@@ -1463,14 +1510,15 @@ public sealed class OnlineVerticalTests : IDisposable {
             ProvisionTimelineAndControl(writer, maxRawEvents: 64);
             ICountingExecutor executor = executorOverride
                 ?? new FillingExecutor();
+            var limits = new RecapGridOnlineLimits(
+                HistoryRecentReserveOperationLimits.MaximumRawEvents,
+                maximumNewCalls,
+                maximumElapsed);
             RecapGridOnlineContextHandle online = Assert.IsType<
                 RecapGridOnlineOpenResult.Opened>(RecapGridOnlineFactory.Open(
                     writer,
                     executor,
-                    new RecapGridOnlineLimits(
-                        HistoryRecentReserveOperationLimits.MaximumRawEvents,
-                        maximumNewCalls,
-                        maximumElapsed),
+                    limits,
                     _estimator)).Handle;
             try {
                 EventAddress boundary = writer.ReadCurrentHead()!.Value;
@@ -1564,10 +1612,19 @@ public sealed class OnlineVerticalTests : IDisposable {
                         timelineHead,
                         recipe.Digest,
                         RecapGridControlActivationPurpose.Direct));
+                await online.DisposeAsync();
+                online = Assert.IsType<RecapGridOnlineOpenResult.Opened>(
+                    RecapGridOnlineFactory.Open(
+                        writer,
+                        executor,
+                        recipe.Target,
+                        limits,
+                        _estimator)).Handle;
                 return new ActiveOnlineFixture(
                     writer,
                     online,
                     executor,
+                    limits,
                     family,
                     definition,
                     recipe);
@@ -1692,6 +1749,7 @@ public sealed class OnlineVerticalTests : IDisposable {
                     active.Bootstrap.TimelineHead,
                     finalRecipe.Digest,
                     RecapGridControlActivationPurpose.Direct));
+            await inner.ReopenOnlineAsync(finalRecipe.Target, _estimator);
             return new CustomActiveOnlineFixture(
                 inner,
                 orderedRecipes.Select(static recipe => recipe.Digest)
@@ -1982,16 +2040,33 @@ public sealed class OnlineVerticalTests : IDisposable {
         SessionJournalEngine writer,
         RecapGridOnlineContextHandle online,
         ICountingExecutor executor,
+        RecapGridOnlineLimits limits,
         FamilyDefinition family,
         MaintainerDefinitionRevision definition,
         GridBuildRecipe recipe
     ) : IAsyncDisposable {
         internal SessionJournalEngine Writer { get; } = writer;
-        internal RecapGridOnlineContextHandle Online { get; } = online;
+        internal RecapGridOnlineContextHandle Online { get; private set; } =
+            online;
         internal ICountingExecutor Executor { get; } = executor;
+        internal RecapGridOnlineLimits Limits { get; } = limits;
         internal FamilyDefinition Family { get; } = family;
         internal MaintainerDefinitionRevision Definition { get; } = definition;
         internal GridBuildRecipe Recipe { get; } = recipe;
+
+        internal async ValueTask ReopenOnlineAsync(
+            BuildTarget? producerTarget,
+            IHistoryUnitLoadEstimator estimator
+        ) {
+            await Online.DisposeAsync();
+            RecapGridOnlineOpenResult opened = producerTarget is null
+                ? RecapGridOnlineFactory.Open(
+                    Writer, Executor, Limits, estimator)
+                : RecapGridOnlineFactory.Open(
+                    Writer, Executor, producerTarget, Limits, estimator);
+            Online = Assert.IsType<RecapGridOnlineOpenResult.Opened>(opened)
+                .Handle;
+        }
 
         public async ValueTask DisposeAsync() {
             try {
