@@ -375,7 +375,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
 
     [Fact]
     public async Task CompletedP0ReadinessAndMaterializationIgnoreCurrentP1() {
-        P1Target currentP1 = CreateDifferentCurrentP1Target();
+        P1Target currentP1 = CreateSameFamilyTwoColumnP1Target();
         RollingRepository fixture = CreateRollingRepository(currentP1.Bundle);
         var seedFactory = new RoutedCompletionFactory("seed", static request =>
             RecapReply.Updated("p0-" + request.LogicalColumnId));
@@ -394,7 +394,20 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             await RunFreshAsync(seed, session, "complete P0 recap");
         }
         Assert.NotEmpty(seedFactory.Recap.Invocations);
+        TimelineHeadRef r0Head = ReadTimelineHead(fixture.Path, fixture.RefId);
+        HistoryRowId r0 = Assert.IsType<HistoryRowId>(r0Head.HeadRowId);
+        PersistedRowState r0Before = ReadPersistedRowState(
+            fixture,
+            r0Head.TimelineId,
+            r0
+        );
+        Assert.Equal(fixture.Recipe.Target.Digest,
+            r0Before.Work.ProducerTarget.Digest);
+        Assert.Equal(fixture.Recipe.Target.ToCanonicalBytes(),
+            r0Before.Work.ProducerTarget.ToCanonicalBytes());
+        Assert.Equal(2, r0Before.Cells.Length);
         ControlHeadRef controlBefore = ReadControlSnapshot(fixture).Head;
+        Assert.Equal(fixture.Recipe.Digest, controlBefore.ActiveRecipeDigest);
         string storePath = Path.Combine(fixture.Path, "derived", "recap-grid",
             "v1", "grid.sqlite");
         byte[] storeBefore = File.ReadAllBytes(storePath);
@@ -406,36 +419,165 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 Interlocked.Increment(ref routeLoads);
                 throw new InvalidOperationException("completed P0 reads must not load routes");
             });
-        await using var service = new GalateaHostService(
+        await using (var service = new GalateaHostService(
             Config(fixture.Path, ModelAConnections()),
             DisabledGalateaUserMessageNormalizer.Instance,
             new GalateaRecapGridComposition(readCompletion,
                 RecapGridOnlineLimits.Production, _estimator),
-            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target)));
-        CharacterSessionHost reopened = await service.GetSessionAsync("alice",
-            CancellationToken.None);
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target)))) {
+            CharacterSessionHost reopened = await service.GetSessionAsync("alice",
+                CancellationToken.None);
 
-        RecentTurnsResponseDto result = await service.GetRecentTurnsAsync(
-            reopened, CancellationToken.None);
+            RecentTurnsResponseDto result = await service.GetRecentTurnsAsync(
+                reopened, CancellationToken.None);
 
-        Assert.Equal("ready", result.RecapGridReadiness?.State);
-        Assert.Contains("galatea.world-understanding Galatea积累的世界理解：",
-            result.ContextHeader.Observation, StringComparison.Ordinal);
-        Assert.Contains("p0-world-understanding", result.ContextHeader.Observation,
-            StringComparison.Ordinal);
-        Assert.Contains("galatea.first-person-autobiography Galatea积累的第一人称自传：",
-            result.ContextHeader.Action, StringComparison.Ordinal);
-        Assert.Contains("p0-autobiography", result.ContextHeader.Action,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("P1 distinct semantic heading", result.ContextHeader.Observation,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("P1 distinct semantic heading", result.ContextHeader.Action,
-            StringComparison.Ordinal);
-        Assert.Equal(0, routeLoads);
-        Assert.Empty(readFactory.Recap.Invocations);
-        Assert.Equal(0, readFactory.Agent.DispatchCallCount);
+            Assert.Equal("ready", result.RecapGridReadiness?.State);
+            Assert.Contains("galatea.world-understanding Galatea积累的世界理解：",
+                result.ContextHeader.Observation, StringComparison.Ordinal);
+            Assert.Contains("p0-world-understanding", result.ContextHeader.Observation,
+                StringComparison.Ordinal);
+            Assert.Contains("galatea.first-person-autobiography Galatea积累的第一人称自传：",
+                result.ContextHeader.Action, StringComparison.Ordinal);
+            Assert.Contains("p0-autobiography", result.ContextHeader.Action,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("P1 distinct semantic heading", result.ContextHeader.Observation,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("P1 distinct semantic heading", result.ContextHeader.Action,
+                StringComparison.Ordinal);
+            Assert.Equal(0, routeLoads);
+            Assert.Empty(readFactory.Recap.Invocations);
+            Assert.Equal(0, readFactory.Agent.DispatchCallCount);
+            Assert.Equal(controlBefore, ReadControlSnapshot(fixture).Head);
+            Assert.Equal(storeBefore, File.ReadAllBytes(storePath));
+        }
+
+        var p1Factory = new RoutedCompletionFactory("p1 agent", static request =>
+            RecapReply.Updated("p1-" + request.LogicalColumnId));
+        RecapGridCompletionHost p1Completion = CreateCompletionHost(
+            fixture,
+            ModelAConnections(),
+            p1Factory,
+            additionalRouteFamily: currentP1.Bundle.Families.Single().Digest
+        );
+        await using (var p1Service = new GalateaHostService(
+            Config(fixture.Path, ModelAConnections()),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            new GalateaRecapGridComposition(p1Completion,
+                PartialFailureLimits(), _estimator),
+            DefaultPolicies(GalateaRecapGridDefaultPolicy.ForTarget(currentP1.Target)))) {
+            CharacterSessionHost reopened = await p1Service.GetSessionAsync(
+                "alice", CancellationToken.None);
+            GalateaLiveTurn turn = p1Service.StartTurn(
+                reopened,
+                "seal exactly one new row under P1",
+                new GalateaTurnOptions(AgentConnectionId),
+                GalateaDelegateTestConfiguration.PlayerSender
+            );
+            GalateaTurnException continuation = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => p1Service.RunTurnAsync(
+                    reopened,
+                    turn,
+                    CancellationToken.None
+                ));
+            Assert.Equal("recap-grid-maintenance-continuation",
+                continuation.FailureReason);
+            Assert.Equal(0, p1Factory.Agent.DispatchCallCount);
+        }
+
+        RecapInvocation[] p1Calls = p1Factory.Recap.Invocations.ToArray();
+        Assert.Equal(2, p1Calls.Length);
+        RecapCompletionTelemetryEvent[] p1Events = p1Completion
+            .ReadTelemetrySnapshot().Events.ToArray();
+        Assert.Equal(2, p1Events.Length);
+        HistoryRowId h1 = Assert.Single(p1Events
+            .Select(static value => value.Slot.HistoryRowId)
+            .Distinct());
+        TimelineHeadRef h1Head = ReadTimelineHead(fixture.Path, fixture.RefId);
+        Assert.Equal(r0Head.TimelineId, h1Head.TimelineId);
+        Assert.NotEqual(r0, h1);
+        PersistedRowState h1State = ReadPersistedRowState(
+            fixture,
+            r0Head.TimelineId,
+            h1
+        );
+        Assert.Equal(currentP1.Target.Digest,
+            h1State.Work.ProducerTarget.Digest);
+        Assert.Equal(currentP1.Target.ToCanonicalBytes(),
+            h1State.Work.ProducerTarget.ToCanonicalBytes());
+        Assert.Equal(r0, h1State.Work.PreviousHistoryRowId);
+        Assert.Equal(r0Before.View.Id, h1State.Work.PreviousRowResultId);
+        Assert.Equal(r0, h1State.View.PreviousHistoryRowId);
+        Assert.Equal(r0Before.View.Id, h1State.View.PreviousRowResultId);
+        Assert.Equal(currentP1.Target.Digest, h1State.View.TargetDigest);
+        Assert.Equal(fixture.Recipe.Digest, h1State.Work.Key.RootRecipeDigest);
+        Assert.Equal(fixture.Recipe.Digest, h1State.View.RecipeDigest);
+        Assert.Equal(2, h1State.Cells.Length);
+        Assert.Equal(currentP1.Target.OrderedColumns.Select(static column =>
+                (column.LogicalColumnId, column.DefinitionDigest)),
+            h1State.Cells.Select(static cell =>
+                (cell.LogicalColumnId, cell.DefinitionDigest)));
+        Assert.All(h1State.Cells, cell => {
+            Assert.Equal(fixture.Recipe.Digest, cell.Slot.RecipeDigest);
+            Assert.Equal(h1, cell.Slot.HistoryRowId);
+            Assert.Equal(h1State.Work.WorkId, cell.Slot.WorkId);
+        });
+
+        Assert.Equal(currentP1.Target.OrderedColumns
+                .Select(static column => column.LogicalColumnId.Value)
+                .Order(StringComparer.Ordinal),
+            p1Calls.Select(static call => call.LogicalColumnId)
+                .Order(StringComparer.Ordinal));
+        string expectedPrior = JsonSerializer.Serialize(new {
+            schema = "atelia.recap.prior.v1",
+            columns = new[] {
+                new {
+                    logicalColumnId = "world-understanding",
+                    semanticHeading = "galatea.world-understanding Galatea积累的世界理解：",
+                    carrier = "Observation",
+                    blockKey = "galatea.world-understanding",
+                    content = "p0-world-understanding"
+                },
+                new {
+                    logicalColumnId = "autobiography",
+                    semanticHeading = "galatea.first-person-autobiography Galatea积累的第一人称自传：",
+                    carrier = "Action",
+                    blockKey = "galatea.first-person-autobiography",
+                    content = "p0-autobiography"
+                }
+            }
+        });
+        Assert.All(p1Calls, call => Assert.Equal(expectedPrior, call.Prior));
+        Assert.Equal(h1State.Cells
+                .Select(static cell => cell.Slot)
+                .OrderBy(static slot => slot.LogicalColumnId.Value,
+                    StringComparer.Ordinal),
+            p1Events.Select(static value => value.Slot)
+                .OrderBy(static slot => slot.LogicalColumnId.Value,
+                    StringComparer.Ordinal));
+        Assert.All(p1Events, value => {
+            Assert.Equal(h1, value.Slot.HistoryRowId);
+            Assert.Equal(h1State.Work.WorkId, value.Slot.WorkId);
+            Assert.Equal(currentP1.Bundle.Families.Single().Digest,
+                value.FamilyDigest);
+        });
+
+        PersistedRowState r0After = ReadPersistedRowState(
+            fixture,
+            r0Head.TimelineId,
+            r0
+        );
+        Assert.Equal(r0Before.View.Id, r0After.View.Id);
+        Assert.Equal(r0Before.View.Coordinate, r0After.View.Coordinate);
+        Assert.Equal(r0Before.View.OrderedCells, r0After.View.OrderedCells);
+        Assert.Equal(r0Before.Work.WorkId, r0After.Work.WorkId);
+        Assert.Equal(r0Before.Work.ProducerTarget.Digest,
+            r0After.Work.ProducerTarget.Digest);
+        Assert.Equal(r0Before.Work.ToCanonicalBytes(),
+            r0After.Work.ToCanonicalBytes());
+        Assert.Equal(r0Before.Cells, r0After.Cells);
         Assert.Equal(controlBefore, ReadControlSnapshot(fixture).Head);
-        Assert.Equal(storeBefore, File.ReadAllBytes(storePath));
+        Assert.Equal(fixture.Recipe.Digest,
+            ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
     }
 
     [Theory]
@@ -734,8 +876,83 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             [p1Family], [p1Definition], []));
     }
 
+    private static P1Target CreateSameFamilyTwoColumnP1Target() {
+        FamilyDefinition family = FamilyDefinition.Create(
+            "P1 has one family and two distinct current-policy columns.", [],
+            RecapRewriterProtocolV3.CreateOutputProtocol(),
+            RecapRewriterProtocolV3.CreateInputRenderingProtocol());
+        MaintainerCapabilitySpec capability = new(
+            RecapRewriterProtocolV3.RuntimeProtocolId,
+            MaintainerReadableScope.FullPriorBuildTargetAndCurrentHistorySegmentV1
+        );
+        MaintainerDefinitionRevision observation =
+            MaintainerDefinitionRevision.Create(
+                new LogicalColumnId("p1-world"), family.Digest,
+                new ContextHeaderBlockTarget(ContextHeaderCarrier.Observation,
+                    "p1.world", "P1 distinct semantic heading (world)"),
+                capability,
+                new MaintainerDeclarativeSpec("P1 world",
+                    "P1 maintains its world column."),
+                maxContentUtf8Bytes: 16 * 1024);
+        MaintainerDefinitionRevision action =
+            MaintainerDefinitionRevision.Create(
+                new LogicalColumnId("p1-autobiography"), family.Digest,
+                new ContextHeaderBlockTarget(ContextHeaderCarrier.Action,
+                    "p1.autobiography",
+                    "P1 distinct semantic heading (autobiography)"),
+                capability,
+                new MaintainerDeclarativeSpec("P1 autobiography",
+                    "P1 maintains its autobiography column."),
+                maxContentUtf8Bytes: 16 * 1024);
+        BuildTarget target = BuildTarget.Create([
+            new BuildTargetColumn(observation.LogicalColumnId,
+                observation.Digest),
+            new BuildTargetColumn(action.LogicalColumnId, action.Digest)
+        ]);
+        return new P1Target(target, new RecapGridControlRegistrationBundle(
+            [family], [observation, action], []));
+    }
+
     private sealed record P1Target(BuildTarget Target,
         RecapGridControlRegistrationBundle Bundle);
+
+    private sealed record PersistedRowState(
+        RecapRowView View,
+        RowWork Work,
+        RecapCellArtifact[] Cells
+    );
+
+    private static PersistedRowState ReadPersistedRowState(
+        RollingRepository fixture,
+        TimelineId timelineId,
+        HistoryRowId rowId
+    ) {
+        using RecapGridStoreReaderHandle store = Assert.IsType<
+            RecapGridStoreReaderOpenResult.Opened
+        >(RecapGridStoreFactory.OpenReader(fixture.Path)).Handle;
+        RecapRowView view = Assert.IsType<
+            RecapGridStoreReadResult<RecapRowView>.Found
+        >(store.Reader.ReadViewAt(new RowViewAssignmentKey(
+            fixture.RefId,
+            timelineId,
+            fixture.Recipe.Digest,
+            rowId
+        ))).Value;
+        RowWork work = Assert.IsType<
+            RecapGridStoreReadResult<RowWork>.Found
+        >(store.Reader.ReadRowWork(new RowWorkKey(
+            fixture.RefId,
+            timelineId,
+            fixture.Recipe.Digest,
+            rowId
+        ))).Value;
+        RecapCellArtifact[] cells = view.OrderedCells.Select(member =>
+            Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(
+                store.Reader.ReadCell(member.CellId)
+            ).Value
+        ).ToArray();
+        return new PersistedRowState(view, work, cells);
+    }
 
     private (RecapCellArtifact World, RecapCellArtifact Autobiography)
         ReadHeadCells(RollingRepository fixture) {
