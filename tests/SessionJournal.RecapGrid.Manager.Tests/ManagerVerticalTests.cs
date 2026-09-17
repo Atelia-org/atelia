@@ -355,6 +355,142 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task SameAdoptedRootKeepsPolicyChangesRowLocalAndDiscoveryIncremental() {
+        Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        Assert.Equal(3, fixture.Rows.Count);
+        (FamilyDefinition family, _) = Values();
+        MaintainerDefinitionRevision p1Definition = Definition(
+            family, "case.culprit", "p1", "P1 maintenance");
+        MaintainerDefinitionRevision p2Definition = Definition(
+            family, "case.culprit", "p2", "P2 maintenance");
+        BuildTarget[] policies = [
+            fixture.Recipe.Target,
+            BuildTarget.Create([
+                new BuildTargetColumn(
+                    p1Definition.LogicalColumnId,
+                    p1Definition.Digest)
+            ]),
+            BuildTarget.Create([
+                new BuildTargetColumn(
+                    p2Definition.LogicalColumnId,
+                    p2Definition.Digest)
+            ])
+        ];
+
+        using (fixture.Journal) {
+            using (RecapGridControlHandle control = OpenControl(fixture)) {
+                ControlHeadRef head = Assert.IsType<
+                    RecapGridControlSnapshotResult.Available
+                >(control.Reader.ReadSnapshot()).Snapshot.Head;
+                head = Assert.IsType<RecapGridControlPutResult.Stored>(
+                    control.Coordinator.PutMaintainerDefinition(
+                        head, p1Definition)).Head;
+                _ = Assert.IsType<RecapGridControlPutResult.Stored>(
+                    control.Coordinator.PutMaintainerDefinition(
+                        head, p2Definition));
+            }
+            AssertSingleAdoptedRoot();
+
+            var executor = new RecordingExecutor();
+            RowWorkId[] workIds = new RowWorkId[fixture.Rows.Count];
+            int[] expectedSelectedRows = [1, 2, 2];
+            for (int index = 0; index < fixture.Rows.Count; index++) {
+                var request = new RecapGridBuildRequest(
+                    new RecapGridBuildSelection.LiveActive(),
+                    fixture.Rows[index].Descriptor.RowId,
+                    new RecapGridBuildBudget(
+                        maximumRecipeRowSteps: 1,
+                        maximumNewCalls: 1,
+                        maximumElapsed: TimeSpan.FromMinutes(1)),
+                    policies[index]);
+                RecapGridBuildResult result;
+                using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                    result = await manager.Manager.BuildAsync(
+                        request, executor);
+                }
+                RecapGridBuildMetrics metrics = index == fixture.Rows.Count - 1
+                    ? Assert.IsType<RecapGridBuildResult.Fulfilled>(result)
+                        .Metrics
+                    : Assert.IsType<RecapGridBuildResult.FulfilledThrough>(result)
+                        .Metrics;
+                Assert.Equal(1, metrics.RecipeRowSteps);
+                Assert.Equal(expectedSelectedRows[index], metrics.SelectedRows);
+                Assert.Equal(1, metrics.NewCalls);
+                Assert.Equal(index + 1, executor.Batches.Count);
+                Assert.Single(executor.Batches[index].OrderedMissingWork);
+                Assert.Equal(policies[index].Digest,
+                    executor.Batches[index].Spec.Work!.ProducerTarget.Digest);
+
+                using RecapGridStoreReaderHandle reader =
+                    OpenStoreReader(fixture);
+                RowWork work = ReadWork(reader, index);
+                workIds[index] = work.WorkId;
+                Assert.Equal(policies[index].Digest,
+                    work.ProducerTarget.Digest);
+                if (index == 0) {
+                    Assert.Null(work.PreviousHistoryRowId);
+                    Assert.Null(work.PreviousRowResultId);
+                }
+                else {
+                    RecapRowView previous = ReadView(reader, index - 1);
+                    Assert.Equal(
+                        fixture.Rows[index - 1].Descriptor.RowId,
+                        work.PreviousHistoryRowId);
+                    Assert.Equal(previous.Id, work.PreviousRowResultId);
+                }
+                for (int old = 0; old < index; old++) {
+                    Assert.Equal(workIds[old], ReadWork(reader, old).WorkId);
+                }
+                AssertSingleAdoptedRoot();
+            }
+
+            int calls = executor.Batches.Count;
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                RecapGridBuildResult.Fulfilled cached = Assert.IsType<
+                    RecapGridBuildResult.Fulfilled
+                >(await manager.Manager.BuildAsync(
+                    Request(policies[0]), executor));
+                Assert.Equal(0, cached.Metrics.RecipeRowSteps);
+                Assert.Equal(1, cached.Metrics.SelectedRows);
+                Assert.Equal(0, cached.Metrics.NewCalls);
+            }
+            Assert.Equal(calls, executor.Batches.Count);
+            using (RecapGridStoreReaderHandle reader = OpenStoreReader(fixture)) {
+                for (int index = 0; index < workIds.Length; index++) {
+                    Assert.Equal(workIds[index], ReadWork(reader, index).WorkId);
+                }
+            }
+            AssertSingleAdoptedRoot();
+        }
+
+        void AssertSingleAdoptedRoot() {
+            using RecapGridControlHandle control = OpenControl(fixture);
+            RecapGridControlSnapshot snapshot = Assert.IsType<
+                RecapGridControlSnapshotResult.Available
+            >(control.Reader.ReadSnapshot()).Snapshot;
+            Assert.Equal(fixture.Recipe.Digest,
+                snapshot.Head.ActiveRecipeDigest);
+            Assert.Single(snapshot.Recipes);
+        }
+
+        RowWork ReadWork(RecapGridStoreReaderHandle reader, int index) =>
+            Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+                reader.Reader.ReadRowWork(new RowWorkKey(
+                    fixture.TimelineHead.RefId,
+                    fixture.TimelineHead.TimelineId,
+                    fixture.Recipe.Digest,
+                    fixture.Rows[index].Descriptor.RowId))).Value;
+
+        RecapRowView ReadView(RecapGridStoreReaderHandle reader, int index) =>
+            Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
+                reader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                    fixture.TimelineHead.RefId,
+                    fixture.TimelineHead.TimelineId,
+                    fixture.Recipe.Digest,
+                    fixture.Rows[index].Descriptor.RowId))).Value;
+    }
+
+    [Fact]
     public async Task PrefixPromotionLeavesNewRootTailAsItsOwnPolicyDebt() {
         Fixture fixture = CreateFullFixture(turns: 10, zeroColumns: false);
         (FamilyDefinition family, _) = Values();
@@ -604,6 +740,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     executor));
                 Assert.Equal(rowCount - 1,
                     result.Metrics.RecipeRowSteps);
+                Assert.Equal(rowCount - 1,
+                    result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
             }
 
@@ -620,6 +758,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     RecapGridBuildResult.Fulfilled
                 >(await head.Manager.BuildAsync(headRequest, executor));
                 Assert.Equal(1, result.Metrics.RecipeRowSteps);
+                Assert.Equal(2, result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
             }
 
@@ -635,8 +774,13 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridBuildResult.Fulfilled
             >(await reopened.Manager.BuildAsync(zeroStepRequest, executor));
             Assert.Equal(0, cached.Metrics.RecipeRowSteps);
+            Assert.Equal(1, cached.Metrics.SelectedRows);
             Assert.Equal(0, cached.Metrics.NewCalls);
             Assert.Empty(executor.Batches);
+            using RecapGridControlHandle control = OpenControl(fixture);
+            Assert.Single(Assert.IsType<
+                RecapGridControlSnapshotResult.Available
+            >(control.Reader.ReadSnapshot()).Snapshot.Recipes);
         }
     }
 
