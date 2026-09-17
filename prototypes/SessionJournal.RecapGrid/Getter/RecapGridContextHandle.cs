@@ -287,7 +287,8 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             currentView,
             currentRow.Descriptor,
             recipe,
-            definitions
+            definitions,
+            out RowWork? currentWork
         );
         if (currentFailure is not null) {
             return currentFailure;
@@ -297,6 +298,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 reader,
                 currentView,
                 currentRow.Descriptor,
+                currentWork,
                 definitions,
                 cancellationToken
             );
@@ -433,7 +435,8 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 previousFound.Value,
                 previousSelected.Row.Descriptor,
                 recipe,
-                definitions
+                definitions,
+                out RowWork? previousWork
             );
             if (previousFailure is not null) {
                 return previousFailure;
@@ -443,6 +446,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                     reader,
                     previousFound.Value,
                     previousSelected.Row.Descriptor,
+                    previousWork,
                     definitions,
                     cancellationToken
                 );
@@ -546,11 +550,15 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         HistorySegmentDescriptor descriptor,
         GridBuildRecipe recipe,
         IReadOnlyDictionary<MaintainerDefinitionDigest,
-            MaintainerDefinitionRevision> definitions
+            MaintainerDefinitionRevision> definitions,
+        out RowWork? rowWork
     ) {
-        if (view.TimelineId != descriptor.TimelineId
+        rowWork = null;
+        if (view.RefId != descriptor.RefId
+            || view.TimelineId != descriptor.TimelineId
             || view.HistoryRowId != descriptor.RowId
             || view.RecipeDigest != recipe.Digest
+            || view.PreviousHistoryRowId != descriptor.PreviousRowId
             || (view.PreviousRowResultId is null)
                 != (descriptor.PreviousRowId is null)) {
             return Invalid(
@@ -571,7 +579,8 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         switch (workRead) {
             case RecapGridStoreReadResult<RowWork>.Found found:
                 RowWork work = found.Value;
-                if (work.PreviousHistoryRowId != descriptor.PreviousRowId
+                if (work.Key != key
+                    || work.PreviousHistoryRowId != descriptor.PreviousRowId
                     || work.PreviousRowResultId != view.PreviousRowResultId
                     || work.ProducerTarget.Digest != view.TargetDigest) {
                     return Invalid(RecapGridContextComponent.Store,
@@ -580,6 +589,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 }
                 target = work.ProducerTarget;
                 assignments = work.OrderedAssignments;
+                rowWork = work;
                 break;
             case RecapGridStoreReadResult<RowWork>.Missing:
                 // V4 facts have no persisted pre-dispatch work. Their stored
@@ -619,7 +629,10 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                     out MaintainerDefinitionRevision? definition)
                 || definition.LogicalColumnId != targetColumn.LogicalColumnId
                 || assignments is { } frozen
-                    && frozen[index].LogicalColumnId != targetColumn.LogicalColumnId) {
+                    && (frozen[index].LogicalColumnId
+                            != targetColumn.LogicalColumnId
+                        || frozen[index].ReusedCellId is { } reusedCellId
+                            && member.CellId != reusedCellId)) {
                 return Invalid(
                     RecapGridContextComponent.Store,
                     "RowViewMembershipMismatch",
@@ -634,11 +647,13 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         RecapGridStoreReader reader,
         RecapRowView view,
         HistorySegmentDescriptor descriptor,
+        RowWork? rowWork,
         IReadOnlyDictionary<MaintainerDefinitionDigest,
             MaintainerDefinitionRevision> definitions,
         CancellationToken cancellationToken
     ) {
-        foreach (RecapRowViewCell member in view.OrderedCells) {
+        for (int index = 0; index < view.OrderedCells.Count; index++) {
+            RecapRowViewCell member = view.OrderedCells[index];
             cancellationToken.ThrowIfCancellationRequested();
             RecapGridStoreReadResult<RecapCellArtifact> read =
                 reader.ReadCell(member.CellId);
@@ -668,6 +683,19 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                     "SelectedCellAuthorityMismatch",
                     "A RowView member Cell differs from its row or definition."
                 );
+            }
+            if (rowWork is { } work) {
+                RowWorkAssignment assignment = work.OrderedAssignments[index];
+                bool matchesFrozenAssignment = assignment.IsEvaluate
+                    ? cell.Slot.WorkId == work.WorkId
+                    : member.CellId == assignment.ReusedCellId;
+                if (!matchesFrozenAssignment) {
+                    return Invalid(
+                        RecapGridContextComponent.Store,
+                        "RowWorkMemberMismatch",
+                        "A RowView member differs from its frozen RowWork assignment."
+                    );
+                }
             }
             int contentBytes;
             try {
@@ -768,7 +796,8 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                             found.Value,
                             row.Descriptor,
                             recipe,
-                            definitions
+                            definitions,
+                            out RowWork? crossedWork
                         );
                     if (viewFailure is not null) {
                         return viewFailure;
@@ -778,6 +807,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                             reader,
                             found.Value,
                             row.Descriptor,
+                            crossedWork,
                             definitions,
                             cancellationToken
                         );

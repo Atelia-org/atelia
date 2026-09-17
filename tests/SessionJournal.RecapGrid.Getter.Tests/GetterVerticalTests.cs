@@ -153,6 +153,286 @@ public sealed partial class GetterVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task CurrentReserveAndNthPreviousUseEachRowsFrozenProducer() {
+        using Fixture fixture = await CreateControlFixture(
+            turns: 2,
+            activate: true,
+            createStore: true
+        );
+        Assert.Equal(3, fixture.Rows.Count);
+        MaintainerDefinitionRevision reserveProducer =
+            MaintainerDefinitionRevision.Create(
+                fixture.Definition.LogicalColumnId,
+                fixture.Family.Digest,
+                new ContextHeaderBlockTarget(
+                    ContextHeaderCarrier.System,
+                    "reserve-producer",
+                    "Reserve producer heading"
+                ),
+                fixture.Definition.Capability,
+                new MaintainerDeclarativeSpec(
+                    "Reserve producer question",
+                    "Maintain the reserve producer context."
+                ),
+                fixture.Definition.MaxContentUtf8Bytes
+            );
+        MaintainerDefinitionRevision currentProducer =
+            MaintainerDefinitionRevision.Create(
+                fixture.Definition.LogicalColumnId,
+                fixture.Family.Digest,
+                new ContextHeaderBlockTarget(
+                    ContextHeaderCarrier.System,
+                    "current-producer",
+                    "Current producer heading"
+                ),
+                fixture.Definition.Capability,
+                new MaintainerDeclarativeSpec(
+                    "Current producer question",
+                    "Maintain the current producer context."
+                ),
+                fixture.Definition.MaxContentUtf8Bytes
+            );
+        using (RecapGridControlHandle control = Assert.IsType<
+            RecapGridControlOpenResult.Opened>(RecapGridControlFactory.Open(
+                fixture.Path,
+                fixture.Journal.BranchRefId,
+                fixture.Admission
+            )).Handle) {
+            ControlHeadRef head = Assert.IsType<
+                RecapGridControlSnapshotResult.Available>(
+                control.Reader.ReadSnapshot()).Snapshot.Head;
+            head = Assert.IsType<RecapGridControlPutResult.Stored>(
+                control.Coordinator.PutMaintainerDefinition(
+                    head,
+                    reserveProducer
+                )).Head;
+            _ = Assert.IsType<RecapGridControlPutResult.Stored>(
+                control.Coordinator.PutMaintainerDefinition(
+                    head,
+                    currentProducer
+                ));
+        }
+
+        MaintainerDefinitionRevision[] producers = [
+            fixture.Definition,
+            reserveProducer,
+            currentProducer
+        ];
+        RecapRowView? previous = null;
+        using (RecapGridStoreHandle store = Assert.IsType<
+            RecapGridStoreOpenResult.Opened>(RecapGridStoreFactory.Open(
+                fixture.Path
+            )).Handle) {
+            for (int index = 0; index < fixture.Rows.Count; index++) {
+                HistorySegmentDescriptor descriptor =
+                    fixture.Rows[index].Descriptor;
+                MaintainerDefinitionRevision producer = producers[index];
+                BuildTarget target = BuildTarget.Create([
+                    new BuildTargetColumn(
+                        producer.LogicalColumnId,
+                        producer.Digest
+                    )
+                ]);
+                var work = new RowWork(
+                    new RowWorkKey(
+                        fixture.Journal.BranchRefId,
+                        descriptor.TimelineId,
+                        fixture.Recipe.Digest,
+                        descriptor.RowId
+                    ),
+                    target,
+                    descriptor.PreviousRowId,
+                    previous?.Id,
+                    [new RowWorkAssignment(producer.LogicalColumnId, null)]
+                );
+                var slot = new CellSlot(
+                    fixture.Recipe.Digest,
+                    descriptor.RowId,
+                    work.WorkId,
+                    producer.LogicalColumnId
+                );
+                RowBuildSpec spec = RowBuildSpec.CreateFull(
+                    fixture.Recipe,
+                    new RowViewCoordinate(
+                        fixture.Journal.BranchRefId,
+                        descriptor.TimelineId,
+                        descriptor.RowId,
+                        fixture.Recipe.Digest,
+                        target.Digest,
+                        descriptor.PreviousRowId,
+                        previous?.Id,
+                        bootstrapCompleted: true
+                    ),
+                    [new RowBuildAssignment.Evaluate(slot)],
+                    work
+                );
+                Assert.IsType<RecapGridRowWorkPutResult.Inserted>(
+                    store.Writer.PutRowWork(work)
+                );
+                RowWork persisted = Assert.IsType<
+                    RecapGridStoreReadResult<RowWork>.Found>(
+                    store.Reader.ReadRowWork(work.Key)).Value;
+                Assert.Equal(work.WorkId, persisted.WorkId);
+                Assert.Equal(previous?.Id, persisted.PreviousRowResultId);
+                Assert.Equal(target.Digest, persisted.ProducerTarget.Digest);
+                RecapCellArtifact cell = Assert.IsType<
+                    RecapGridCellPutResult.Inserted>(store.Writer.PutCell(
+                        spec,
+                        RecapCellDraft.Create(
+                            slot,
+                            producer.Digest,
+                            RecapCellOutcome.Updated,
+                            $"producer-{index}",
+                            producer.MaxContentUtf8Bytes
+                        )
+                    )).Winner;
+                previous = Assert.IsType<RecapGridRowViewPutResult.Inserted>(
+                    store.Writer.PutRowView(spec, [cell])).Winner;
+            }
+            Assert.IsType<RecapGridFulfilledPutResult.Inserted>(
+                store.Writer.PutFulfilled(
+                    FulfilledViewKey.Create(
+                        fixture.Journal.BranchRefId,
+                        fixture.TimelineHead,
+                        fixture.Rows[^1].Descriptor.RowId,
+                        fixture.Recipe
+                    ),
+                    previous!.Id
+                )
+            );
+        }
+
+        EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
+        using (RecapGridContextHandle current = OpenGetter(fixture.Journal)) {
+            AssertMaterializedProducer(
+                current,
+                boundary,
+                nthPrevious: 0,
+                fixture.Rows[^1].Descriptor.RowId,
+                currentProducer,
+                "producer-2"
+            );
+        }
+
+        UpdateCadence(
+            fixture.Journal,
+            FindCrossingRequirement(fixture, boundary)
+        );
+        using (RecapGridContextHandle reserve = OpenGetter(fixture.Journal)) {
+            AssertMaterializedProducer(
+                reserve,
+                boundary,
+                nthPrevious: 0,
+                fixture.Rows[^2].Descriptor.RowId,
+                reserveProducer,
+                "producer-1"
+            );
+            AssertMaterializedProducer(
+                reserve,
+                boundary,
+                nthPrevious: 1,
+                fixture.Rows[^3].Descriptor.RowId,
+                fixture.Definition,
+                "producer-0"
+            );
+        }
+    }
+
+    [Fact]
+    public async Task EvaluatedMemberMustMatchItsFrozenWorkId() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 1);
+        HistorySegmentDescriptor row = Assert.Single(fixture.Rows).Descriptor;
+        BuildTarget target = BuildTarget.Create([
+            new BuildTargetColumn(
+                fixture.Definition.LogicalColumnId,
+                fixture.Definition.Digest
+            )
+        ]);
+        GridBuildRecipe decoyRecipe = GridBuildRecipe.CreateFull(
+            fixture.TimelineHead.TimelineId,
+            fixture.TimelineHead.HeadRowId,
+            target,
+            fixture.Recipe.Digest
+        );
+        CellId replacement;
+        RowResultId rootView;
+        using (RecapGridStoreHandle store = Assert.IsType<
+            RecapGridStoreOpenResult.Opened>(RecapGridStoreFactory.Open(
+                fixture.Path
+            )).Handle) {
+            var decoyWork = new RowWork(
+                new RowWorkKey(
+                    fixture.Journal.BranchRefId,
+                    row.TimelineId,
+                    decoyRecipe.Digest,
+                    row.RowId
+                ),
+                target,
+                null,
+                null,
+                [new RowWorkAssignment(
+                    fixture.Definition.LogicalColumnId,
+                    null
+                )]
+            );
+            var decoySlot = new CellSlot(
+                decoyRecipe.Digest,
+                row.RowId,
+                decoyWork.WorkId,
+                fixture.Definition.LogicalColumnId
+            );
+            RowBuildSpec decoySpec = RowBuildSpec.CreateFull(
+                decoyRecipe,
+                new RowViewCoordinate(
+                    fixture.Journal.BranchRefId,
+                    row.TimelineId,
+                    row.RowId,
+                    decoyRecipe.Digest,
+                    target.Digest,
+                    null,
+                    null,
+                    bootstrapCompleted: true
+                ),
+                [new RowBuildAssignment.Evaluate(decoySlot)],
+                decoyWork
+            );
+            Assert.IsType<RecapGridRowWorkPutResult.Inserted>(
+                store.Writer.PutRowWork(decoyWork));
+            replacement = Assert.IsType<RecapGridCellPutResult.Inserted>(
+                store.Writer.PutCell(
+                    decoySpec,
+                    RecapCellDraft.Create(
+                        decoySlot,
+                        fixture.Definition.Digest,
+                        RecapCellOutcome.Updated,
+                        "wrong-work",
+                        fixture.Definition.MaxContentUtf8Bytes
+                    ))).Winner.Id;
+            rootView = Assert.IsType<
+                RecapGridStoreReadResult<RecapRowView>.Found>(
+                store.Reader.ReadViewAt(new RowViewAssignmentKey(
+                    fixture.Journal.BranchRefId,
+                    row.TimelineId,
+                    fixture.Recipe.Digest,
+                    row.RowId
+                ))).Value.Id;
+        }
+        ExecuteStoreSql(
+            fixture.Path,
+            "PRAGMA foreign_keys=OFF; UPDATE row_view_member SET cell_id=$replacement WHERE row_result_id=$row;",
+            ("$replacement", replacement.Value),
+            ("$row", rootView.Value)
+        );
+        using RecapGridContextHandle corrupted = OpenGetter(fixture.Journal);
+        RecapGridContextResolveResult.Invalid invalid = Assert.IsType<
+            RecapGridContextResolveResult.Invalid>(corrupted.Resolve(
+                fixture.Journal.ReadCurrentHead()!.Value,
+                0
+            ));
+        Assert.Equal("RowWorkMemberMismatch", invalid.Code);
+    }
+
+    [Fact]
     public async Task NthPreviousFollowsExactViewAndTimelinePredecessors() {
         using Fixture fixture = await CreateBuiltFixture(turns: 3);
         Assert.True(fixture.Rows.Count >= 3);
@@ -196,6 +476,41 @@ public sealed partial class GetterVerticalTests : IDisposable {
                 boundary,
                 RecapGridGetterLimits.MaximumNthPrevious + 1
             )
+        );
+    }
+
+    private static void AssertMaterializedProducer(
+        RecapGridContextHandle getter,
+        EventAddress boundary,
+        int nthPrevious,
+        HistoryRowId expectedRow,
+        MaintainerDefinitionRevision expectedProducer,
+        string expectedContent
+    ) {
+        RecapGridContextSelection selection = Assert.IsType<
+            RecapGridContextResolveResult.Selected>(getter.Resolve(
+                boundary,
+                nthPrevious
+            )).Selection;
+        Assert.Equal(expectedRow, selection.SelectedRowId);
+        RecapGridContextMaterializeResult.Available available = Assert.IsType<
+            RecapGridContextMaterializeResult.Available>(
+            getter.Materialize(selection));
+        SessionContextContribution contribution = Assert.Single(
+            available.Candidate.Contributions);
+        Assert.Equal(expectedProducer.Target, contribution.Target);
+        Assert.Equal(expectedContent, contribution.ExactText);
+        Assert.Equal(
+            RecapGridProvenanceStatus.Verified,
+            available.Provenance.MembershipComplete
+        );
+        Assert.Equal(
+            RecapGridProvenanceStatus.Verified,
+            available.Provenance.PriorSourceAligned
+        );
+        Assert.Equal(
+            RecapGridProvenanceStatus.Verified,
+            available.Provenance.FullRebuildChain
         );
     }
 
@@ -303,14 +618,37 @@ public sealed partial class GetterVerticalTests : IDisposable {
         RecapRowView? previous = null;
         for (int index = 0; index < fixture.Rows.Count; index++) {
             HistorySegmentDescriptor descriptor = fixture.Rows[index].Descriptor;
-            var slot = new CellSlot(fixture.Recipe.Digest, descriptor.RowId, fixture.Definition.LogicalColumnId);
+            var work = new RowWork(
+                new RowWorkKey(
+                    fixture.Journal.BranchRefId,
+                    descriptor.TimelineId,
+                    fixture.Recipe.Digest,
+                    descriptor.RowId
+                ),
+                fixture.Recipe.Target,
+                descriptor.PreviousRowId,
+                previous?.Id,
+                [new RowWorkAssignment(
+                    fixture.Definition.LogicalColumnId,
+                    null
+                )]
+            );
+            var slot = new CellSlot(
+                fixture.Recipe.Digest,
+                descriptor.RowId,
+                work.WorkId,
+                fixture.Definition.LogicalColumnId
+            );
             RowBuildSpec spec = RowBuildSpec.CreateFull(
                 fixture.Recipe,
                 new RowViewCoordinate(fixture.Journal.BranchRefId, descriptor.TimelineId,
                     descriptor.RowId, fixture.Recipe.Digest,
                     fixture.Recipe.Target.Digest, descriptor.PreviousRowId, previous?.Id,
                     bootstrapCompleted: true),
-                [new RowBuildAssignment.Evaluate(slot)]);
+                [new RowBuildAssignment.Evaluate(slot)],
+                work);
+            Assert.IsType<RecapGridRowWorkPutResult.Inserted>(
+                store.Writer.PutRowWork(work));
             RecapCellArtifact cell = Assert.IsType<RecapGridCellPutResult.Inserted>(
                 store.Writer.PutCell(spec, RecapCellDraft.Create(slot, fixture.Definition.Digest,
                     RecapCellOutcome.Updated, contentFactory?.Invoke(index) ?? $"recap-{index}",

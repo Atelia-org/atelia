@@ -704,14 +704,36 @@ public sealed partial class GetterVerticalTests {
             }
             foreach ((HistoryTimelineSelectedRow row, int index) in committed
                          .Select((row, index) => (row, index))) {
-                var slot = new CellSlot(fixture.Recipe.Digest, row.Descriptor.RowId,
-                    fixture.Definition.LogicalColumnId);
+                var work = new RowWork(
+                    new RowWorkKey(
+                        fixture.Journal.BranchRefId,
+                        row.Descriptor.TimelineId,
+                        fixture.Recipe.Digest,
+                        row.Descriptor.RowId
+                    ),
+                    fixture.Recipe.Target,
+                    row.Descriptor.PreviousRowId,
+                    previous.Id,
+                    [new RowWorkAssignment(
+                        fixture.Definition.LogicalColumnId,
+                        null
+                    )]
+                );
+                var slot = new CellSlot(
+                    fixture.Recipe.Digest,
+                    row.Descriptor.RowId,
+                    work.WorkId,
+                    fixture.Definition.LogicalColumnId
+                );
                 RowBuildSpec spec = RowBuildSpec.CreateFull(fixture.Recipe,
                     new RowViewCoordinate(fixture.Journal.BranchRefId, row.Descriptor.TimelineId,
                         row.Descriptor.RowId, fixture.Recipe.Digest,
                         fixture.Recipe.Target.Digest, row.Descriptor.PreviousRowId, previous.Id,
                         bootstrapCompleted: true),
-                    [new RowBuildAssignment.Evaluate(slot)]);
+                    [new RowBuildAssignment.Evaluate(slot)],
+                    work);
+                Assert.IsType<RecapGridRowWorkPutResult.Inserted>(
+                    store.Writer.PutRowWork(work));
                 RecapCellArtifact cell = Assert.IsType<RecapGridCellPutResult.Inserted>(
                     store.Writer.PutCell(spec, RecapCellDraft.Create(slot, fixture.Definition.Digest,
                         RecapCellOutcome.Updated, $"sibling-recap-{index}",

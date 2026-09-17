@@ -365,7 +365,8 @@ public sealed partial class RecapGridContextHandle {
                 previous.Value,
                 selectedPredecessor.Row.Descriptor,
                 selection.Recipe,
-                definitions
+                definitions,
+                out RowWork? previousWork
             ) is not null) {
             return RecapGridProvenanceStatus.Incomplete;
         }
@@ -389,7 +390,12 @@ public sealed partial class RecapGridContextHandle {
                 || found.Value.LogicalColumnId != member.LogicalColumnId
                 || found.Value.DefinitionDigest != member.DefinitionDigest
                 || found.Value.Slot.HistoryRowId
-                    != selectedPredecessor.Row.Descriptor.RowId) {
+                    != selectedPredecessor.Row.Descriptor.RowId
+                || previousWork is { } work
+                    && (work.OrderedAssignments[index].IsEvaluate
+                        ? found.Value.Slot.WorkId != work.WorkId
+                        : member.CellId
+                            != work.OrderedAssignments[index].ReusedCellId)) {
                 return RecapGridProvenanceStatus.Incomplete;
             }
             previousCells[index] = found.Value;

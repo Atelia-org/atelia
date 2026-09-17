@@ -270,7 +270,11 @@ public sealed partial class GetterVerticalTests {
                     1
                 )
             );
-            Assert.Equal("PreviousViewMissing", invalid.Code);
+            // V5 RowWork binds the exact prior. Store detects the deleted
+            // predecessor while loading that work, before Getter can attempt
+            // its own PreviousView lookup.
+            Assert.Equal(RecapGridContextComponent.Store, invalid.Component);
+            Assert.Equal("GridStoreInvalid", invalid.Code);
         }
     }
 
@@ -404,6 +408,40 @@ public sealed partial class GetterVerticalTests {
         using RecapGridContextHandle reopened = OpenGetter(fixture.Journal);
         Assert.IsType<RecapGridContextResolveResult.Invalid>(
             reopened.Resolve(fixture.Journal.ReadCurrentHead()!.Value, 0));
+    }
+
+    [Fact]
+    public async Task RowViewFromAnotherRefFailsClosed() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 1);
+        RowResultId selected;
+        using (RecapGridContextHandle getter = OpenGetter(fixture.Journal)) {
+            selected = Select(
+                getter,
+                fixture.Journal.ReadCurrentHead()!.Value
+            ).SelectedRowResultId;
+        }
+        RefId foreign = new RefId(1);
+        if (foreign == fixture.Journal.BranchRefId) {
+            foreign = new RefId(2);
+        }
+        ExecuteStoreSql(
+            fixture.Path,
+            "PRAGMA foreign_keys=OFF; UPDATE row_view SET ref_id=$ref WHERE row_result_id=$row;",
+            ("$ref", foreign.ToHexString()),
+            ("$row", selected.Value)
+        );
+
+        // V5 binds the RowView Ref to its RowWork with a composite FK. That
+        // Store integrity fence rejects the forged Ref before Getter's own
+        // defense-in-depth Ref comparison needs to run.
+        using RecapGridContextHandle reopened = OpenGetter(fixture.Journal);
+        RecapGridContextResolveResult.Invalid invalid = Assert.IsType<
+            RecapGridContextResolveResult.Invalid>(reopened.Resolve(
+                fixture.Journal.ReadCurrentHead()!.Value,
+                0
+            ));
+        Assert.Equal(RecapGridContextComponent.Store, invalid.Component);
+        Assert.Equal("GridStoreInvalid", invalid.Code);
     }
 
     private static void ForgeActiveRecipe(
