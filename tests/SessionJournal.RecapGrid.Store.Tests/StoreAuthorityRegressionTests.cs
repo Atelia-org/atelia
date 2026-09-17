@@ -454,6 +454,10 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
         RecapRowView predecessor = Assert.IsType<RecapGridRowViewPutResult.Inserted>(
             handle.Writer.PutRowView(predecessorSpec, [predecessorCell])).Winner;
         RowBuildSpec conflicting = StoreFixture.Spec(previous: predecessor);
+        Assert.NotEqual(spec.Work!.WorkId, conflicting.Work!.WorkId);
+        Assert.NotEqual(
+            ((RowBuildAssignment.Evaluate)spec.OrderedAssignments[0]).Slot,
+            ((RowBuildAssignment.Evaluate)conflicting.OrderedAssignments[0]).Slot);
         Assert.IsType<RecapGridRowWorkPutResult.SelectionConflict>(
             handle.Writer.PutRowWork(conflicting.Work!));
         Assert.Equal("RowWorkMismatch", Assert.IsType<RecapGridCellPutResult.Rejected>(
