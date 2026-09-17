@@ -196,7 +196,8 @@ internal static class RecapGridStoreCommands {
             RecapGridStoreMaintenance.UpgradeV4(
                 repository,
                 apply: options.HasFlag("apply"),
-                () => RecapGridV4PartialWorkProofResolver.Resolve(repository)
+                facts => RecapGridV4PartialWorkProofResolver.Resolve(
+                    repository, facts)
             );
         return result switch {
             RecapGridStoreUpgradeResult.DryRunReady ready => Print(
@@ -351,8 +352,8 @@ internal static class RecapGridStoreCommands {
             RecapGridStoreMaintenance.PrepareRestoreV4(
                 repository,
                 backup,
-                () => RecapGridV4PartialWorkProofResolver.ResolveBackup(
-                    repository, backup)
+                facts => RecapGridV4PartialWorkProofResolver.Resolve(
+                    repository, facts)
             );
         return result switch {
             RecapGridStorePrepareRestoreResult.Prepared prepared => Print(
@@ -413,8 +414,8 @@ internal static class RecapGridStoreCommands {
             backup,
             activeWitness,
             backupWitness,
-            () => RecapGridV4PartialWorkProofResolver.ResolveBackup(
-                repository, backup)
+            facts => RecapGridV4PartialWorkProofResolver.Resolve(
+                repository, facts)
         );
         return result switch {
             RecapGridStoreRestoreResult.Restored restored => Print(

@@ -213,6 +213,38 @@ public sealed class RecapGridStorePartialProofException : Exception {
     public RecapGridStorePartialProofFailure Failure { get; }
 }
 
+/// <summary>
+/// Store-owned, read-only V4 facts needed by a higher layer to prove partial
+/// RowWork.  These facts contain no Control or Timeline policy decisions.
+/// </summary>
+public sealed record RecapGridStoreV4PartialProofFacts(
+    IReadOnlyList<RecapGridStoreV4PartialCellFact> PartialCells,
+    IReadOnlyList<RecapGridStoreV4RowFact> Rows
+);
+
+public sealed record RecapGridStoreV4PartialCellFact(
+    string CellId,
+    string RecipeDigest,
+    string HistoryRowId,
+    string LogicalColumnId,
+    string DefinitionDigest
+);
+
+public sealed record RecapGridStoreV4RowFact(
+    string RowResultId,
+    string RefId,
+    string TimelineId,
+    string HistoryRowId,
+    string RecipeDigest,
+    IReadOnlyList<RecapGridStoreV4RowMemberFact> Members
+);
+
+public sealed record RecapGridStoreV4RowMemberFact(
+    string LogicalColumnId,
+    string DefinitionDigest,
+    string CellId
+);
+
 public sealed record RecapGridStoreExportCursor {
     private const byte WireVersion = 2;
     private const byte CellKind = 1;

@@ -350,7 +350,18 @@ public sealed partial class StoreAuthorityRegressionTests : IDisposable {
             RecapGridStoreMaintenance.UpgradeV4(
                 _root,
                 apply: true,
-                () => [proof]));
+                facts => {
+                    RecapGridStoreV4PartialCellFact partial = Assert.Single(
+                        facts.PartialCells);
+                    Assert.Equal(partialCell.Id.Value, partial.CellId);
+                    Assert.Equal(partialCell.Slot.RecipeDigest.Value,
+                        partial.RecipeDigest);
+                    RecapGridStoreV4RowFact prior = Assert.Single(facts.Rows);
+                    Assert.Equal(row.Id.Value, prior.RowResultId);
+                    Assert.Equal(StoreFixture.Column.Value,
+                        Assert.Single(prior.Members).LogicalColumnId);
+                    return [proof];
+                }));
         using RecapGridStoreReaderHandle reader = Assert.IsType<
             RecapGridStoreReaderOpenResult.Opened>(
             RecapGridStoreFactory.OpenReader(_root)).Handle;

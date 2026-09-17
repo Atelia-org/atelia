@@ -102,7 +102,8 @@ public sealed class StoreRestoreTests : IDisposable {
         RecapGridStoreUpgradeResult.Upgraded upgraded = Upgrade();
         RecapGridStorePrepareRestoreResult.Prepared prepared = Prepare(upgraded);
         int resolverCalls = 0;
-        Func<IReadOnlyList<RowWork>> resolver = () => {
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolver = _ => {
             resolverCalls++;
             throw new InvalidOperationException(
                 "A stale physical request must not read proof authorities.");
@@ -231,7 +232,12 @@ public sealed class StoreRestoreTests : IDisposable {
                 partialHistory), previous.Recipe.Target,
             previous.HistoryRowId, prior.Id,
             [new RowWorkAssignment(StoreFixture.Column, null)]);
-        Func<IReadOnlyList<RowWork>> resolver = () => [proof];
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolver = facts => {
+                Assert.Equal(partial.Id.Value,
+                    Assert.Single(facts.PartialCells).CellId);
+                return [proof];
+            };
         RecapGridStoreUpgradeResult.Upgraded upgraded = Assert.IsType<
             RecapGridStoreUpgradeResult.Upgraded>(
             RecapGridStoreMaintenance.UpgradeV4(

@@ -216,6 +216,41 @@ public sealed class StorePublicSurfaceTests : IDisposable {
             ));
     }
 
+    [Fact]
+    public void V4PartialProofBoundaryExposesFactsWithoutSqliteAuthority() {
+        MethodInfo[] methods = typeof(RecapGridStoreMaintenance).GetMethods(
+            BindingFlags.Public | BindingFlags.Static);
+        foreach ((string name, int count) in new[] {
+                     (nameof(RecapGridStoreMaintenance.UpgradeV4), 3),
+                     (nameof(RecapGridStoreMaintenance.PrepareRestoreV4), 3),
+                     (nameof(RecapGridStoreMaintenance.RestoreV4), 5)
+                 }) {
+            MethodInfo factsAware = Assert.Single(methods,
+                method => method.Name == name
+                    && method.GetParameters().Length == count
+                    && IsFactsResolver(method.GetParameters()[^1]
+                        .ParameterType));
+            Assert.DoesNotContain("Sqlite", factsAware.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Equal(
+            typeof(IReadOnlyList<RecapGridStoreV4PartialCellFact>),
+            typeof(RecapGridStoreV4PartialProofFacts)
+                .GetProperty(nameof(
+                    RecapGridStoreV4PartialProofFacts.PartialCells))!
+                .PropertyType);
+        Assert.Equal(
+            typeof(IReadOnlyList<RecapGridStoreV4RowMemberFact>),
+            typeof(RecapGridStoreV4RowFact)
+                .GetProperty(nameof(RecapGridStoreV4RowFact.Members))!
+                .PropertyType);
+
+        static bool IsFactsResolver(Type type) => type.IsGenericType
+            && type.GenericTypeArguments.Length == 2
+            && type.GenericTypeArguments[0]
+                == typeof(RecapGridStoreV4PartialProofFacts);
+    }
+
     public void Dispose() {
         if (Directory.Exists(_root)) {
             Directory.Delete(_root, recursive: true);

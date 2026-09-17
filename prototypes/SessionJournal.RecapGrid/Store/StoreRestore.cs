@@ -6,12 +6,20 @@ public static partial class RecapGridStoreMaintenance {
     public static RecapGridStorePrepareRestoreResult PrepareRestoreV4(
         string repositoryPath,
         string backupPath
-    ) => PrepareRestoreV4(repositoryPath, backupPath, static () => []);
+    ) => PrepareRestoreV4(repositoryPath, backupPath, static _ => []);
 
     public static RecapGridStorePrepareRestoreResult PrepareRestoreV4(
         string repositoryPath,
         string backupPath,
         Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs
+    ) => PrepareRestoreV4(repositoryPath, backupPath,
+        _ => resolvePartialWorkProofs());
+
+    public static RecapGridStorePrepareRestoreResult PrepareRestoreV4(
+        string repositoryPath,
+        string backupPath,
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs
     ) {
         ArgumentNullException.ThrowIfNull(resolvePartialWorkProofs);
         try {
@@ -41,14 +49,18 @@ public static partial class RecapGridStoreMaintenance {
                 return new RecapGridStorePrepareRestoreResult.UnsupportedSchema(
                     "backup", backupSchema);
             }
-            IReadOnlyList<RowWork> partialWorkProofs =
-                resolvePartialWorkProofs();
+            IReadOnlyList<RowWork>? resolvedPartialWorkProofs = null;
+            IReadOnlyList<RowWork> ResolveOnce(
+                RecapGridStoreV4PartialProofFacts facts
+            ) => resolvedPartialWorkProofs ??=
+                resolvePartialWorkProofs(facts);
             RecapGridStoreUpgradeEvidence backupEvidence = VerifyV4(
-                paths, backup, partialWorkProofs).Evidence;
+                paths, backup, ResolveOnce).Evidence;
             int activeSchema = ReadSchema(paths.DatabasePath);
             if (activeSchema == 4) {
                 RecapGridStoreUpgradeEvidence restored = VerifyV4(
-                    paths, paths.DatabasePath, partialWorkProofs).Evidence;
+                    paths, paths.DatabasePath,
+                    ResolveOnce).Evidence;
                 if (restored == backupEvidence) {
                     return new RecapGridStorePrepareRestoreResult
                         .AlreadyRestored(backup, restored);
@@ -91,7 +103,7 @@ public static partial class RecapGridStoreMaintenance {
         RecapGridStorePhysicalWitness expectedActive,
         RecapGridStorePhysicalWitness expectedBackup
     ) => RestoreV4Core(repositoryPath, backupPath, expectedActive,
-        expectedBackup, static () => [], StoreRestoreTestHooks.None);
+        expectedBackup, static _ => [], StoreRestoreTestHooks.None);
 
     public static RecapGridStoreRestoreResult RestoreV4(
         string repositoryPath,
@@ -99,6 +111,17 @@ public static partial class RecapGridStoreMaintenance {
         RecapGridStorePhysicalWitness expectedActive,
         RecapGridStorePhysicalWitness expectedBackup,
         Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs
+    ) => RestoreV4Core(repositoryPath, backupPath, expectedActive,
+        expectedBackup, _ => resolvePartialWorkProofs(),
+        StoreRestoreTestHooks.None);
+
+    public static RecapGridStoreRestoreResult RestoreV4(
+        string repositoryPath,
+        string backupPath,
+        RecapGridStorePhysicalWitness expectedActive,
+        RecapGridStorePhysicalWitness expectedBackup,
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs
     ) => RestoreV4Core(repositoryPath, backupPath, expectedActive,
         expectedBackup, resolvePartialWorkProofs, StoreRestoreTestHooks.None);
 
@@ -110,14 +133,15 @@ public static partial class RecapGridStoreMaintenance {
         Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs,
         StoreRestoreTestHooks hooks
     ) => RestoreV4Core(repositoryPath, backupPath, expectedActive,
-        expectedBackup, resolvePartialWorkProofs, hooks);
+        expectedBackup, _ => resolvePartialWorkProofs(), hooks);
 
     private static RecapGridStoreRestoreResult RestoreV4Core(
         string repositoryPath,
         string backupPath,
         RecapGridStorePhysicalWitness expectedActive,
         RecapGridStorePhysicalWitness expectedBackup,
-        Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs,
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs,
         StoreRestoreTestHooks hooks
     ) {
         ArgumentNullException.ThrowIfNull(expectedActive);
@@ -164,10 +188,13 @@ public static partial class RecapGridStoreMaintenance {
                 return new RecapGridStoreRestoreResult.UnsupportedSchema(
                     "backup", backupSchema);
             }
-            IReadOnlyList<RowWork> partialWorkProofs =
-                resolvePartialWorkProofs();
+            IReadOnlyList<RowWork>? resolvedPartialWorkProofs = null;
+            IReadOnlyList<RowWork> ResolveOnce(
+                RecapGridStoreV4PartialProofFacts facts
+            ) => resolvedPartialWorkProofs ??=
+                resolvePartialWorkProofs(facts);
             RecapGridStoreUpgradeEvidence backupEvidence = VerifyV4(
-                paths, backup, partialWorkProofs).Evidence;
+                paths, backup, ResolveOnce).Evidence;
             if (backupEvidence.Witness != expectedBackup) {
                 return new RecapGridStoreRestoreResult.BackupChanged(
                     backupEvidence.Witness);
@@ -179,7 +206,8 @@ public static partial class RecapGridStoreMaintenance {
                         StoreDurableFiles.ComputeWitness(paths));
                 }
                 RecapGridStoreUpgradeEvidence restored = VerifyV4(
-                    paths, paths.DatabasePath, partialWorkProofs).Evidence;
+                    paths, paths.DatabasePath,
+                    ResolveOnce).Evidence;
                 if (restored == backupEvidence) {
                     return new RecapGridStoreRestoreResult.AlreadyRestored(
                         backup, restored);
@@ -206,14 +234,14 @@ public static partial class RecapGridStoreMaintenance {
                 File.Copy(backup, temporary, overwrite: false);
                 StoreDurableFiles.FlushFile(paths, temporary);
                 RecapGridStoreUpgradeEvidence temporaryEvidence = VerifyV4(
-                    paths, temporary, partialWorkProofs).Evidence;
+                    paths, temporary, ResolveOnce).Evidence;
                 if (temporaryEvidence != backupEvidence) {
                     throw new InvalidDataException(
                         "The V4 restore temporary does not match its backup.");
                 }
                 hooks.AfterTempVerified?.Invoke();
                 RecapGridStoreUpgradeEvidence backupBeforeReplace = VerifyV4(
-                    paths, backup, partialWorkProofs).Evidence;
+                    paths, backup, ResolveOnce).Evidence;
                 if (backupBeforeReplace != backupEvidence
                     || backupBeforeReplace.Witness != expectedBackup) {
                     return new RecapGridStoreRestoreResult.BackupChanged(
@@ -238,7 +266,7 @@ public static partial class RecapGridStoreMaintenance {
                 StoreDurableFiles.FlushDirectory(paths.RootPath);
                 hooks.AfterDirectoryFsyncBeforeVerify?.Invoke();
                 RecapGridStoreUpgradeEvidence restored = VerifyV4(
-                    paths, paths.DatabasePath, partialWorkProofs).Evidence;
+                    paths, paths.DatabasePath, ResolveOnce).Evidence;
                 if (restored != backupEvidence) {
                     throw new InvalidDataException(
                         "The restored V4 Store does not match its backup.");
@@ -251,7 +279,7 @@ public static partial class RecapGridStoreMaintenance {
                 && !IsFatal(exception)) {
                 return new RecapGridStoreRestoreResult.CommitIndeterminate(
                     backup, backupEvidence,
-                    ObserveRestoreActive(paths, partialWorkProofs),
+                    ObserveRestoreActive(paths, ResolveOnce),
                     "inspect-active-before-any-restore-or-upgrade");
             }
             finally {
@@ -344,7 +372,8 @@ public static partial class RecapGridStoreMaintenance {
 
     private static RecapGridStoreUpgradeObservation ObserveRestoreActive(
         StorePaths paths,
-        IReadOnlyList<RowWork> partialWorkProofs
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs
     ) {
         int? schema = null;
         RecapGridStoreIdentity? identity = null;
@@ -354,7 +383,7 @@ public static partial class RecapGridStoreMaintenance {
                 schema = ReadSchema(paths.DatabasePath);
                 if (schema == 4) {
                     RecapGridStoreUpgradeEvidence evidence = VerifyV4(paths,
-                        paths.DatabasePath, partialWorkProofs).Evidence;
+                        paths.DatabasePath, resolvePartialWorkProofs).Evidence;
                     identity = evidence.Identity;
                     witness = evidence.Witness;
                 }

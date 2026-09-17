@@ -13,7 +13,7 @@ public static partial class RecapGridStoreMaintenance {
     public static RecapGridStoreUpgradeResult UpgradeV4(
         string repositoryPath,
         bool apply
-    ) => UpgradeV4Core(repositoryPath, apply, static () => [],
+    ) => UpgradeV4Core(repositoryPath, apply, static _ => [],
         StoreUpgradeTestHooks.None);
 
     /// <summary>
@@ -25,6 +25,21 @@ public static partial class RecapGridStoreMaintenance {
         string repositoryPath,
         bool apply,
         Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs
+    ) => UpgradeV4Core(repositoryPath, apply,
+        _ => resolvePartialWorkProofs(),
+        StoreUpgradeTestHooks.None);
+
+    /// <summary>
+    /// Supplies Store-owned V4 structural facts after the exclusive gate is
+    /// acquired. The caller still owns Control/Timeline scope and prior
+    /// selection; Store revalidates the returned RowWork against the same
+    /// V4 snapshot.
+    /// </summary>
+    public static RecapGridStoreUpgradeResult UpgradeV4(
+        string repositoryPath,
+        bool apply,
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs
     ) => UpgradeV4Core(repositoryPath, apply, resolvePartialWorkProofs,
         StoreUpgradeTestHooks.None);
 
@@ -33,13 +48,15 @@ public static partial class RecapGridStoreMaintenance {
         bool apply,
         Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs,
         StoreUpgradeTestHooks hooks
-    ) => UpgradeV4Core(repositoryPath, apply, resolvePartialWorkProofs,
+    ) => UpgradeV4Core(repositoryPath, apply,
+        _ => resolvePartialWorkProofs(),
         hooks);
 
     private static RecapGridStoreUpgradeResult UpgradeV4Core(
         string repositoryPath,
         bool apply,
-        Func<IReadOnlyList<RowWork>> resolvePartialWorkProofs,
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs,
         StoreUpgradeTestHooks hooks
     ) {
         ArgumentNullException.ThrowIfNull(resolvePartialWorkProofs);
@@ -72,8 +89,11 @@ public static partial class RecapGridStoreMaintenance {
                 return new RecapGridStoreUpgradeResult.UnsupportedSchema(
                     version);
             }
-            IReadOnlyList<RowWork> partialWorkProofs =
-                resolvePartialWorkProofs();
+            IReadOnlyList<RowWork>? resolvedPartialWorkProofs = null;
+            IReadOnlyList<RowWork> ResolveOnce(
+                RecapGridStoreV4PartialProofFacts facts
+            ) => resolvedPartialWorkProofs ??=
+                resolvePartialWorkProofs(facts);
             string temporary = Path.Combine(paths.RootPath,
                 $".grid.upgrade-v5.{Guid.NewGuid():N}.sqlite");
             paths.RequireSafe(temporary);
@@ -88,7 +108,7 @@ public static partial class RecapGridStoreMaintenance {
                     using (SqliteConnection source = OpenRaw(paths.DatabasePath,
                                readOnly: true)) {
                         dryRunSnapshot = ReadV4Snapshot(source,
-                            partialWorkProofs);
+                            ResolveOnce);
                     }
                     BuildV5Replacement(temporary, dryRunSnapshot);
                     _ = VerifyV5(paths, temporary);
@@ -107,7 +127,7 @@ public static partial class RecapGridStoreMaintenance {
                 StoreDurableFiles.FlushFile(paths, backup);
                 StoreDurableFiles.FlushDirectory(paths.RootPath);
                 VerifiedV4 verifiedBackup = VerifyV4(
-                    paths, backup, partialWorkProofs);
+                    paths, backup, ResolveOnce);
                 backupEvidence = verifiedBackup.Evidence;
                 hooks.AfterBackupDurable?.Invoke();
                 BuildV5Replacement(temporary, verifiedBackup.Snapshot);
@@ -128,7 +148,7 @@ public static partial class RecapGridStoreMaintenance {
                         "inspect-active-and-backup-before-a-new-upgrade");
                 }
                 VerifiedV4 backupBeforeReplace = VerifyV4(paths, backup,
-                    partialWorkProofs);
+                    ResolveOnce);
                 if (backupBeforeReplace.Evidence != backupEvidence) {
                     bool cleaned = TryDeleteUpgradeTemporary(temporary);
                     cleanupNeeded = false;
@@ -153,7 +173,7 @@ public static partial class RecapGridStoreMaintenance {
                         "inspect-active-backup-and-sidecar-before-a-new-upgrade");
                 }
                 VerifiedV4 activeBeforeReplace = VerifyV4(paths,
-                    paths.DatabasePath, partialWorkProofs);
+                    paths.DatabasePath, ResolveOnce);
                 if (activeBeforeReplace.Evidence != backupEvidence) {
                     bool cleaned = TryDeleteUpgradeTemporary(temporary);
                     cleanupNeeded = false;
@@ -243,7 +263,8 @@ public static partial class RecapGridStoreMaintenance {
     private static VerifiedV4 VerifyV4(
         StorePaths paths,
         string path,
-        IReadOnlyList<RowWork> partialWorkProofs
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs
     ) {
         if (!StoreDurableFiles.RegularFileExists(paths, path)) {
             throw new InvalidDataException("V4 backup is absent.");
@@ -252,7 +273,8 @@ public static partial class RecapGridStoreMaintenance {
         if (ReadV4Version(source) != 4) {
             throw new InvalidDataException("Backup is not a V4 Store.");
         }
-        V4Snapshot snapshot = ReadV4Snapshot(source, partialWorkProofs);
+        V4Snapshot snapshot = ReadV4Snapshot(source,
+            resolvePartialWorkProofs);
         var evidence = new RecapGridStoreUpgradeEvidence(
             new RecapGridStoreIdentity(new RecapGridStoreInstanceId(snapshot.InstanceId), 4),
             snapshot.Cells.Count,
@@ -346,8 +368,72 @@ public static partial class RecapGridStoreMaintenance {
 
     private static V4Snapshot ReadV4Snapshot(
         SqliteConnection source,
-        IReadOnlyList<RowWork> partialWorkProofs
+        Func<RecapGridStoreV4PartialProofFacts, IReadOnlyList<RowWork>>
+            resolvePartialWorkProofs
     ) {
+        V4ProofSource proofSource = ReadV4ProofSource(source);
+        IReadOnlyDictionary<string, V4Cell> cells = proofSource.Cells;
+        IReadOnlyDictionary<string, V4Row> rows = proofSource.Rows;
+        IReadOnlySet<string> referencedCells = proofSource.ReferencedCells;
+        IReadOnlyList<RowWork> partialWorkProofs =
+            resolvePartialWorkProofs(ToPublicV4PartialProofFacts(proofSource));
+        IReadOnlyList<V4PartialWork> partialWorks = RecoverPartialWorks(
+            cells,
+            rows,
+            referencedCells,
+            partialWorkProofs
+        );
+        var fulfilled = new List<V4Fulfilled>();
+        using (SqliteCommand command = source.CreateCommand()) {
+            command.CommandText = """
+                SELECT ref_id,timeline_id,timeline_head_generation,
+                       through_history_row_id,recipe_digest,row_result_id
+                FROM fulfilled_view_ref;
+                """;
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) {
+                var value = new V4Fulfilled(reader.GetString(0), reader.GetString(1),
+                    reader.GetInt64(2), reader.GetString(3), reader.GetString(4),
+                    reader.GetString(5));
+                if (!rows.ContainsKey(value.RowResultId)) {
+                    throw new InvalidDataException("V4 fulfillment lacks its row view.");
+                }
+                fulfilled.Add(value);
+            }
+        }
+        string instance;
+        long cellCount;
+        long rowCount;
+        long memberCount;
+        long fulfilledCount;
+        using (SqliteCommand command = source.CreateCommand()) {
+            command.CommandText = """
+                SELECT store_instance_id,cell_count,row_view_count,
+                       row_view_member_count,fulfilled_view_count
+                FROM store_metadata WHERE singleton=1;
+                """;
+            using SqliteDataReader reader = command.ExecuteReader();
+            if (!reader.Read()) {
+                throw new InvalidDataException("V4 Store metadata is invalid.");
+            }
+            instance = reader.GetString(0);
+            cellCount = reader.GetInt64(1);
+            rowCount = reader.GetInt64(2);
+            memberCount = reader.GetInt64(3);
+            fulfilledCount = reader.GetInt64(4);
+            if (reader.Read()) {
+                throw new InvalidDataException("V4 Store metadata is invalid.");
+            }
+        }
+        if (cellCount != cells.Count || rowCount != rows.Count
+            || memberCount != rows.Values.Sum(static row => row.Members.Count)
+            || fulfilledCount != fulfilled.Count) {
+            throw new InvalidDataException("V4 Store counters differ from rows.");
+        }
+        return new V4Snapshot(instance, cells, rows, fulfilled, partialWorks);
+    }
+
+    private static V4ProofSource ReadV4ProofSource(SqliteConnection source) {
         ValidateV4Identity(source);
         var cells = new Dictionary<string, V4Cell>(StringComparer.Ordinal);
         using (SqliteCommand command = source.CreateCommand()) {
@@ -421,60 +507,33 @@ public static partial class RecapGridStoreMaintenance {
                 throw new InvalidDataException("V4 row has no members.");
             }
         }
-        IReadOnlyList<V4PartialWork> partialWorks = RecoverPartialWorks(
-            cells,
-            rows,
-            referencedCells,
-            partialWorkProofs
-        );
-        var fulfilled = new List<V4Fulfilled>();
-        using (SqliteCommand command = source.CreateCommand()) {
-            command.CommandText = """
-                SELECT ref_id,timeline_id,timeline_head_generation,
-                       through_history_row_id,recipe_digest,row_result_id
-                FROM fulfilled_view_ref;
-                """;
-            using SqliteDataReader reader = command.ExecuteReader();
-            while (reader.Read()) {
-                var value = new V4Fulfilled(reader.GetString(0), reader.GetString(1),
-                    reader.GetInt64(2), reader.GetString(3), reader.GetString(4),
-                    reader.GetString(5));
-                if (!rows.ContainsKey(value.RowResultId)) {
-                    throw new InvalidDataException("V4 fulfillment lacks its row view.");
-                }
-                fulfilled.Add(value);
-            }
-        }
-        string instance;
-        long cellCount;
-        long rowCount;
-        long memberCount;
-        long fulfilledCount;
-        using (SqliteCommand command = source.CreateCommand()) {
-            command.CommandText = """
-                SELECT store_instance_id,cell_count,row_view_count,
-                       row_view_member_count,fulfilled_view_count
-                FROM store_metadata WHERE singleton=1;
-                """;
-            using SqliteDataReader reader = command.ExecuteReader();
-            if (!reader.Read()) {
-                throw new InvalidDataException("V4 Store metadata is invalid.");
-            }
-            instance = reader.GetString(0);
-            cellCount = reader.GetInt64(1);
-            rowCount = reader.GetInt64(2);
-            memberCount = reader.GetInt64(3);
-            fulfilledCount = reader.GetInt64(4);
-            if (reader.Read()) {
-                throw new InvalidDataException("V4 Store metadata is invalid.");
-            }
-        }
-        if (cellCount != cells.Count || rowCount != rows.Count
-            || memberCount != rows.Values.Sum(static row => row.Members.Count)
-            || fulfilledCount != fulfilled.Count) {
-            throw new InvalidDataException("V4 Store counters differ from rows.");
-        }
-        return new V4Snapshot(instance, cells, rows, fulfilled, partialWorks);
+        return new V4ProofSource(cells, rows, referencedCells);
+    }
+
+    private static RecapGridStoreV4PartialProofFacts
+        ToPublicV4PartialProofFacts(V4ProofSource source) {
+        RecapGridStoreV4PartialCellFact[] partial = source.Cells.Values
+            .Where(cell => !source.ReferencedCells.Contains(cell.Id))
+            .OrderBy(static cell => cell.RecipeDigest, StringComparer.Ordinal)
+            .ThenBy(static cell => cell.HistoryRowId, StringComparer.Ordinal)
+            .ThenBy(static cell => cell.LogicalColumnId,
+                StringComparer.Ordinal)
+            .Select(static cell => new RecapGridStoreV4PartialCellFact(
+                cell.Id, cell.RecipeDigest, cell.HistoryRowId,
+                cell.LogicalColumnId, cell.DefinitionDigest))
+            .ToArray();
+        RecapGridStoreV4RowFact[] rows = source.Rows.Values
+            .OrderBy(static row => row.Id, StringComparer.Ordinal)
+            .Select(static row => new RecapGridStoreV4RowFact(
+                row.Id, row.RefId, row.TimelineId, row.HistoryRowId,
+                row.RecipeDigest,
+                Array.AsReadOnly(row.Members.Select(static member =>
+                    new RecapGridStoreV4RowMemberFact(
+                        member.LogicalColumnId, member.DefinitionDigest,
+                        member.CellId)).ToArray())))
+            .ToArray();
+        return new RecapGridStoreV4PartialProofFacts(
+            Array.AsReadOnly(partial), Array.AsReadOnly(rows));
     }
 
     private static IReadOnlyList<V4PartialWork> RecoverPartialWorks(
@@ -916,6 +975,12 @@ public static partial class RecapGridStoreMaintenance {
     private sealed record V4PartialWork(
         RowWork Work,
         IReadOnlyList<V4Cell> Cells
+    );
+
+    private sealed record V4ProofSource(
+        IReadOnlyDictionary<string, V4Cell> Cells,
+        IReadOnlyDictionary<string, V4Row> Rows,
+        IReadOnlySet<string> ReferencedCells
     );
 
 }

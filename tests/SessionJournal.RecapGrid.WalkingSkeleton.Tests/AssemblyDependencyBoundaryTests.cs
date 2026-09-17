@@ -154,7 +154,8 @@ public sealed class AssemblyDependencyBoundaryTests {
                 "Atelia.SessionJournal.RecapGrid.Getter.Tests",
                 "Atelia.SessionJournal.RecapGrid.Hosting.Tests",
                 "Atelia.SessionJournal.RecapGrid.Online.Tests",
-                "Atelia.SessionJournal.RecapGrid.AgentControl.Tests"
+                "Atelia.SessionJournal.RecapGrid.AgentControl.Tests",
+                "Atelia.SessionJournal.RecapGrid.Abstractions.Tests"
             ],
             recapGridDocument.Descendants("InternalsVisibleTo")
                 .Select(
@@ -171,9 +172,16 @@ public sealed class AssemblyDependencyBoundaryTests {
                 ?.Contains("PublicSurface", StringComparison.Ordinal) is true
         );
         Assert.Equal(
-            "Atelia.SessionJournal.RecapGrid.Store.SchemaV4.sql",
-            (string?)recapGridDocument.Descendants("EmbeddedResource")
-                .Single().Attribute("LogicalName")
+            [
+                "Atelia.SessionJournal.RecapGrid.Store.SchemaV4.sql",
+                "Atelia.SessionJournal.RecapGrid.Store.SchemaV5.sql"
+            ],
+            recapGridDocument.Descendants("EmbeddedResource")
+                .Select(static element =>
+                    (string?)element.Attribute("LogicalName")
+                        ?? throw new InvalidDataException(
+                            "EmbeddedResource LogicalName is required."))
+                .ToArray()
         );
         Assert.Equal(
             "true",
