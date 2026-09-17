@@ -1052,7 +1052,8 @@ internal sealed class SqliteRecapGridStore {
     private static RowWork? ReadRowWorkByIdCore(
         SqliteConnection connection,
         SqliteTransaction? transaction,
-        RowWorkId workId
+        RowWorkId workId,
+        bool validateReferences = true
     ) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -1071,7 +1072,8 @@ internal sealed class SqliteRecapGridStore {
         RowWork work = ReadAndValidateRowWorkPhysical(
             connection,
             transaction,
-            physical
+            physical,
+            validateReferences
         );
         if (work.WorkId != workId) {
             throw new InvalidDataException(
@@ -1098,7 +1100,8 @@ internal sealed class SqliteRecapGridStore {
     private static RowWork ReadAndValidateRowWorkPhysical(
         SqliteConnection connection,
         SqliteTransaction? transaction,
-        RowWorkPhysical physical
+        RowWorkPhysical physical,
+        bool validateReferences = true
     ) {
         RowWork work = RowWork.DecodeCanonical(physical.Canonical);
         if (!string.Equals(work.WorkId.Value, physical.WorkId,
@@ -1166,6 +1169,10 @@ internal sealed class SqliteRecapGridStore {
             }
         }
 
+        if (!validateReferences) {
+            return work;
+        }
+
         for (int index = 0; index < work.OrderedAssignments.Count; index++) {
             RowWorkAssignment assignment = work.OrderedAssignments[index];
             if (assignment.ReusedCellId is not { } reusedCellId) {
@@ -1186,6 +1193,19 @@ internal sealed class SqliteRecapGridStore {
                     "A RowWork reuse source differs from its frozen assignment."
                 );
             }
+            RowWorkId sourceWorkId = source.Slot.WorkId
+                ?? throw new InvalidDataException(
+                    "A RowWork reuse source is missing its own RowWork identity."
+                );
+            RowWork sourceWork = ReadRowWorkByIdCore(
+                connection,
+                transaction,
+                sourceWorkId,
+                validateReferences: false
+            ) ?? throw new InvalidDataException(
+                "A RowWork reuse source references a missing source RowWork."
+            );
+            ValidateCellAgainstWork(source, sourceWork);
         }
 
         if (work.PreviousRowResultId is { } previousResult) {
@@ -2215,43 +2235,85 @@ internal sealed class SqliteRecapGridStore {
         SqliteConnection connection,
         SqliteTransaction transaction
     ) {
-        string? after = null;
+        using (SqliteCommand legacy = connection.CreateCommand()) {
+            legacy.Transaction = transaction;
+            legacy.CommandText =
+                "SELECT 1 FROM cell_artifact WHERE work_id IS NULL LIMIT 1;";
+            if (legacy.ExecuteScalar() is not null) {
+                throw new InvalidDataException(
+                    "A V5 Cell is missing its RowWork identity."
+                );
+            }
+        }
+
+        WorkCellKey? after = null;
+        RowWorkId? currentWorkId = null;
+        RowWork? currentWork = null;
         while (true) {
-            List<CellId> page = ReadIdPage<CellId>(
-                connection,
-                transaction,
-                "cell_artifact",
-                "cell_id",
-                after,
-                static value => new CellId(value)
+            using SqliteCommand command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = after is null
+                ? """
+                    SELECT work_id,logical_column_id,cell_id
+                    FROM cell_artifact
+                    ORDER BY work_id,logical_column_id LIMIT 128;
+                    """
+                : """
+                    SELECT work_id,logical_column_id,cell_id
+                    FROM cell_artifact
+                    WHERE (work_id,logical_column_id) > ($work,$column)
+                    ORDER BY work_id,logical_column_id LIMIT 128;
+                    """;
+            if (after is not null) {
+                command.Parameters.AddWithValue("$work", after.WorkId.Value);
+                command.Parameters.AddWithValue(
+                    "$column",
+                    after.LogicalColumnId.Value
+                );
+            }
+            var page = new List<WorkCellKey>(
+                RecapGridStoreLimits.MaximumPageItems
             );
-            foreach (CellId cellId in page) {
+            using (SqliteDataReader reader = command.ExecuteReader()) {
+                while (reader.Read()) {
+                    page.Add(DecodeStoredValue(() => new WorkCellKey(
+                        new RowWorkId(reader.GetString(0)),
+                        new LogicalColumnId(reader.GetString(1)),
+                        new CellId(reader.GetString(2))
+                    )));
+                }
+            }
+            foreach (WorkCellKey key in page) {
                 RecapCellArtifact cell = ReadCellByIdCore(
                     connection,
                     transaction,
-                    cellId
+                    key.CellId
                 )
                     ?? throw new InvalidDataException(
                         "A Cell disappeared during verification."
                     );
-                if (cell.Slot.WorkId is not { } workId) {
+                if (cell.Slot.WorkId != key.WorkId
+                    || cell.LogicalColumnId != key.LogicalColumnId) {
                     throw new InvalidDataException(
-                        "A V5 Cell is missing its RowWork identity."
+                        "A Cell differs from its verification key."
                     );
                 }
-                RowWork work = ReadRowWorkByIdCore(
-                    connection,
-                    transaction,
-                    workId
-                ) ?? throw new InvalidDataException(
-                    "A Cell references a missing RowWork."
-                );
-                ValidateCellAgainstWork(cell, work);
+                if (currentWorkId != key.WorkId) {
+                    currentWork = ReadRowWorkByIdCore(
+                        connection,
+                        transaction,
+                        key.WorkId
+                    ) ?? throw new InvalidDataException(
+                        "A Cell references a missing RowWork."
+                    );
+                    currentWorkId = key.WorkId;
+                }
+                ValidateCellAgainstWork(cell, currentWork!);
             }
             if (page.Count < RecapGridStoreLimits.MaximumPageItems) {
                 return;
             }
-            after = page[^1].Value;
+            after = page[^1];
         }
     }
 
@@ -2517,6 +2579,9 @@ internal sealed class SqliteRecapGridStore {
                     "A RowView member differs from its frozen RowWork source."
                 );
             }
+            if (assignment.IsEvaluate) {
+                ValidateCellAgainstWork(cell, work);
+            }
         }
     }
 
@@ -2552,6 +2617,12 @@ internal sealed class SqliteRecapGridStore {
         string? PreviousRowResult,
         byte[] ProducerTarget,
         byte[] Canonical
+    );
+
+    private sealed record WorkCellKey(
+        RowWorkId WorkId,
+        LogicalColumnId LogicalColumnId,
+        CellId CellId
     );
 
     // Translate malformed SQL values only; public input validation stays outside this boundary.

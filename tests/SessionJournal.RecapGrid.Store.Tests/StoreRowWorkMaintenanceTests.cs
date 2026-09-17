@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Atelia.SessionJournal.HistoryTimeline;
 using Microsoft.Data.Sqlite;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Atelia.SessionJournal.RecapGrid.Store.Tests;
 
@@ -11,6 +13,11 @@ public sealed class StoreRowWorkMaintenanceTests : IDisposable {
         "atelia-recap-grid-row-work-maintenance",
         Guid.NewGuid().ToString("N")
     );
+    private readonly ITestOutputHelper _output;
+
+    public StoreRowWorkMaintenanceTests(ITestOutputHelper output) {
+        _output = output;
+    }
 
     [Fact]
     public void VerifyAndExportCloseMixedWorkProducerPriorAndReuseFacts() {
@@ -125,6 +132,35 @@ public sealed class StoreRowWorkMaintenanceTests : IDisposable {
     }
 
     [Fact]
+    public void RowViewPhaseResumeRejectsEvaluateCellWithWrongRoot() {
+        MixedFixture fixture = CreateMixedFixture();
+        Execute($"UPDATE cell_artifact SET recipe_digest='{new string('b', 64)}' WHERE cell_id='{fixture.OverlayOne.Id.Value}';");
+
+        RecapGridStoreExportResult result = RecapGridStoreMaintenance.Export(
+            _root,
+            RecapGridStoreExportCursor.CreateId(
+                "row-view",
+                new string('0', 32)
+            )
+        );
+
+        Assert.IsType<RecapGridStoreExportResult.Invalid>(result);
+    }
+
+    [Fact]
+    public void RowWorkPhaseResumeRejectsReuseSourceWithoutOwnWork() {
+        MixedFixture fixture = CreateMixedFixture();
+        Execute($"UPDATE cell_artifact SET work_id=NULL WHERE cell_id='{fixture.BaseTwo.Id.Value}';");
+
+        RecapGridStoreExportResult result = RecapGridStoreMaintenance.Export(
+            _root,
+            RecapGridStoreExportCursor.CreateRowWork(new string('0', 64))
+        );
+
+        Assert.IsType<RecapGridStoreExportResult.Invalid>(result);
+    }
+
+    [Fact]
     public void ExportPagesAll257ZeroCellWorksWithTypedV2Cursor() {
         Create();
         using (RecapGridStoreHandle handle = Open()) {
@@ -190,6 +226,69 @@ public sealed class StoreRowWorkMaintenanceTests : IDisposable {
         Assert.Equal(186, Decode(cursors[2]).Length);
         Assert.Equal(66, Decode(cursors[3]).Length);
         Assert.All(cursors, static cursor => Assert.Equal(2, Decode(cursor)[0]));
+    }
+
+    [Theory]
+    [InlineData(
+        "AgFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYQ",
+        1,
+        34
+    )]
+    [InlineData(
+        "AgJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYg",
+        2,
+        34
+    )]
+    [InlineData(
+        "AgNjY2NjY2NjY2NjY2NjY2NjZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQAAAAAAAAAB2VlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm",
+        3,
+        186
+    )]
+    public void ParsesPinnedPreRowWorkV2Cursor(
+        string wire,
+        int expectedKind,
+        int expectedLength
+    ) {
+        RecapGridStoreExportCursor cursor =
+            RecapGridStoreExportCursor.Parse(wire);
+
+        Assert.Equal(wire, cursor.Value);
+        Assert.Equal(expectedKind, Decode(cursor)[1]);
+        Assert.Equal(expectedLength, Decode(cursor).Length);
+    }
+
+    [Fact]
+    public void VerifyAndDrainExport4097ActualWorkCellRows() {
+        const int rowCount = 4097;
+        Create();
+        InsertScaleRows(rowCount);
+
+        Stopwatch verify = Stopwatch.StartNew();
+        Assert.IsType<RecapGridStoreVerifyResult.Healthy>(
+            RecapGridStoreMaintenance.Verify(_root)
+        );
+        verify.Stop();
+
+        Stopwatch export = Stopwatch.StartNew();
+        IReadOnlyList<RecapGridStoreExportItem> items = DrainExport(
+            includeContent: false
+        );
+        export.Stop();
+
+        Assert.Equal(rowCount,
+            items.Count(static item => item.Kind == "row-work"));
+        Assert.Equal(rowCount,
+            items.Count(static item => item.Kind == "cell"));
+        Assert.Equal(rowCount,
+            items.Count(static item => item.Kind == "row-view"));
+        Assert.DoesNotContain(items,
+            static item => item.Kind == "fulfilled");
+        _output.WriteLine(
+            "4097 actual rows: verify={0} ms; drain export={1} ms; items={2}",
+            verify.ElapsedMilliseconds,
+            export.ElapsedMilliseconds,
+            items.Count
+        );
     }
 
     private MixedFixture CreateMixedFixture() {
@@ -287,6 +386,88 @@ public sealed class StoreRowWorkMaintenanceTests : IDisposable {
             );
         } while (true);
         return items;
+    }
+
+    private void InsertScaleRows(int count) {
+        GridBuildRecipe recipe = StoreFixture.Recipe();
+        Directory.CreateDirectory(_root);
+        using var connection = new SqliteConnection(
+            $"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False"
+        );
+        connection.Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO row_work(work_id,ref_id,timeline_id,root_recipe_digest,
+                history_row_id,previous_history_row_id,previous_row_result_id,
+                producer_target,canonical)
+            VALUES($work,$ref,$timeline,$root,$history,NULL,NULL,$target,$canonical);
+            INSERT INTO row_work_member(work_id,column_ordinal,logical_column_id,
+                definition_digest,reused_cell_id)
+            VALUES($work,0,$column,$definition,NULL);
+            INSERT INTO cell_artifact(cell_id,recipe_digest,history_row_id,work_id,
+                logical_column_id,definition_digest,outcome,content)
+            VALUES($cell,$root,$history,$work,$column,$definition,0,'scale');
+            INSERT INTO row_view(row_result_id,ref_id,timeline_id,history_row_id,
+                recipe_digest,target_digest,work_id,previous_history_row_id,
+                previous_row_result_id,bootstrap_completed)
+            VALUES($row,$ref,$timeline,$history,$root,$targetDigest,$work,NULL,NULL,1);
+            INSERT INTO row_view_member(row_result_id,column_ordinal,
+                logical_column_id,definition_digest,cell_id)
+            VALUES($row,0,$column,$definition,$cell);
+            """;
+        SqliteParameter work = command.Parameters.Add("$work", SqliteType.Text);
+        SqliteParameter history = command.Parameters.Add(
+            "$history",
+            SqliteType.Text
+        );
+        SqliteParameter canonical = command.Parameters.Add(
+            "$canonical",
+            SqliteType.Blob
+        );
+        SqliteParameter cell = command.Parameters.Add("$cell", SqliteType.Text);
+        SqliteParameter row = command.Parameters.Add("$row", SqliteType.Text);
+        command.Parameters.AddWithValue("$ref", new Atelia.EventJournal.RefId(1).ToHexString());
+        command.Parameters.AddWithValue("$timeline", StoreFixture.Timeline.Value);
+        command.Parameters.AddWithValue("$root", recipe.Digest.Value);
+        command.Parameters.AddWithValue("$target", recipe.Target.ToCanonicalBytes());
+        command.Parameters.AddWithValue("$targetDigest", recipe.Target.Digest.Value);
+        command.Parameters.AddWithValue("$column", StoreFixture.Column.Value);
+        command.Parameters.AddWithValue("$definition", StoreFixture.Definition.Value);
+
+        for (int index = 1; index <= count; index++) {
+            var historyRowId = new HistoryRowId(index.ToString("x64"));
+            var rowWork = new RowWork(
+                new RowWorkKey(
+                    new Atelia.EventJournal.RefId(1),
+                    StoreFixture.Timeline,
+                    recipe.Digest,
+                    historyRowId
+                ),
+                recipe.Target,
+                previousHistoryRowId: null,
+                previousRowResultId: null,
+                [new RowWorkAssignment(StoreFixture.Column, null)]
+            );
+            work.Value = rowWork.WorkId.Value;
+            history.Value = historyRowId.Value;
+            canonical.Value = rowWork.ToCanonicalBytes();
+            cell.Value = index.ToString("x32");
+            row.Value = (index + count).ToString("x32");
+            command.ExecuteNonQuery();
+        }
+
+        using SqliteCommand counts = connection.CreateCommand();
+        counts.Transaction = transaction;
+        counts.CommandText = """
+            UPDATE store_metadata
+            SET cell_count=$count,row_view_count=$count,
+                row_view_member_count=$count;
+            """;
+        counts.Parameters.AddWithValue("$count", count);
+        counts.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     private void Create() {
