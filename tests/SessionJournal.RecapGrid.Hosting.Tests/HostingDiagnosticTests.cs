@@ -83,7 +83,7 @@ public sealed partial class HostingTests {
         var inspection = Assert.IsType<RecapGridConfiguredRouteInspectionResult.Invalid>(host.InspectRouteExact(key));
         var result = Assert.IsType<RecapCellBatchExecutionResult.RejectedBeforeDispatch>(
             await host.Executor.ExecuteAsync(batch, CancellationToken.None));
-        Assert.Equal("RouteManifestLoadFailed", result.Code);
+        Assert.Equal("RouteConfigurationFailed", result.Code);
         Assert.Equal(inspection.Detail, result.Detail);
         Assert.Contains("InvalidDataException: Cannot load diagnostic routes", result.Detail);
         Assert.Contains("FormatException: routes.json entry is missing familyDigest", result.Detail);

@@ -613,7 +613,7 @@ public sealed partial class HostingTests {
                 RecapGridConfiguredRouteInspectionResult.Invalid>(
                 invalid.InspectRouteExact(key)
             );
-            Assert.Equal("RouteManifestLoadFailed", failure.Code);
+            Assert.Equal("RouteConfigurationFailed", failure.Code);
             Assert.Equal("InvalidDataException: invalid", failure.Detail);
             Assert.Equal(0, factory.CreateCount);
         }
