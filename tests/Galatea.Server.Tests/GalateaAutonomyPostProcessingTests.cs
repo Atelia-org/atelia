@@ -121,8 +121,8 @@ public sealed class GalateaAutonomyPostProcessingTests {
         // No chat request or browser sponsor: a later server-owned pulse
         // delivers the saved Note receipt alongside independently recalled memory.
         clock.Advance(TimeSpan.FromMinutes(10));
-        using HttpResponseMessage secondResponse = await http.PostAsJsonAsync(
-            "/api/v1/characters/alice/mailbox/ready-turn", new ReadyReplyTurnRequest());
+        using HttpResponseMessage secondResponse = await PostReadyTurnAsync(
+            http);
         Assert.Equal(HttpStatusCode.Accepted, secondResponse.StatusCode);
         LoopPulseAcceptedTurnDto secondAccepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
             await secondResponse.Content.ReadFromJsonAsync<LoopPulseAcceptedTurnDto>());
@@ -163,6 +163,37 @@ public sealed class GalateaAutonomyPostProcessingTests {
         );
         Assert.Equal(GalateaAutonomyCadence.WaitingState,
             status.State);
+    }
+
+    private static async Task<HttpResponseMessage> PostReadyTurnAsync(
+        HttpClient http
+    ) {
+        using var deadline = new CancellationTokenSource(TestDeadline);
+        while (true) {
+            HttpResponseMessage response = await http.PostAsJsonAsync(
+                "/api/v1/characters/alice/mailbox/ready-turn",
+                new ReadyReplyTurnRequest(),
+                deadline.Token);
+            if (response.StatusCode != HttpStatusCode.Conflict) {
+                return response;
+            }
+            TurnBusyErrorDto? busy = await response.Content
+                .ReadFromJsonAsync<TurnBusyErrorDto>(deadline.Token);
+            if (busy is null
+                || !string.Equals(
+                    busy.Code,
+                    "turn-busy",
+                    StringComparison.Ordinal)
+                || busy.TurnId is not null) {
+                response.Dispose();
+                throw new InvalidOperationException(
+                    $"Unexpected ready-turn conflict: {busy?.Code}.");
+            }
+            response.Dispose();
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(20),
+                deadline.Token);
+        }
     }
 
     private static CompletionConnectionConfig Connection(string id) => new(

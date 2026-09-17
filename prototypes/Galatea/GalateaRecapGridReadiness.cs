@@ -106,6 +106,7 @@ internal static class GalateaRecapGridReadiness {
                 => WithoutContext(InspectUnfulfilled(
                     selectedRef,
                     capturedRawHead,
+                    defaultPolicy,
                     cancellationToken
                 )),
             RecapGridContextResolveResult.OrdinalUnavailable
@@ -351,6 +352,7 @@ internal static class GalateaRecapGridReadiness {
     private static RecapGridReadinessSnapshotDto InspectUnfulfilled(
         SessionJournalReadView selectedRef,
         EventAddress capturedRawHead,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
         CancellationToken cancellationToken
     ) {
         RecapGridManagerOpenResult opened = RecapGridManagerFactory.Open(
@@ -366,7 +368,8 @@ internal static class GalateaRecapGridReadiness {
                 new RecapGridBuildRequest(
                     new RecapGridBuildSelection.LiveActive(),
                     throughRowId: null,
-                    ProgressBudget
+                    ProgressBudget,
+                    defaultPolicy.Target
                 ),
                 cancellationToken
             );

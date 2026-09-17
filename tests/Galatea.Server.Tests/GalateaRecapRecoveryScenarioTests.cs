@@ -46,7 +46,9 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
 
         var boundaryFactory = new GalateaRecapFixture.Factory(2, expectedMainCalls: 0, expectedRecapCalls: 4);
         EventAddress frozenHead = await FreezeAsync(lab.SessionDirectory, routesPath,
-            main, recap, boundaryFactory, failpoint, restartRequired);
+            main, recap, boundaryFactory,
+            GalateaRecapGridDefaultPolicy.ForCharacter(new("Galatea")),
+            failpoint, restartRequired);
         boundaryFactory.AssertComplete();
         SessionPreparedRequestReconstruction frozen = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
         GalateaRecapFixture.AssertAdopted(frozen, 3);
@@ -145,7 +147,9 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
 
     private static async Task<EventAddress> FreezeAsync(string repository, string routesPath,
         CompletionConnectionConfig main, CompletionConnectionConfig recap,
-        GalateaRecapFixture.Factory factory, SessionJournalFailpoint failpoint, bool legacyStarted) {
+        GalateaRecapFixture.Factory factory,
+        GalateaRecapGridDefaultPolicy defaultPolicy,
+        SessionJournalFailpoint failpoint, bool legacyStarted) {
         ICompletionClient client = factory.Create(main);
         CompletionDispatchIdentity identity = CompletionDispatchIdentityFactory.Create(main, client);
         var runtime = new SessionRuntime(client, CompletionTarget: new SessionCompletionTargetIdentity(
@@ -160,7 +164,8 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
                 CompletionConnectionConfigLoader.NormalizeAndValidate(new CompletionConnectionsFileConfig(
                     [main, recap], main.Id)), factory, inputProjector: GalateaInputProjector.Instance);
             await using RecapGridOnlineContextHandle online = Assert.IsType<RecapGridOnlineOpenResult.Opened>(
-                RecapGridOnlineFactory.Open(engine, completion.Executor, RecapGridOnlineLimits.Production,
+                RecapGridOnlineFactory.Open(engine, completion.Executor,
+                    defaultPolicy.Target, RecapGridOnlineLimits.Production,
                     new O200kBaseHistoryUnitLoadEstimator())).Handle;
             SessionInputContent observation = GalateaObservationContent.CreatePlayerAction(
                 GalateaDelegateTestConfiguration.PlayerSender,

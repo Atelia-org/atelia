@@ -424,6 +424,11 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                     maximumConcurrency: 1,
                     dispatchTimeout: TimeSpan.FromSeconds(30))
             ]).ToCanonicalBytes());
+        string producerTargetPath = Path.Combine(
+            external, "producer-target.canonical");
+        File.WriteAllBytes(
+            producerTargetPath,
+            targetRecipe.Target.ToCanonicalBytes());
         RecapGridAgentControlProfile agentProfile = AgentProfile();
         string refId;
         using (SessionJournalEngine reader =
@@ -440,7 +445,8 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                 "--message", "same next clue",
                 "--connection", connection.Id,
                 "--connections", connectionsPath,
-                "--routes", routesPath
+                "--routes", routesPath,
+                "--producer-target", producerTargetPath
             ],
             cliFactory));
 
@@ -1962,6 +1968,8 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             members = row.OrderedCells.Select(member => CellBody(cells[member.CellId.Value])).ToArray()
         };
         return items.Select(item => item.Kind switch {
+            "row-work" => "row-work:" + item.Key + ":"
+                + Convert.ToHexString(Assert.IsType<byte[]>(item.Json)),
             "cell" => "cell:" + JsonSerializer.Serialize(CellBody(cells[item.Key])),
             "row-view" => "row:" + JsonSerializer.Serialize(RowBody(rows[item.Key])),
             "fulfilled" => "fulfilled:" + item.Key + ":" + JsonSerializer.Serialize(
