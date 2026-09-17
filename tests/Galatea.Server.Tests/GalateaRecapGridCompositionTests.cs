@@ -832,9 +832,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         RecapGridControlSnapshot snapshot = Assert.IsType<
             RecapGridControlSnapshotResult.Available
         >(control.Reader.ReadSnapshot()).Snapshot;
-        Assert.Equal(1, snapshot.Head.Generation);
-        Assert.Single(snapshot.Families);
-        Assert.Equal(2, snapshot.Definitions.Count);
+        AssertRecoveredToolAndDefaultBundles(snapshot);
     }
 
     [Theory]
@@ -1197,9 +1195,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         RecapGridControlSnapshot snapshot = Assert.IsType<
             RecapGridControlSnapshotResult.Available
         >(control.Reader.ReadSnapshot()).Snapshot;
-        Assert.Equal(1, snapshot.Head.Generation);
-        Assert.Single(snapshot.Families);
-        Assert.Equal(2, snapshot.Definitions.Count);
+        AssertRecoveredToolAndDefaultBundles(snapshot);
     }
 
     [Fact]
@@ -1608,6 +1604,35 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             out RecapGridControlRegistrationBundle? bundle
         ));
         return bundle!;
+    }
+
+    private static void AssertRecoveredToolAndDefaultBundles(
+        RecapGridControlSnapshot snapshot
+    ) {
+        Assert.True(RecapGridAgentControlBuiltIns
+            .TryCreateRegistrationBundle(
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
+                out RecapGridControlRegistrationBundle? toolBundle
+            ));
+        RecapGridControlRegistrationBundle defaultBundle = GalateaBundle(
+            "Galatea");
+        Assert.Equal(4, snapshot.Head.Generation);
+        Assert.Null(snapshot.Head.ActiveRecipeDigest);
+        Assert.Equal(
+            toolBundle!.Families.Concat(defaultBundle.Families)
+                .Select(static family => family.Digest)
+                .OrderBy(static digest => digest.Value, StringComparer.Ordinal),
+            snapshot.Families.Select(static family => family.Digest)
+                .OrderBy(static digest => digest.Value, StringComparer.Ordinal)
+        );
+        Assert.Equal(
+            toolBundle.Definitions.Concat(defaultBundle.Definitions)
+                .Select(static definition => definition.Digest)
+                .OrderBy(static digest => digest.Value, StringComparer.Ordinal),
+            snapshot.Definitions.Select(static definition => definition.Digest)
+                .OrderBy(static digest => digest.Value, StringComparer.Ordinal)
+        );
+        Assert.Empty(snapshot.Recipes);
     }
 
     private static BuildTarget BundleTarget(
