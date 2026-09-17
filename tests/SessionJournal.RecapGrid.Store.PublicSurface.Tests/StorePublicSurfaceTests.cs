@@ -21,6 +21,39 @@ public sealed class StorePublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void RowWorkCursorIsReadableWithoutExportingWriterOrImportFactories() {
+        var bytes = new byte[66];
+        bytes[0] = 2;
+        bytes[1] = 4;
+        System.Text.Encoding.ASCII.GetBytes(new string('a', 64))
+            .CopyTo(bytes, 2);
+        string value = Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+
+        Assert.Equal(value, RecapGridStoreExportCursor.Parse(value).Value);
+        string[] publicFactories = typeof(RecapGridStoreExportCursor).GetMethods(
+                BindingFlags.Public
+                | BindingFlags.Static
+                | BindingFlags.DeclaredOnly
+            ).Where(static method => !method.IsSpecialName)
+            .Select(static method => method.Name).ToArray();
+        Assert.Equal(["Parse"], publicFactories);
+        Assert.DoesNotContain(
+            typeof(RecapGridStoreMaintenance).GetMethods(
+                BindingFlags.Public
+                | BindingFlags.Static
+                | BindingFlags.DeclaredOnly
+            ),
+            static method => method.Name.Contains(
+                "Import",
+                StringComparison.Ordinal
+            )
+        );
+    }
+
+    [Fact]
     public void ExternalCompositionCanCreateOpenReadAndDispose() {
         Directory.CreateDirectory(_root);
         RecapGridStoreCreateResult.Created created = Assert.IsType<

@@ -177,6 +177,7 @@ internal sealed class SqliteRecapGridStore {
                 );
             }
         }
+        VerifyAllRowWorks(connection, transaction);
         VerifyAllCells(connection, transaction);
         VerifyAllRowViews(connection, transaction);
         VerifyAllFulfilled(connection, transaction);
@@ -201,14 +202,16 @@ internal sealed class SqliteRecapGridStore {
             { IsCell: true } => 0,
             { IsRowView: true } => 1,
             { IsFulfilled: true } => 2,
+            { IsRowWork: true } => 3,
             _ => throw new InvalidDataException(
                 "The export cursor has an unknown kind."
             )
         };
-        for (; phase < 3 && !incomplete; phase++) {
+        for (; phase < 4 && !incomplete; phase++) {
             string? digestAfter = phase switch {
                 0 when after?.IsCell == true => after.Key,
                 1 when after?.IsRowView == true => after.Key,
+                3 when after?.IsRowWork == true => after.Key,
                 _ => null
             };
             bool exhausted = phase switch {
@@ -236,10 +239,19 @@ internal sealed class SqliteRecapGridStore {
                     ref totalBytes,
                     ref last
                 ),
-                _ => ExportFulfilledTable(
+                2 => ExportFulfilledTable(
                     connection,
                     transaction,
                     after?.IsFulfilled == true ? after : null,
+                    includeContent,
+                    items,
+                    ref totalBytes,
+                    ref last
+                ),
+                _ => ExportRowWorkTable(
+                    connection,
+                    transaction,
+                    digestAfter,
                     includeContent,
                     items,
                     ref totalBytes,
@@ -1010,7 +1022,9 @@ internal sealed class SqliteRecapGridStore {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT canonical FROM row_work
+            SELECT work_id,ref_id,timeline_id,root_recipe_digest,history_row_id,
+                previous_history_row_id,previous_row_result_id,producer_target,canonical
+            FROM row_work
             WHERE ref_id=$ref AND timeline_id=$timeline
                 AND root_recipe_digest=$root AND history_row_id=$row;
             """;
@@ -1018,12 +1032,178 @@ internal sealed class SqliteRecapGridStore {
         command.Parameters.AddWithValue("$timeline", key.TimelineId.Value);
         command.Parameters.AddWithValue("$root", key.RootRecipeDigest.Value);
         command.Parameters.AddWithValue("$row", key.HistoryRowId.Value);
-        if (command.ExecuteScalar() is not byte[] canonical) {
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read()) {
             return null;
         }
-        RowWork work = RowWork.DecodeCanonical(canonical);
+        RowWorkPhysical physical = ReadRowWorkPhysical(reader);
+        reader.Close();
+        RowWork work = ReadAndValidateRowWorkPhysical(
+            connection,
+            transaction,
+            physical
+        );
         if (work.Key != key) {
             throw new InvalidDataException("A RowWork key differs from its stored canonical identity.");
+        }
+        return work;
+    }
+
+    private static RowWork? ReadRowWorkByIdCore(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RowWorkId workId
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT work_id,ref_id,timeline_id,root_recipe_digest,history_row_id,
+                previous_history_row_id,previous_row_result_id,producer_target,canonical
+            FROM row_work WHERE work_id=$id;
+            """;
+        command.Parameters.AddWithValue("$id", workId.Value);
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read()) {
+            return null;
+        }
+        RowWorkPhysical physical = ReadRowWorkPhysical(reader);
+        reader.Close();
+        RowWork work = ReadAndValidateRowWorkPhysical(
+            connection,
+            transaction,
+            physical
+        );
+        if (work.WorkId != workId) {
+            throw new InvalidDataException(
+                "A RowWork identity differs from its physical key."
+            );
+        }
+        return work;
+    }
+
+    private static RowWorkPhysical ReadRowWorkPhysical(
+        SqliteDataReader reader
+    ) => new(
+        reader.GetString(0),
+        reader.GetString(1),
+        reader.GetString(2),
+        reader.GetString(3),
+        reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetString(6),
+        reader.GetFieldValue<byte[]>(7),
+        reader.GetFieldValue<byte[]>(8)
+    );
+
+    private static RowWork ReadAndValidateRowWorkPhysical(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RowWorkPhysical physical
+    ) {
+        RowWork work = RowWork.DecodeCanonical(physical.Canonical);
+        if (!string.Equals(work.WorkId.Value, physical.WorkId,
+                StringComparison.Ordinal)
+            || !string.Equals(work.Key.RefId.ToHexString(), physical.RefId,
+                StringComparison.Ordinal)
+            || !string.Equals(work.Key.TimelineId.Value, physical.TimelineId,
+                StringComparison.Ordinal)
+            || !string.Equals(work.Key.RootRecipeDigest.Value, physical.Root,
+                StringComparison.Ordinal)
+            || !string.Equals(work.Key.HistoryRowId.Value, physical.HistoryRow,
+                StringComparison.Ordinal)
+            || !string.Equals(work.PreviousHistoryRowId?.Value,
+                physical.PreviousHistoryRow, StringComparison.Ordinal)
+            || !string.Equals(work.PreviousRowResultId?.Value,
+                physical.PreviousRowResult, StringComparison.Ordinal)
+            || !work.ProducerTarget.ToCanonicalBytes()
+                .SequenceEqual(physical.ProducerTarget)) {
+            throw new InvalidDataException(
+                "A RowWork physical projection differs from its canonical value."
+            );
+        }
+
+        using (SqliteCommand members = connection.CreateCommand()) {
+            members.Transaction = transaction;
+            members.CommandText = """
+                SELECT column_ordinal,logical_column_id,definition_digest,reused_cell_id
+                FROM row_work_member WHERE work_id=$id ORDER BY column_ordinal;
+                """;
+            members.Parameters.AddWithValue("$id", work.WorkId.Value);
+            using SqliteDataReader reader = members.ExecuteReader();
+            int ordinal = 0;
+            while (reader.Read()) {
+                if (ordinal >= work.OrderedAssignments.Count
+                    || reader.GetInt64(0) != ordinal) {
+                    throw new InvalidDataException(
+                        "A RowWork member count or ordinal is invalid."
+                    );
+                }
+                RowWorkAssignment assignment = work.OrderedAssignments[ordinal];
+                BuildTargetColumn column = work.ProducerTarget.OrderedColumns[ordinal];
+                string? reused = reader.IsDBNull(3) ? null : reader.GetString(3);
+                if (!string.Equals(reader.GetString(1),
+                        assignment.LogicalColumnId.Value,
+                        StringComparison.Ordinal)
+                    || !string.Equals(reader.GetString(1),
+                        column.LogicalColumnId.Value,
+                        StringComparison.Ordinal)
+                    || !string.Equals(reader.GetString(2),
+                        column.DefinitionDigest.Value,
+                        StringComparison.Ordinal)
+                    || !string.Equals(reused,
+                        assignment.ReusedCellId?.Value,
+                        StringComparison.Ordinal)) {
+                    throw new InvalidDataException(
+                        "A RowWork member differs from its canonical assignment."
+                    );
+                }
+                ordinal++;
+            }
+            if (ordinal != work.OrderedAssignments.Count) {
+                throw new InvalidDataException(
+                    "A RowWork member count differs from its canonical assignments."
+                );
+            }
+        }
+
+        for (int index = 0; index < work.OrderedAssignments.Count; index++) {
+            RowWorkAssignment assignment = work.OrderedAssignments[index];
+            if (assignment.ReusedCellId is not { } reusedCellId) {
+                continue;
+            }
+            RecapCellArtifact source = ReadCellByIdCore(
+                connection,
+                transaction,
+                reusedCellId
+            ) ?? throw new InvalidDataException(
+                "A RowWork reuse assignment references a missing Cell."
+            );
+            BuildTargetColumn column = work.ProducerTarget.OrderedColumns[index];
+            if (source.Slot.HistoryRowId != work.Key.HistoryRowId
+                || source.LogicalColumnId != assignment.LogicalColumnId
+                || source.DefinitionDigest != column.DefinitionDigest) {
+                throw new InvalidDataException(
+                    "A RowWork reuse source differs from its frozen assignment."
+                );
+            }
+        }
+
+        if (work.PreviousRowResultId is { } previousResult) {
+            RowResultId? assigned = ReadRowViewAssignmentId(
+                connection,
+                transaction,
+                new RowViewAssignmentKey(
+                    work.Key.RefId,
+                    work.Key.TimelineId,
+                    work.Key.RootRecipeDigest,
+                    work.PreviousHistoryRowId!.Value
+                )
+            );
+            if (assigned != previousResult) {
+                throw new InvalidDataException(
+                    "A RowWork exact predecessor is unavailable in its root scope."
+                );
+            }
         }
         return work;
     }
@@ -1692,16 +1872,19 @@ internal sealed class SqliteRecapGridStore {
         schemaVersion = SchemaVersion,
         id = cell.Id.Value,
         slot = new { recipeDigest = cell.Slot.RecipeDigest.Value, historyRowId = cell.Slot.HistoryRowId.Value,
-            logicalColumnId = cell.Slot.LogicalColumnId.Value },
+            workId = cell.Slot.WorkId?.Value, logicalColumnId = cell.Slot.LogicalColumnId.Value },
         definitionDigest = cell.DefinitionDigest.Value,
         outcome = cell.Outcome == RecapCellOutcome.Updated ? "updated" : "keep-unchanged",
         content = cell.Content
     });
 
-    private static byte[] ExportRowJson(RecapRowView row) => RecapGridCanonical.Encode(new {
+    private static byte[] ExportRowJson(
+        RecapRowView row,
+        RowWorkId? workId
+    ) => RecapGridCanonical.Encode(new {
         schemaVersion = SchemaVersion, id = row.Id.Value,
         refId = row.RefId.Packed, timelineId = row.TimelineId.Value, historyRowId = row.HistoryRowId.Value,
-        recipeDigest = row.RecipeDigest.Value,
+        recipeDigest = row.RecipeDigest.Value, workId = workId?.Value,
         targetDigest = row.TargetDigest.Value, previousHistoryRowId = row.PreviousHistoryRowId?.Value,
         previousRowResultId = row.PreviousRowResultId?.Value, bootstrapCompleted = row.BootstrapCompleted,
         orderedCells = row.OrderedCells.Select(static cell => new {
@@ -1713,6 +1896,34 @@ internal sealed class SqliteRecapGridStore {
         refId = key.RefId.Packed, timelineId = key.TimelineId.Value, timelineHeadGeneration = key.TimelineHeadGeneration,
         throughRowId = key.ThroughRowId.Value, recipeDigest = key.RecipeDigest.Value
     });
+
+    private static byte[] ExportRowWorkJson(RowWork work)
+        => RecapGridCanonical.Encode(new {
+            schemaVersion = SchemaVersion,
+            workId = work.WorkId.Value,
+            refId = work.Key.RefId.Packed,
+            timelineId = work.Key.TimelineId.Value,
+            rootRecipeDigest = work.Key.RootRecipeDigest.Value,
+            historyRowId = work.Key.HistoryRowId.Value,
+            previousHistoryRowId = work.PreviousHistoryRowId?.Value,
+            previousRowResultId = work.PreviousRowResultId?.Value,
+            producerTarget = new {
+                digest = work.ProducerTarget.Digest.Value,
+                orderedColumns = work.ProducerTarget.OrderedColumns.Select(
+                    static column => new {
+                        logicalColumnId = column.LogicalColumnId.Value,
+                        definitionDigest = column.DefinitionDigest.Value
+                    }
+                ).ToArray()
+            },
+            orderedAssignments = work.OrderedAssignments.Select(
+                static assignment => new {
+                    kind = assignment.IsEvaluate ? "evaluate" : "reuse",
+                    logicalColumnId = assignment.LogicalColumnId.Value,
+                    reusedCellId = assignment.ReusedCellId?.Value
+                }
+            ).ToArray()
+        });
 
     private static bool ExportIdTable(
         SqliteConnection connection,
@@ -1748,10 +1959,16 @@ internal sealed class SqliteRecapGridStore {
                 return false;
             }
             byte[] canonical = kind == "cell"
-                ? ExportCellJson(ReadCellByIdCore(connection, transaction, DecodeStoredValue(() => new CellId(key)))
-                    ?? throw new InvalidDataException("A Cell disappeared during export."))
-                : ExportRowJson(ReadRowViewCore(connection, transaction, DecodeStoredValue(() => new RowResultId(key)))
-                    ?? throw new InvalidDataException("A RowView disappeared during export."));
+                ? ExportCellForExport(
+                    connection,
+                    transaction,
+                    DecodeStoredValue(() => new CellId(key))
+                )
+                : ExportRowForExport(
+                    connection,
+                    transaction,
+                    DecodeStoredValue(() => new RowResultId(key))
+                );
             if (!TryAddExportItem(
                     items,
                     ref totalBytes,
@@ -1764,6 +1981,120 @@ internal sealed class SqliteRecapGridStore {
                 return false;
             }
             last = RecapGridStoreExportCursor.CreateId(kind, key);
+        }
+        return keys.Count < queryLimit;
+    }
+
+    private static byte[] ExportCellForExport(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CellId cellId
+    ) {
+        RecapCellArtifact cell = ReadCellByIdCore(
+            connection,
+            transaction,
+            cellId
+        ) ?? throw new InvalidDataException(
+            "A Cell disappeared during export."
+        );
+        RowWorkId workId = cell.Slot.WorkId
+            ?? throw new InvalidDataException(
+                "A V5 Cell is missing its RowWork identity."
+            );
+        RowWork work = ReadRowWorkByIdCore(
+            connection,
+            transaction,
+            workId
+        ) ?? throw new InvalidDataException(
+            "A Cell references a missing RowWork."
+        );
+        ValidateCellAgainstWork(cell, work);
+        return ExportCellJson(cell);
+    }
+
+    private static byte[] ExportRowForExport(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        RowResultId rowResultId
+    ) {
+        RecapRowView row = ReadRowViewCore(
+            connection,
+            transaction,
+            rowResultId
+        ) ?? throw new InvalidDataException(
+            "A RowView disappeared during export."
+        );
+        RowWorkId? workId = ReadRowViewWorkId(
+            connection,
+            transaction,
+            rowResultId
+        );
+        RowWorkId value = workId
+            ?? throw new InvalidDataException(
+                "A V5 RowView is missing its RowWork identity."
+            );
+        RowWork work = ReadRowWorkByIdCore(
+            connection,
+            transaction,
+            value
+        ) ?? throw new InvalidDataException(
+            "A RowView references a missing RowWork."
+        );
+        ValidateRowViewAgainstWork(connection, transaction, row, work);
+        return ExportRowJson(row, workId);
+    }
+
+    private static bool ExportRowWorkTable(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string? after,
+        bool includeContent,
+        List<RecapGridStoreExportItem> items,
+        ref int totalBytes,
+        ref RecapGridStoreExportCursor? last
+    ) {
+        int remaining = RecapGridStoreLimits.MaximumPageItems - items.Count;
+        int queryLimit = checked(remaining + 1);
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = after is null
+            ? "SELECT work_id FROM row_work WHERE work_id >= '' ORDER BY work_id LIMIT $limit;"
+            : "SELECT work_id FROM row_work WHERE work_id > $after ORDER BY work_id LIMIT $limit;";
+        command.Parameters.AddWithValue("$limit", queryLimit);
+        if (after is not null) {
+            command.Parameters.AddWithValue("$after", after);
+        }
+        var keys = new List<string>(queryLimit);
+        using (SqliteDataReader reader = command.ExecuteReader()) {
+            while (reader.Read()) {
+                keys.Add(reader.GetString(0));
+            }
+        }
+        foreach (string key in keys) {
+            if (items.Count >= RecapGridStoreLimits.MaximumPageItems) {
+                return false;
+            }
+            var workId = DecodeStoredValue(() => new RowWorkId(key));
+            RowWork work = ReadRowWorkByIdCore(
+                connection,
+                transaction,
+                workId
+            ) ?? throw new InvalidDataException(
+                "A RowWork disappeared during export."
+            );
+            byte[] canonical = ExportRowWorkJson(work);
+            if (!TryAddExportItem(
+                    items,
+                    ref totalBytes,
+                    new RecapGridStoreExportItem(
+                        "row-work",
+                        key,
+                        canonical.Length,
+                        includeContent ? canonical : null
+                    ))) {
+                return false;
+            }
+            last = RecapGridStoreExportCursor.CreateRowWork(key);
         }
         return keys.Count < queryLimit;
     }
@@ -1895,9 +2226,77 @@ internal sealed class SqliteRecapGridStore {
                 static value => new CellId(value)
             );
             foreach (CellId cellId in page) {
-                _ = ReadCellByIdCore(connection, transaction, cellId)
+                RecapCellArtifact cell = ReadCellByIdCore(
+                    connection,
+                    transaction,
+                    cellId
+                )
                     ?? throw new InvalidDataException(
                         "A Cell disappeared during verification."
+                    );
+                if (cell.Slot.WorkId is not { } workId) {
+                    throw new InvalidDataException(
+                        "A V5 Cell is missing its RowWork identity."
+                    );
+                }
+                RowWork work = ReadRowWorkByIdCore(
+                    connection,
+                    transaction,
+                    workId
+                ) ?? throw new InvalidDataException(
+                    "A Cell references a missing RowWork."
+                );
+                ValidateCellAgainstWork(cell, work);
+            }
+            if (page.Count < RecapGridStoreLimits.MaximumPageItems) {
+                return;
+            }
+            after = page[^1].Value;
+        }
+    }
+
+    private static void ValidateCellAgainstWork(
+        RecapCellArtifact cell,
+        RowWork work
+    ) {
+        int index = work.OrderedAssignments
+            .Select(static (assignment, index) => (assignment, index))
+            .Where(pair => pair.assignment.LogicalColumnId
+                == cell.LogicalColumnId)
+            .Select(static pair => pair.index)
+            .DefaultIfEmpty(-1)
+            .Single();
+        if (index < 0
+            || !work.OrderedAssignments[index].IsEvaluate
+            || cell.Slot.RecipeDigest != work.Key.RootRecipeDigest
+            || cell.Slot.HistoryRowId != work.Key.HistoryRowId
+            || cell.DefinitionDigest
+                != work.ProducerTarget.OrderedColumns[index]
+                    .DefinitionDigest) {
+            throw new InvalidDataException(
+                "A Cell differs from its RowWork Evaluate assignment."
+            );
+        }
+    }
+
+    private static void VerifyAllRowWorks(
+        SqliteConnection connection,
+        SqliteTransaction transaction
+    ) {
+        string? after = null;
+        while (true) {
+            List<RowWorkId> page = ReadIdPage<RowWorkId>(
+                connection,
+                transaction,
+                "row_work",
+                "work_id",
+                after,
+                static value => new RowWorkId(value)
+            );
+            foreach (RowWorkId workId in page) {
+                _ = ReadRowWorkByIdCore(connection, transaction, workId)
+                    ?? throw new InvalidDataException(
+                        "A RowWork disappeared during verification."
                     );
             }
             if (page.Count < RecapGridStoreLimits.MaximumPageItems) {
@@ -1928,6 +2327,26 @@ internal sealed class SqliteRecapGridStore {
                     rowResultId
                 ) ?? throw new InvalidDataException(
                     "A RowView disappeared during verification."
+                );
+                RowWorkId workId = ReadRowViewWorkId(
+                    connection,
+                    transaction,
+                    rowResultId
+                ) ?? throw new InvalidDataException(
+                    "A V5 RowView is missing its RowWork identity."
+                );
+                RowWork work = ReadRowWorkByIdCore(
+                    connection,
+                    transaction,
+                    workId
+                ) ?? throw new InvalidDataException(
+                    "A RowView references a missing RowWork."
+                );
+                ValidateRowViewAgainstWork(
+                    connection,
+                    transaction,
+                    view,
+                    work
                 );
                 if (view.PreviousRowResultId is { } previous) {
                     RecapRowView predecessor = ReadRowViewAtCore(
@@ -2038,6 +2457,69 @@ internal sealed class SqliteRecapGridStore {
         }
     }
 
+    private static RowWorkId? ReadRowViewWorkId(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RowResultId rowResultId
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "SELECT work_id FROM row_view WHERE row_result_id=$id;";
+        command.Parameters.AddWithValue("$id", rowResultId.Value);
+        object? value = command.ExecuteScalar();
+        return value is string text
+            ? DecodeStoredValue(() => new RowWorkId(text))
+            : null;
+    }
+
+    private static void ValidateRowViewAgainstWork(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RecapRowView view,
+        RowWork work
+    ) {
+        if (view.RefId != work.Key.RefId
+            || view.TimelineId != work.Key.TimelineId
+            || view.RecipeDigest != work.Key.RootRecipeDigest
+            || view.HistoryRowId != work.Key.HistoryRowId
+            || view.TargetDigest != work.ProducerTarget.Digest
+            || view.PreviousHistoryRowId != work.PreviousHistoryRowId
+            || view.PreviousRowResultId != work.PreviousRowResultId
+            || view.OrderedCells.Count != work.OrderedAssignments.Count) {
+            throw new InvalidDataException(
+                "A RowView scope, target, or exact prior differs from its RowWork."
+            );
+        }
+        for (int index = 0; index < view.OrderedCells.Count; index++) {
+            RecapRowViewCell member = view.OrderedCells[index];
+            RowWorkAssignment assignment = work.OrderedAssignments[index];
+            BuildTargetColumn column = work.ProducerTarget.OrderedColumns[index];
+            if (member.LogicalColumnId != assignment.LogicalColumnId
+                || member.LogicalColumnId != column.LogicalColumnId
+                || member.DefinitionDigest != column.DefinitionDigest) {
+                throw new InvalidDataException(
+                    "A RowView member differs from its RowWork assignment."
+                );
+            }
+            RecapCellArtifact cell = ReadCellByIdCore(
+                connection,
+                transaction,
+                member.CellId
+            ) ?? throw new InvalidDataException(
+                "A RowView member references a missing Cell."
+            );
+            bool exact = assignment.ReusedCellId is { } reused
+                ? member.CellId == reused
+                : cell.Slot.WorkId == work.WorkId;
+            if (!exact) {
+                throw new InvalidDataException(
+                    "A RowView member differs from its frozen RowWork source."
+                );
+            }
+        }
+    }
+
     private static (FulfilledViewKey Key, RowResultId RowResultId)
         ValidateFulfilledPhysicalRow(
             SqliteConnection connection,
@@ -2058,6 +2540,18 @@ internal sealed class SqliteRecapGridStore {
         string Through,
         string Recipe,
         string RowResultId
+    );
+
+    private sealed record RowWorkPhysical(
+        string WorkId,
+        string RefId,
+        string TimelineId,
+        string Root,
+        string HistoryRow,
+        string? PreviousHistoryRow,
+        string? PreviousRowResult,
+        byte[] ProducerTarget,
+        byte[] Canonical
     );
 
     // Translate malformed SQL values only; public input validation stays outside this boundary.

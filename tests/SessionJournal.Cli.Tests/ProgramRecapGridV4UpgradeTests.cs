@@ -136,12 +136,84 @@ public sealed partial class ProgramRecapGridCommandTests {
             Assert.Equal(bootstrapView, work.PreviousRowResultId);
         }
         Assert.Equal("overlay partial", Assert.IsType<RecapGridStoreReadResult<RecapCellArtifact>.Found>(reader.Reader.ReadCell(overlayPartial)).Value.Content);
+
+        (int hiddenCode, JsonElement hidden) = RunGridCaptured(
+            "export", "--input", _root);
+        Assert.True(hiddenCode == 0, hidden.GetRawText());
+        Assert.All(hidden.GetProperty("detail").GetProperty("items")
+            .EnumerateArray(), static item => Assert.Equal(
+                JsonValueKind.Null,
+                item.GetProperty("jsonBase64").ValueKind
+            ));
+
+        JsonElement exportedWork = Assert.Single(
+            DrainStoreExportContent(),
+            item => item.GetProperty("Kind").GetString() == "row-work"
+                && item.GetProperty("Key").GetString() == work.WorkId.Value
+        );
+        byte[] workJson = Convert.FromBase64String(
+            exportedWork.GetProperty("jsonBase64").GetString()!
+        );
+        using JsonDocument document = JsonDocument.Parse(workJson);
+        JsonElement root = document.RootElement;
+        Assert.Equal(work.ProducerTarget.Digest.Value,
+            root.GetProperty("producerTarget").GetProperty("digest")
+                .GetString());
+        Assert.Equal(work.PreviousHistoryRowId?.Value,
+            root.GetProperty("previousHistoryRowId").ValueKind
+                == JsonValueKind.Null
+                ? null
+                : root.GetProperty("previousHistoryRowId").GetString());
+        Assert.Equal(work.PreviousRowResultId?.Value,
+            root.GetProperty("previousRowResultId").ValueKind
+                == JsonValueKind.Null
+                ? null
+                : root.GetProperty("previousRowResultId").GetString());
+        JsonElement[] exportedAssignments = root
+            .GetProperty("orderedAssignments").EnumerateArray().ToArray();
+        if (afterBootstrap) {
+            Assert.All(exportedAssignments, static assignment => Assert.Equal(
+                "evaluate",
+                assignment.GetProperty("kind").GetString()
+            ));
+        }
+        else {
+            Assert.Equal("reuse",
+                exportedAssignments[1].GetProperty("kind").GetString());
+            Assert.Equal(reusedSource.Value,
+                exportedAssignments[1].GetProperty("reusedCellId").GetString());
+        }
     }
 
     private HistoryTimelineSelectedRow[] ReadSelectedFor(RefId refId) {
         TimelineHeadRef head = ReadTimelineHead(refId.ToHexString());
         using HistoryTimelineReaderHandle reader = Assert.IsType<HistoryTimelineReaderOpenResult.Opened>(HistoryTimelineMaintenance.OpenReader(_root, refId)).Handle;
         return ReadSelected(reader.Reader, head).ToArray();
+    }
+
+    private IReadOnlyList<JsonElement> DrainStoreExportContent() {
+        var items = new List<JsonElement>();
+        string? after = null;
+        do {
+            string[] args = after is null
+                ? ["export", "--input", _root, "--include-content"]
+                : ["export", "--input", _root, "--include-content",
+                    "--after", after];
+            (int code, JsonElement result) = RunGridCaptured(args);
+            Assert.True(code == 0, result.GetRawText());
+            JsonElement detail = result.GetProperty("detail");
+            items.AddRange(detail.GetProperty("items").EnumerateArray()
+                .Select(static item => item.Clone()));
+            after = detail.GetProperty("nextCursor").ValueKind
+                == JsonValueKind.Null
+                ? null
+                : detail.GetProperty("nextCursor").GetString();
+            if (!detail.GetProperty("Incomplete").GetBoolean()) {
+                break;
+            }
+            Assert.False(string.IsNullOrEmpty(after));
+        } while (true);
+        return items;
     }
 
     private void CreateV4OverlayStore(V4PartialFixture basis, GridBuildRecipe overlay,

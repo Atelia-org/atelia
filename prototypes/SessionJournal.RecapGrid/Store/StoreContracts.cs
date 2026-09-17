@@ -218,6 +218,7 @@ public sealed record RecapGridStoreExportCursor {
     private const byte CellKind = 1;
     private const byte RowViewKind = 2;
     private const byte FulfilledKind = 3;
+    private const byte RowWorkKind = 4;
 
     private RecapGridStoreExportCursor(
         string value,
@@ -284,6 +285,9 @@ public sealed record RecapGridStoreExportCursor {
                 BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(50, 8)),
                 ReadLowerHex(bytes.AsSpan(58, 64), 64, nameof(value)),
                 ReadLowerHex(bytes.AsSpan(122, 64), 64, nameof(value))
+            ),
+            RowWorkKind when bytes.Length == 66 => CreateRowWork(
+                ReadLowerHex(bytes.AsSpan(2), 64, nameof(value))
             ),
             _ => throw new ArgumentException(
                 "The export cursor has an invalid V2 shape.",
@@ -373,6 +377,24 @@ public sealed record RecapGridStoreExportCursor {
         );
     }
 
+    internal static RecapGridStoreExportCursor CreateRowWork(string workId) {
+        workId = StoreSyntax.RequireLowerHex(workId, 64, nameof(workId));
+        var bytes = new byte[66];
+        bytes[0] = WireVersion;
+        bytes[1] = RowWorkKind;
+        WriteAscii(bytes.AsSpan(2), workId);
+        return new RecapGridStoreExportCursor(
+            Encode(bytes),
+            RowWorkKind,
+            workId,
+            null,
+            null,
+            0,
+            null,
+            null
+        );
+    }
+
     internal static string FulfilledDiagnosticKey(
         string refId,
         string timelineId,
@@ -384,6 +406,7 @@ public sealed record RecapGridStoreExportCursor {
     internal bool IsCell => Kind == CellKind;
     internal bool IsRowView => Kind == RowViewKind;
     internal bool IsFulfilled => Kind == FulfilledKind;
+    internal bool IsRowWork => Kind == RowWorkKind;
 
     private static string ReadLowerHex(
         ReadOnlySpan<byte> bytes,

@@ -380,11 +380,11 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             cell = Assert.IsType<RecapGridCellPutResult.Inserted>(Put(handle, Cell('b', "private answer"))).Winner;
         }
         RecapGridStoreExportItem hidden = Assert.Single(Assert.IsType<RecapGridStoreExportResult.Page>(
-            RecapGridStoreMaintenance.Export(_root)).Value.Items);
+            RecapGridStoreMaintenance.Export(_root)).Value.Items, static item => item.Kind == "cell");
         Assert.Equal(cell.Id.Value, hidden.Key);
         Assert.Null(hidden.Json);
         RecapGridStoreExportItem revealed = Assert.Single(Assert.IsType<RecapGridStoreExportResult.Page>(
-            RecapGridStoreMaintenance.Export(_root, includeContent: true)).Value.Items);
+            RecapGridStoreMaintenance.Export(_root, includeContent: true)).Value.Items, static item => item.Kind == "cell");
         byte[] json = Assert.IsType<byte[]>(revealed.Json);
         Assert.Equal(json.Length, revealed.JsonUtf8Bytes);
         Assert.Contains("private answer", System.Text.Encoding.UTF8.GetString(json));
@@ -405,11 +405,11 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         do {
             var page = Assert.IsType<RecapGridStoreExportResult.Page>(RecapGridStoreMaintenance.Export(_root, cursor)).Value;
             pages++;
-            exported.AddRange(page.Items.Select(item => item.Key));
+            exported.AddRange(page.Items.Where(static item => item.Kind == "cell").Select(item => item.Key));
             if (!page.Incomplete) { Assert.Null(page.NextCursor); break; }
             cursor = RecapGridStoreExportCursor.Parse(Assert.IsType<RecapGridStoreExportCursor>(page.NextCursor).Value);
         } while (true);
-        Assert.Equal(3, pages);
+        Assert.Equal(5, pages);
         Assert.Equal(cells.Select(c => c.Id.Value), exported);
     }
 
@@ -431,7 +431,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             if (!page.Incomplete) break;
             cursor = Assert.IsType<RecapGridStoreExportCursor>(page.NextCursor);
         } while (true);
-        Assert.Equal(cells.Length, seen.Count);
+        Assert.Equal(cells.Length * 2, seen.Count);
     }
 
     [Theory]
@@ -482,7 +482,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             Assert.True(cursors.Add(cursor.Value));
             cursor = RecapGridStoreExportCursor.Parse(cursor.Value);
         } while (true);
-        Assert.Equal(7, pages);
+        Assert.Equal(9, pages);
         Assert.Equal(expected.Count, seen.Count);
     }
 
@@ -515,12 +515,38 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         connection.Open();
         using SqliteTransaction transaction = connection.BeginTransaction();
         foreach (RecapCellArtifact cell in cells) {
+            RowBuildSpec spec = StoreFixture.Spec(row: cell.Slot.HistoryRowId);
+            RowWork work = Assert.IsType<RowWork>(spec.Work);
+            Assert.Equal(work.WorkId, cell.Slot.WorkId);
+            using (SqliteCommand insertWork = connection.CreateCommand()) {
+                insertWork.Transaction = transaction;
+                insertWork.CommandText = """
+                    INSERT INTO row_work(work_id,ref_id,timeline_id,root_recipe_digest,
+                        history_row_id,previous_history_row_id,previous_row_result_id,
+                        producer_target,canonical)
+                    VALUES($id,$ref,$timeline,$root,$row,NULL,NULL,$target,$canonical);
+                    INSERT INTO row_work_member(work_id,column_ordinal,logical_column_id,
+                        definition_digest,reused_cell_id)
+                    VALUES($id,0,$column,$definition,NULL);
+                    """;
+                insertWork.Parameters.AddWithValue("$id", work.WorkId.Value);
+                insertWork.Parameters.AddWithValue("$ref", work.Key.RefId.ToHexString());
+                insertWork.Parameters.AddWithValue("$timeline", work.Key.TimelineId.Value);
+                insertWork.Parameters.AddWithValue("$root", work.Key.RootRecipeDigest.Value);
+                insertWork.Parameters.AddWithValue("$row", work.Key.HistoryRowId.Value);
+                insertWork.Parameters.AddWithValue("$target", work.ProducerTarget.ToCanonicalBytes());
+                insertWork.Parameters.AddWithValue("$canonical", work.ToCanonicalBytes());
+                insertWork.Parameters.AddWithValue("$column", cell.LogicalColumnId.Value);
+                insertWork.Parameters.AddWithValue("$definition", cell.DefinitionDigest.Value);
+                insertWork.ExecuteNonQuery();
+            }
             using SqliteCommand command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = "INSERT INTO cell_artifact(cell_id, recipe_digest, history_row_id, logical_column_id, definition_digest, outcome, content) VALUES ($id, $recipe, $row, $column, $definition, $outcome, $content);";
+            command.CommandText = "INSERT INTO cell_artifact(cell_id, recipe_digest, history_row_id, work_id, logical_column_id, definition_digest, outcome, content) VALUES ($id, $recipe, $row, $work, $column, $definition, $outcome, $content);";
             command.Parameters.AddWithValue("$id", cell.Id.Value);
             command.Parameters.AddWithValue("$recipe", cell.Slot.RecipeDigest.Value);
             command.Parameters.AddWithValue("$row", cell.Slot.HistoryRowId.Value);
+            command.Parameters.AddWithValue("$work", work.WorkId.Value);
             command.Parameters.AddWithValue("$column", cell.LogicalColumnId.Value);
             command.Parameters.AddWithValue("$definition", cell.DefinitionDigest.Value);
             command.Parameters.AddWithValue("$outcome", (int)cell.Outcome);
