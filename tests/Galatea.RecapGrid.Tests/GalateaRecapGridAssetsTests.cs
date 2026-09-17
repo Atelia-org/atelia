@@ -112,7 +112,7 @@ public sealed class GalateaRecapGridAssetsTests {
             names
         );
         Assert.Equal(
-            "4e709956122af57ae733ce8ac60fa4f705282813da77cddede4b16932f71c0bf",
+            "a3f2444d2ef6d3ec61a14ec5d6decc1c14d47c6ea868b67dc73cc00bac6348cf",
             ResourceSha256(PromptResourceLoader.FamilySystemResourceName)
         );
         Assert.Equal(
@@ -493,10 +493,10 @@ public sealed class GalateaRecapGridAssetsTests {
         RecapGridControlRegistrationBundle bundle
     ) => Assert.Equal(
         [
-            "75839423ac000cc5401dcdc6d4bb6ef3a3ea365229e57896738d03624696c989",
-            "d6b4c9042180457991c7c3113fda7063b1ff0cfda158b5a2919209b2f58cda7a",
-            "720ac79dc2fd95246cfe32ea513765fb94c3588c70a851c6eec57ba5544d2011",
-            "d5d90e95b5eb282166c66e0b0736301423f2d9ff6084c259ed7d6c681f5289f2"
+            "42477a8838928993c2835a8863910b297ba1805136a37b27242054a47a60e090",
+            "f0912f4d0316372d6eaec39a974291373bcd0c668ab476aa108ae110a778ec1a",
+            "74451f0f1cb70503e64d8b1c320bd1fc0350630fd5d2216fea9b7e948d80c1e1",
+            "fe53611e0bcd7cc64f8a7b3248afb84a72891375526d8d9aad81976566e5c49f"
         ],
         [
             bundle.Families[0].Digest.Value,
