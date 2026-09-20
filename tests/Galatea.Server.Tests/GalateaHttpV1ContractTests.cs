@@ -300,7 +300,7 @@ public sealed class GalateaHttpV1ContractTests {
     }
 
     [Fact]
-    public void ReadyReplyTurn_AutomaticAdmissionHasNoTraceOrInfoEmission() {
+    public void ReadyReplyTurn_AutomaticAdmissionHasNoDebugLevelDiagnosticOutput() {
         string repositoryRoot = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "../../../../.."
@@ -322,6 +322,8 @@ public sealed class GalateaHttpV1ContractTests {
         );
         Assert.True(start >= 0 && end > start);
         string endpoint = source[start..end];
+        Assert.DoesNotContain("DebugUtil.Debug", endpoint,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("DebugUtil.Trace", endpoint,
             StringComparison.Ordinal);
         Assert.DoesNotContain("DebugUtil.Info", endpoint,
@@ -332,6 +334,8 @@ public sealed class GalateaHttpV1ContractTests {
             "Galatea",
             "GalateaAutomaticTurnCoordinator.cs"
         ));
+        Assert.DoesNotContain("DebugUtil.Debug", coordinator,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("DebugUtil.Trace", coordinator,
             StringComparison.Ordinal);
         Assert.DoesNotContain("DebugUtil.Info", coordinator,

@@ -724,7 +724,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
         try {
             var session = await lazy.Value.ConfigureAwait(false);
-            DebugUtil.Info(
+            DebugUtil.Debug(
                 "Galatea.Session",
                 $"GetSessionAsync: character={characterId}"
             );
@@ -805,7 +805,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             && projection.RestorablePlayerText is not null
                 ? EventAddressTextCodec.Format(head)
                 : null;
-        DebugUtil.Info(
+        DebugUtil.Debug(
             "Galatea.Session",
             $"BuildRecentTurnsResponse: head={snapshot.CapturedHead}, responseTurns={turns.Count}, rewindEligible={rewindLatestToken is not null}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
         );
@@ -919,7 +919,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             SessionRuntimeRecoveryRequirements recovery =
                 host.Engine.InspectRuntimeRecoveryRequirements(ct);
             CurrentTurnDto result = BuildDurableCurrentTurn(recovery);
-            DebugUtil.Info(
+            DebugUtil.Debug(
                 "Galatea.Session",
                 $"GetCurrentTurnAsync: character={host.Character.CharacterId}, status={result.Status}, head={recovery.CapturedHead}"
             );
@@ -946,7 +946,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             liveTurn.TurnId,
             liveTurn.Options.ConnectionId
         );
-        DebugUtil.Info(
+        DebugUtil.Debug(
             "Galatea.Session",
             $"BuildLiveCurrentTurn: turnId={result.TurnId}, connectionId={result.ConnectionId ?? "<none>"}"
         );
@@ -975,8 +975,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             RecentTurnsResponseDto fallback = host.GetRecentTurns();
             DebugUtil.Warning(
                 "Galatea.Session",
-                $"Stable session snapshot refresh failed: character={host.Character.CharacterId}",
-                ex
+                $"Stable session snapshot refresh failed: character={host.Character.CharacterId}; exceptionType={ex.GetType().FullName}"
             );
             return fallback;
         }
@@ -1000,8 +999,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             DebugUtil.Warning(
                 "Galatea.Session",
                 "Completed turn recent refresh was cancelled after the "
-                    + $"durable boundary: character={host.Character.CharacterId}",
-                ex
+                    + $"durable boundary: character={host.Character.CharacterId}; exceptionType={ex.GetType().FullName}"
             );
             return null;
         }
@@ -1012,8 +1010,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             DebugUtil.Warning(
                 "Galatea.Session",
                 "Completed turn has no exact bounded recent view: "
-                + $"character={host.Character.CharacterId}",
-                ex
+                + $"character={host.Character.CharacterId}; exceptionType={ex.GetType().FullName}"
             );
             return null;
         }
@@ -2117,10 +2114,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
 
         liveTurn.PublishStatus(GalateaSseStatusCode.Generating);
-        DebugUtil.Info(
+        DebugUtil.Debug(
             "Galatea.Session",
-            $"RunTurnAsync start: character={host.Character.CharacterId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, head={host.Engine.ReadCurrentHead()}",
-            eventKind: DebugEventKind.Start
+            $"RunTurnAsync start: character={host.Character.CharacterId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, head={host.Engine.ReadCurrentHead()}"
         );
 
         CompletionStreamObserver observer = liveTurn.Observer;
@@ -2216,7 +2212,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ct
             )
             .ConfigureAwait(false);
-        DebugUtil.Info(
+        DebugUtil.Debug(
             "Galatea.Session",
             $"RunTurnAsync send done: character={host.Character.CharacterId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot?.Turns.Count.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}, head={host.Engine.ReadCurrentHead()}"
         );
@@ -2436,8 +2432,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     receiptOutcome: "none",
                     mailMilliseconds,
                     noteMilliseconds,
-                    ElapsedMilliseconds(batchStarted),
-                    eventKind: DebugEventKind.Failure
+                    ElapsedMilliseconds(batchStarted)
                 );
                 failures.ThrowNotePrimary(
                     CreateCharacterNoteFailClosed(effectiveNoteFailure)
@@ -2454,8 +2449,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 receiptOutcome: "none",
                 mailMilliseconds,
                 noteMilliseconds,
-                ElapsedMilliseconds(batchStarted),
-                eventKind: DebugEventKind.Failure
+                ElapsedMilliseconds(batchStarted)
             );
             if (mailFailure is not null) {
                 failures.ThrowMailPrimary();
@@ -2473,8 +2467,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 receiptOutcome: "none",
                 mailMilliseconds,
                 noteMilliseconds,
-                ElapsedMilliseconds(batchStarted),
-                eventKind: DebugEventKind.Failure
+                ElapsedMilliseconds(batchStarted)
             );
             failures.ThrowMailPrimary();
         }
@@ -2506,8 +2499,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 receiptOutcome: "head-changed",
                 mailMilliseconds,
                 noteMilliseconds,
-                ElapsedMilliseconds(batchStarted),
-                eventKind: DebugEventKind.Failure
+                ElapsedMilliseconds(batchStarted)
             );
             failures.ThrowAuthorityPrimary(new GalateaTurnException(
                 "Durable extraction head changed; retry admission.",
@@ -2536,8 +2528,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     receiptOutcome: "head-changed",
                     mailMilliseconds,
                     noteMilliseconds,
-                    ElapsedMilliseconds(batchStarted),
-                    eventKind: DebugEventKind.Failure
+                    ElapsedMilliseconds(batchStarted)
                 );
                 failures.ThrowAuthorityPrimary(new GalateaTurnException(
                     "Durable extraction head changed; retry admission.",
@@ -2557,8 +2548,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 receiptOutcome: "durable-pending",
                 mailMilliseconds,
                 noteMilliseconds,
-                ElapsedMilliseconds(batchStarted),
-                eventKind: DebugEventKind.Success
+                ElapsedMilliseconds(batchStarted)
             );
         }
         else {
@@ -2572,11 +2562,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 receiptOutcome: "none",
                 mailMilliseconds,
                 noteMilliseconds,
-                ElapsedMilliseconds(batchStarted),
-                eventKind: settled is CharacterNoteDefaultPodReconcileResult
-                        .DeferredAfterCapture
-                    ? DebugEventKind.Failure
-                    : DebugEventKind.Success
+                ElapsedMilliseconds(batchStarted)
             );
         }
 
@@ -2712,8 +2698,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     podId = memo.PodId.Value,
                     memoId = memo.MemoId.Value,
                     exactText = memo.ExactText,
-                }),
-                DebugEventKind.Success
+                })
             );
         }
     }
@@ -2729,8 +2714,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string receiptOutcome,
         long mailMilliseconds,
         long noteMilliseconds,
-        long batchMilliseconds,
-        DebugEventKind eventKind
+        long batchMilliseconds
     ) => WriteCharacterNoteDiagnostic(
         JsonSerializer.Serialize(new {
             @event = "character-note-extraction-batch",
@@ -2749,22 +2733,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
             mailMs = mailMilliseconds,
             noteMs = noteMilliseconds,
             batchMs = batchMilliseconds,
-        }),
-        eventKind
+        })
     );
 
     [Conditional("DEBUG")]
-    private void WriteCharacterNoteDiagnostic(
-        string serializedJson,
-        DebugEventKind eventKind
-    ) {
+    private void WriteCharacterNoteDiagnostic(string serializedJson) {
         ArgumentNullException.ThrowIfNull(serializedJson);
         CharacterNoteDiagnosticSinkForTest?.Invoke(serializedJson);
-        DebugUtil.Info(
-            "Galatea.CharacterMemory",
-            serializedJson,
-            eventKind: eventKind
-        );
+        DebugUtil.Debug("Galatea.CharacterMemory", serializedJson);
     }
 
     private async Task<GalateaCompletedOperation> RunFreshSendAsync(
@@ -3206,20 +3182,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
 
         try {
-            bool failed = diagnostic.Outcome
-                is GalateaMemoRecallDiagnosticOutcome.Failed;
-            DebugUtil.Log(
-                failed ? DebugLevel.Warning : DebugLevel.Info,
-                "Galatea.MemoRecall",
-                serialized,
-                exception: null,
-                eventKind: failed
-                    ? DebugEventKind.Failure
-                    : diagnostic.Outcome
-                        is GalateaMemoRecallDiagnosticOutcome.NotScheduled
-                        ? DebugEventKind.Skip
-                        : DebugEventKind.Success
-            );
+            DebugUtil.Debug("Galatea.MemoRecall", serialized);
         }
         catch {
             // Diagnostics must never affect recall or turn recovery.
@@ -3674,7 +3637,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 : OpenSessionForTest?.Invoke(sessionDir) ?? SessionJournalEngine.Open(sessionDir);
             SessionExecutionBoundaryInspection boundary =
                 engine.InspectExecutionBoundary(ct);
-            DebugUtil.Info(
+            DebugUtil.Debug(
                 "Galatea.Session",
                 $"CreateSessionAsync: character={character.CharacterId}, sessionDir={sessionDir}, phase={boundary.Phase}, head={boundary.Head}"
             );

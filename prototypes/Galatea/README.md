@@ -6,10 +6,11 @@ Galatea.Server 是基于 SessionJournal 的Player 与 Character 分离的 Role-P
 
 ## 启动服务
 
-需要 Linux、仓库固定的 .NET 10 SDK，以及已配置的 Completion connection。当前 Completion 使用未公开发布的本地开发包，先按[依赖指南](../../docs/completion-dependency.md)准备冻结 feed。以下命令在仓库根目录执行：
+需要 Linux、仓库固定的 .NET 10 SDK，以及已配置的 Completion connection。当前 Completion 包
+`0.1.0-preview.2` 已发布到 nuget.org；按[依赖指南](../../docs/completion-dependency.md)使用根 nuget.config。以下命令在仓库根目录执行：
 
 ```bash
-dotnet restore prototypes/Galatea/Galatea.Server.csproj --configfile eng/NuGet.Completion.Local.config
+dotnet restore prototypes/Galatea/Galatea.Server.csproj
 dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
@@ -120,11 +121,14 @@ Stop 接受不等于已停止；完整工具批次结算后才能持久化结束
 开发时可使用以下 Debug 启动命令查看各环节进度：
 
 ```bash
-ATELIA_DEBUG_CATEGORIES='Galatea.Autonomy,Galatea.Api,Galatea.Mailbox,Galatea.TextExtractor,Galatea.CharacterMemory,Galatea.Delegation,Galatea.Delegation.Supervisor,Galatea.DelegateSidecar' \
+ATELIA_DEBUG_CONSOLE_LEVEL=DEBUG \
+ATELIA_DEBUG_FILE_LEVEL=DEBUG \
 dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
-`Trace/Info` 在 Release 中不编译调用；控制台类别主要控制低级别日志，`Warning/Error` 达到控制台级别阈值后不依赖类别开关。Debug 文件日志默认写入进程工作目录下 `.atelia/debug-logs/`，不可用时回退到 `gitignore/debug-logs/`。可用 `ATELIA_DEBUG_FILE_LEVEL`、`ATELIA_DEBUG_CONSOLE_LEVEL` 调整级别。
+`DebugUtil.Debug` 调用只在 Debug 构建中生成；Release 包内的库内部 Debug 调用已被裁掉，环境变量不能恢复。
+控制台输出一律写 stderr。文件日志写入进程工作目录下 `.atelia/debug-logs/{safe-category}.log`；
+两个级别变量接受 `DEBUG`/`WARNING`/`ERROR`/`OFF`，默认均为 `WARNING`。没有类别开关。
 
 | 现象 | 先检查 |
 |:--|:--|

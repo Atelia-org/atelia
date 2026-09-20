@@ -317,11 +317,10 @@ internal sealed class GalateaCodexDurableSidecarClient
                             "Sidecar sent ready more than once."
                         );
                     }
-                    DebugUtil.Info(
+                    DebugUtil.Debug(
                         LogCategory,
                         "Node durable sidecar ready: "
-                            + $"generation={generation.Id}.",
-                        eventKind: DebugEventKind.Success
+                            + $"generation={generation.Id}."
                     );
                     return;
                 case "binding-established":
@@ -1183,7 +1182,7 @@ internal sealed class GalateaCodexDurableSidecarClient
             );
         }
 
-        private void LogUnmatchedResponse(string requestId) => DebugUtil.Info(
+        private void LogUnmatchedResponse(string requestId) => DebugUtil.Debug(
             LogCategory,
             $"Ignoring completed or retired durable request: generation={Id}, requestId={requestId}."
         );

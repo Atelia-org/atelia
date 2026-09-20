@@ -1,12 +1,11 @@
 
 # Atelia.Diagnostics.DebugUtil 用法说明
-- 推荐优先使用 `DebugUtil.Trace/Info/Warning/Error` 输出调试信息；`Trace/Info` 带 `[Conditional("DEBUG")]`，Release 默认零调用开销。
-- `DebugUtil.Print("类别", "内容")` 仍可临时兼容旧调用，但后续应逐步清理到分级接口。
-- 控制台打印由环境变量 `ATELIA_DEBUG_CATEGORIES` 控制（类别用逗号/分号分隔，如：`TypeHash,Test,Outline`；设置为 `ALL` 打印所有类别）。
-- 文件/控制台最小级别可分别由 `ATELIA_DEBUG_FILE_LEVEL` / `ATELIA_DEBUG_CONSOLE_LEVEL` 覆盖；默认 `DEBUG` 记录 `Trace+`，`RELEASE` 记录 `Warning+`。
-- 默认日志目录优先为 `.atelia/debug-logs/{category}.log`，其次回退到 `gitignore/debug-logs/{category}.log`。
-- 推荐在调试代码、测试代码中统一使用本工具，便于全局开关与后续维护；单元测试默认不会被调试输出干扰（除非开启 ATELIA_DEBUG_CATEGORIES）。
-- 可用 DebugUtil.ClearLog("类别") 清空某类别日志。
+- 使用 `DebugUtil.Debug/Warning/Error(category, text)`；`Debug` 带 `[Conditional("DEBUG")]`，Release 调用点零开销。
+- 没有 `Trace`/`Info`/`Print`/`ClearLog`、`DebugEventKind` 或 exception 参数；异常只写 `exceptionType={type.FullName}`。
+- 控制台输出一律写 stderr；文件写入当前工作目录 `.atelia/debug-logs/{safe-category}.log`。
+- 只用 `ATELIA_DEBUG_FILE_LEVEL` / `ATELIA_DEBUG_CONSOLE_LEVEL` 配置，接受 `DEBUG`/`WARNING`/`ERROR`/`OFF`，默认均为 `WARNING`；非法值回退默认值。
+- 没有 `ATELIA_DEBUG_CATEGORIES`、`ALL` 或类别开关；category 只是日志标签和安全化后的文件分区名。
+- 调用文本必须 content-free：不得包含凭据、provider 原文、正文、文件路径或堆栈。
 - 实现细节与对应版本源码见 [Completion 依赖指南](docs/completion-dependency.md) 中的 Diagnostics 入口。
 
 # 项目性质与阶段
@@ -83,7 +82,7 @@ StateJournal 与其 Generator 已从 Atelia 活跃构建图迁出为封存源码
 
 ## atelia-completion 拆仓任务入口
 
-Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至独立仓；历史公开版本为 `0.1.0-preview.1`。自动重试重构现使用未公开发布的唯一开发包，先本地试运行：restore 必须显式使用 `eng/NuGet.Completion.Local.config`，后续 build/run 使用 `--no-restore`；冻结 feed 不随 Git clone 搬运，准备方式见 [Completion 依赖](docs/completion-dependency.md)。不要降回旧包或自动探测兄弟仓。显式源码联调仍使用 `UseCompletionSources` / `CompletionSourceRoot`，版本与来源以 `eng/CompletionDependency.props` 为准。拆仓范围见 [实施方案](docs/plans/atelia-completion-extraction-plan.md)，阶段证据见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)；DramaBoard 的 P4 接入尚未实施。
+Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至独立仓；当前 pin 为 `0.1.0-preview.2`，已公开发布到 nuget.org。普通 restore/build 直接用根 nuget.config，不需要本地 feed。旧 `eng/NuGet.Completion.Local.config` 与冻结 dev feed 只是历史试运行产物。不要降回旧包或自动探测兄弟仓。显式源码联调仍使用 `UseCompletionSources` / `CompletionSourceRoot`，版本与来源以 `eng/CompletionDependency.props` 为准。日常入口见 [Completion 依赖](docs/completion-dependency.md)；拆仓范围见 [实施方案](docs/plans/atelia-completion-extraction-plan.md)，阶段证据见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)；DramaBoard 的 P4 接入尚未实施。
 
 ---
 

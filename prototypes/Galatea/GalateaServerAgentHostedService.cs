@@ -27,7 +27,7 @@ internal sealed class GalateaServerAgentHostedService(
                 catch (OperationCanceledException) when (ct.IsCancellationRequested || host.IsStopping) { return; }
                 catch (Exception ex) when (GalateaExceptionClassifier.IsNonFatal(ex)) {
                     coordinator.BlockAfterFailure(characterId);
-                    DebugUtil.Error("Galatea.Autonomy", $"Automatic admission blocked: character={characterId}", ex);
+                    DebugUtil.Error("Galatea.Autonomy", $"Automatic admission blocked: character={characterId}; exceptionType={ex.GetType().FullName}");
                 }
             } while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
         }

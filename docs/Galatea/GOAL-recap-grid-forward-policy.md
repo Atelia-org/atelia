@@ -13,7 +13,7 @@
 
 旧IDs/内容/producer保留，raw Journal和Timeline/Cadence不迁写。迁移只用合成仓或获准隔离副本，不访问或修改 prototypes/Galatea/.atelia/galatea。没有live调用、commit/push或发包的要求。默认串行施工，不自行启动subagents。真实语义矛盾先给最小反例，不以全量重建、放宽校验或清空旧库绕过。
 
-restore显式使用eng/NuGet.Completion.Local.config和UseCompletionSources=false，后续--no-restore，重型.NET串行-m:1 -nr:false。按工作单跑聚焦及完整受影响测试、公有表面、4097/65537规模回归；不得降回preview包。文档和迁移工具完成不等于真实实例已升级。
+restore用根nuget.config和UseCompletionSources=false，后续--no-restore，重型.NET串行-m:1 -nr:false。按工作单跑聚焦及完整受影响测试、公有表面、4097/65537规模回归；不得降回旧包。文档和迁移工具完成不等于真实实例已升级。
 
 最后逐项审计A1-A15、报告实际测试和残余风险，说明每个引入改动如何闭环。不stash/reset/clean或提交用户原有改动来制造干净状态。只在目标真正完成时标记complete；真正受阻按当前Goal规则处理，工作量大或未验证不等于完成。最终留下可审阅的本地成果和后续实例升级入口。
 ```

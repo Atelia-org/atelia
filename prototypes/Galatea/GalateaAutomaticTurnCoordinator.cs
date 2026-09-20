@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.ExceptionServices;
 using Atelia.Completion;
-using Atelia.Diagnostics;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
@@ -114,7 +113,6 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)
             && !ct.IsCancellationRequested && !host.IsStopping) {
             RecordAdmissionFailure(session, exception);
-            DebugUtil.Error("Galatea.Autonomy", $"Admission retry failed: character={characterId}", exception);
             ApiErrorDto failure = session.AutomaticAdmissionFailure!;
             return new GalateaAutomaticTurnResult.Blocked(failure.Code, failure.Error);
         }

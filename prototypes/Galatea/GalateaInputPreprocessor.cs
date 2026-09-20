@@ -38,7 +38,7 @@ internal sealed class GalateaInputPreprocessor {
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
-            LogFallback(original, exception);
+            LogFallback(exception);
             return original;
         }
         cancellationToken.ThrowIfCancellationRequested();
@@ -67,19 +67,17 @@ internal sealed class GalateaInputPreprocessor {
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
-            LogFallback(original, exception);
+            LogFallback(exception);
             return original;
         }
     }
 
     private static void LogFallback(
-        string original,
         Exception exception
     ) => DebugUtil.Warning(
         DebugCategory,
         "Admission input preprocessing fallback to original: "
-        + $"input={Preview(original)}, "
-        + $"error={exception.Message}"
+        + $"exceptionType={exception.GetType().FullName}"
     );
 
     private static void RequireMessageFits(string message, string source) {
@@ -92,15 +90,4 @@ internal sealed class GalateaInputPreprocessor {
         }
     }
 
-    private static string Preview(string? text) {
-        if (string.IsNullOrWhiteSpace(text)) {
-            return "<null>";
-        }
-        string normalized = text
-            .Replace("\r", string.Empty, StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal);
-        return normalized.Length <= 120
-            ? normalized
-            : normalized[..120] + "...";
-    }
 }

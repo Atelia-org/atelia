@@ -391,7 +391,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             _signals.Writer.TryComplete();
             _shutdown.Cancel();
         }
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             "Durable delegation supervisor shutdown started."
         );
@@ -705,18 +705,16 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         _shutdown.Dispose();
 
         if (failures.Count == 0) {
-            DebugUtil.Info(
+            DebugUtil.Debug(
                 LogCategory,
-                "Durable delegation supervisor shutdown completed.",
-                eventKind: DebugEventKind.Success
+                "Durable delegation supervisor shutdown completed."
             );
             return;
         }
         DebugUtil.Warning(
             LogCategory,
             "Durable delegation supervisor shutdown completed with "
-                + $"cleanupFailures={failures.Count}.",
-            eventKind: DebugEventKind.Failure
+                + $"cleanupFailures={failures.Count}."
         );
         if (failures.Count == 1) { throw failures[0]; }
         if (failures.Count > 1) { throw new AggregateException(failures); }
@@ -745,9 +743,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         LogCategory,
         "Durable delegation supervisor cleanup failed: "
             + $"component={component}, "
-            + $"exception={exception.GetType().Name}.",
-        exception,
-        DebugEventKind.Failure
+            + $"exceptionType={exception.GetType().FullName}."
     );
 
     private static string Safe(string? value) =>
@@ -903,9 +899,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                         "Durable mailbox status read failed: "
                             + $"user={Safe(CharacterId)}, "
                             + "code=STORE_READ_FAILED, "
-                            + $"exception={exception.GetType().Name}.",
-                        exception,
-                        DebugEventKind.Failure
+                            + $"exception={exception.GetType().Name}; exceptionType={exception.GetType().FullName}."
                     );
                     return GalateaMailboxStatusProjection.Unavailable(
                         "STORE_READ_FAILED"
@@ -931,9 +925,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                         "Durable automatic wake read failed: "
                             + $"user={Safe(CharacterId)}, "
                             + "code=STORE_READ_FAILED, "
-                            + $"exception={exception.GetType().Name}.",
-                        exception,
-                        DebugEventKind.Failure
+                            + $"exception={exception.GetType().Name}; exceptionType={exception.GetType().FullName}."
                     );
                     return GalateaAutomaticWakeReason.None;
                 }
@@ -1167,7 +1159,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                         or GalateaDurableMailState.Accepted)) {
                     return;
                 }
-                DebugUtil.Info(
+                DebugUtil.Debug(
                     LogCategory,
                     "Durable active dispatch preserved for cold-restart "
                         + $"reconciliation: user={Safe(CharacterId)}, "
@@ -1181,9 +1173,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                     LogCategory,
                     "Durable delegation shutdown state inspection failed: "
                         + $"user={Safe(CharacterId)}, "
-                        + $"exception={exception.GetType().Name}.",
-                    exception,
-                    DebugEventKind.Failure
+                        + $"exception={exception.GetType().Name}; exceptionType={exception.GetType().FullName}."
                 );
             }
         }

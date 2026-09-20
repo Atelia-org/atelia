@@ -78,7 +78,7 @@ public sealed class ConfiguredGalateaUserMessageNormalizer
         _getClient = getClient
             ?? throw new ArgumentNullException(nameof(getClient));
 
-        DebugUtil.Info(
+        DebugUtil.Debug(
             DebugCategory,
             $"User input normalization enabled: connection={connection.Id}, model={connection.ModelId}, maxChars={MaxMessageLengthChars}, maxLines={MaxMessageLines}"
         );
@@ -132,13 +132,13 @@ public sealed class ConfiguredGalateaUserMessageNormalizer
 
             bool changed = !string.Equals(userMessage, normalized, StringComparison.Ordinal);
             if (changed) {
-                DebugUtil.Info(
+                DebugUtil.Debug(
                     DebugCategory,
                     $"Input normalized: before={Preview(userMessage)}, after={Preview(normalized)}"
                 );
             }
             else {
-                DebugUtil.Trace(DebugCategory, $"Input normalization kept original: input={Preview(userMessage)}");
+                DebugUtil.Debug(DebugCategory, $"Input normalization kept original: input={Preview(userMessage)}");
             }
 
             return normalized;
@@ -150,8 +150,7 @@ public sealed class ConfiguredGalateaUserMessageNormalizer
             GalateaExceptionClassifier.IsNonFatal(ex)) {
             DebugUtil.Warning(
                 DebugCategory,
-                $"Input normalization failed; keeping original. input={Preview(userMessage)}, error={ex.Message}",
-                ex
+                $"Input normalization failed; keeping original. input={Preview(userMessage)}; exceptionType={ex.GetType().FullName}"
             );
             return userMessage;
         }

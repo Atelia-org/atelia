@@ -1,21 +1,31 @@
 # Completion 自动重试实施记录
 
-状态：实现、独立审阅、包模式回归与本地交付验收完成；本文件随实现一并提交。尚未部署真实角色，公开发布另行安排。开始日期：2026-09-16。
+状态：实现、独立审阅、包模式回归与本地交付验收完成；本文件随实现一并提交。尚未部署真实角色。
+2026-09-21 状态更新：相关四包已公开发布为 `0.1.0-preview.2`，Atelia 当前 pin 与根
+nuget.org-only restore 流程见[依赖指南](../completion-dependency.md)。下文 dev 包、本地冻结 feed
+与本地交付复验是 2026-09-16 试运行时的历史事实，不代表当前默认流程。
 
 ## 当前验收结论（优先于下文历史流水）
 
 - P1–P5 实现、独立 review 与高风险尾修已完成；历史 Started/Failed 严格读取保留，新的调用开始/重试不再写入业务事件链。
 - 新增冷恢复一次性 0–250ms jitter、单次生成 boundary 恢复、可停止 admission、Recap maintenance 单次期限移交，均有对应故障测试。
 - 上游最终提交 `612b9bc7fec52c4bd3a98b06b64f61e3ead6ef93`，离线测试 **843 passed / 1 Windows-only skip / 0 failed**。
-- 最终开发包为 `0.1.0-dev.20260916114103`；冻结 feed 为 `/tmp/completion-retry-bounded-package.HaeDM6/feed`，manifest 记录四包 SHA256。三个独立消费者通过；Atelia 独立缓存四包 hash 与 manifest 一致，assets 均为 package，输出 Completion DLL 与包内 DLL hash 一致。
+- 当时最终开发包为 `0.1.0-dev.20260916114103`；冻结 feed 为 `/tmp/completion-retry-bounded-package.HaeDM6/feed`，manifest 记录四包 SHA256。三个独立消费者通过；Atelia 独立缓存四包 hash 与 manifest 一致，assets 均为 package，输出 Completion DLL 与包内 DLL hash 一致。
 - 最终包模式 Release：Core **557/557**、PublicSurface **4/4**、Offline **30/30**。源码模式 Debug：HistoryTimeline **207/207**、Recap.Runtime **96/96**、Hosting **39/39**、Hosting.PublicSurface **7/7**、Online **33/33**、CLI **162/162**；Node **23/23**。
 - Host 源码 Debug **1291/1291**；随后新增四个冷恢复 jitter 用例。Release 包模式两次完整运行均为 **1294/1295**，分别暴露测试夹具在线 seed CAS 竞态、跨状态变化二次读取快照竞态；均只修夹具，不降低生产约束。相关三个测试连续三轮通过；最终完整 Release 包模式 **1295/1295，0 failed**（2 分 30 秒），TRX：`/tmp/galatea-retry-test-results/retry-host-package-release-verified.trx`。
 - scoped 文档检查 **57 files / 0 diagnostics**；`git diff --check` 通过。构建测试项目仍有 nullable/xUnit analyzer warnings，不宣称测试代码零警告。
 - 独立最终审计确认旧 v7/v8 Prepared/Started 与新事件混合历史、冷 strict open/audit、工具仅执行一次、提交不确定后冷恢复、生产 SSE 预览隔离、Note/mail 冷结算和 Terminated lease 消费已有实际断言。
-- 仅合成故障与隔离临时 home 验证；未调用真实 provider，未修改真实角色数据，未部署、公开推送或发布 NuGet。
-- **交付方式已确认**：用户选择先本地试运行，NuGet 另行安排。`eng/CompletionDependency.props` 已 pin 最终开发包与源码提交，不推送、不公开发布。必须使用显式本地 NuGet 配置或源码联调；普通 nuget.org restore 不可用。
+- 仅合成故障与隔离临时 home 验证；未调用真实 provider，未修改真实角色数据。当时未部署、公开推送或发布 NuGet。
+- **当时交付方式**：用户选择先本地试运行，NuGet 另行安排。`eng/CompletionDependency.props` 当时 pin 最终开发包与源码提交，不推送、不公开发布；当时必须使用显式本地 NuGet 配置或源码联调。
 
-当前本地交付入口（仓库根执行，SDK 10.0.201）：
+当前包模式入口（仓库根执行，根 nuget.config 仅映射 nuget.org）：
+
+```sh
+dotnet restore tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj -p:UseCompletionSources=false -m:1 -nr:false
+dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -c Release -p:UseCompletionSources=false -m:1 -nr:false
+```
+
+当时本地交付入口（保留为历史证据）：
 
 ```sh
 dotnet restore tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --configfile eng/NuGet.Completion.Local.config -p:UseCompletionSources=false -m:1 -nr:false
@@ -29,7 +39,7 @@ dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -c Release -p
 上游三项本地提交未推送。固定 SDK 已保存至 `gitignore/dotnet-10.0.201/`，无需依赖临时目录或修改全局安装；
 本机新 shell 的 PATH 设置见[依赖指南](../completion-dependency.md)，其他机器正常安装仓库指定 SDK 即可。
 
-本地交付最终复验：无包版本覆盖参数、`UseCompletionSources=false`，使用仓内显式配置 restore 成功；
+当时本地交付最终复验：无包版本覆盖参数、`UseCompletionSources=false`，使用仓内显式配置 restore 成功；
 assets 四包均为默认 pin 的 package、cache/source 均为上述持久本地目录；四包缓存 hash、nuspec 源码提交及
 Release 输出 Completion DLL 均与冻结包一致。完整 Release Host **1295/1295、0 failed**（2 分 16 秒），
 TRX：`gitignore/completion-auto-retry-validation/retry-host-local-delivery.trx`。

@@ -358,16 +358,15 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
         }
 
         generation.CompleteFailure("shutdown", "SIDECAR_DISPOSED");
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             $"Sidecar generation stopping: generation={generation.Id}."
         );
         try {
             await cleanup.ConfigureAwait(false);
-            DebugUtil.Info(
+            DebugUtil.Debug(
                 LogCategory,
-                $"Sidecar generation stopped: generation={generation.Id}.",
-                eventKind: DebugEventKind.Success
+                $"Sidecar generation stopped: generation={generation.Id}."
             );
         }
         catch (Exception exception) when (
@@ -381,9 +380,7 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
             DebugUtil.Warning(
                 LogCategory,
                 $"Sidecar generation shutdown failed: generation={generation.Id}, "
-                    + $"stage={stage}, code={code}.",
-                exception,
-                DebugEventKind.Failure
+                    + $"stage={stage}, code={code}; exceptionType={exception.GetType().FullName}."
             );
             throw;
         }
@@ -449,10 +446,9 @@ internal abstract class GalateaSidecarProcessGeneration {
         Task stdout = ReadStdoutAsync();
         _ = DrainStderrAsync();
         _ = ObserveExitAsync(stdout);
-        DebugUtil.Info(
+        DebugUtil.Debug(
             GalateaSidecarProcessClientBase.LogCategory,
-            $"Node sidecar process started: generation={Id}, pid={_process.Id}.",
-            eventKind: DebugEventKind.Start
+            $"Node sidecar process started: generation={Id}, pid={_process.Id}."
         );
     }
 
@@ -726,7 +722,7 @@ internal abstract class GalateaSidecarProcessGeneration {
             exception is IOException
                 or ObjectDisposedException
                 or InvalidOperationException) { }
-        DebugUtil.Trace(
+        DebugUtil.Debug(
             GalateaSidecarProcessClientBase.LogCategory,
             $"Sidecar stderr drained: generation={Id}, bytes={total}."
         );

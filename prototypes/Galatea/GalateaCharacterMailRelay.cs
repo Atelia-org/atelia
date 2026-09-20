@@ -116,8 +116,8 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
                 GalateaExceptionClassifier.IsNonFatal(exception)) {
                 DebugUtil.Warning("Galatea.CharacterMail",
                     "Character-mail relay sweep deferred: target="
-                    + target.CharacterId + ", exception="
-                    + exception.GetType().Name + ".", exception);
+                    + target.CharacterId + ", exceptionType="
+                    + exception.GetType().FullName + ".");
             }
         }
     }

@@ -149,33 +149,30 @@ internal sealed class CharacterNoteDerivedInfoPump : IAsyncDisposable {
         CharacterNoteDerivedInfoReconcileResult result,
         long elapsedMilliseconds
     ) {
-        (string source, string outcome, string code, DebugEventKind kind) =
+        (string source, string outcome, string code) =
             result switch {
                 CharacterNoteDerivedInfoReconcileResult.NoWork =>
-                    ("none", "no-work", "none", DebugEventKind.Skip),
+                    ("none", "no-work", "none"),
                 CharacterNoteDerivedInfoReconcileResult.Applied applied =>
-                    (Format(applied.SourceAction), "applied", "none",
-                        DebugEventKind.Success),
+                    (Format(applied.SourceAction), "applied", "none"),
                 CharacterNoteDerivedInfoReconcileResult.Rejected rejected =>
                     (Format(rejected.SourceAction), "rejected",
-                        rejected.Code, DebugEventKind.Skip),
+                        rejected.Code),
                 CharacterNoteDerivedInfoReconcileResult.Deferred deferred =>
                     (Format(deferred.SourceAction), "deferred",
-                        deferred.Code, DebugEventKind.Failure),
+                        deferred.Code),
                 CharacterNoteDerivedInfoReconcileResult.Quarantined
                         quarantined =>
-                    ("none", "quarantined", quarantined.Code,
-                        DebugEventKind.Failure),
+                    ("none", "quarantined", quarantined.Code),
                 _ => throw new InvalidDataException(
                     "Unknown Character Note DerivedInfo reconciliation result."
                 ),
             };
-        DebugUtil.Info(
+        DebugUtil.Debug(
             "Galatea.CharacterMemory",
             "Character Note DerivedInfo pump completed: "
                 + $"source={source} outcome={outcome} code={code} "
-                + $"elapsedMs={elapsedMilliseconds}",
-            eventKind: kind
+                + $"elapsedMs={elapsedMilliseconds}"
         );
     }
 

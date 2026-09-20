@@ -124,7 +124,7 @@ internal static class GalateaMemoRecallQueryRenderer {
         }
 
         if (omittedNoticeCount > 0 || omittedActionCount > 0) {
-            DebugUtil.Trace(
+            DebugUtil.Debug(
                 DebugCategory,
                 "Memo recall query omitted optional evidence: "
                     + $"notices={omittedNoticeCount}, "

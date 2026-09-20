@@ -151,13 +151,12 @@ internal sealed class GalateaDurableDelegationDriver {
                         queued.DispatchId,
                         queued.Revision
                     );
-                DebugUtil.Info(
+                DebugUtil.Debug(
                     LogCategory,
                     "Durable queued mail failed preflight: "
                         + $"user={Safe(snapshot.Owner.CharacterId)}, "
                         + $"dispatchId={queued.DispatchId}, "
-                        + $"code={notice.Code}.",
-                    eventKind: DebugEventKind.Failure
+                        + $"code={notice.Code}."
                 );
                 return new(
                     GalateaDurableDelegationPulseStep.QueuedPreflightFailed,
@@ -227,7 +226,7 @@ internal sealed class GalateaDurableDelegationDriver {
             queued.DispatchId,
             queued.Revision
         );
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             "Durable thread binding claimed: "
                 + $"user={Safe(snapshot.Owner.CharacterId)}, "
@@ -293,13 +292,12 @@ internal sealed class GalateaDurableDelegationDriver {
                 result.ThreadId,
                 route.Revision
             );
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             "Durable thread binding established: "
                 + $"user={Safe(snapshot.Owner.CharacterId)}, "
                 + $"bindingOperationId={operationId}, "
-                + $"threadId={result.ThreadId}.",
-            eventKind: DebugEventKind.Success
+                + $"threadId={result.ThreadId}."
         );
         return new(
             GalateaDurableDelegationPulseStep.BindingEstablished,
@@ -385,13 +383,12 @@ internal sealed class GalateaDurableDelegationDriver {
             ?? throw new InvalidDataException(
                 "A Started mail has no durable requested thread."
             );
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             "Durable mail start requested: "
                 + $"user={Safe(snapshot.Owner.CharacterId)}, "
                 + $"dispatchId={started.DispatchId}, threadId={threadId}, "
-                + $"taskUtf8Bytes={TextExtractorUtf8.GetByteCount(task)}.",
-            eventKind: DebugEventKind.Start
+                + $"taskUtf8Bytes={TextExtractorUtf8.GetByteCount(task)}."
         );
         GalateaDelegateTurnAccepted accepted;
         try {
@@ -463,14 +460,13 @@ internal sealed class GalateaDurableDelegationDriver {
                 accepted.ThreadId,
                 accepted.TurnId
             );
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             "Durable mail accepted: "
                 + $"user={Safe(snapshot.Owner.CharacterId)}, "
                 + $"dispatchId={persisted.DispatchId}, "
                 + $"threadId={accepted.ThreadId}, "
-                + $"turnId={accepted.TurnId}.",
-            eventKind: DebugEventKind.Success
+                + $"turnId={accepted.TurnId}."
         );
         return new(
             GalateaDurableDelegationPulseStep.MailAccepted,
@@ -761,7 +757,7 @@ internal sealed class GalateaDurableDelegationDriver {
             DebugUtil.Warning(LogCategory, message);
         }
         else {
-            DebugUtil.Info(LogCategory, message);
+            DebugUtil.Debug(LogCategory, message);
         }
         return new(
             code switch {
@@ -1217,7 +1213,7 @@ internal sealed class GalateaDurableDelegationDriver {
                 or GalateaDurableMailState.Accepted)) {
             return;
         }
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             "Durable active dispatch reconciliation scheduled: "
                 + $"user={Safe(snapshot.Owner.CharacterId)}, "
@@ -1237,7 +1233,7 @@ internal sealed class GalateaDurableDelegationDriver {
         if (!ShouldLogDebugRunningLiveness(mail.DispatchId, recovered)) {
             return;
         }
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
             "Durable dispatch Running confirmed: "
                 + $"user={Safe(snapshot.Owner.CharacterId)}, "
@@ -1248,8 +1244,7 @@ internal sealed class GalateaDurableDelegationDriver {
                 + $"threadId={running.ThreadId}, turnId={running.TurnId}, "
                 + $"recovered={recovered.ToString().ToLowerInvariant()}, "
                 + $"clearedAttempt={mail.RecoveryFailureCount}, "
-                + $"clearedCode={mail.RecoveryLastCode ?? "<none>"}.",
-            eventKind: DebugEventKind.Success
+                + $"clearedCode={mail.RecoveryLastCode ?? "<none>"}."
         );
     }
 
@@ -1308,19 +1303,17 @@ internal sealed class GalateaDurableDelegationDriver {
             + $"sequence={notice.CompletionSequence}, "
             + $"noticeUtf8Bytes={TextExtractorUtf8.GetByteCount(notice.Body)}";
         if (notice.Kind == GalateaReplyNoticeKind.DeliveryFailure) {
-            DebugUtil.Info(
+            DebugUtil.Debug(
                 LogCategory,
                 summary
                     + $", stage={notice.Stage ?? "<none>"}, "
-                    + $"code={notice.Code ?? "<none>"}.",
-                eventKind: DebugEventKind.Failure
+                    + $"code={notice.Code ?? "<none>"}."
             );
             return;
         }
-        DebugUtil.Info(
+        DebugUtil.Debug(
             LogCategory,
-            summary + ".",
-            eventKind: DebugEventKind.Success
+            summary + "."
         );
     }
 
@@ -1328,7 +1321,7 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaDelegationStateSnapshot snapshot,
         GalateaDelegationInboxBackpressureException backpressure,
         string dispatchId
-    ) => DebugUtil.Trace(
+    ) => DebugUtil.Debug(
         LogCategory,
         "Durable delegation inbox backpressure: "
             + $"user={Safe(snapshot.Owner.CharacterId)}, "

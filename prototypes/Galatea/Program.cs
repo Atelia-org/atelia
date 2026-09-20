@@ -150,8 +150,7 @@ app.Use(async (context, next) => {
         if (statusCode >= StatusCodes.Status500InternalServerError) {
             DebugUtil.Error(
                 "Galatea.Api",
-                $"API request failed: method={context.Request.Method}, path={context.Request.Path}, status={statusCode}, code={error.Code}",
-                exception
+                $"API request failed: method={context.Request.Method}, path={context.Request.Path}, status={statusCode}, code={error.Code}; exceptionType={exception.GetType().FullName}"
             );
         }
         context.Response.Clear();
@@ -353,7 +352,7 @@ characterApi.MapGet(
     async (string characterId, GalateaHostService hostService, CancellationToken ct) => {
         var session = await hostService.GetSessionAsync(characterId, ct);
         var response = await hostService.GetRecentTurnsAsync(session, ct);
-        DebugUtil.Info(
+        DebugUtil.Debug(
             "Galatea.Api",
             $"GET /api/v1/characters/{characterId}/recent-turns character={characterId}, items={response.Turns.Count}, rewindEligible={response.RewindLatestToken is not null}"
         );
@@ -374,7 +373,7 @@ characterApi.MapGet(
         );
         RecapCadenceProgressSnapshotDto response = await hostService
             .GetRecapCadenceProgressAsync(session, ct);
-        DebugUtil.Info(
+        DebugUtil.Debug(
             "Galatea.Api",
             $"GET /api/v1/characters/{characterId}/recap-cadence-progress "
                 + $"character={characterId}, freshness={response.Freshness}, "
@@ -504,7 +503,7 @@ characterApi.MapPost(
                 new GalateaTurnOptions(connection.Id),
                 PlayerSender(user, hostService)
             );
-            DebugUtil.Info("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns character={characterId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
+            DebugUtil.Debug("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns character={characterId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
             IResult result = BuildAcceptedTurnResult(liveTurn);
             _ = turnRunner.Start(session, liveTurn);
             writerOwnershipTransferred = true;
@@ -957,7 +956,7 @@ characterApi.MapPost(
                 ), statusCode: StatusCodes.Status409Conflict);
             }
 
-            DebugUtil.Info("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns/pop-latest character={characterId} succeeded, head={session.Engine.ReadCurrentHead()}");
+            DebugUtil.Debug("Galatea.Api", $"POST /api/v1/characters/{characterId}/chat/turns/pop-latest character={characterId} succeeded, head={session.Engine.ReadCurrentHead()}");
             return Results.Bytes(
                 prepared.ReceiptUtf8Bytes,
                 "application/json"
@@ -980,7 +979,7 @@ characterApi.MapGet(
             session,
             ct
         );
-        DebugUtil.Info("Galatea.Api", $"GET /api/v1/characters/{characterId}/chat/turns/current character={characterId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}");
+        DebugUtil.Debug("Galatea.Api", $"GET /api/v1/characters/{characterId}/chat/turns/current character={characterId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}");
         return Results.Ok(currentTurn);
     }
 );

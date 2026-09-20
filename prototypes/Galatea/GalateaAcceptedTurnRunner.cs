@@ -81,7 +81,7 @@ internal sealed class GalateaAcceptedTurnRunner {
     ) {
         CancellationToken stopping = _stopping.Token;
         try {
-            DebugUtil.Info(
+            DebugUtil.Debug(
                 "Galatea.TurnRunner",
                 $"Accepted turn start: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}"
             );
@@ -93,13 +93,13 @@ internal sealed class GalateaAcceptedTurnRunner {
         }
         catch (GalateaTurnException ex) {
             if (ex.InnerException is not null) {
-                DebugUtil.Error("Galatea.TurnRunner", $"Turn stage failed: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}", ex);
+                DebugUtil.Debug("Galatea.TurnRunner", $"Turn stage failed: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}; exceptionType={ex.InnerException.GetType().FullName}");
             }
-            DebugUtil.Warning("Galatea.TurnRunner", $"Turn failed with GalateaTurnException: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
+            DebugUtil.Warning("Galatea.TurnRunner", $"Turn failed with GalateaTurnException: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}");
             liveTurn.PublishError(GalateaSseErrorClassifier.Classify(ex));
         }
         catch (Exception ex) when (GalateaExceptionClassifier.IsNonFatal(ex)) {
-            DebugUtil.Error("Galatea.TurnRunner", $"Turn failed with exception: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}", ex);
+            DebugUtil.Debug("Galatea.TurnRunner", $"Turn failed with exception: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}; exceptionType={ex.GetType().FullName}");
             liveTurn.PublishError(GalateaSseErrorCode.InternalFailure);
         }
         catch (Exception) {
@@ -116,7 +116,7 @@ internal sealed class GalateaAcceptedTurnRunner {
                         .RefreshRecentTurnsBestEffortAsync(session, stopping)
                         .ConfigureAwait(false);
                 }
-                DebugUtil.Info(
+                DebugUtil.Debug(
                     "Galatea.TurnRunner",
                     $"Accepted turn finish: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, status={liveTurn.Status}"
                 );
