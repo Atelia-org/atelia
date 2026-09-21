@@ -68,6 +68,9 @@ public sealed class StoreReadSessionTests : IDisposable {
         Create();
         using RecapGridStoreHandle handleA = Open();
         RecapGridStoreReadSession session = OpenSession(handleA);
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            session.ReadViewAt(UnwrittenKey())
+        );
         using RecapGridStoreHandle handleB = Open();
         RowBuildSpec spec = StoreFixture.Spec();
         RecapCellArtifact cell = StoreFixture.Put(handleB, spec, "concurrent");
@@ -166,6 +169,48 @@ public sealed class StoreReadSessionTests : IDisposable {
         Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
             handle.Reader.ReadViewAt(missingKey)
         );
+        session.Dispose();
+    }
+
+    [Fact]
+    public void SessionSentinelDetectsSchemaDriftBeforeFreshOpen() {
+        Create();
+        RecapGridStoreHandle handle = Open();
+        RecapGridStoreReadSession session = OpenSession(handle);
+        using (SqliteConnection connection = CreateRawConnection()) {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText =
+                """
+                PRAGMA ignore_check_constraints = ON;
+                UPDATE store_metadata SET schema_version = 99 WHERE singleton = 1;
+                """;
+            command.ExecuteNonQuery();
+        }
+        var sessionRead = Assert.IsType<
+            RecapGridStoreReadResult<RecapRowView>.Invalid
+            >(session.ReadViewAt(UnwrittenKey()));
+        var freshRead = Assert.IsType<
+            RecapGridStoreReadResult<RecapRowView>.Invalid
+            >(handle.Reader.ReadViewAt(UnwrittenKey()));
+        Assert.Equal(freshRead.Code, sessionRead.Code);
+        session.Dispose();
+        handle.Dispose();
+    }
+
+    [Fact]
+    public void SessionOpenCountsOnceAndSessionReadsDoNotOpen() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        int before = handle.Reader.ConnectionOpens;
+        RecapGridStoreReadSession session = OpenSession(handle);
+        Assert.Equal(before + 1, handle.Reader.ConnectionOpens);
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            session.ReadViewAt(UnwrittenKey())
+        );
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            session.ReadViewAt(UnwrittenKey())
+        );
+        Assert.Equal(before + 1, handle.Reader.ConnectionOpens);
         session.Dispose();
     }
 
