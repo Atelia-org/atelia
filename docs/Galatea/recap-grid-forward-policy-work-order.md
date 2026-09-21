@@ -124,6 +124,12 @@ dotnet restore "$project" --configfile eng/NuGet.Completion.Local.config -p:UseC
 dotnet test "$project" --no-restore -c Release -p:UseCompletionSources=false -m:1 -nr:false
 ```
 
+上述 restore 命令是 2026-09-17 本轮 G6 验收时的历史命令。当前仓库的
+Completion 依赖入口已改为根 `nuget.config` / gitignored
+`eng/CompletionDependency.Local.props` 三态模式；后续运行以
+[Completion 依赖](../completion-dependency.md)为准，不要继续把旧本地 config 当作
+当前默认流程。
+
 受影响 RecapGrid 测试项目以 `rg --files tests | rg 'SessionJournal\.RecapGrid.*\.Tests\.csproj$'` 盘点；
 另有 `tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj`、`tests/Galatea.RecapGrid.Tests/Galatea.RecapGrid.Tests.csproj`、
 `tests/Galatea.RecapGrid.PublicSurface.Tests/Galatea.RecapGrid.PublicSurface.Tests.csproj`、

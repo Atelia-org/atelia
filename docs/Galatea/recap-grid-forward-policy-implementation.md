@@ -219,6 +219,14 @@ G5 已知残余（不改变已实现合同）：
   HistoryTimeline full 用时 3 分 37 秒，包含
   `V2MutableSelectedPathCommitsAndVerifies65537Rows`。
 
+2026-09-21 在后续 Completion/Diagnostics 依赖与 Galatea 调用面更新后的当前
+HEAD `2123d3c8` 上，本机处于 gitignored local feed 模式
+（`eng/CompletionDependency.Local.props` 指向唯一 dev 包）。针对这些后续提交的
+影响面补跑：`Galatea.RecapGrid.Tests` 9/9 passed；`Galatea.Server.Tests`
+1296 passed、1 个显式 live-provider skip、0 failed。结果分别为两个项目的
+`TestResults/g6-current-head.trx`。这不是重复 2026-09-17 的 26 项目全量门禁，
+而是当前 HEAD 的受影响面复验；规模与迁移合同仍以上方原始 G6 证据为准。
+
 ### A1--A15 审计
 
 | 项 | 最终证据与闭环 |
