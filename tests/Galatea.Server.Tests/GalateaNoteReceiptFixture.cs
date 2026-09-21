@@ -81,7 +81,7 @@ internal static class GalateaNoteReceiptFixture {
         try {
             IReadOnlyList<SessionCompletedTurnProjection> turns = epoch.Session.Engine
                 .ReadRecentCompletedTurns().RequireSnapshot().Turns;
-            string source = EventAddressTextCodec.Format(turns[^1].TerminalAction.Address);
+            string source = EventAddressTextCodec.Format(turns[^1].RequireTerminalAction().Address);
             var memory = epoch.Session.CharacterMemoryReconciler!;
             return new(Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
                     epoch.Session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()),

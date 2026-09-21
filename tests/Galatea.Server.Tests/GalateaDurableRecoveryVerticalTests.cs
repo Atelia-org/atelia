@@ -70,7 +70,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             CharacterSessionHost firstSession = await firstService.GetSessionAsync(
                 "alice", CancellationToken.None
             );
-            GalateaReplyLeaseSnapshot membership = firstSession.DelegationHandle.Store.BeginReplyLeaseMembership(
+            GalateaReplyLeaseSnapshot membership = firstSession.RequireDelegationHandle().Store.BeginReplyLeaseMembership(
                 "cold-active-lease",
                 PlayerTurnObservationEnvelope
                     .DelegateReplyLeasePlayerTextDiscriminator,
@@ -79,11 +79,11 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             await firstSession.TurnLock.WaitAsync();
             EventAddress observation;
             try {
-                var lease = new GalateaDurableReplyLease(firstSession.DelegationHandle.Store,
+                var lease = new GalateaDurableReplyLease(firstSession.RequireDelegationHandle().Store,
                     membership.LeaseId, membership.Revision);
                 SessionInputContent input = GalateaObservationContent.Create(
                     new GalateaFreshInput.DelegateReply(lease.ReadNotices()), DateTimeOffset.UnixEpoch,
-                    GalateaDelegationTestInputs.Sender(firstSession.DelegationHandle.Store, "Galatea")
+                    GalateaDelegationTestInputs.Sender(firstSession.RequireDelegationHandle().Store, "Galatea")
                 );
                 lease.BindObservationBase(firstSession.Engine, firstSession.Engine.ReadCurrentHead()!.Value, input);
                 observation = firstSession.Engine.AppendObservation(input);
@@ -173,7 +173,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         coordinator.BeforeReadyReplyCutoffForTest = _ =>
             ConsumeReadyReplyAsOtherWinner(
-                session.DelegationHandle.Store,
+                session.RequireDelegationHandle().Store,
                 session.Engine
             );
 
@@ -189,10 +189,10 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         }
 
         Assert.Null(session.GetCurrentTurn());
-        Assert.Null(session.DelegationHandle.Store.ReadSnapshot().ActiveLease);
+        Assert.Null(session.RequireDelegationHandle().Store.ReadSnapshot().ActiveLease);
         Assert.Equal(
             GalateaReplyNoticeState.Consumed,
-            Assert.Single(session.DelegationHandle.Store.ReadSnapshot().Notices)
+            Assert.Single(session.RequireDelegationHandle().Store.ReadSnapshot().Notices)
                 .State
         );
         Assert.Equal(0, completionFactory.Client.DispatchCallCount);
@@ -242,8 +242,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                     session.Engine.InspectRuntimeRecoveryRequirements()
                 );
         Assert.Equal(failedHead, after.FailedHead);
-        GalateaDelegationStateSnapshot delegation = session.DelegationHandle
-            .Store.ReadSnapshot();
+        GalateaDelegationStateSnapshot delegation = session
+            .RequireDelegationHandle().Store.ReadSnapshot();
         Assert.Null(delegation.ActiveLease);
         Assert.Equal(
             GalateaReplyNoticeState.Ready,
@@ -536,7 +536,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         SessionCompletedTurnProjection completed = turns[0];
         Assert.Equal(
             "answer after rejection",
-            completed.TerminalAction.Message.GetFlattenedText()
+            completed.RequireTerminalAction().Message.GetFlattenedText()
         );
     }
 
@@ -721,7 +721,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         Assert.Equal(
             "resumed answer",
-            completed.TerminalAction.Message.GetFlattenedText()
+            completed.RequireTerminalAction().Message.GetFlattenedText()
         );
     }
 
@@ -1066,7 +1066,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(
             "restarted answer",
             session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[^1]
-                .TerminalAction.Message.GetFlattenedText()
+                .RequireTerminalAction().Message.GetFlattenedText()
         );
     }
 

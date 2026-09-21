@@ -50,7 +50,7 @@ public sealed class GalateaScenarioLabLiveTests(ITestOutputHelper output) {
             string[] originalNative;
             using (var engine = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
                 originalNative = engine.ReadRecentCompletedTurns().RequireSnapshot().Turns
-                    .Single().TerminalAction.Message.Blocks.OfType<OpenAIResponsesReasoningBlock>()
+                    .Single().RequireTerminalAction().Message.Blocks.OfType<OpenAIResponsesReasoningBlock>()
                     .Select(block => block.RawItemJson).ToArray();
                 Assert.NotEmpty(originalNative);
                 Assert.Equal(SessionExecutionPhase.Idle, engine.InspectExecutionBoundary().Phase);
@@ -66,7 +66,7 @@ public sealed class GalateaScenarioLabLiveTests(ITestOutputHelper output) {
             using (var engine = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
                 var turns = engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
                 Assert.Equal(2, turns.Count);
-                Assert.Equal(originalNative, turns[^1].TerminalAction.Message.Blocks
+                Assert.Equal(originalNative, turns[^1].RequireTerminalAction().Message.Blocks
                     .OfType<OpenAIResponsesReasoningBlock>().Select(block => block.RawItemJson).ToArray());
                 Assert.Equal(SessionExecutionPhase.Idle, engine.InspectExecutionBoundary().Phase);
                 _ = engine.ScanCheckedAuditEvents(_ => { });
@@ -107,7 +107,7 @@ public sealed class GalateaScenarioLabLiveTests(ITestOutputHelper output) {
         Assert.Equal("completed", turn.Status);
         Assert.Equal(SessionExecutionPhase.Idle, session.Engine.InspectExecutionBoundary().Phase);
         Assert.NotEmpty(session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[0]
-            .TerminalAction.Message.GetFlattenedText());
+            .RequireTerminalAction().Message.GetFlattenedText());
     }
 
     private static string RequiredPath(string name) {

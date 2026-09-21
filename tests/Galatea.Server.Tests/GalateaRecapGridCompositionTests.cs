@@ -912,7 +912,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         var results = audit.Select(item => item.Fact).OfType<SessionJournalAuditToolResultObservedFact>().ToArray();
         Assert.Equal(["inspect-one", "inspect-two"], results.Select(result => result.ToolCallId));
         Assert.All(results, result => Assert.Equal(ToolExecutionStatus.Success, result.Status));
-        Assert.Single(audit.Where(item => item.Kind == SessionEventKind.ObservationAccepted));
+        Assert.Single(audit, item => item.Kind == SessionEventKind.ObservationAccepted);
         Assert.Equal(retryAfterTools ? SessionEventKind.AgentActionProduced : SessionEventKind.TurnEnded, audit[^1].Kind);
         Assert.Equal(2, audit.Count(item => item.Kind == SessionEventKind.ToolExecutionStarted));
         if (retryAfterTools) {

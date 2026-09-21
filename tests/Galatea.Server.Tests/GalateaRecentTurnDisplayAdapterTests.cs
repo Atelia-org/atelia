@@ -74,10 +74,10 @@ public sealed class GalateaRecentTurnDisplayAdapterTests {
                 )
             );
 
-        Assert.Equal("text-atext-b", projected.Assistant.Text);
+        Assert.Equal("text-atext-b", projected.RequireAssistant().Text);
         Assert.Equal(
             "reasoning-areasoning-b",
-            projected.Assistant.ReasoningText
+            projected.RequireAssistant().ReasoningText
         );
     }
 
@@ -91,8 +91,8 @@ public sealed class GalateaRecentTurnDisplayAdapterTests {
             )
         );
 
-        Assert.Equal("answer", projected.Assistant.Text);
-        Assert.Equal("provider reasoning", projected.Assistant.ReasoningText);
+        Assert.Equal("answer", projected.RequireAssistant().Text);
+        Assert.Equal("provider reasoning", projected.RequireAssistant().ReasoningText);
     }
 
     [Fact]
@@ -107,8 +107,8 @@ public sealed class GalateaRecentTurnDisplayAdapterTests {
                 )
             );
 
-        Assert.Equal("before after", projected.Assistant.Text);
-        Assert.Null(projected.Assistant.ReasoningText);
+        Assert.Equal("before after", projected.RequireAssistant().Text);
+        Assert.Null(projected.RequireAssistant().ReasoningText);
     }
 
     [Fact]
@@ -124,10 +124,10 @@ public sealed class GalateaRecentTurnDisplayAdapterTests {
                 )
             );
 
-        Assert.Equal(string.Empty, projected.Assistant.Text);
+        Assert.Equal(string.Empty, projected.RequireAssistant().Text);
         Assert.Equal(
             "reasoning-only",
-            projected.Assistant.ReasoningText
+            projected.RequireAssistant().ReasoningText
         );
     }
 
@@ -146,11 +146,11 @@ public sealed class GalateaRecentTurnDisplayAdapterTests {
             );
 
         Assert.Equal("empty", empty.UserText);
-        Assert.Equal(string.Empty, empty.Assistant.Text);
-        Assert.Null(empty.Assistant.ReasoningText);
+        Assert.Equal(string.Empty, empty.RequireAssistant().Text);
+        Assert.Null(empty.RequireAssistant().ReasoningText);
         Assert.Equal("think-only", thinkOnly.UserText);
-        Assert.Equal(string.Empty, thinkOnly.Assistant.Text);
-        Assert.Null(thinkOnly.Assistant.ReasoningText);
+        Assert.Equal(string.Empty, thinkOnly.RequireAssistant().Text);
+        Assert.Null(thinkOnly.RequireAssistant().ReasoningText);
     }
 
     [Fact]

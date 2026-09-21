@@ -60,7 +60,7 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
             retainedHead = session.Engine.ReadCurrentHead()!.Value;
             OpenAIResponsesReasoningBlock reasoning = Assert.Single(
                 Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns)
-                    .TerminalAction.Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
+                    .RequireTerminalAction().Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
             retainedOrigin = reasoning.Origin;
             Assert.Equal(OldModel, retainedOrigin.Model);
         }
@@ -159,10 +159,10 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
         Assert.Equal(SessionExecutionPhase.Idle, reopened.Engine.InspectExecutionBoundary().Phase);
         var turns = reopened.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
         Assert.Equal(2, turns.Count);
-        Assert.Equal(FreshAnswer, turns[0].TerminalAction.Message.GetFlattenedText());
-        Assert.Equal(RetainedAnswer, turns[1].TerminalAction.Message.GetFlattenedText());
+        Assert.Equal(FreshAnswer, turns[0].RequireTerminalAction().Message.GetFlattenedText());
+        Assert.Equal(RetainedAnswer, turns[1].RequireTerminalAction().Message.GetFlattenedText());
         OpenAIResponsesReasoningBlock retained = Assert.Single(
-            turns[1].TerminalAction.Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
+            turns[1].RequireTerminalAction().Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
         Assert.Equal(retainedOrigin, retained.Origin);
         using JsonDocument native = JsonDocument.Parse(NativeJson);
         using JsonDocument persisted = JsonDocument.Parse(retained.RawItemJson);

@@ -64,7 +64,7 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
             GalateaLiveTurn recovered = await GalateaRecapFixture.WaitAsync(accepted, service, session);
             AssertCompleted(recovered);
             Assert.Equal(Answer, Assert.Single(session.Engine.ReadRecentCompletedTurns()
-                .RequireSnapshot().Turns).TerminalAction.Message.GetFlattenedText());
+                .RequireSnapshot().Turns).RequireTerminalAction().Message.GetFlattenedText());
             Assert.Equal(frozen.CanonicalBytes, Assert.Single(factory.LogicalRequests));
         }
         RequestCapture[] calls = factory.Requests.ToArray();

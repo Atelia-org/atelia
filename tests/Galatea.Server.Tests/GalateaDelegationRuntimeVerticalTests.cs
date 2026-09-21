@@ -116,7 +116,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await WaitUntilAsync(() => backend.StartCallCount == 1);
         backend.Complete(0, Reply);
         _ = session.DelegationHandle.Signal();
-        await WaitUntilAsync(() => session.DelegationHandle.Store
+        await WaitUntilAsync(() => session.RequireDelegationHandle().Store
             .ReadSnapshot().Notices.SingleOrDefault()?.State
                 == GalateaReplyNoticeState.Ready);
         GalateaAutonomyCadencePulseResult due =
@@ -262,7 +262,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Equal(completedHead, session.Engine.ReadCurrentHead());
         Assert.Equal(2, mainClient.CallCount);
         Assert.Equal(extractorCallsAfterCompleted, extractorClient.CallCount);
-        Assert.Null(session.DelegationHandle.Store.ReadSnapshot().ActiveLease);
+        Assert.Null(session.RequireDelegationHandle().Store.ReadSnapshot().ActiveLease);
     }
 
     [Fact]
@@ -724,7 +724,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         backend.Complete(0, "durable reply after pause");
         _ = session.DelegationHandle!.Signal();
-        await WaitUntilAsync(() => session.DelegationHandle.Store
+        await WaitUntilAsync(() => session.RequireDelegationHandle().Store
             .ReadSnapshot().Notices.SingleOrDefault()?.State
                 == GalateaReplyNoticeState.Ready);
         using (HttpResponseMessage blocked = await http.PostAsJsonAsync(
@@ -801,7 +801,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await WaitUntilAsync(() => backend.StartCallCount == 1);
         backend.Complete(0, "durable reply retained across stop");
         _ = session.DelegationHandle!.Signal();
-        await WaitUntilAsync(() => session.DelegationHandle.Store
+        await WaitUntilAsync(() => session.RequireDelegationHandle().Store
             .ReadSnapshot().Notices.SingleOrDefault()?.State
                 == GalateaReplyNoticeState.Ready);
 
@@ -830,9 +830,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Equal(GalateaReplyNoticeState.Ready,
             Assert.Single(retained.Notices).State);
         Assert.Equal(1, mainClient.CallCount);
-        Assert.Null(session.DelegationHandle.Store.ReadSnapshot().ActiveLease);
+        Assert.Null(session.RequireDelegationHandle().Store.ReadSnapshot().ActiveLease);
         Assert.Equal(GalateaReplyNoticeState.Ready,
-            Assert.Single(session.DelegationHandle.Store.ReadSnapshot()
+            Assert.Single(session.RequireDelegationHandle().Store.ReadSnapshot()
                 .Notices).State);
 
         // No Observation was accepted, so stop must not consume this reply or
@@ -850,7 +850,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Equal("completed", received.Status);
         Assert.Equal(2, mainClient.CallCount);
         Assert.Equal(GalateaReplyNoticeState.Consumed,
-            Assert.Single(session.DelegationHandle.Store.ReadSnapshot()
+            Assert.Single(session.RequireDelegationHandle().Store.ReadSnapshot()
                 .Notices).State);
     }
 
@@ -988,7 +988,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await WaitUntilAsync(() => backend.StartCallCount == 2);
         backend.Complete(1, ReplyTwo);
         _ = session.DelegationHandle.Signal();
-        await WaitUntilAsync(() => session.DelegationHandle.Store
+        await WaitUntilAsync(() => session.RequireDelegationHandle().Store
             .ReadSnapshot().Notices.Count == 2);
 
         Assert.Equal(1, backend.EnsureCallCount);
@@ -1034,7 +1034,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         Assert.Equal(HttpStatusCode.OK, undo.StatusCode);
         Assert.All(
-            session.DelegationHandle.Store.ReadSnapshot().Notices,
+            session.RequireDelegationHandle().Store.ReadSnapshot().Notices,
             static notice => Assert.Equal(
                 GalateaReplyNoticeState.Consumed,
                 notice.State
@@ -1107,7 +1107,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await WaitUntilAsync(() => backend.StartCallCount == 1);
         backend.Complete(0, "reply");
         _ = session.DelegationHandle!.Signal();
-        await WaitUntilAsync(() => session.DelegationHandle.Store
+        await WaitUntilAsync(() => session.RequireDelegationHandle().Store
             .ReadSnapshot().Notices.SingleOrDefault()?.State
                 == GalateaReplyNoticeState.Ready);
 
@@ -1179,7 +1179,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             StringComparison.Ordinal);
         Assert.Equal(
             GalateaReplyNoticeState.Consumed,
-            Assert.Single(session.DelegationHandle.Store.ReadSnapshot()
+            Assert.Single(session.RequireDelegationHandle().Store.ReadSnapshot()
                 .Notices).State
         );
         Assert.Equal(3, mainClient.CallCount);
@@ -1392,7 +1392,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             Assert.Equal(ready.NoticeId, interruption.NoticeId);
             Assert.Equal(
                 GalateaReplyNoticeState.Consumed,
-                restartedSession.DelegationHandle.Store.ReadSnapshot()
+                restartedSession.RequireDelegationHandle().Store.ReadSnapshot()
                     .Notices.Single().State
             );
             Assert.Equal(1, backend.StartCallCount);

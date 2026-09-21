@@ -48,7 +48,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         SessionCompletedTurnProjection first = Assert.Single(
             session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns);
         OpenAIResponsesReasoningBlock oldReasoning = Assert.Single(
-            first.TerminalAction.Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
+            first.RequireTerminalAction().Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
         Assert.Equal(OldModel, oldReasoning.Origin.Model);
         string originalReasoningJson = oldReasoning.RawItemJson;
 
@@ -63,10 +63,10 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         AssertSwitchedRequest(requests[1], originalReasoningJson);
         var completed = session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
         Assert.Equal(2, completed.Count);
-        Assert.Equal(NewAnswer, completed[0].TerminalAction.Message.GetFlattenedText());
+        Assert.Equal(NewAnswer, completed[0].RequireTerminalAction().Message.GetFlattenedText());
         // Cross-model replay never rewrites the provenance in raw history.
         OpenAIResponsesReasoningBlock retainedReasoning = Assert.Single(
-            completed[1].TerminalAction.Message.Blocks
+            completed[1].RequireTerminalAction().Message.Blocks
                 .OfType<OpenAIResponsesReasoningBlock>());
         Assert.Equal(originalReasoningJson, retainedReasoning.RawItemJson);
         Assert.Equal(oldReasoning.Origin, retainedReasoning.Origin);
@@ -118,9 +118,9 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         Assert.Single(factory.Requests);
         Assert.Equal(1, factory.CredentialReads);
         Assert.Equal(OldAnswer, session.Engine.ReadRecentCompletedTurns().RequireSnapshot()
-            .Turns[0].TerminalAction.Message.GetFlattenedText());
+            .Turns[0].RequireTerminalAction().Message.GetFlattenedText());
         OpenAIResponsesReasoningBlock reasoning = Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot()
-            .Turns[0].TerminalAction.Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
+            .Turns[0].RequireTerminalAction().Message.Blocks.OfType<OpenAIResponsesReasoningBlock>());
         Assert.Equal(OldModel, reasoning.Origin.Model);
         using JsonDocument rawReasoning = JsonDocument.Parse(reasoning.RawItemJson);
         Assert.Equal(ReasoningCanary, rawReasoning.RootElement.GetProperty("encrypted_content").GetString());
@@ -173,7 +173,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         AssertSwitchedRequest(requests[1]);
         Assert.Equal(NewAnswer,
             session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[0]
-                .TerminalAction.Message.GetFlattenedText());
+                .RequireTerminalAction().Message.GetFlattenedText());
     }
 
     [Fact]

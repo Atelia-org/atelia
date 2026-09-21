@@ -80,7 +80,7 @@ public sealed class GalateaProcessCrashRehearsalTests(ITestOutputHelper output) 
             SessionCompletedTurnProjection turn = Assert.Single(
                 offline.ReadRecentCompletedTurns().RequireSnapshot().Turns);
             Assert.Equal(GalateaLabCrashResponsesServer.Answer,
-                turn.TerminalAction.Message.GetFlattenedText());
+                turn.RequireTerminalAction().Message.GetFlattenedText());
             var events = new List<SessionJournalAuditEvent>();
             offline.ScanCheckedAuditEvents(events.Add);
             Assert.Single(events, item => item.Kind == SessionEventKind.ObservationAccepted);

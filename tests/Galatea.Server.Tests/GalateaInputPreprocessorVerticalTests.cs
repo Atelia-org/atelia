@@ -304,7 +304,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         RecentTurnsResponseDto recent = await GetRecentTurnsAsync(client);
         RecentTurnDto recentTurn = Assert.Single(recent.Turns);
         Assert.Equal("normalized input", recentTurn.UserText);
-        Assert.Equal("assistant reply", recentTurn.Assistant.Text);
+        Assert.Equal("assistant reply", recentTurn.RequireAssistant().Text);
 
         CurrentTurnDto current = await GetCurrentTurnAsync(client);
         Assert.Equal("idle", current.Status);
@@ -441,7 +441,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             StringComparison.Ordinal);
         Assert.DoesNotContain("SourceId:", recentTurn.UserText,
             StringComparison.Ordinal);
-        Assert.Equal("assistant reply", recentTurn.Assistant.Text);
+        Assert.Equal("assistant reply", recentTurn.RequireAssistant().Text);
     }
 
     [Fact]
@@ -655,7 +655,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Equal(initialHead, after.CapturedHead);
         Assert.Equal(SessionExecutionPhase.Idle, after.Phase);
         GalateaDelegationStateSnapshot afterDelegation = session
-            .DelegationHandle.Store.ReadSnapshot();
+            .RequireDelegationHandle().Store.ReadSnapshot();
         Assert.Equal(
             initialDelegation.StoreRevision,
             afterDelegation.StoreRevision

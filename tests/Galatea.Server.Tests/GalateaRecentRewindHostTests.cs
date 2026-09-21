@@ -149,7 +149,7 @@ public sealed class GalateaRecentRewindHostTests {
             session.Engine.ReadRecentCompletedTurns(2).RequireSnapshot();
         Assert.Equal(raw.CapturedHead, rewindHead);
         Assert.Equal(
-            raw.Turns[0].TerminalAction.Address,
+            raw.Turns[0].RequireTerminalAction().Address,
             rewindHead
         );
         Assert.Equal(2, completion.DispatchCallCount);
@@ -998,7 +998,7 @@ public sealed class GalateaRecentRewindHostTests {
         string assistant
     ) {
         Assert.Equal(user, turn.UserText);
-        Assert.Equal(assistant, turn.Assistant.Text);
+        Assert.Equal(assistant, turn.RequireAssistant().Text);
     }
 
     private static string FindRepositoryRoot() {

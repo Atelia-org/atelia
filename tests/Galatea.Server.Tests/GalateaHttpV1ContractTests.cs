@@ -75,7 +75,7 @@ public sealed class GalateaHttpV1ContractTests {
             Assert.Equal("no-mail", status!.State);
             Assert.Equal(
                 revision,
-                session.DelegationHandle.Store.ReadSnapshot().StoreRevision
+                session.RequireDelegationHandle().Store.ReadSnapshot().StoreRevision
             );
         }
         finally {

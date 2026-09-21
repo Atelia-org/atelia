@@ -256,7 +256,7 @@ public sealed class GalateaHostSmokeTests {
         Assert.NotNull(recent);
         RecentTurnDto turn = Assert.Single(recent!.Turns);
         Assert.Equal("visible user", turn.UserText);
-        Assert.Equal("visible assistant", turn.Assistant.Text);
+        Assert.Equal("visible assistant", turn.RequireAssistant().Text);
         Assert.Equal(ContextHeaderDto.Empty, recent.ContextHeader);
         Assert.NotNull(recent.RewindLatestToken);
         RecapGridReadinessSnapshotDto recap = Assert.IsType<

@@ -45,7 +45,7 @@ public sealed class GalateaStructuredInputTests {
             }
             using (SessionJournalEngine writer = SessionJournalEngine.Open(host.SessionDirectory)) {
                 var preparation = Assert.IsType<SessionCompletedTurnRewindPrepareResult.Prepared>(
-                    writer.PrepareLatestCompletedTurnRewind(completed.TerminalAction.Address));
+                    writer.PrepareLatestCompletedTurnRewind(completed.RequireTerminalAction().Address));
                 Assert.True(PlayerTurnObservationClassifier.TryProject(preparation.Value.ObservationContent, out var projection));
                 Assert.Equal(action, projection.RestorablePlayerText);
                 Assert.IsType<SessionTurnRetractionResult.Moved>(writer.CommitPreparedCompletedTurnRewind(preparation.Value));

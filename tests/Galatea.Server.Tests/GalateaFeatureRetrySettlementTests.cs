@@ -78,7 +78,7 @@ public sealed class GalateaFeatureRetrySettlementTests {
         else {
             await WaitUntilAsync(() => {
                 _ = session.DelegationHandle!.Signal();
-                return session.DelegationHandle.Store.ReadSnapshot().Notices.Count == 1;
+                return session.RequireDelegationHandle().Store.ReadSnapshot().Notices.Count == 1;
             });
             var snapshot = session.DelegationHandle!.Store.ReadSnapshot();
             Assert.Equal(EventAddressTextCodec.Format(action), Assert.Single(snapshot.Captures).SourceActionAddress);

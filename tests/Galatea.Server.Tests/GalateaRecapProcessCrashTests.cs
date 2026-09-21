@@ -109,7 +109,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
             SessionCompletedTurnProjection resumed = Assert.Single(engine.ReadRecentCompletedTurns().RequireSnapshot().Turns,
                 turn => turn.ObservationAddress == frozen.RawEndInclusive);
             Assert.Equal(GalateaLabRecapResponsesServer.RecoveryAnswer,
-                resumed.TerminalAction.Message.GetFlattenedText());
+                resumed.RequireTerminalAction().Message.GetFlattenedText());
             AssertNoRawMarkers(engine, expectedTurns: 3);
         }
         provider.AssertRecovered();
@@ -140,7 +140,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
             Assert.Equal(SessionExecutionPhase.Idle, engine.InspectExecutionBoundary().Phase);
             AssertCounts(ReadAudit(engine), observations: 4, prepared: 4, started: 0, actions: 4);
             SessionCompletedTurnProjection latest = engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[0];
-            Assert.Equal(GalateaLabRecapResponsesServer.FreshAnswer, latest.TerminalAction.Message.GetFlattenedText());
+            Assert.Equal(GalateaLabRecapResponsesServer.FreshAnswer, latest.RequireTerminalAction().Message.GetFlattenedText());
             Assert.Contains(GalateaLabRecapResponsesServer.FreshMessage, GalateaRecapFixture.ReadPlayerText(latest.ObservationContent), StringComparison.Ordinal);
             AssertNoRawMarkers(engine, expectedTurns: 4);
         }
@@ -174,7 +174,7 @@ public sealed class GalateaRecapProcessCrashTests(ITestOutputHelper output) {
         IReadOnlyList<SessionCompletedTurnProjection> turns = engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
         Assert.Equal(expectedTurns, turns.Count);
         foreach (SessionCompletedTurnProjection turn in turns) {
-            foreach (string text in new[] { System.Text.Encoding.UTF8.GetString(turn.ObservationContent.ToUtf8Json()), turn.TerminalAction.Message.GetFlattenedText() }) {
+            foreach (string text in new[] { System.Text.Encoding.UTF8.GetString(turn.ObservationContent.ToUtf8Json()), turn.RequireTerminalAction().Message.GetFlattenedText() }) {
                 Assert.DoesNotContain("GALATEA_LAB_WORLD_RECAP_V", text, StringComparison.Ordinal);
                 Assert.DoesNotContain("GALATEA_LAB_AUTOBIOGRAPHY_RECAP_V", text, StringComparison.Ordinal);
             }

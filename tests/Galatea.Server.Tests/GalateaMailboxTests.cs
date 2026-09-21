@@ -455,7 +455,7 @@ public sealed class GalateaMailboxTests {
             session.DelegationHandle!.Store.ReadSnapshot().Mails
         );
         Assert.Equal(
-            EventAddressTextCodec.Format(persisted.TerminalAction.Address),
+            EventAddressTextCodec.Format(persisted.RequireTerminalAction().Address),
             candidate.SourceActionAddress
         );
         Assert.Equal("Alice", candidate.Recipient);
@@ -517,7 +517,7 @@ public sealed class GalateaMailboxTests {
         StartTurnResponseDto extracted = await PostPlayerTurn(http);
         await service.FindTurn(session, extracted.TurnId)!
             .RunTask!.WaitAsync(Deadline);
-        Assert.Single(session.DelegationHandle.Store.ReadSnapshot().Mails);
+        Assert.Single(session.RequireDelegationHandle().Store.ReadSnapshot().Mails);
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
             RecentTurnsResponseDto>("/api/v1/characters/alice/recent-turns"))!;
         Assert.NotNull(recent.RewindLatestToken);
@@ -530,7 +530,7 @@ public sealed class GalateaMailboxTests {
         Assert.Equal(
             GalateaDurableMailState.Unrouted,
             Assert.Single(
-                session.DelegationHandle.Store.ReadSnapshot().Mails
+                session.RequireDelegationHandle().Store.ReadSnapshot().Mails
             ).State
         );
     }

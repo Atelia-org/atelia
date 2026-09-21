@@ -143,7 +143,7 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
                 turn => turn.ObservationAddress == observationAddress);
             Assert.Equal(renderedObservation, completed.ObservationContent);
             Assert.Equal(GalateaLabNoteReceiptResponsesServer.Answer,
-                completed.TerminalAction.Message.GetFlattenedText());
+                completed.RequireTerminalAction().Message.GetFlattenedText());
             int receipts = 0;
             foreach (SessionCompletedTurnProjection turn in turns) {
                 PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(turn.ObservationContent);

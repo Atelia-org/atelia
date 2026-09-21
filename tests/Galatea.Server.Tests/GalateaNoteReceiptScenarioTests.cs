@@ -26,7 +26,7 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.Single(pending.Turns);
         Assert.Equal(GalateaNoteReceiptFixture.NoteText, pending.Note.ExactText);
         Assert.Equal(CharacterNoteReceiptDeliveryState.Pending, pending.Receipt.State);
-        Assert.Equal(EventAddressTextCodec.Format(pending.Turns[0].TerminalAction.Address), pending.Receipt.SourceActionAddress);
+        Assert.Equal(EventAddressTextCodec.Format(pending.Turns[0].RequireTerminalAction().Address), pending.Receipt.SourceActionAddress);
         Assert.Equal(pending.Receipt.CreatedRevision, pending.Receipt.StateRevision);
         Assert.Equal(1, firstFactory.SaveIntents);
         Assert.Equal(1, firstFactory.DerivedCalls);
