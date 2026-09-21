@@ -5,4 +5,7 @@
     <CompletionRepositoryUrl>https://github.com/Atelia-org/atelia-completion.git</CompletionRepositoryUrl>
     <UseCompletionSources Condition="'$(UseCompletionSources)' == ''">false</UseCompletionSources>
   </PropertyGroup>
+  <!-- 本机长期本地依赖模式：文件存在即覆盖上方默认 pin；gitignored，模板见同目录 .template。 -->
+  <Import Project="$(MSBuildThisFileDirectory)CompletionDependency.Local.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)CompletionDependency.Local.props')" />
 </Project>

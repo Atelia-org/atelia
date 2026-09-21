@@ -28,6 +28,44 @@ dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -c Release -p
 `src/Completion/README.md`、`src/Completion.Tools/README.md`、`src/Diagnostics/README.md`。
 本轮验收与试运行注意事项见[实施记录](Galatea/completion-auto-retry-implementation.md)。
 
+## 长期本地模式与切换备忘
+
+`eng/CompletionDependency.props` 末尾按存在性导入 `eng/CompletionDependency.Local.props`
+（gitignored，不随 Git 搬运）。该文件存在即覆盖默认 pin 与 restore 配置（方式 A 经
+`RestoreConfigFile` 选用 [NuGet.Completion.LocalFeed.config](../eng/NuGet.Completion.LocalFeed.config)）；普通
+`dotnet build` / `dotnet test` / `dotnet restore`（含 `dotnet test` 的隐式 restore）
+自动生效，无须命令行参数。删除或重命名该文件再重新 restore，即回落公开包 pin。
+一次性实验仍可用 `-p:CompletionPackageVersion=<版本>` 临时覆盖，命令行属性优先级最高。
+模板见 [CompletionDependency.Local.props.template](../eng/CompletionDependency.Local.props.template)。
+
+三态切换：
+
+| 目标状态 | 操作 |
+|---|---|
+| 公开包（默认，可移植） | 确认不存在 `eng/CompletionDependency.Local.props`，执行 `dotnet restore <项目或 Atelia.sln>` 重新落 assets |
+| 本地 feed 包 | `cp eng/CompletionDependency.Local.props.template eng/CompletionDependency.Local.props`，保留方式 A，把 `CompletionPackageVersion` 改成目标 dev 版本 |
+| 本地源码联调 | 同上，保留方式 B（`UseCompletionSources=true` + `CompletionSourceRoot`）；源码模式禁止 consumer pack |
+
+接入新 dev 包（上游 pack 之后）：
+
+1. 把上游 `artifacts/feed-<version>/` 中的四组 nupkg/snupkg 与 manifest 复制进
+   `gitignore/completion-local-feed/`（累积 feed，多版本共存；ignored 本地产物）。
+2. 修改 `eng/CompletionDependency.Local.props` 中的 `CompletionPackageVersion` 与
+   `CompletionSourceRevision`（取自 manifest）。
+3. `dotnet restore Atelia.sln` 统一切换整个工作区。
+
+注意事项：
+
+- 根 nuget.config 的 packageSourceMapping（`*` → nuget.org）会把本地 feed 从 Atelia 包解析中
+  排除，因此方式 A 不直接加源，而是经 `RestoreConfigFile` 使用带显式 source mapping 的
+  [NuGet.Completion.LocalFeed.config](../eng/NuGet.Completion.LocalFeed.config)：四个 Atelia
+  包允许来自 completion-local 或 nuget.org，其余包仅来自 nuget.org。
+- dev 版本必须唯一，不得在相同版本号下重新打包；包缓存为 `gitignore/completion-local-cache/`
+  （由该 config 的 globalPackagesFolder 指定）。
+- 模式文件是本机状态：每台机器各写各的；CI 与新 clone 无此文件时即默认公开 pin。
+- 长期本地模式下建议在里程碑保留 feed 快照与 manifest SHA256 作为身份锚点
+  （沿用 `gitignore/completion-packages/` 的既有惯例）。
+
 ## 显式源码联调
 
 ```powershell
@@ -41,8 +79,7 @@ dotnet test tests/SessionJournal.RecapGrid.Runtime.Tests/SessionJournal.RecapGri
 Storage 开关独立；通常只需 Completion 源码 + Storage 包。源码模式禁止 consumer pack。
 如需打包消费者，先将上游变更打成唯一开发版本，再显式选用该包版本。
 
-本地开发包使用显式 NuGet.Config、四个包 ID 的精确 source mapping 和独立缓存；
-用 `-p:CompletionPackageVersion=<唯一开发版本>` 覆盖。多个验证者共享一次冻结 feed，
+本地开发包的长期使用与三态切换见上文[长期本地模式与切换备忘]；dev 版本必须唯一，
 不重新打已发布版本，不清理全局 NuGet 缓存来掩盖版本内容冲突。
 
 ## 调用与调试边界

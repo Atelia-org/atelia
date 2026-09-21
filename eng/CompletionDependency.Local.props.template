@@ -1,0 +1,19 @@
+<Project>
+  <!--
+    长期本地依赖模式模板。复制为 eng/CompletionDependency.Local.props（gitignored）并按需保留一段。
+    该文件存在即生效；删除后重新 restore 即回落公开 pin。三态切换备忘见 docs/completion-dependency.md。
+  -->
+  <!-- 方式 A：本地 feed 包。gitignore/completion-local-feed 为累积 feed，多版本共存。 -->
+  <PropertyGroup>
+    <CompletionPackageVersion>0.1.0-dev.20260921093903</CompletionPackageVersion>
+    <CompletionSourceRevision>0d6e832c73f8f03d5a94ab4d7a72246ad2299b3f</CompletionSourceRevision>
+    <RestoreConfigFile>$(MSBuildThisFileDirectory)NuGet.Completion.LocalFeed.config</RestoreConfigFile>
+  </PropertyGroup>
+  <!--
+  方式 B：本地源码联调（源码模式禁止 consumer pack；切回包模式需重新 restore）
+  <PropertyGroup>
+    <UseCompletionSources>true</UseCompletionSources>
+    <CompletionSourceRoot>/repos/focus/atelia-completion</CompletionSourceRoot>
+  </PropertyGroup>
+  -->
+</Project>

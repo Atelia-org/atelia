@@ -82,7 +82,7 @@ StateJournal 与其 Generator 已从 Atelia 活跃构建图迁出为封存源码
 
 ## atelia-completion 拆仓任务入口
 
-Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至独立仓；当前 pin 为 `0.1.0-preview.2`，已公开发布到 nuget.org。普通 restore/build 直接用根 nuget.config，不需要本地 feed。旧 `eng/NuGet.Completion.Local.config` 与冻结 dev feed 只是历史试运行产物。不要降回旧包或自动探测兄弟仓。显式源码联调仍使用 `UseCompletionSources` / `CompletionSourceRoot`，版本与来源以 `eng/CompletionDependency.props` 为准。日常入口见 [Completion 依赖](docs/completion-dependency.md)；拆仓范围见 [实施方案](docs/plans/atelia-completion-extraction-plan.md)，阶段证据见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)；DramaBoard 的 P4 接入尚未实施。
+Diagnostics、Completion.Abstractions、Completion、Completion.Tools 已迁至独立仓；当前 pin 为 `0.1.0-preview.2`，已公开发布到 nuget.org。普通 restore/build 直接用根 nuget.config，不需要本地 feed。旧 `eng/NuGet.Completion.Local.config` 与冻结 dev feed 只是历史试运行产物。不要降回旧包或自动探测兄弟仓。显式源码联调仍使用 `UseCompletionSources` / `CompletionSourceRoot`，版本与来源以 `eng/CompletionDependency.props` 为准。长期本地模式（local feed 包或源码联调）用 gitignored 的 `eng/CompletionDependency.Local.props` 一键切换，模板与三态切换备忘见 [Completion 依赖](docs/completion-dependency.md)。日常入口见 [Completion 依赖](docs/completion-dependency.md)；拆仓范围见 [实施方案](docs/plans/atelia-completion-extraction-plan.md)，阶段证据见 [验收记录](docs/plans/atelia-completion-extraction-validation.md)；DramaBoard 的 P4 接入尚未实施。
 
 ---
 

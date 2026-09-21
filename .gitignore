@@ -21,6 +21,7 @@ docs/Nexus/
 temp_review.md
 discussion_examples/
 gitignore/
+eng/CompletionDependency.Local.props
 .codecortex/
 prototypes/CodeOutline.Cli/
 prototypes/MemoFileProto/
