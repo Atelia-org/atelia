@@ -116,7 +116,7 @@ public sealed class ConfiguredGalateaUserMessageNormalizer
             if (!result.Termination.IsSuccess) {
                 DebugUtil.Warning(
                     DebugCategory,
-                    $"Input normalization fallback to original: termination={result.Termination.Kind}, providerReason={result.Termination.ProviderReason ?? "<none>"}, input={Preview(userMessage)}"
+                    $"Input normalization fallback to original: termination={result.Termination.Kind}, providerReason={result.Termination.ProviderReason ?? "<none>"}"
                 );
                 return userMessage;
             }
@@ -125,7 +125,7 @@ public sealed class ConfiguredGalateaUserMessageNormalizer
             if (string.IsNullOrWhiteSpace(normalized)) {
                 DebugUtil.Warning(
                     DebugCategory,
-                    $"Input normalization produced empty or invalid output; keeping original. input={Preview(userMessage)}"
+                    $"Input normalization produced empty or invalid output; keeping original."
                 );
                 return userMessage;
             }
@@ -150,7 +150,7 @@ public sealed class ConfiguredGalateaUserMessageNormalizer
             GalateaExceptionClassifier.IsNonFatal(ex)) {
             DebugUtil.Warning(
                 DebugCategory,
-                $"Input normalization failed; keeping original. input={Preview(userMessage)}; exceptionType={ex.GetType().FullName}"
+                $"Input normalization failed; keeping original. exceptionType={ex.GetType().FullName}"
             );
             return userMessage;
         }
