@@ -1,6 +1,6 @@
 # Diagnostics Debug 级文件默认落盘（单门控）改造方案
 
-状态：**设计方向已与用户对齐（2026-09-21），待实施**。本文档是跨仓实施入口，自包含全部背景与决策，实施时无须原会话上下文。带队方式沿用 two-layer：主线程统筹，subagent 分包执行。
+状态：**已实施（2026-09-21）**。本文档是跨仓实施入口，自包含全部背景与决策，实施时无须原会话上下文。带队方式沿用 two-layer：主线程统筹，subagent 分包执行。
 
 ## 0. 快速上下文（为压缩后的会话准备）
 
@@ -108,3 +108,11 @@ env 覆盖语义不变：`ATELIA_DEBUG_FILE_LEVEL` / `ATELIA_DEBUG_CONSOLE_LEVEL
 - 主线程先确认 DP-1/2/3，再分包；WP-U1 与 WP-A1 可并行（不同仓），WP-U2→WP-A2 串行。
 - 重型 .NET 命令一律 `-m:1 -nr:false`；测试追加 `-- xUnit.MaxParallelThreads=4`；上游与 atelia 各自窄提交，atelia 提交排除用户未提交的 `docs/Galatea/recap-grid-forward-policy-*.md`。
 - 禁区：不碰用户未提交文件、历史冻结 feed `gitignore/completion-packages/0.1.0-dev.20260916114103/`、`eng/NuGet.Completion.Local.config`（历史试运行入口）。
+
+## 9. 实施证据（2026-09-21）
+
+- 上游：commit `029653d`（文件 sink 默认 Debug 单门控改造，sourceRevision `649f282`），Test-Package 三探针全过（含干净进程默认值 File=Debug / Console=Warning）。
+- 交付包：`0.1.0-dev.20260921145510`，feed `/repos/focus/atelia/gitignore/completion-local-feed/`，8 个 nupkg/snupkg SHA256 与 manifest 逐一核对一致。
+- atelia：commit `c52b3ab9`（normalizer 三处 Warning 删 `input={Preview(...)}` 段）+ 本次接入提交（Local.props/template 版本切换、AGENTS.md/README/completion-dependency 文档同步）。
+- 回归（Debug 构建串行 `-m:1 -nr:false`，`xUnit.MaxParallelThreads=4`）：MemoPod 284/284、Galatea.Server 1296 passed / 1 skipped / 0 failed、Hosting 公共面 7/7，均与基线一致；Galatea.Server Release 构建 0 Warning / 0 Error。
+- 消费端行为验收（/tmp 一次性 console 工程，仅引用 `Atelia.Diagnostics`）：无 env 时 probe.log 同时含 DBG 与 WRN、stderr 仅 WRN、stdout 空；`ATELIA_DEBUG_FILE_LEVEL=WARNING` 覆盖后 log 仅 WRN。env 覆盖语义不变，验证通过。

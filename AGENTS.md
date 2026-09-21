@@ -3,9 +3,9 @@
 - 使用 `DebugUtil.Debug/Warning/Error(category, text)`；`Debug` 带 `[Conditional("DEBUG")]`，Release 调用点零开销。
 - 没有 `Trace`/`Info`/`Print`/`ClearLog`、`DebugEventKind` 或 exception 参数；异常只写 `exceptionType={type.FullName}`。
 - 控制台输出一律写 stderr；文件写入当前工作目录 `.atelia/debug-logs/{safe-category}.log`。
-- 只用 `ATELIA_DEBUG_FILE_LEVEL` / `ATELIA_DEBUG_CONSOLE_LEVEL` 配置，接受 `DEBUG`/`WARNING`/`ERROR`/`OFF`，默认均为 `WARNING`；非法值回退默认值。
+- 只用 `ATELIA_DEBUG_FILE_LEVEL` / `ATELIA_DEBUG_CONSOLE_LEVEL` 配置，接受 `DEBUG`/`WARNING`/`ERROR`/`OFF`；非法值回退默认值。文件 sink 默认 `DEBUG`、控制台默认 `WARNING`（自 `0.1.0-dev.20260921145510` 起；`0.1.0-preview.2` 及更早版本文件默认同为 `WARNING`）。
 - 没有 `ATELIA_DEBUG_CATEGORIES`、`ALL` 或类别开关；category 只是日志标签和安全化后的文件分区名。
-- 调用文本必须 content-free：不得包含凭据、provider 原文、正文、文件路径或堆栈。
+- 调用文本按级别分层：`Debug` 是开发期临时诊断，可记录宿主自己的数据（如用户输入 Preview、memo exactText）；`Warning`/`Error` 必须 content-free：不得包含凭据、provider 原文、正文、文件路径或堆栈。
 - 实现细节与对应版本源码见 [Completion 依赖指南](docs/completion-dependency.md) 中的 Diagnostics 入口。
 
 # 项目性质与阶段

@@ -95,6 +95,9 @@ Diagnostics public API 只有 `DebugUtil.Debug/Warning/Error`；`Debug` 带 `[Co
 Release 调用点零开销。Completion/Tools 以 Release 打包后，其内部 `Debug` 调用已被裁掉，
 环境变量不能恢复。控制台一律写 stderr，文件写入当前工作目录
 `.atelia/debug-logs/{safe-category}.log`；`ATELIA_DEBUG_FILE_LEVEL` /
-`ATELIA_DEBUG_CONSOLE_LEVEL` 接受 `DEBUG`/`WARNING`/`ERROR`/`OFF`，默认均为 `WARNING`。
+`ATELIA_DEBUG_CONSOLE_LEVEL` 接受 `DEBUG`/`WARNING`/`ERROR`/`OFF`。
+文件 sink 默认 `DEBUG`、控制台默认 `WARNING`（自 `0.1.0-dev.20260921145510` 起；
+`0.1.0-preview.2` 及更早版本文件默认同为 `WARNING`）。
 没有 `ATELIA_DEBUG_CATEGORIES` 或类别开关，也没有 `Trace`/`Info`/`Print`/`ClearLog`。
-调用文本必须 content-free；异常只允许写 `exceptionType={type.FullName}`。
+调用文本按级别分层：`Debug` 是开发期临时诊断，可记录宿主自己的数据；`Warning`/`Error`
+必须 content-free，异常只允许写 `exceptionType={type.FullName}`。
