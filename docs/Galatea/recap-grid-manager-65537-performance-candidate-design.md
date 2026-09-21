@@ -1,6 +1,7 @@
 # RecapGrid Manager 65,537 规模性能候选设计
 
-状态：**Candidate design / 未实施。** 2026-09-22 01:08:45 CST。
+状态：**Candidate design / 未实施。** 初稿 2026-09-22 01:08:45 CST；同日经三方独立
+dialectical review（demand skeptic / minimal architect / semantic defender）交叉质询后收敛修订。
 
 本文只描述候选改进方向，不表示已经优化，也不改变当前 65,537 规模测试的语义或预算。
 目标是把已观察到的耗时风险拆成可独立验证的小步，并明确哪些优化不允许以性能为名越过持久化合同。
@@ -20,14 +21,24 @@
 这不是 provider 成本问题：测试中的 `executor.Batches` 为空，也没有 live provider 调用。
 耗时集中在 Manager/Store 的本地持久化与 orchestration 常数上。
 
+### 1.1 产品节奏边界
+
+本设计优化的是 **gate 测试与 CLI 显式 budget 的批处理路径**，不是产品稳态延迟：
+
+- Galatea Online/Host catch-up 是 Grid-first、每 pass 至多 seal 一行 Timeline row、publish
+  一行 recipe-row；稳态下 `DiscoverProgression` 只需读到近期锚点，per-pass 成本有界。
+- 65,537 全量 build 只出现在规模门禁测试与 CLI 显式 budget 的冷启动 catch-up。
+- 因此收益方是 CI gate 时长与一次性 CLI catch-up；不应据此为产品 per-pass 延迟引入新机制。
+
 ## 2. 当前热点
 
-以下结论来自静态代码路径，仍需 profile 证实：
+以下结论来自静态代码路径，仍需 P0 计数与 profile 证实：
 
 1. `DiscoverProgression` 会沿 selected path 逐行调用 `_store.Reader.ReadViewAt(...)`。
    入口见 [ManagerProgression.cs](../../prototypes/SessionJournal.RecapGrid/Manager/ManagerProgression.cs:24)。
 2. `SqliteRecapGridStore` 的每个读写入口都可能调用 `OpenVerifiedConnection()`。
-   该方法每次都新建 `SqliteConnection`，设置并回验一组 PRAGMA，再检查 schema identity 与 counters。
+   该方法每次都新建 `SqliteConnection`（`Pooling=false`），设置并回验一组 PRAGMA，
+   再检查 schema identity 与 counters。
    入口见 [SqliteRecapGridStore.cs](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs:1470)。
 3. Manager 每个新 row 至少涉及：
    - `ReadRowWork` / `PutRowWork`：[ManagerRowBuild.cs](../../prototypes/SessionJournal.RecapGrid/Manager/ManagerRowBuild.cs:353)。
@@ -40,100 +51,120 @@
 
 ## 3. 候选设计
 
-### P0：先加分阶段观测，再优化
+经评审收敛，候选从 5 个收敛为 2 个：**P0 最小观测**与 **P1 唯一的 read session 机制**。
+原 P3（get-or-insert 合并）与原 P4（zero-column 快速返回）经源码证伪后删除，理由见 §4.1。
 
-在实施任何行为改动前，先加入可测试的 phase timing 或诊断计数，至少覆盖：
+### P0：最小 in-code 观测计数
 
-- fixture 构建
-- `DiscoverProgression`
-- connection open / PRAGMA
-- `ReadRowWork`
-- `PutRowWork`
-- `PutRowView`
-- final fulfilled / cold reopen
+不做 7 阶段 phase-timing 框架。最小形态：
 
-目标不是引入通用 profiler，而是让 4,097 与 65,537 的耗时可以按阶段拆开。
-如果观测证明主要成本在别处，后续优化顺序应重新评估。
+- 在现有 `RecapGridBuildMetrics`
+  （[ManagerContracts.cs:259](../../prototypes/SessionJournal.RecapGrid/Manager/ManagerContracts.cs:259)）
+  上扩展 2-3 个 int 计数字段（如 `ConnectionOpens` 与 discovery/build 分组计数）。
+- Store 侧在 `OpenVerifiedConnection` 这唯一收口点加 per-instance int 计数器
+  （直接自增；不用 delegate hook、不用 Stopwatch，避免计时污染与并行测试串扰）。
+- 沿用 per-instance 注入模型（`ManagerTestHooks` / Store hooks），禁止 static/共享计数器：
+  避免 65,537 行规模下计时开销污染被测数据，以及并行测试互相污染计数。
+- 外部 profiler（dotnet-trace 等）不是第一选择，仅当计数无法解释 4,097 与 65,537 差距时作深挖手段。
 
-### P1：`DiscoverProgression` 使用 bounded read session
+理由：验证策略要求跨 commit 的可重复 A/B；一次性外部 profile 无法低成本支撑多步 A/B，
+而 2-3 个计数字段 + 单点 hook 是更小的机制。
 
-为逐行 `ReadViewAt` 复用一个已经过同一套验证的只读 connection。
+### P1：operation-scoped verified read session（唯一行为改动候选）
 
-设计边界：
+**一个机制、两个启用点，不建两种 session：**
 
-- 不改变写事务、fsync、first-winner 或崩溃恢复语义。
-- 只限制在 `DiscoverProgression` 的读取阶段。
-- session 结束后必须释放 connection。
-- 不得把该只读 session 泄漏到 Manager 的写路径。
+- 机制：Store 内新增一个 operation-scoped 只读 session。open 时执行一次现有
+  `OpenVerifiedConnection` 全套验证（PRAGMA 回验 + schema shape + counters +
+  缓存 `store_instance_id`）；session 内的读操作复用该连接；dispose 时释放。
+- 启用点 1（无条件）：`DiscoverProgression` 的逐行 `ReadViewAt`。
+- 启用点 2（P0-gated）：Manager build 其余读路径（`ReadRowWork` 预读、overlay base
+  校验读等），仅当 P0 归因显示 build 期读连接开销仍占显著份额时启用。
+  每个启用点独立 A/B、独立提交。
 
-这是风险最低的候选切口，适合作为第一步实施。
+两层验证设计（保持 fail-closed）：
 
-### P2：Manager build 使用 Store read session
+- **open 一次**：全套 PRAGMA 回验、schema shape 全对比、counters 非负检查、缓存 instance_id。
+  - PRAGMA 是 session 自持连接的状态，读路径不会改动它，open 时回验一次即足够。
+  - counters 的真实一致性由写路径在事务内原子维护；读 session 内仅省略重复的
+    非负 sanity 检查，无实质风险。
+- **每次读前**：执行单行 `ReadIdentity`
+  （SELECT `schema_version` + `store_instance_id`，
+  [SqliteRecapGridStore.cs:1723](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs:1723)），
+  并与 open 时缓存的 identity **比对**。哨兵的覆盖边界：同文件 in-protocol 的
+  identity/schema 篡改与漂移（SQLite change-counter 使缓存页失效，比对必可见）；
+  协议内 Reset 换库已被 exclusive lease 阻断；inode 级换库不在哨兵覆盖内
+  （旧连接继续读自洽旧数据）。lease、哨兵、session pass 内一致性三者互补。
+- **写路径完全不变**：仍每入口 fresh open + 全套验证。
 
-把 Manager build 过程中的读操作改为复用同一个已验证连接。
-写操作仍保持 `PutRowWork` / `PutRowView` 各自独立事务。
+设计边界（一份清单，不按启用点分写）：
 
-设计边界：
-
-- 保留 RowWork first-winner。
-- 保留逐行恢复语义。
-- Store lifetime、Busy、Disposed、Invalid 的映射必须继续返回原 typed result。
-- 不允许为了复用连接而吞掉 schema identity、counters 或 PRAGMA 校验错误。
-
-### P3：`ReadRowWork` + `PutRowWork` 合并为 get-or-insert
-
-当前 `PutRowWork` 会先读 existing，再决定插入。
-可以把 Manager 的“先读，缺失再写”合并成一次事务内的 get-or-insert。
-
-设计边界：
-
-- 仍必须在 provider 调用之前持久化 RowWork。
-- `SelectionConflict`、`AlreadyPresent`、`CommitIndeterminate` 的语义不能被折叠。
-- 不能把竞争窗口变成静默覆盖。
-
-### P4：zero-column / no-evaluate 快速返回
-
-对 zero-column 或 no-evaluate assignment，可以在完成必要校验后直接返回 Complete，避免打开数据库。
-
-设计边界：
-
-- 只影响明确不需要评估的路径。
-- 不能跳过 RowWork、timeline scope 或 Store identity 校验。
-- 对有 provider 调用的路径没有收益。
+- session 是**连接复用，不是事务复用**：每次读独立 autocommit，不得跨读持有 `BEGIN`。
+  否则 DELETE journal 下长读事务会把并发 writer 的 COMMIT 变成 `Busy`，
+  破坏 first-winner 的显式失败语义。
+- `TryObserveCell` / `TryObserveRowViewAt` / `TryObserveFulfilled`
+  （CommitIndeterminate 观察路径）**不得使用 session**，必须继续 fresh open。
+  观察只依赖观察时点的全新验证，不与 build 读 session 共享生命周期；
+  这是零重构成本约束（三者现为 Store private 方法），防止未来重构时被合并进 session。
+- Manager 写路径（`PutRowWork` / `PutRowView` / `PutCell`）不进入 session。
+- RowWork first-winner 与逐行恢复语义不变。
+- Store lifetime、Busy、Disposed、Invalid 的 typed result 映射不变。
+- session 结束后必须释放连接；不得泄漏到 operation 之外。
 
 ## 4. 不建议的方向
 
-以下方向在当前合同下不建议先做：
+### 4.1 评审证伪后删除的候选
+
+- **原 P3（`ReadRowWork` + `PutRowWork` 合并为 get-or-insert）：delete。**
+  - `PutRowWork` 内部已是 `BEGIN IMMEDIATE` + read-existing + insert-or-conflict
+    的闭合 get-or-insert（[SqliteRecapGridStore.cs:381](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs:381)）。
+  - Manager 的前置 `ReadRowWork` 不是冗余 presence 探测，而是 resume 判别器：
+    其内容驱动 `DeriveAssignments` 的 derive-from-existing / derive-from-plan 分支
+    与 `ProducerPolicyRequired` 判定；work 已存在时 Manager 根本不调 `PutRowWork`。
+  - progression frontier 的锚是 RowView 而非 RowWork，无法证明 work missing；
+    RowWork-without-RowView 崩溃窗口内的行若跳过预读，会把 resume 快路径的廉价读
+    变成 `BEGIN IMMEDIATE` 写锁竞争。
+  - 预读的连接开销由 P1 session 覆盖，本候选不留独立段落。
+- **原 P4（zero-column / no-evaluate 快速返回）：delete。**
+  - 文本自相矛盾："避免打开数据库"与"不能跳过 RowWork 校验"不可同时成立——
+    zero-column 行也必须 `PutRowWork` + `PutRowView` 才能支撑冷重开零重建断言。
+  - zero-column 只是测试 fixture 形态：真实 Galatea recipe target 恒非空
+    （provisioner 强制非空 definition closure），CLI 构造点亦非空；
+    no-evaluate assignment 无真实消费者。
+  - 重启触发条件：未来出现真实 no-evaluate recipe 形态且其持久化需求被显式重新定义时再议。
+
+### 4.2 持久化合同保护边界（不得以性能为名越过）
 
 - 修改 WAL 或降低 `synchronous`。
-- 启用通用 connection pooling。
+- 启用通用 connection pooling。`Pooling=false` 保证"连接关闭"即"锁释放 + 下次全新验证"；
+  池化会让 fresh-open 的 PRAGMA 回验与 identity 哨兵整体失效，Busy 后归还池中的连接状态也不再可信。
 - 跨行批量插入 RowWork。
 - 合并 RowWork 与 RowView 事务。
 - 改变 first-winner 或 pre-dispatch durability 语义。
-
-这些选项可能改变持久化或崩溃恢复语义。除非后续设计明确允许，否则不应作为本轮优化方案。
+- 调高 `busy_timeout`。`busy_timeout=0` 让所有锁竞争立即以 typed `Busy` 返回、
+  由 Manager 显式决策；任何等待都会把显式失败信号变成隐式时序依赖。
 
 ## 5. 验证策略
 
-1. 先在 4,097 行上做 A/B，确认每个候选方向的收益。
-2. 再对最终选中的方向跑一次 65,537 规模回归。
-3. 保留现有测试断言，不放宽预算、不缩小规模、不删除失败边界。
-4. 验证 cold reopen 后已完成的 row 不产生新调用。
-5. 每个优化步骤都单独提交，便于回滚和审计。
+1. 先在 4,097 行上做 A/B，用 P0 计数确认每个启用点的收益。
+2. 启用点 2 仅在 P0 归因支持时实施；若 discovery 已占绝对主导，则停止。
+3. 对最终选中的方向跑一次 65,537 规模回归。
+4. 保留现有测试断言，不放宽预算、不缩小规模、不删除失败边界。
+5. 验证 cold reopen 后已完成的 row 不产生新调用。
+6. 每个优化步骤单独提交，便于回滚和审计。
 
 验收标准：
 
 - 语义不变：RowWork、first-winner、provider 调用前持久化、cell 按 `WorkId` 定位。
 - 65,537 测试仍通过，且耗时显著下降。
-- 4,097 与 65,537 的差距可由分阶段计时解释。
+- 4,097 与 65,537 的差距可由 P0 计数解释。
 - 不新增隐式连接池或全局状态。
 
 ## 6. 推荐实施顺序
 
-1. P0：分阶段计时。
-2. P1：`DiscoverProgression` bounded read session。
-3. P2：Manager build Store read session。
-4. P3：`ReadRowWork` + `PutRowWork` get-or-insert。
-5. P4：zero-column / no-evaluate 快速返回。
+1. P0：最小观测计数（Metrics 字段 + 单点 hook）。
+2. P1 启用点 1：`DiscoverProgression` 接入 read session；4,097 A/B。
+3. 用 P0 计数重新归因：若 build 期读连接开销仍显著，实施启用点 2；否则停止。
+4. 65,537 规模回归收尾。
 
-如果 P0 证明主要成本不在连接生命周期，则在 P1 之前重新评估方案。
+如果 P0 证明主要成本不在连接生命周期，则重新评估整个 P1 方向。
