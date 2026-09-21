@@ -207,3 +207,14 @@ P0 计数与 P1 机制保留：计数器持续提供归因证据；read session 
   §4.2 保护边界内的合同变更。
 - Timeline `ReadSelectedRow` 逐行 fresh open（约 65k 次/gate，独立 Store 与验证机制）。
 - 测试 fixture 构建耗时（测试路径，非 build 路径）。
+
+### 7.1 65,537 gate 环境性对照（2026-09-22 04:45）
+
+最终验证中 65,537 gate 在当前机器条件下返回 `BudgetExceeded`
+（测试内固定 `maximumElapsed=10min` build 预算）。对照实验：checkout 到
+改动前基线 `c916128b`，在相同条件下跑同一 focused 测试，同样
+`BudgetExceeded`（基线 19m56s vs 当前 HEAD 20m5s，差异在噪声内）。
+当前机器比 15m44s 基线记录时慢约 27%（4,097 focused：约 56s → 1m11s），
+固定 10 分钟预算被环境超限，与本次重构无关；按合同不放宽预算。
+两次运行均在 build 预算点中止，G2 的 65,537 实际耗时收益无法从这两次
+运行直接测得，量级以 §7 上文分析为准。全量 Manager 套件其余 96/97 通过。
