@@ -26,6 +26,34 @@ public sealed partial class RecapGridManager {
         BuildState state,
         CancellationToken cancellationToken
     ) {
+        RecapGridStoreSessionOpenResult sessionOpen =
+            _store.Reader.OpenSession();
+        if (sessionOpen is RecapGridStoreSessionOpenResult.Busy) {
+            return new ProgressionAttempt(
+                null,
+                Unavailable(RecapGridBuildDependency.Store, "StoreBusy")
+            );
+        }
+        if (sessionOpen is RecapGridStoreSessionOpenResult.Disposed) {
+            return new ProgressionAttempt(
+                null,
+                Unavailable(RecapGridBuildDependency.Store, "StoreDisposed")
+            );
+        }
+        if (sessionOpen
+            is not RecapGridStoreSessionOpenResult.Opened openedSession) {
+            RecapGridStoreSessionOpenResult.Invalid invalidOpen =
+                (RecapGridStoreSessionOpenResult.Invalid)sessionOpen;
+            return new ProgressionAttempt(
+                null,
+                Unavailable(
+                    RecapGridBuildDependency.Store,
+                    invalidOpen.Code,
+                    invalidOpen.Detail
+                )
+            );
+        }
+        using RecapGridStoreReadSession session = openedSession.Session;
         var headToOldest = new List<HistoryTimelineSelectedRow> {
             frozen.Through
         };
@@ -102,7 +130,7 @@ public sealed partial class RecapGridManager {
                 }
                 HistoryTimelineSelectedRow selected = headToOldest[index];
                 RecapGridStoreReadResult<RecapRowView> read =
-                    _store.Reader.ReadViewAt(new RowViewAssignmentKey(
+                    session.ReadViewAt(new RowViewAssignmentKey(
                         frozen.TimelineHead.RefId,
                         frozen.TimelineHead.TimelineId,
                         plan.Recipe.Digest,

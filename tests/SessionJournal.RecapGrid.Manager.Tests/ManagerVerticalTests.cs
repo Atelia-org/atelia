@@ -744,8 +744,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 Assert.Equal(rowCount - 1,
                     result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
-                Assert.Equal(28_673, result.Metrics.StoreConnectionOpens);
-                Assert.Equal(4_096, result.Metrics.StoreDiscoveryConnectionOpens);
+                Assert.Equal(24_578, result.Metrics.StoreConnectionOpens);
+                Assert.Equal(1, result.Metrics.StoreDiscoveryConnectionOpens);
             }
 
             var headRequest = new RecapGridBuildRequest(
@@ -763,8 +763,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 Assert.Equal(1, result.Metrics.RecipeRowSteps);
                 Assert.Equal(2, result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
-                Assert.Equal(9, result.Metrics.StoreConnectionOpens);
-                Assert.Equal(2, result.Metrics.StoreDiscoveryConnectionOpens);
+                Assert.Equal(8, result.Metrics.StoreConnectionOpens);
+                Assert.Equal(1, result.Metrics.StoreDiscoveryConnectionOpens);
             }
 
             var zeroStepRequest = new RecapGridBuildRequest(
