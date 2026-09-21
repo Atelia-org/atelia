@@ -1,6 +1,6 @@
 # RecapGrid forward-policy 实施验收记录
 
-状态：**G1--G5 已实现；G6/A1--A15 总审计进行中。不得据此安排真实实例升级。**
+状态：**G1--G6 已实现，A1--A15 本地验收完成。不得据此安排真实实例升级。**
 
 本记录只陈述当前工作树的已验证局部，不替代
 [设计](recap-grid-forward-policy-refactor-plan.md)或
@@ -173,7 +173,7 @@
   receipt/reopen 是既有证据。CLI publish-after-fault→reopen→AlreadyActive
   的完整跨层 E2E 没有安全的局部 fault hook，仍未在本包执行；reopen 必须以当前
   Control 判断 AlreadyCurrent 或重新 proof→CAS，不能盲重放。
-- Galatea.Server 完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
+- Galatea.Server 当时的阶段完整套件：1288 passed、1 skipped，exit 0。V12 synthetic
   fixture 显式区分 character default connection 与 maintenance connection；
   old producer/default policy 不同不再造成 fresh admission 门禁。
 - G5 CLI exact-scope 迁移组：6 passed（active/inactive partial、historical
@@ -183,9 +183,7 @@
 - G5 Store 完整 Release：136 passed，包含 upgrade/restore 18 个 cold-process
   fail-fast case、双 witness、`AlreadyCurrent`、RowWork verify/export/cursor 以及
   4,097 actual work rows；`review-g5c4-store-full.trx`。4,097 聚焦复验另为
-  1 passed；`review-g5c4-4097.trx`。Store PublicSurface 在 restore surface 引入前
-  的最近可追溯结果为 6 passed；当前完整 public surface 留给 G6 统一重跑，不用
-  旧计数冒充当前全量。
+  1 passed；`review-g5c4-4097.trx`。最终 Store PublicSurface 计数见下方 G6 总验收。
 
 G5 已知残余（不改变已实现合同）：
 
@@ -195,9 +193,69 @@ G5 已知残余（不改变已实现合同）：
 - restore pre-replace temporary 删除失败目前只有有限 P2 可诊断性，operator 仍须检查
   同目录 sidecar/residue。
 
-## 尚未完成
+## G6 最终验收
 
-G1--G5 的实现与分片证据已完成；G6 仍须串行完成全部受影响项目、PublicSurface、
-4,097/65,537 规模回归及 A1--A15 逐项审计，并核对当前并行尾修后的最终 diff。
-在这些闸门结束前不能把本记录标为整体完成。本记录不能作为服务部署、真实
-`.atelia/galatea` 迁移或 NuGet 发布的授权；本轮未访问或修改真实实例。
+本节记录 2026-09-17 forward-policy 收尾时的本地验收；其尾修证据对应 `f4abd4a1`
+与 `82f0c820`。当时 Completion restore 使用 `eng/NuGet.Completion.Local.config`
+和 `UseCompletionSources=false`，不表示今天的依赖切换规则已改变。
+最终 restore 均显式使用 `eng/NuGet.Completion.Local.config`、
+`UseCompletionSources=false` 与 `-m:1 -nr:false`；后续测试均使用 Release、
+`--no-restore -m:1 -nr:false`。26 个项目的 `TestResults/g6-final.trx` 合计
+2397 passed、1 skipped、0 failed。唯一 skip 是显式 opt-in 的
+`GalateaCodexDelegationLiveTests.DurableV5_EnsureStartInspectCompletesInCleanRepo`，
+本轮不要求 live provider。
+
+最终完整计数：
+
+- Abstractions 34；AgentControl 33 + PublicSurface 1；Cadence 29 + 2；
+  Control 95 + 5；Getter 38 + 3；Hosting 39 + 7。
+- Manager 97 + PublicSurface 3；Online 34 + 3；Runtime 97 + 4；
+  Store 136 + 10；WalkingSkeleton 27。
+- HistoryTimeline 207 + PublicSurface 9；CLI 178；Galatea.RecapGrid 9 + 1；
+  Galatea.Server 1296 passed + 1 skipped。
+- Manager full 用时 20 分 38 秒，包含
+  `Public4097TimelineBuildsThroughHeadOneRowAtATimeAndReopensZeroStep` 与
+  `Public65537TimelineBuildsThroughHeadAndColdReopensWithoutProviderCalls`；
+  HistoryTimeline full 用时 3 分 37 秒，包含
+  `V2MutableSelectedPathCommitsAndVerifies65537Rows`。
+
+### A1--A15 审计
+
+| 项 | 最终证据与闭环 |
+|:--|:--|
+| A1 | `CompletedP0ReadinessAndMaterializationIgnoreCurrentP1`：P0 ready、read 时 0 route/call、Store bytes 与 Control head 不变；P1 bundle 未预注册，避免 fixture 掩盖升级路径。 |
+| A2 | 同一 Host 垂直片只为 H1 生成 P1 两列，exact prior 指向 R0；P0 WorkId、row/cell IDs、内容和 producer 不变。fresh maintenance 先用窄权限幂等注册 code-owned family/definitions，`ActiveRecipeDigest` 仍为 P0 root。 |
+| A3 | `ExistingRowWorkKeepsItsProducerBeforeNextRowSelectsNewPolicy`：0-cell P1 work 冷开后仍完成 P1，下一未选行才用 P2。 |
+| A4 | `ModelSwitchAfterPartialFailureBuildsOnlyMissingCell`：A 成功/B 失败后只补 B，不重发 A；WorkId 与 producer 不变。 |
+| A5 | `ConflictingRowWorkCannotPublishOrFillNewCell`：不同 prior 得到不同 WorkId/slot，同 key first-winner 不可重绑。 |
+| A6 | `CurrentReserveAndNthPreviousUseEachRowsFrozenProducer` 及 Ref/Evaluate/Reuse 负例；新增 `V5SelectedRowWithoutPersistedWorkFailsClosed`、`V5SelectedRowWithoutPhysicalWorkLinkFailsClosed`，Getter 不再回退 root recipe target。 |
+| A7 | `LiveActiveReselectsOriginalWorkAfterBootstrapDetachAndSiblingBuild`：Undo 早于 bootstrap、sibling 分叉、回选原后缀均命中原 work/view，0 新调用。 |
+| A8 | candidate failure/resume 与 promotion 前旧 root 保持；`PromotionLostResponseReopensAsAlreadyActiveWithoutRepublish` 和 CLI reopen 证明不明 CAS 后先读再收敛。 |
+| A9 | `PrefixPromotionLeavesNewRootTailAsItsOwnPolicyDebt` 与 CLI prefix promotion：只采用 proof 前缀，新 root 尾债不拼接旧尾部。 |
+| A10 | Full V2 `OriginRootRecipeDigest`、Overlay actual reuse 拒绝反例（0 calls）及 RowWork export 的逐行 actual producer 均已覆盖。 |
+| A11 | character/prompt digest、旧 family 补列、跨 exact route global lane 均有回归；旧 P0 仓未预注册 P1 时，Host 在首次 fresh work 前注册当前 code-owned bundle，read/frozen 阶段不写 Control。 |
+| A12 | Prepared/LegacyStarted 保持 recap=0、routeLoads=0、Control 不注册 P1；tool continuation 只在 frozen tools durable settle 后注册 default bundle，再进入 maintenance，旧 runtime/profile identity 不变。 |
+| A13 | V4 full/Overlay/active+candidate partial/multi-ref/orphan、18 个 upgrade/restore fail-fast phase、AlreadyCurrent/AlreadyRestored、verify/export 全部 provider-free；旧 IDs/内容/producer 与 raw Journal/Timeline/Cadence/Control bytes 按合同保留。 |
+| A14 | `SameAdoptedRootKeepsPolicyChangesRowLocalAndDiscoveryIncremental` 证明 P0→P1→P2 同 root、Control recipe count=1、selected-row 扫描量递减；4,097/65,537 规模门禁均通过。 |
+| A15 | V11→V12 保留连接/预算，歧义 dry-run 零写；`MissingCreateIfMissing_EmptyHistoricalProfilesBootstrapCodeOwnedBundleWithoutProvider` 证明空历史 profile 的新仓 bootstrap。 |
+
+总审计尾修还关闭了两处此前被 fixture 掩盖的边界：Getter 对缺失 RowWork/物理
+work link fail closed；Host default policy 携带与 target 严格一致且不含 recipe 的
+code-owned bundle，只用 `RegisterFamily|RegisterDefinition` 权限，注册前尊重取消，
+`CommitIndeterminate` 后 exact reopen，不能把注册误当 adoption。对应提交
+`f4abd4a1`，tool/default bundle 共存断言为 `82f0c820`。
+
+### 残余与停止边界
+
+- G5 已知的 dry-run/crash temporary residue、极端多列 export 重复解码、restore
+  pre-replace temporary 删除失败诊断限制仍保留；不影响本轮合同，但属于后续维护项。
+- Host default-bundle direct Put 的 `CommitIndeterminate` 已实现 exact reopen；本轮没有
+  为该内部 fault window 新增专用 fault-hook。A8 的 CLI lost-response、A10 的
+  mixed producer/Full origin、A14 的策略计数/大规模分别由组合证据闭合，未再造一个
+  巨型单测。
+- Galatea.Server 构建仍报告既有 nullable 与一条 xUnit2031 analyzer warning；测试
+  结果为 0 failed。规模测试耗时仍是明确的性能观察项，未通过放宽生产预算规避。
+- 本轮只操作源码、测试、合成仓/测试临时目录、正式迁移工具与文档；未访问或修改
+  `prototypes/Galatea/.atelia/galatea`，未执行真实实例迁移、服务部署、push 或 NuGet
+  发布。真实实例升级仍须单独授权，并从已文档化的 inspect/backup/upgrade/restore
+  operator 入口开始。
