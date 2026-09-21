@@ -19,6 +19,9 @@ internal sealed class SqliteRecapGridStore {
     private readonly StorePersistenceTestHooks _hooks;
     private readonly bool _readOnly;
     private readonly object _invalidGate = new();
+
+    internal int ConnectionOpens { get; private set; }
+
     private string? _invalidCode;
     private string? _invalidDetail;
 
@@ -1483,6 +1486,7 @@ internal sealed class SqliteRecapGridStore {
             }
             ValidateSchemaIdentity(connection);
             ValidateCounts(ReadCounts(connection, null));
+            ++ConnectionOpens;
             return connection;
         }
         catch {

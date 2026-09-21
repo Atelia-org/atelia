@@ -20,6 +20,9 @@ public sealed partial class RecapGridManager {
         internal int CellsCommitted { get; set; }
         internal int RowViewsCommitted { get; set; }
         internal OnlineSelectedRawCapture? RawCapture { get; set; }
+        internal int StoreConnectionOpensStart { get; set; }
+        internal int StoreDiscoveryConnectionOpensStart { get; set; }
+        internal int StoreDiscoveryConnectionOpensEnd { get; set; }
 
         internal void RecordRowCommitted(RecapRowView row, bool alreadyPresent) {
             try {
@@ -36,12 +39,17 @@ public sealed partial class RecapGridManager {
             => timeProvider.GetElapsedTime(_started)
                 >= Budget.MaximumElapsed;
 
-        internal RecapGridBuildMetrics Metrics() => new(
+        internal RecapGridBuildMetrics Metrics(
+            int storeConnectionOpensNow
+        ) => new(
             SelectedRows,
             RecipeRowSteps,
             NewCalls,
             CellsCommitted,
-            RowViewsCommitted
+            RowViewsCommitted,
+            storeConnectionOpensNow - StoreConnectionOpensStart,
+            StoreDiscoveryConnectionOpensEnd
+                - StoreDiscoveryConnectionOpensStart
         );
     }
 

@@ -22,13 +22,16 @@ public sealed partial class RecapGridManager {
         Action<RecapGridRowCommitProgress>? rowCommitted
     ) {
         var state = new BuildState(request.Budget, _timeProvider, rowCommitted);
+        state.StoreConnectionOpensStart = _store.Reader.ConnectionOpens;
         RecapGridBuildResult result = await RunWavefrontCoreAsync(
             request,
             executor,
             state,
             cancellationToken
         ).ConfigureAwait(false);
-        return result with { Metrics = state.Metrics() };
+        return result with {
+            Metrics = state.Metrics(_store.Reader.ConnectionOpens)
+        };
     }
 
     private async ValueTask<RecapGridBuildResult> RunWavefrontCoreAsync(
@@ -46,11 +49,15 @@ public sealed partial class RecapGridManager {
             return freezeError;
         }
         FrozenOperation frozen = frozenAttempt.Value!;
+        state.StoreDiscoveryConnectionOpensStart =
+            _store.Reader.ConnectionOpens;
         ProgressionAttempt progressionAttempt = DiscoverProgression(
             frozen,
             state,
             cancellationToken
         );
+        state.StoreDiscoveryConnectionOpensEnd =
+            _store.Reader.ConnectionOpens;
         if (progressionAttempt.Error is { } progressionError) {
             return progressionError;
         }

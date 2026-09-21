@@ -261,7 +261,9 @@ public sealed record RecapGridBuildMetrics(
     int RecipeRowSteps,
     int NewCalls,
     int CellsCommitted,
-    int RowViewsCommitted
+    int RowViewsCommitted,
+    int StoreConnectionOpens = 0,
+    int StoreDiscoveryConnectionOpens = 0
 ) {
     public static RecapGridBuildMetrics Empty { get; } = new(
         0,

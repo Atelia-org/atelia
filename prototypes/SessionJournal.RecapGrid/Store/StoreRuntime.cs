@@ -291,6 +291,8 @@ public sealed class RecapGridStoreReader {
     private readonly SqliteRecapGridStore _store;
     private readonly StoreLifetime _lifetime;
 
+    internal int ConnectionOpens => _store.ConnectionOpens;
+
     internal RecapGridStoreReader(
         SqliteRecapGridStore store,
         StoreLifetime lifetime

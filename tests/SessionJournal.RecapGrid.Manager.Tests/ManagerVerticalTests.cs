@@ -744,6 +744,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 Assert.Equal(rowCount - 1,
                     result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
+                Assert.Equal(28_673, result.Metrics.StoreConnectionOpens);
+                Assert.Equal(4_096, result.Metrics.StoreDiscoveryConnectionOpens);
             }
 
             var headRequest = new RecapGridBuildRequest(
@@ -761,6 +763,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 Assert.Equal(1, result.Metrics.RecipeRowSteps);
                 Assert.Equal(2, result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
+                Assert.Equal(9, result.Metrics.StoreConnectionOpens);
+                Assert.Equal(2, result.Metrics.StoreDiscoveryConnectionOpens);
             }
 
             var zeroStepRequest = new RecapGridBuildRequest(
@@ -777,6 +781,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             Assert.Equal(0, cached.Metrics.RecipeRowSteps);
             Assert.Equal(1, cached.Metrics.SelectedRows);
             Assert.Equal(0, cached.Metrics.NewCalls);
+            Assert.Equal(2, cached.Metrics.StoreConnectionOpens);
+            Assert.Equal(1, cached.Metrics.StoreDiscoveryConnectionOpens);
             Assert.Empty(executor.Batches);
             using RecapGridControlHandle control = OpenControl(fixture);
             Assert.Single(Assert.IsType<
