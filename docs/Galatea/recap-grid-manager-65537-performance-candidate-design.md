@@ -168,3 +168,42 @@ dialectical review（demand skeptic / minimal architect / semantic defender）�
 4. 65,537 规模回归收尾。
 
 如果 P0 证明主要成本不在连接生命周期，则重新评估整个 P1 方向。
+
+## 7. 实测结果与 G3 裁决（2026-09-22）
+
+P0 与 P1 启用点 1 已实施并通过验证（commits `7457d7c8`、`8a0e2f1b`、`54545d82`、`c9be1dad`）。
+4,097 垂直测试实测（同一测试、同机同会话 A/B）：
+
+| 段 | StoreConnectionOpens | StoreDiscoveryConnectionOpens |
+|---|---|---|
+| bootstrap（4,096 行，G0 → G2） | 28,673 → 24,578 | 4,096 → 1 |
+| head（1 行，G0 → G2） | 9 → 8 | 2 → 1 |
+| cached reopen（G0 → G2） | 2 → 2 | 1 → 1 |
+
+剩余 24,578 次 open ≈ 6 次/行 = 4 读（`ReadRowWork`×2 +
+`FindMissingAssignments`×2，全部在启用点 2 白名单）+ 2 写
+（`PutRowWork` + `PutRowView`）。
+
+决定性 wall-time 证据：G0 后与 G2 后各跑一次 4,097，Duration 均为 1m11s——
+消除 4,095 次连接 open 对耗时无可测影响，单次 open 成本上界 <约 0.5ms。
+
+**G3 裁决：stop，不实施启用点 2。** 依据：
+
+1. 连接生命周期不是 65,537 gate 的主导成本。启用点 2 全量接入白名单的
+   收益上界 ≈ 26.2 万次 open × ≤0.5ms ≈ ≤131s（≤14% gate 耗时），
+   按每 open 0.1-0.4ms 的现实估计约 3-8%。
+2. 本设计验收标准"65,537 耗时显著下降"在当前持久化合同内不可达：
+   主导成本在写事务持久化（`synchronous=EXTRA` + DELETE journal，
+   每行 `PutRowWork` + `PutRowView` 两个独立写事务）与测试 fixture 构建，
+   前者属 §4.2 保护边界，后者在 build 路径之外。
+3. 工作单 §7"计数降≠耗时降"停止条件已触发（计数降 4,095，耗时不动）。
+
+P0 计数与 P1 机制保留：计数器持续提供归因证据；read session 机制
+（含 identity 哨兵与测试矩阵）已落地，未来若写路径策略变化可自然扩展启用面。
+
+后续真实杠杆（均需单独设计决策，本轮不做）：
+
+- 写路径持久化策略（WAL、`synchronous`、RowWork/RowView 事务合并、批量化）——
+  §4.2 保护边界内的合同变更。
+- Timeline `ReadSelectedRow` 逐行 fresh open（约 65k 次/gate，独立 Store 与验证机制）。
+- 测试 fixture 构建耗时（测试路径，非 build 路径）。
