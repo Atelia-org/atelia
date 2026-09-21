@@ -1027,7 +1027,7 @@ internal sealed class SqliteRecapGridStore {
         return command.ExecuteScalar() is string value ? DecodeStoredValue(() => new RowResultId(value)) : null;
     }
 
-    private static RecapRowView? ReadRowViewAtCore(SqliteConnection connection, SqliteTransaction? transaction,
+    internal static RecapRowView? ReadRowViewAtCore(SqliteConnection connection, SqliteTransaction? transaction,
         RowViewAssignmentKey key) {
         RowResultId? id = ReadRowViewAssignmentId(connection, transaction, key);
         if (id is null) { return null; }
@@ -1470,7 +1470,11 @@ internal sealed class SqliteRecapGridStore {
             new(reader.GetString(5)), (RecapCellOutcome)reader.GetInt32(6), content);
     }
 
-    private SqliteConnection OpenVerifiedConnection() {
+    private SqliteConnection OpenVerifiedConnection()
+        => OpenVerifiedConnectionCore().Connection;
+
+    internal (SqliteConnection Connection, RecapGridStoreIdentity Identity)
+        OpenVerifiedConnectionCore() {
         RequireFilePresent(_paths.DatabasePath);
         SqliteConnection connection = OpenConnection(
             _paths.DatabasePath,
@@ -1484,10 +1488,12 @@ internal sealed class SqliteRecapGridStore {
             else {
                 ConfigureOpened(connection, _limits);
             }
-            ValidateSchemaIdentity(connection);
+            RecapGridStoreIdentity identity = ValidateSchemaIdentity(
+                connection
+            );
             ValidateCounts(ReadCounts(connection, null));
             ++ConnectionOpens;
-            return connection;
+            return (connection, identity);
         }
         catch {
             connection.Dispose();
@@ -1651,7 +1657,9 @@ internal sealed class SqliteRecapGridStore {
         RequirePragmaInteger(connection, "query_only", 1);
     }
 
-    private static void ValidateSchemaIdentity(SqliteConnection connection) {
+    private static RecapGridStoreIdentity ValidateSchemaIdentity(
+        SqliteConnection connection
+    ) {
         using (SqliteCommand command = connection.CreateCommand()) {
             command.CommandText = "PRAGMA user_version;";
             using SqliteDataReader reader = command.ExecuteReader();
@@ -1721,10 +1729,10 @@ internal sealed class SqliteRecapGridStore {
             );
         }
         rows.Close();
-        _ = ReadIdentity(connection, transaction: null);
+        return ReadIdentity(connection, transaction: null);
     }
 
-    private static RecapGridStoreIdentity ReadIdentity(
+    internal static RecapGridStoreIdentity ReadIdentity(
         SqliteConnection connection,
         SqliteTransaction? transaction
     ) {

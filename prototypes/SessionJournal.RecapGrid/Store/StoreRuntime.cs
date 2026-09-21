@@ -301,6 +301,9 @@ public sealed class RecapGridStoreReader {
         _lifetime = lifetime;
     }
 
+    internal RecapGridStoreSessionOpenResult OpenSession()
+        => RecapGridStoreReadSession.Open(_store, _lifetime);
+
     public RecapGridStoreReadResult<RecapCellArtifact> TryReadCell(
         CellSlot slot
     ) {
