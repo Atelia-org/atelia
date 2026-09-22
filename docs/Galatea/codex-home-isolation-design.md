@@ -207,3 +207,13 @@ else:
 实测限制：Provider `first` 的旧 thread 在默认切到 `second` 并删除 `first` 定义后，`thread/resume` 仍要求 `first`，在派发前报 `Model provider first not found`，分类为 `not-dispatched`；它不会自动转换 Provider。新 thread 使用 `second` 的 model 和 localhost endpoint。canary 明确断言只有两个成功请求（旧配置一次、新线程一次），失败恢复没有发出请求。此证据加强了原设计中“新任务可用不代表旧历史可继续”的边界，不新增会话转换逻辑。
 
 基础 Home 切片实施时未实现日常解绑；后续已按 [独立设计](codex-session-reset-design.md)交付离线命令，实际操作记录见该文第 9 节。真实 Home 切换、Provider 认证和历史迁移不由软件实现隐式执行，也未验证 Ark 的真实兼容性。
+
+### 真实实例切换记录（2026-09-23，Asia/Singapore）
+
+经用户显式授权，已升级 `prototypes/Galatea/.atelia/galatea/`：root V11→V12 使用官方 operator，唯一 maintenance route candidate 为 `gpt5-6-sol-codex` / concurrency 1 / timeout 900000 ms；delegates V4→V5，`sidecar.codexHome` 设为 `/galatea-homes/codex-home`。补入原已定义的 `gpt-6-astra-codex` selectable connection，使 gpt 的原默认选择通过严格校验。
+
+新 Home 权限为 0700，配置与认证副本为 0600。当前 `config.toml` 从个人配置选取 model、reasoning、service tier、context window、sandbox、approval、web search 基础设置，使用 ChatGPT / `gpt-6-astra`；不复制个人 plugins、skills 或历史。另存 `chatgpt.config.toml` 与 `ark.config.toml`，并复制 Ark model catalog、改为专用 Home 内路径。日常停服、解绑和配置切换步骤保存在该 Home 的 `README.md`。
+
+验证：当前 Debug build 零警告、零错误；真实配置 strict open 后两个角色均 `AlreadyUnbound`；使用生产 Node 子环境清理函数启动 pinned app-server，`config/read` 返回预期 model，`account/read` 返回 requiresOpenaiAuth=true、account 非空。当前环境无 `CODEX_SQLITE_HOME`，配置无显式 `sqlite_home`，SQLite 实际生成在专用 Home。真实 host 启动后 `/login` 返回 HTTP 200，随后正常停服（exit 0）。两个 delegation store 的全部表与本次备份完全一致、quick_check=ok，仍为 Unbound。没有发起真实模型调用，也没有将旧 Codex 历史迁入新 Home；本次不证明订阅额度或 Ark 上游调用可用。
+
+完整实例备份位于状态目录之外的 `prototypes/Galatea/.atelia/galatea-upgrade-backup-20260922T184803Z/instance/`，同级 `verification.json` 与 `host-smoke.log` 保存核验结果。这些本机配置、凭据和备份均不入 Git。实例保持停服，后续按原启动方式启动即可。
