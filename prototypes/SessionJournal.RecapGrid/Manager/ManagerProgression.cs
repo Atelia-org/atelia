@@ -4,6 +4,8 @@ using Atelia.SessionJournal.RecapGrid.Store;
 namespace Atelia.SessionJournal.RecapGrid.Manager;
 
 public sealed partial class RecapGridManager {
+    private const int ProgressionTimelinePageRows = 32;
+
     private sealed record FrozenRecipeRowUnit(
         FrozenRecipePlan Plan,
         HistoryTimelineSelectedRow Selected,
@@ -63,6 +65,10 @@ public sealed partial class RecapGridManager {
         var anchors = new Dictionary<GridBuildRecipeDigest, BuiltRow>();
         var workByRecipe = new Dictionary<GridBuildRecipeDigest,
             List<(int Depth, bool IsOverlayBootstrap)>>();
+        IReadOnlyList<HistoryTimelineSelectedRow> pagedPredecessors =
+            Array.Empty<HistoryTimelineSelectedRow>();
+        int nextPagedPredecessor = 0;
+        bool firstPredecessorRead = false;
 
         RecapGridBuildResult? ExtendOne() {
             HistoryRowId? previous = headToOldest[^1]
@@ -76,13 +82,41 @@ public sealed partial class RecapGridManager {
             if (cancellationToken.IsCancellationRequested) {
                 return new RecapGridBuildResult.Cancelled();
             }
-            (HistoryTimelineSelectedRow? row,
-                RecapGridBuildResult? error) = ReadSelectedRow(
+            HistoryTimelineSelectedRow? row;
+            if (!firstPredecessorRead) {
+                (row, RecapGridBuildResult? error) = ReadSelectedRow(
                     frozen.TimelineHead,
                     previous.Value
                 );
-            if (error is not null) {
-                return error;
+                if (error is not null) {
+                    return error;
+                }
+                firstPredecessorRead = true;
+            }
+            else {
+                if (nextPagedPredecessor == pagedPredecessors.Count) {
+                    // A page may verify rows beyond the first Store anchor.
+                    // That bounded prefetch is intentional: Timeline corruption
+                    // remains fail-closed even when the anchor ends this search.
+                    HistoryTimelinePathPageResult pageRead = _timeline.Reader
+                        .ReadSelectedPathPageStartingAt(
+                            frozen.TimelineHead,
+                            previous.Value,
+                            ProgressionTimelinePageRows
+                        );
+                    if (pageRead is not HistoryTimelinePathPageResult.Page page) {
+                        return MapTimelinePath(pageRead);
+                    }
+                    if (page.Value.Rows.Count == 0) {
+                        return Invalid(
+                            "ProgressionSelectedChainInvalid",
+                            "The selected predecessor page was unexpectedly empty."
+                        );
+                    }
+                    pagedPredecessors = page.Value.Rows;
+                    nextPagedPredecessor = 0;
+                }
+                row = pagedPredecessors[nextPagedPredecessor++];
             }
             if (row!.Descriptor.RowId != previous
                 || row.Descriptor.RefId != frozen.TimelineHead.RefId

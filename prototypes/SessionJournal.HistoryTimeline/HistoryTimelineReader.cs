@@ -218,6 +218,30 @@ public sealed class HistoryTimelineReader {
         }
     }
 
+    /// <summary>
+    /// Reads a verified, newest-to-oldest page of the selected path beginning
+    /// at <paramref name="startAt"/>. This is for consumers that already have
+    /// a selected-row anchor and must not reinterpret it as the Timeline head.
+    /// </summary>
+    public HistoryTimelinePathPageResult ReadSelectedPathPageStartingAt(
+        TimelineHeadRef expectedWholeHead,
+        HistoryRowId startAt,
+        int maximumRows = HistoryTimelineStoreLimits
+            .MaximumPathPageRows
+    ) {
+        ArgumentNullException.ThrowIfNull(expectedWholeHead);
+        return ReadSelectedPathPage(
+            expectedWholeHead,
+            new HistoryTimelinePathCursor(
+                expectedWholeHead.TimelineId,
+                expectedWholeHead.RefId,
+                expectedWholeHead.Generation,
+                startAt
+            ),
+            maximumRows
+        );
+    }
+
     private HistoryTimelineReaderRowResult.Selected Selected(
         TimelineHeadRef expectedWholeHead,
         HistorySegmentDescriptor descriptor
