@@ -29,6 +29,8 @@
 | TextExtractor 与 Observation 通讯 | [Observation Bridge](text-extractor-observation-bridge.md) |
 | Character Note、Default MemoPod | [忠实代写](character-note-transcription.md)、[保存合同](character-note-default-memopod-v1.md)、[自动记忆工作单](automatic-memory-work-order.md) |
 | durable Codex delegation | [状态机设计](codex-delegation-durability-design.md)、[V3 resilience 实施记录](codex-delegation-local-resilience-work-order.md) |
+| Galatea 专用 Codex 配置与手动 Provider 切换 | [Codex Home 设计](codex-home-isolation-design.md)：已完成辩证审阅，尚未实施；固定 Home、认证 gate 与首次迁移边界 |
+| 日常解除 Codex 绑定，让后续邮件进入新 session | [离线解绑设计](codex-session-reset-design.md)：尚未实施；保留队列/回信、显式结束旧任务等待、懒创建新 thread |
 | 角色间站内信 | [角色间站内信设计与实施记录](character-mail-design.md)：地址簿、提示词、可靠入箱、recovery 与实例迁移边界 |
 | Character 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |

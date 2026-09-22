@@ -38,6 +38,8 @@ docs/Galatea/e2e-testing.md
 docs/Galatea/e2e-20260914-refactor-acceptance.md
 docs/Galatea/codex-delegation-verification.md
 docs/Galatea/codex-delegation-recovery-refactor-plan.md
+docs/Galatea/codex-home-isolation-design.md
+docs/Galatea/codex-session-reset-design.md
 docs/Galatea/completion-auto-retry-refactor-plan.md
 docs/Galatea/completion-auto-retry-implementation.md
 docs/Galatea/user-home-design.md
