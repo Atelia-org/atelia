@@ -64,6 +64,35 @@ public sealed partial class RecapGridManager {
         FrozenProgression progression = progressionAttempt.Value!;
         var previous = progression.Anchors.ToDictionary();
         BuiltRow? requestedFinal = progression.RequestedExact;
+        if (progression.OrderedUnits.Count == 0) {
+            if (requestedFinal is null) {
+                return Invalid(
+                    "RequestedRecipeViewUnavailable",
+                    "The requested recipe did not produce its through-row view."
+                );
+            }
+            return FinalizeFulfilled(frozen, requestedFinal, state);
+        }
+        RecapGridStoreSessionOpenResult sessionOpen =
+            _store.Reader.OpenSession();
+        if (sessionOpen is RecapGridStoreSessionOpenResult.Busy) {
+            return Unavailable(RecapGridBuildDependency.Store, "StoreBusy");
+        }
+        if (sessionOpen is RecapGridStoreSessionOpenResult.Disposed) {
+            return Unavailable(
+                RecapGridBuildDependency.Store,
+                "StoreDisposed"
+            );
+        }
+        if (sessionOpen is RecapGridStoreSessionOpenResult.Invalid invalidOpen) {
+            return Unavailable(
+                RecapGridBuildDependency.Store,
+                invalidOpen.Code,
+                invalidOpen.Detail
+            );
+        }
+        using RecapGridStoreReadSession session =
+            ((RecapGridStoreSessionOpenResult.Opened)sessionOpen).Session;
         HistoryRowId? currentRowId = null;
         HistorySegmentContent? content = null;
         var current = new Dictionary<GridBuildRecipeDigest, BuiltRow>();
@@ -138,7 +167,8 @@ public sealed partial class RecapGridManager {
                 baseRow,
                 executor,
                 state,
-                cancellationToken
+                cancellationToken,
+                session
             ).ConfigureAwait(false);
             if (attempt.Error is { } error) {
                 return error;
@@ -170,6 +200,7 @@ public sealed partial class RecapGridManager {
         IRecapCellBatchExecutor executor,
         BuildState state,
         CancellationToken cancellationToken,
+        RecapGridStoreReadSession session,
         bool workSelectionAllowed = false
     ) {
         HistorySegmentDescriptor descriptor = selected.Descriptor;
@@ -181,6 +212,7 @@ public sealed partial class RecapGridManager {
                 isOverlayBootstrap,
                 previousRow,
                 baseRow,
+                session,
                 allowNewWorkSelection: workSelectionAllowed
             );
         if (deriveError is not null) {
@@ -191,7 +223,7 @@ public sealed partial class RecapGridManager {
             derived.PreviousCells;
 
         RecapGridMissingResult missingRead =
-            _store.Reader.FindMissingAssignments(spec);
+            session.FindMissingAssignments(spec);
         CellSlot[] missing;
         switch (missingRead) {
             case RecapGridMissingResult.Complete:
@@ -241,7 +273,7 @@ public sealed partial class RecapGridManager {
             return await BuildRecipeRowAsync(
                 frozen, plan, selected, openContent,
                 isOverlayBootstrap, previousRow, baseRow, executor,
-                state, cancellationToken, workSelectionAllowed: true
+                state, cancellationToken, session, workSelectionAllowed: true
             ).ConfigureAwait(false);
         }
         FrozenRecapCellWork[] orderedWork = work!;
@@ -264,7 +296,7 @@ public sealed partial class RecapGridManager {
                 return await BuildRecipeRowAsync(
                     frozen, plan, selected, openContent,
                     isOverlayBootstrap, previousRow, baseRow, executor,
-                    state, cancellationToken, workSelectionAllowed: true
+                    state, cancellationToken, session, workSelectionAllowed: true
                 ).ConfigureAwait(false);
             }
             if (state.HasElapsed()) {

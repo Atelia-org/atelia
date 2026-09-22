@@ -173,6 +173,172 @@ public sealed class StoreReadSessionTests : IDisposable {
     }
 
     [Fact]
+    public void SessionRowWorkAndMissingReadsMatchFreshOpenWithoutNewConnections() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        RowBuildSpec complete = StoreFixture.Spec();
+        StoreFixture.Put(handle, complete);
+        RowBuildSpec incomplete = StoreFixture.Spec(
+            row: new HistoryRowId(new string('d', 64))
+        );
+
+        var freshWork = Assert.IsType<
+            RecapGridStoreReadResult<RowWork>.Found
+            >(handle.Reader.ReadRowWork(complete.Work!.Key));
+        Assert.IsType<RecapGridMissingResult.Complete>(
+            handle.Reader.FindMissingAssignments(complete)
+        );
+        var freshMissing = Assert.IsType<RecapGridMissingResult.Missing>(
+            handle.Reader.FindMissingAssignments(incomplete)
+        );
+
+        int beforeSession = handle.Reader.ConnectionOpens;
+        RecapGridStoreReadSession session = OpenSession(handle);
+        Assert.Equal(beforeSession + 1, handle.Reader.ConnectionOpens);
+        var sessionWork = Assert.IsType<
+            RecapGridStoreReadResult<RowWork>.Found
+            >(session.ReadRowWork(complete.Work.Key));
+        Assert.Equal(freshWork.Value.WorkId, sessionWork.Value.WorkId);
+        Assert.IsType<RecapGridMissingResult.Complete>(
+            session.FindMissingAssignments(complete)
+        );
+        var sessionMissing = Assert.IsType<RecapGridMissingResult.Missing>(
+            session.FindMissingAssignments(incomplete)
+        );
+        Assert.Equal(
+            freshMissing.OrderedSlots.ToArray(),
+            sessionMissing.OrderedSlots.ToArray()
+        );
+        Assert.Equal(beforeSession + 1, handle.Reader.ConnectionOpens);
+        session.Dispose();
+    }
+
+    [Fact]
+    public void SessionRowWorkAndMissingReadsObserveConcurrentWriterCommits() {
+        Create();
+        using RecapGridStoreHandle reader = Open();
+        using RecapGridStoreHandle writer = Open();
+        RowBuildSpec spec = StoreFixture.Spec();
+        RecapGridStoreReadSession session = OpenSession(reader);
+        Assert.IsType<RecapGridStoreReadResult<RowWork>.Missing>(
+            session.ReadRowWork(spec.Work!.Key)
+        );
+        Assert.IsType<RecapGridMissingResult.Missing>(
+            session.FindMissingAssignments(spec)
+        );
+
+        StoreFixture.Put(writer, spec, "concurrent");
+
+        Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+            session.ReadRowWork(spec.Work.Key)
+        );
+        Assert.IsType<RecapGridMissingResult.Complete>(
+            session.FindMissingAssignments(spec)
+        );
+        session.Dispose();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SessionNewReadKindsDetectIdentityRewriteAndLatchStore(
+        bool readMissingAssignments
+    ) {
+        Create();
+        RecapGridStoreHandle handle = Open();
+        RowBuildSpec spec = StoreFixture.Spec();
+        RecapGridStoreReadSession session = OpenSession(handle);
+        string replacement = RecapGridStoreInstanceId.Generate().Value;
+        using (SqliteConnection connection = CreateRawConnection()) {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText =
+                $"""
+                UPDATE store_metadata
+                SET store_instance_id = '{replacement}'
+                WHERE singleton = 1;
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        if (readMissingAssignments) {
+            Assert.IsType<RecapGridMissingResult.Invalid>(
+                session.FindMissingAssignments(spec)
+            );
+        }
+        else {
+            Assert.IsType<RecapGridStoreReadResult<RowWork>.Invalid>(
+                session.ReadRowWork(spec.Work!.Key)
+            );
+        }
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Invalid>(
+            handle.Reader.ReadViewAt(UnwrittenKey())
+        );
+        session.Dispose();
+        handle.Dispose();
+    }
+
+    [Fact]
+    public void SessionRowWorkAndMissingReadsReturnBusy() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        RowBuildSpec spec = StoreFixture.Spec();
+        StoreFixture.PutWork(handle, spec);
+        RecapGridStoreReadSession session = OpenSession(handle);
+        using SqliteConnection blocker = CreateRawConnection();
+        using (SqliteCommand command = blocker.CreateCommand()) {
+            command.CommandText = "PRAGMA busy_timeout = 0;";
+            command.ExecuteNonQuery();
+            command.CommandText = "BEGIN EXCLUSIVE;";
+            command.ExecuteNonQuery();
+
+            Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Busy>(
+                session.ReadViewAt(UnwrittenKey())
+            );
+            Assert.IsType<RecapGridStoreReadResult<RowWork>.Busy>(
+                session.ReadRowWork(spec.Work!.Key)
+            );
+            Assert.IsType<RecapGridMissingResult.Busy>(
+                session.FindMissingAssignments(spec)
+            );
+
+            command.CommandText = "ROLLBACK;";
+            command.ExecuteNonQuery();
+        }
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            session.ReadViewAt(UnwrittenKey())
+        );
+        Assert.IsType<RecapGridStoreReadResult<RowWork>.Found>(
+            session.ReadRowWork(spec.Work!.Key)
+        );
+        Assert.IsType<RecapGridMissingResult.Missing>(
+            session.FindMissingAssignments(spec)
+        );
+        using (RecapGridStoreHandle writer = Open()) {
+            StoreFixture.Put(writer, spec, "after-busy");
+        }
+        Assert.IsType<RecapGridMissingResult.Complete>(
+            session.FindMissingAssignments(spec)
+        );
+        session.Dispose();
+    }
+
+    [Fact]
+    public void SessionRowWorkAndMissingReadsReturnDisposedAfterSessionDispose() {
+        Create();
+        using RecapGridStoreHandle handle = Open();
+        RowBuildSpec spec = StoreFixture.Spec();
+        RecapGridStoreReadSession session = OpenSession(handle);
+        session.Dispose();
+
+        Assert.IsType<RecapGridStoreReadResult<RowWork>.Disposed>(
+            session.ReadRowWork(spec.Work!.Key)
+        );
+        Assert.IsType<RecapGridMissingResult.Disposed>(
+            session.FindMissingAssignments(spec)
+        );
+    }
+
+    [Fact]
     public void SessionSentinelDetectsSchemaDriftBeforeFreshOpen() {
         Create();
         RecapGridStoreHandle handle = Open();

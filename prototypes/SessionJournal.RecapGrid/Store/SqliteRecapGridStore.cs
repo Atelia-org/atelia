@@ -292,6 +292,16 @@ internal sealed class SqliteRecapGridStore {
     internal RecapGridMissingResult FindMissing(RowBuildSpec spec) {
         ArgumentNullException.ThrowIfNull(spec);
         using SqliteConnection connection = OpenVerifiedConnection();
+        return FindMissingCore(connection, transaction: null, spec);
+    }
+
+    internal static RecapGridMissingResult FindMissingCore(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        RowBuildSpec spec
+    ) {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(spec);
         var missing = new List<CellSlot>();
         for (int index = 0; index < spec.OrderedAssignments.Count; index++) {
             RowBuildAssignment assignment = spec.OrderedAssignments[index];
@@ -299,7 +309,7 @@ internal sealed class SqliteRecapGridStore {
                 case RowBuildAssignment.Evaluate evaluate:
                     RecapCellArtifact? winner = ReadCellBySlotCore(
                         connection,
-                        transaction: null,
+                        transaction,
                         evaluate.Slot
                     );
                     if (winner is null) {
@@ -312,7 +322,7 @@ internal sealed class SqliteRecapGridStore {
                 case RowBuildAssignment.Reuse reuse:
                     RecapCellArtifact? reused = ReadCellByIdCore(
                         connection,
-                        transaction: null,
+                        transaction,
                         reuse.Cell.Id
                     );
                     if (reused is null
@@ -1039,7 +1049,7 @@ internal sealed class SqliteRecapGridStore {
         return view;
     }
 
-    private static RowWork? ReadRowWorkCore(
+    internal static RowWork? ReadRowWorkCore(
         SqliteConnection connection,
         SqliteTransaction? transaction,
         RowWorkKey key
@@ -1850,7 +1860,7 @@ internal sealed class SqliteRecapGridStore {
         _ = command.ExecuteScalar();
     }
 
-    private static void ExecuteNativeControl(
+    internal static void ExecuteNativeControl(
         SqliteConnection connection,
         string statement
     ) {

@@ -1,6 +1,7 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using System.Data.Common;
+using System.Diagnostics;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
@@ -8,12 +9,31 @@ using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Store;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Atelia.SessionJournal.RecapGrid.Manager.Tests;
 
 public sealed partial class ManagerVerticalTests : IDisposable {
     private readonly List<string> _paths = [];
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
+    private readonly ITestOutputHelper _output;
+
+    public ManagerVerticalTests(ITestOutputHelper output) {
+        _output = output;
+    }
+
+    private async Task<RecapGridBuildResult> MeasureScaleBuildAsync(
+        string phase,
+        RecapGridManager manager,
+        RecapGridBuildRequest request,
+        IRecapCellBatchExecutor executor
+    ) {
+        var clock = Stopwatch.StartNew();
+        RecapGridBuildResult result = await manager.BuildAsync(request, executor);
+        _output.WriteLine("{0}: elapsed={1}; result={2}; metrics={3}",
+            phase, clock.Elapsed, result.GetType().Name, result.Metrics);
+        return result;
+    }
 
     [Fact]
     public void ProgressReportsExactFirstFrontierWithoutRawMaterializationOrWrites() {
@@ -718,9 +738,11 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [Fact]
     public async Task Public4097TimelineBuildsThroughHeadOneRowAtATimeAndReopensZeroStep() {
         const int rowCount = 4_097;
+        var fixtureClock = Stopwatch.StartNew();
         Fixture fixture = CreateFullFixture(
             turns: (rowCount - 1) / 2,
             zeroColumns: true);
+        _output.WriteLine("fixture: rows={0}; elapsed={1}", rowCount, fixtureClock.Elapsed);
         Assert.Equal(rowCount, fixture.Rows.Count);
         var executor = new RecordingExecutor();
 
@@ -736,7 +758,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             using (RecapGridManagerHandle bootstrap = OpenManager(fixture)) {
                 RecapGridBuildResult.FulfilledThrough result = Assert.IsType<
                     RecapGridBuildResult.FulfilledThrough
-                >(await bootstrap.Manager.BuildAsync(
+                >(await MeasureScaleBuildAsync(
+                    "bootstrap", bootstrap.Manager,
                     bootstrapRequest,
                     executor));
                 Assert.Equal(rowCount - 1,
@@ -744,7 +767,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 Assert.Equal(rowCount - 1,
                     result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
-                Assert.Equal(24_578, result.Metrics.StoreConnectionOpens);
+                Assert.Equal(8_195, result.Metrics.StoreConnectionOpens);
                 Assert.Equal(1, result.Metrics.StoreDiscoveryConnectionOpens);
             }
 
@@ -759,11 +782,12 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             using (RecapGridManagerHandle head = OpenManager(fixture)) {
                 RecapGridBuildResult.Fulfilled result = Assert.IsType<
                     RecapGridBuildResult.Fulfilled
-                >(await head.Manager.BuildAsync(headRequest, executor));
+                >(await MeasureScaleBuildAsync(
+                    "head", head.Manager, headRequest, executor));
                 Assert.Equal(1, result.Metrics.RecipeRowSteps);
                 Assert.Equal(2, result.Metrics.SelectedRows);
                 Assert.Equal(0, result.Metrics.NewCalls);
-                Assert.Equal(8, result.Metrics.StoreConnectionOpens);
+                Assert.Equal(5, result.Metrics.StoreConnectionOpens);
                 Assert.Equal(1, result.Metrics.StoreDiscoveryConnectionOpens);
             }
 
@@ -777,7 +801,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             using RecapGridManagerHandle reopened = OpenManager(fixture);
             RecapGridBuildResult.Fulfilled cached = Assert.IsType<
                 RecapGridBuildResult.Fulfilled
-            >(await reopened.Manager.BuildAsync(zeroStepRequest, executor));
+            >(await MeasureScaleBuildAsync(
+                "cold", reopened.Manager, zeroStepRequest, executor));
             Assert.Equal(0, cached.Metrics.RecipeRowSteps);
             Assert.Equal(1, cached.Metrics.SelectedRows);
             Assert.Equal(0, cached.Metrics.NewCalls);
@@ -794,9 +819,11 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [Fact]
     public async Task Public65537TimelineBuildsThroughHeadAndColdReopensWithoutProviderCalls() {
         const int rowCount = 65_537;
+        var fixtureClock = Stopwatch.StartNew();
         Fixture fixture = CreateFullFixture(
             turns: (rowCount - 1) / 2,
             zeroColumns: true);
+        _output.WriteLine("fixture: rows={0}; elapsed={1}", rowCount, fixtureClock.Elapsed);
         Assert.Equal(rowCount, fixture.Rows.Count);
         var executor = new RecordingExecutor();
 
@@ -812,7 +839,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
             using (RecapGridManagerHandle manager = OpenManager(fixture)) {
                 RecapGridBuildResult.Fulfilled result = Assert.IsType<
                     RecapGridBuildResult.Fulfilled>(
-                    await manager.Manager.BuildAsync(request, executor));
+                    await MeasureScaleBuildAsync(
+                        "build", manager.Manager, request, executor));
                 Assert.Equal(rowCount, result.Metrics.RecipeRowSteps);
                 Assert.Equal(0, result.Metrics.NewCalls);
             }
@@ -826,7 +854,8 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                     maximumElapsed: TimeSpan.FromMinutes(1)));
             RecapGridBuildResult.Fulfilled cached = Assert.IsType<
                 RecapGridBuildResult.Fulfilled>(
-                await reopened.Manager.BuildAsync(
+                await MeasureScaleBuildAsync(
+                    "cold", reopened.Manager,
                     cachedRequest, executor));
             Assert.Equal(0, cached.Metrics.RecipeRowSteps);
             Assert.Equal(0, cached.Metrics.NewCalls);

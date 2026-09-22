@@ -14,11 +14,14 @@ internal abstract record RecapGridStoreSessionOpenResult {
 
 /// <summary>
 /// Operation-scoped verified read session over a single RecapGrid Store
-/// connection. Connection reuse only — never a transaction: every read runs
-/// in autocommit mode exactly like a fresh-open read. Each read re-checks the
-/// store instance identity on the cached connection and latches the whole
-/// store invalid on mismatch. Not thread-safe: a session must be used from a
-/// single operation thread and disposed by its owner.
+/// connection. Only the connection is reused between calls: every read runs
+/// in one short, per-read deferred snapshot and ends that snapshot before the
+/// call returns. Each read re-checks the store instance identity on the cached
+/// connection and latches the whole store invalid on mismatch. No transaction
+/// crosses logical reads or awaits. Not thread-safe: a session must be
+/// accessed sequentially by one operation and disposed by its owner; an async
+/// continuation may resume that operation on a different thread only after
+/// its prior read has returned.
 /// </summary>
 internal sealed class RecapGridStoreReadSession : IDisposable {
     private readonly SqliteRecapGridStore _store;
@@ -89,6 +92,43 @@ internal sealed class RecapGridStoreReadSession : IDisposable {
         );
     }
 
+    internal RecapGridStoreReadResult<RowWork> ReadRowWork(RowWorkKey key) {
+        ArgumentNullException.ThrowIfNull(key);
+        return Execute(
+            connection => SqliteRecapGridStore.ReadRowWorkCore(
+                connection,
+                transaction: null,
+                key
+            )
+        );
+    }
+
+    internal RecapGridMissingResult FindMissingAssignments(RowBuildSpec spec) {
+        ArgumentNullException.ThrowIfNull(spec);
+        return Execute(
+            connection => SqliteRecapGridStore.FindMissingCore(
+                connection,
+                transaction: null,
+                spec
+            )
+        ) switch {
+            RecapGridStoreReadResult<RecapGridMissingResult>.Found found
+                => found.Value,
+            RecapGridStoreReadResult<RecapGridMissingResult>.Busy
+                => new RecapGridMissingResult.Busy(),
+            RecapGridStoreReadResult<RecapGridMissingResult>.Disposed
+                => new RecapGridMissingResult.Disposed(),
+            RecapGridStoreReadResult<RecapGridMissingResult>.Invalid invalid
+                => new RecapGridMissingResult.Invalid(
+                    invalid.Code,
+                    invalid.Detail
+                ),
+            _ => throw new InvalidOperationException(
+                "The read session returned an unsupported missing outcome."
+            )
+        };
+    }
+
     private RecapGridStoreReadResult<T> Execute<T>(
         Func<SqliteConnection, T?> read
     ) where T : class {
@@ -101,20 +141,7 @@ internal sealed class RecapGridStoreReadSession : IDisposable {
         }
         try {
             SqliteConnection connection = _connection!;
-            RecapGridStoreIdentity fresh = SqliteRecapGridStore.ReadIdentity(
-                connection,
-                transaction: null
-            );
-            if (fresh != _identity) {
-                (code, detail) = _store.LatchInvalid(
-                    new StoreException(
-                        "GridStoreInstanceIdMismatch",
-                        "Store identity changed under the read session."
-                    )
-                );
-                return new RecapGridStoreReadResult<T>.Invalid(code, detail);
-            }
-            T? value = read(connection);
+            T? value = ReadWithinShortSnapshot(connection, read);
             return value is null
                 ? new RecapGridStoreReadResult<T>.Missing()
                 : new RecapGridStoreReadResult<T>.Found(value);
@@ -128,6 +155,71 @@ internal sealed class RecapGridStoreReadSession : IDisposable {
         ) {
             (code, detail) = _store.LatchInvalid(exception);
             return new RecapGridStoreReadResult<T>.Invalid(code, detail);
+        }
+    }
+
+    private T? ReadWithinShortSnapshot<T>(
+        SqliteConnection connection,
+        Func<SqliteConnection, T?> read
+    ) where T : class {
+        bool begun = false;
+        try {
+            SqliteRecapGridStore.ExecuteNativeControl(
+                connection,
+                "BEGIN DEFERRED;"
+            );
+            begun = true;
+            // A constant SELECT can be optimized without acquiring a shared
+            // lock. This exact-table read establishes it before any managed
+            // provider command, whose zero command timeout otherwise retries
+            // a busy prepare indefinitely.
+            SqliteRecapGridStore.ExecuteNativeControl(
+                connection,
+                "SELECT singleton FROM store_metadata WHERE singleton = 1 LIMIT 1;"
+            );
+            RecapGridStoreIdentity fresh = SqliteRecapGridStore.ReadIdentity(
+                connection,
+                transaction: null
+            );
+            if (fresh != _identity) {
+                throw new StoreException(
+                    "GridStoreInstanceIdMismatch",
+                    "Store identity changed under the read session."
+                );
+            }
+            return read(connection);
+        }
+        finally {
+            if (begun
+                && SQLitePCL.raw.sqlite3_get_autocommit(connection.Handle) == 0) {
+                try {
+                    SqliteRecapGridStore.ExecuteNativeControl(
+                        connection,
+                        "ROLLBACK;"
+                    );
+                }
+                catch (Exception exception) when (
+                    SqliteRecapGridStore.IsStoreFailure(exception)
+                ) {
+                    var failure = new StoreException(
+                        "GridStoreReadSnapshotCleanupFailed",
+                        "The Store read snapshot could not be ended.",
+                        exception
+                    );
+                    _store.LatchInvalid(failure);
+                    _connection = null;
+                    try {
+                        connection.Dispose();
+                    }
+                    catch (Exception disposal) when (
+                        SqliteRecapGridStore.IsStoreFailure(disposal)
+                    ) {
+                        // The Store is already invalid and this connection
+                        // detached; preserve the original cleanup failure.
+                    }
+                    throw failure;
+                }
+            }
         }
     }
 

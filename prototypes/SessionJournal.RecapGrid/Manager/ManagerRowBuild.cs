@@ -16,6 +16,7 @@ public sealed partial class RecapGridManager {
         bool isOverlayBootstrap,
         BuiltRow? previousRow,
         BuiltRow? baseRow,
+        RecapGridStoreReadSession? session = null,
         bool allowNewWorkSelection = false
     ) {
         HistorySegmentDescriptor descriptor = selected.Descriptor;
@@ -44,7 +45,8 @@ public sealed partial class RecapGridManager {
 
         (RowWork? work, RecapGridBuildResult? workError) = ReadRowWork(
             plan,
-            descriptor
+            descriptor,
+            session
         );
         if (workError is not null) {
             return (null, workError);
@@ -63,7 +65,8 @@ public sealed partial class RecapGridManager {
                 isOverlayBootstrap,
                 baseRow,
                 producerTarget,
-                work
+                work,
+                session
             );
         }
         catch (OverlaySourceIncompatibleException exception) {
@@ -90,7 +93,7 @@ public sealed partial class RecapGridManager {
             try {
                 assignments = DeriveAssignments(
                     plan, descriptor, isOverlayBootstrap, baseRow,
-                    producerTarget, work);
+                    producerTarget, work, session);
             }
             catch (OverlaySourceIncompatibleException exception) {
                 return (null, exception.Result);
@@ -173,7 +176,8 @@ public sealed partial class RecapGridManager {
         bool isOverlayBootstrap,
         BuiltRow? baseRow,
         BuildTarget producerTarget,
-        RowWork? work
+        RowWork? work,
+        RecapGridStoreReadSession? session
     ) {
         HashSet<LogicalColumnId> recomputed = plan.Recipe
             .RecomputedColumns.ToHashSet();
@@ -192,7 +196,13 @@ public sealed partial class RecapGridManager {
             );
             if (work is null) {
                 ValidateNewOverlayBaseAssignments(
-                    plan, descriptor, baseRow, producerTarget, recomputed);
+                    plan,
+                    descriptor,
+                    baseRow,
+                    producerTarget,
+                    recomputed,
+                    session
+                );
             }
         }
         var assignments = new RowBuildAssignment[
@@ -259,7 +269,8 @@ public sealed partial class RecapGridManager {
         HistorySegmentDescriptor descriptor,
         BuiltRow baseRow,
         BuildTarget producerTarget,
-        IReadOnlySet<LogicalColumnId> recomputed
+        IReadOnlySet<LogicalColumnId> recomputed,
+        RecapGridStoreReadSession? session
     ) {
         BuildTargetColumn? firstReusedTarget = producerTarget.OrderedColumns
             .FirstOrDefault(column => !recomputed.Contains(
@@ -272,7 +283,8 @@ public sealed partial class RecapGridManager {
                 "Overlay bootstrap requires a base recipe digest.");
         var key = new RowWorkKey(descriptor.RefId, descriptor.TimelineId,
             baseDigest, descriptor.RowId);
-        RecapGridStoreReadResult<RowWork> read = _store.Reader.ReadRowWork(key);
+        RecapGridStoreReadResult<RowWork> read = session?.ReadRowWork(key)
+            ?? _store.Reader.ReadRowWork(key);
         if (read is RecapGridStoreReadResult<RowWork>.Missing) {
             throw Incompatible(plan, descriptor,
                 firstReusedTarget.LogicalColumnId, "BaseRowWorkMissing");
@@ -367,7 +379,8 @@ public sealed partial class RecapGridManager {
 
     private (RowWork? Work, RecapGridBuildResult? Error) ReadRowWork(
         FrozenRecipePlan plan,
-        HistorySegmentDescriptor descriptor
+        HistorySegmentDescriptor descriptor,
+        RecapGridStoreReadSession? session
     ) {
         var key = new RowWorkKey(
             descriptor.RefId,
@@ -375,7 +388,8 @@ public sealed partial class RecapGridManager {
             plan.Recipe.Digest,
             descriptor.RowId
         );
-        RecapGridStoreReadResult<RowWork> read = _store.Reader.ReadRowWork(key);
+        RecapGridStoreReadResult<RowWork> read = session?.ReadRowWork(key)
+            ?? _store.Reader.ReadRowWork(key);
         if (read is RecapGridStoreReadResult<RowWork>.Found found) {
             return (found.Value, null);
         }
