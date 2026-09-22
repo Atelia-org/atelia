@@ -267,3 +267,28 @@ code-owned bundle，只用 `RegisterFamily|RegisterDefinition` 权限，注册�
   `prototypes/Galatea/.atelia/galatea`，未执行真实实例迁移、服务部署、push 或 NuGet
   发布。真实实例升级仍须单独授权，并从已文档化的 inspect/backup/upgrade/restore
   operator 入口开始。
+
+## 真实实例 Store V5 迁移记录（2026-09-23，Asia/Singapore）
+
+在 Galatea root V12 与独立 Codex Home 切换后的首次真实生成中，`gpt` 回合在进入
+模型调用前以 `recap-grid-maintenance-unavailable` 失败。停服后的正式只读
+`recap-grid progress` 将原因收敛为 Store dependency schema 4；Timeline 与 Cadence
+均可正常读取。`cyber` 的 Store 也仍是 schema V4。此前仅验证 host `/login` 的部署
+烟测没有覆盖这个派生库版本门禁。
+
+迁移前已将两个完整 session 备份到
+`prototypes/Galatea/.atelia/galatea-recap-store-v5-backup-20260922T231148Z/`。
+两次 `upgrade-store-v5` dry-run 分别确认 `gpt` 的 8 row views / 16 cells 与
+`cyber` 的 6 row views / 12 cells 可迁移；随后对两个停服 repository 执行 `--apply`。
+工具各自保留 exact V4 backup，并将 active Store 原位升级为 V5。迁移没有构造
+provider client，也没有调用模型。
+
+迁移后两个 Store 的 `verify` 均为 `healthy`、schemaVersion 5，`progress` 均为
+`complete`，重复 upgrade 均为 `already-current`。真实 host 冷启动、登录和两个
+`recent-turns` 请求均成功，`cyber` readiness 为 `exact/ready`，`gpt` 为
+`exact/fulfillment-missing`；后者表示失败回合推进 Timeline 后仍有可在线结算的
+fulfillment，不再是 schema unavailable。host 随后正常退出，未执行新的生成。
+
+后续部署检查不应以 `/login` 成功代替 session 可用性证明。涉及 RecapGrid schema
+硬切时，应在停服副本或真实停服 repository 上先执行 `verify` 与 provider-free
+`progress`，再启动 host 并读取每个角色的 exact readiness。
