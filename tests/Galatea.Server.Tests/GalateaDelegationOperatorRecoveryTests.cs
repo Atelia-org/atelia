@@ -510,13 +510,15 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             ?? Convert.ToBase64String(Encoding.UTF8.GetBytes(evidence.Final))
     });
 
-    private sealed class RecoveryFixture : IDisposable {
+    internal sealed class RecoveryFixture : IDisposable {
         private readonly string _root;
         private GalateaDelegationSqliteStore? _store;
 
         internal RecoveryFixture(
             bool closeStore,
-            bool withActiveLease = false
+            bool withActiveLease = false,
+            GalateaDurableMailState activeState = GalateaDurableMailState.Accepted,
+            int maximumInboxReplies = 16
         ) {
             _root = Path.Combine(
                 Path.GetTempPath(),
@@ -528,7 +530,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             string sessionDirectory = Path.Combine(_root, "session");
             TestDirectorySafety.CreateDirectoryNew(sessionDirectory);
             StateDirectory = Path.Combine(_root, "delegation");
-            Route = GalateaDelegateTestConfiguration.Create(_root).CodexRoute;
+            Route = GalateaDelegateTestConfiguration.Create(_root).CodexRoute with { MaximumInboxReplies = maximumInboxReplies };
             User = new GalateaCharacterConfig(
                 "gpt",
                 new GalateaCharacterName("Galatea"),
@@ -628,19 +630,15 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 initial.Mails[targetIndex].Revision,
                 bound.Revision
             , GalateaDelegationTestInputs.Commitment(_store, capture.DispatchIds[targetIndex]));
-            GalateaOutboundMailSnapshot accepted = _store.RecordMailAccepted(
-                started.DispatchId,
-                started.Revision,
-                "thread-1",
-                "turn-1"
-            );
-            accepted = _store.RecordMailPollMiss(
-                accepted.DispatchId,
-                accepted.Revision,
-                GalateaDelegateDispatchInspection.AcceptedTurnNotVisible
-                    .FailureCode,
-                nowUnixTimeMilliseconds: 1_000
-            );
+            GalateaOutboundMailSnapshot accepted = started;
+            if (activeState == GalateaDurableMailState.Accepted) {
+                accepted = _store.RecordMailAccepted(started.DispatchId, started.Revision, "thread-1", "turn-1");
+                accepted = _store.RecordMailPollMiss(accepted.DispatchId, accepted.Revision,
+                    GalateaDelegateDispatchInspection.AcceptedTurnNotVisible.FailureCode, 1_000);
+            }
+            else if (activeState == GalateaDurableMailState.OutcomeUnknown) {
+                accepted = _store.MarkMailOutcomeUnknown(started.DispatchId, started.Revision, "START_OUTCOME_UNKNOWN", 1_000);
+            }
             QueuedMailBefore = _store.ReadSnapshot().Mails[targetIndex + 1];
             Final = "exact final reply\nwith UTF-8: 终";
             byte[] taskBytes = Encoding.UTF8.GetBytes(

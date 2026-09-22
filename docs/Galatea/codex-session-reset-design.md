@@ -1,7 +1,7 @@
 # Galatea 日常解除 Codex 绑定与新会话
 
-> 状态：已完成三位独立审阅者的两轮质疑与交叉质询，尚未实施；2026-09-23。用户已选择停服后的 operator 命令。
-> 本文扩展 [专用 Codex Home 设计](codex-home-isolation-design.md)，本轮不操作真实 delegation-state 或 Codex session。
+> 状态：已实施离线 operator 命令；2026-09-23。原设计已完成三位独立审阅者的两轮质疑与交叉质询。
+> 本文扩展 [专用 Codex Home 设计](codex-home-isolation-design.md)。第 2、8 节保留设计期记录；软件实施与实例操作证据见第 9 节。
 
 ## 1. 最小操作模型
 
@@ -27,7 +27,7 @@
 
 ## 3. 命令与用户可见行为
 
-以下是拟新增命令形状，当前不可直接执行：
+命令已实现；可用 `dotnet prototypes/Galatea/bin/Debug/net10.0/Atelia.Galatea.Server.dll` 代替下面的 `Galatea.Server`，或使用对应 Release 构建：
 
 ```bash
 # 预览：默认不写入，不启动 Codex
@@ -138,3 +138,32 @@ reset 影响“接下来尚未派发的 FIFO 头”，包括执行命令之前�
 | defer | 在线按钮、pending reset、批量原子切换、取消 queued、自动补历史与操作来源审计；当前单角色离线动作无此消费者 |
 
 语义守护者在明确“普通 reset 作用于执行时当前绑定”后撤回新增 CLI expected revision 的未决项；其他审阅者据 active reservation 和投影代码撤回初稿的额外运维/队列推进假设。相对初稿，减少一个正常阻塞分支和两个过强承诺，仍为一个新命令、一个窄 store 操作、零新增数据库字段。真实实例操作不属于本次文档工作。
+
+
+## 9. 实施与验收（2026-09-23）
+
+实现入口：[GalateaCodexBindingReset](../../prototypes/Galatea/GalateaCodexBindingReset.cs)、[空闲解绑事务](../../prototypes/Galatea/GalateaDelegationSqliteStore.Recovery.cs)和 [Program](../../prototypes/Galatea/Program.cs)。命令输出一行 JSON，包含 `Outcome`、解绑前 route/thread/active 元数据、计数及前后 store revision；成功/可执行预览返回 0，拒绝或执行错误返回 2。省略 `--apply` 保持只读；重复已完成操作返回 `AlreadyUnbound` / `AlreadySatisfied`。
+
+本实现复用当前 strict root config 与 delegates loader，不增加旧版 reader，也不隐式升级真实配置。旧实例若需要先解绑再升级，可准备权限受限的独立操作配置副本：保留 CharacterId、sessionDir、delegationStateDir 和 route 限额，显式转换副本到当前 root/delegates schema；不启动 host。该副本仅供离线命令，不代表真实部署已升级。
+
+[测试](../../tests/Galatea.Server.Tests/GalateaCodexBindingResetTests.cs)覆盖：空闲 Bound/Binding、三种 active 状态、exact dispatch/陈旧参数、满额 active reservation、冻结 lease、无写入预览与重复、锁/隔离/缺库/非法容量拒绝、提交前后故障、输出失败重跑、晚到结果、FIFO 与新 thread 复用。已有 operator recovery、store 和 driver 回归共同验证原恢复语义。
+
+`PinnedHomesRebindThroughProductionSidecarWithoutRecreatingStore` 以 `ATELIA_CODEX_HOME_CANARY_REPO` 和 `ATELIA_CODEX_HOME_CANARY_COMMAND` 启用；经真实 C# driver → Node durable sidecar → pinned app-server，在临时 Home A 建立绑定、离线解绑，再在 Home B 建立不同的 thread，Galatea store 的 owner/baseline/mail/notice/capture 保持不变。此探针停在新 thread 建立后，不调用真实 Provider；下一邮件派发和后续复用由 FIFO 测试验证。不把这两项组合证据称作真实 Provider 调用验收。
+
+
+本轮验证结果：新增测试及 operator recovery、bounded recovery、SQLite store、durable driver 回归共 133 项通过；其中已显式启用 pinned Home A/B 探针。没有复制真实 auth.json/ark.config.toml，也没有调用真实 Provider。
+
+### 9.1 实际实例解绑
+
+用户授权后，确认没有运行中的 Galatea/所属 durable sidecar，分别 strict-preview `cyber` 与 `gpt`：均为空闲 Bound，无 active、无 queued、无未消费回信。随后备份并逐个执行普通 `--apply`，没有使用 `--abandon-active`。
+
+| Character | route | route revision | store revision | 既有记录 |
+|:--|:--|:--|:--|:--|
+| cyber | Bound → Unbound | 10 → 11 | 46 → 47 | 2 封已完成邮件、2 条已消费回信保留 |
+| gpt | Bound → Unbound | 38 → 39 | 283 → 284 | 16 封已完成、2 封失败、1 封 Unrouted 邮件，18 条已消费回信保留 |
+
+备份位于 machine-local `prototypes/Galatea/.atelia/galatea/backups/codex-binding-reset-20260922T182710Z/`，含两库备份及 `verification.json`。冷重开 strict-read、`quick_check` 和逐表比对确认：仅 route 绑定字段与 route/store revision 改动，所有其他表完整不变；再次执行得到 AlreadyUnbound，数据库字节摘要不变。
+
+实际 root config 仍是 V11、delegates 仍是 V4；本轮没有变更这两份文件或 connections.json。为执行当前严格命令，仅在权限受限的临时副本上用既有 operator 将 root 转为 V12、将 delegates 补成 V5 并显式指向原 `/root/.codex`；副本内也补入已存在但未被列为 selectable 的 `gpt-6-astra-codex`。副本没有启动 host，操作完成后已删除。
+
+下一次真实部署还需处理 root V11→V12、default connection selectable 配置，以及 delegates V4→V5，并选择 `/galatea-homes/codex-home`。本轮未切换 Codex Home、未迁移/删除旧 Codex 历史，也未重启生产服务；下一封可派发邮件将在正式配置就绪后创建新绑定。

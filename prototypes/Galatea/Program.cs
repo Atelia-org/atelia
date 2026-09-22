@@ -32,6 +32,11 @@ if (GalateaRecapGridConfigUpgrade.IsInvocation(args)) {
     return;
 }
 
+if (GalateaCodexBindingReset.IsInvocation(args)) {
+    Environment.ExitCode = GalateaCodexBindingReset.Run(args, Console.Out, Console.Error);
+    return;
+}
+
 if (GalateaDelegationOperatorRecovery.IsOperatorInvocation(args)) {
     Environment.ExitCode = GalateaDelegationOperatorRecovery.Run(
         args,

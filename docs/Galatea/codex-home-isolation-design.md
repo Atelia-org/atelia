@@ -206,4 +206,4 @@ else:
 
 实测限制：Provider `first` 的旧 thread 在默认切到 `second` 并删除 `first` 定义后，`thread/resume` 仍要求 `first`，在派发前报 `Model provider first not found`，分类为 `not-dispatched`；它不会自动转换 Provider。新 thread 使用 `second` 的 model 和 localhost endpoint。canary 明确断言只有两个成功请求（旧配置一次、新线程一次），失败恢复没有发出请求。此证据加强了原设计中“新任务可用不代表旧历史可继续”的边界，不新增会话转换逻辑。
 
-日常解绑是 [独立设计](codex-session-reset-design.md)，本次未实施；其中拟议命令暂不可用。真实 Home 选址、V4 实例升级、Provider 认证和历史迁移均未执行，也未验证 Ark 的真实兼容性。
+基础 Home 切片实施时未实现日常解绑；后续已按 [独立设计](codex-session-reset-design.md)交付离线命令，实际操作记录见该文第 9 节。真实 Home 切换、Provider 认证和历史迁移不由软件实现隐式执行，也未验证 Ark 的真实兼容性。

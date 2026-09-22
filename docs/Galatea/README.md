@@ -14,6 +14,7 @@
 | 对现有实例做真实 E2E、冷重开与清理 | [E2E 操作指南](e2e-testing.md) | 可复用流程、浏览器观察、测试筛选与实测经验 |
 | 查看 Timeline/Recap 重构后的真实浏览器验收 | [2026-09-14 E2E 记录](e2e-20260914-refactor-acceptance.md) | 两 backend、冷重启、Undo 竞争修复、数据结束状态 |
 | 开发期演练升级、回退、进程 crash、记忆通知与摘要恢复 | [Scenario lab](scenario-lab.md) | 合成隔离实例、持久状态组合验收与显式 live canary |
+| 换 Home/Provider 前解除 Codex 绑定 | [离线解绑命令](codex-session-reset-design.md#3-命令与用户可见行为) | 停服、预览、精确处理 active，保留队列与回信 |
 | 处理已证实完成但无法自动结算的 Codex turn | [离线恢复 runbook](codex-delegation-operator-recovery.md) | exact evidence、dry-run 与显式 apply |
 | 委派自动恢复、失败回信与失效线程重建 | [自动恢复重构方案](codex-delegation-recovery-refactor-plan.md) | 已实施与本地验证；含决策、测试和部署边界 |
 | 主角色 Completion 自动重试与持久化边界 | [重构方案](completion-auto-retry-refactor-plan.md)、[实施记录](completion-auto-retry-implementation.md) | 实施与集成验收中；瞬态重试、业务结束、上游合同及验收矩阵 |

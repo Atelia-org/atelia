@@ -155,3 +155,5 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 新 Observation 和 system setup 保存机读 JSON 事实与来源快照，给 LLM 的 Markdown 在请求时生成。
 新 Prepared 保存所选语义计划，每次 Started 记录实际请求摘要；换格式不授权重发结果未知的调用。
 旧 v7/v8 exact 请求仍走旧恢复合同。V11 config 不能由 V12 host 正常启动；必须停服、确认 writer 已退出、在状态目录外备份，并以默认 dry-run 的显式 operator command 升级。候选不唯一时必须选择 index，`--apply` 会备份并 strict reopen；这不授权 live SessionJournal/Store/Control 迁移，详见[配置指南](../../docs/Galatea/configuration.md#v11--v12-root-config-operator-升级)。
+
+停服后需让后续委派使用新 Codex session，可运行 `operator reset-codex-binding --config <absolute-path> --character <id>` 预览，再追加 `--apply`。活动邮件默认拒绝；精确放弃和恢复边界见[日常解绑说明](../../docs/Galatea/codex-session-reset-design.md)。

@@ -199,7 +199,7 @@ Galatea 在子进程环境将 `CODEX_HOME` 设为 `sidecar.codexHome`，保留�
 
 从 V4 升级：停服，在 `sidecar` 加入现存 canonical `codexHome`，将 `v` 改为 `5`，校验后重启。可以显式填写原 Home，先完成软件升级再处理迁移。应用不创建目录或复制配置、认证、skills、plugins、历史。需要 ChatGPT 登录时，在目标 Home 下运行 `CODEX_HOME=/实际目录 codex login`。第三方 Provider 使用原生 `requires_openai_auth = false` 与 `env_key`；account 为空不再误判为缺 OpenAI 登录，但仍需验证目标 key、额度和能力。
 
-手动切 Provider：停服，修改该 Home 的 `config.toml`，先用隔离 canary 验证，再重启。避免 `routes[0].codexConfig` 重复覆盖 Provider/model。旧 thread 可能保留旧 Provider 身份，删除旧定义会使恢复失败；不会自动变成新上下文。独立的[离线解绑设计](codex-session-reset-design.md)尚未实现，此时不要执行文档中的拟议命令，也不要删除 delegation-state 来换 session。首次采用空 Home 的现有实例需另行安排状态处理，或暂时显式使用原 Home。
+手动切 Provider：停服，修改该 Home 的 `config.toml`，先用隔离 canary 验证，再重启。避免 `routes[0].codexConfig` 重复覆盖 Provider/model。旧 thread 可能保留旧 Provider 身份，删除旧定义会使恢复失败；不会自动变成新上下文。可在停服后执行[离线解绑命令](codex-session-reset-design.md#3-命令与用户可见行为)，保留队列和回信，让下一封可派发邮件创建新 thread。已有 active 默认拒绝；只有 exact `--abandon-active <dispatch-id>` 才结束本地等待并生成 `RESULT_UNCONFIRMED`，不取消或重发远端工作。不要删除 delegation-state 来换 session。
 
 专用 Home 不保证全部 SQLite 状态独立：显式 `sqlite_home` 或继承的 `CODEX_SQLITE_HOME` 仍可指向外部目录；部署时核查实际数据库位置。`config/read` 中 `sqlite_home: null` 不能排除环境覆盖。完整边界与验证记录见[专用 Home 设计](codex-home-isolation-design.md)。
 

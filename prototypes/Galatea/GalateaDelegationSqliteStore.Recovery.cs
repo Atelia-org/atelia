@@ -3,6 +3,24 @@ using Microsoft.Data.Sqlite;
 namespace Atelia.Galatea.Server;
 
 internal sealed partial class GalateaDelegationSqliteStore {
+    internal void ResetIdleCodexBinding(long expectedRouteRevision) {
+        lock (_gate) {
+            ThrowIfNotWritable();
+            _ = ExecuteWrite("reset-idle-codex-binding", (connection, transaction) => {
+                GalateaRouteBindingSnapshot route = ReadRoute(connection, transaction);
+                if (route.Revision != expectedRouteRevision || route.ActiveDispatchId is not null
+                    || route.State is not (GalateaDelegationRouteState.Bound or GalateaDelegationRouteState.Binding)) {
+                    throw Conflict("Binding reset requires the exact idle Bound or Binding route.");
+                }
+                ReleaseRecoveryRoute(connection, transaction, route, resetBinding: true);
+                return IncrementStoreRevision(connection, transaction);
+            }, (snapshot, revision) => snapshot.StoreRevision == revision
+                && snapshot.Route == new GalateaRouteBindingSnapshot(
+                    GalateaDelegationRouteState.Unbound, null, null, null, null, checked(expectedRouteRevision + 1)));
+            _ = ReadSnapshot();
+        }
+    }
+
     internal GalateaOutboundMailSnapshot RecordThreadBindingEnsureMiss(
         string bindingOperationId, long expectedRouteRevision,
         string dispatchId, long expectedMailRevision, string code,
