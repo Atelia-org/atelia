@@ -600,3 +600,20 @@ test("expired operation cannot dispatch after a delayed client startup resumes",
   const requests = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
   assert.equal(requests.turnStartCount, 0);
 });
+
+for (const fixtureArgs of [[], ["--no-openai-auth"], ["--unauth"]]) {
+  test(`authentication gate applies to binding and cold inspection: ${fixtureArgs}`, async (t) => {
+    const value = await harness(t, { fixtureArgs, persistent: true });
+    const inspection = { threadId: "absent", dispatchId: "unsent", ...taskCommitment("never"), expectedTurnId: null, maximumFinalUtf8Bytes: 20_000 };
+    if (fixtureArgs.includes("--unauth")) {
+      await assert.rejects(bind(value), /configured `CODEX_HOME`/);
+      await assert.rejects(value.client.request("test/crash", {}));
+      await assert.rejects(value.backend.inspectDispatch(inspection), /configured `CODEX_HOME`/);
+    } else {
+      const binding = await bind(value);
+      await assert.rejects(value.client.request("test/crash", {}));
+      const result = await value.backend.inspectDispatch({ ...inspection, threadId: binding.threadId });
+      assert.equal(result.kind, "not-found");
+    }
+  });
+}

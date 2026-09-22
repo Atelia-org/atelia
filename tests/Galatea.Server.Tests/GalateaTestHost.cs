@@ -638,11 +638,12 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             ),
             $$"""
             {
-              "v": 4,
+              "v": 5,
               "sidecar": {
                 "nodeCommand": {{JsonSerializer.Serialize(executable)}},
                 "entryPoint": {{JsonSerializer.Serialize(entryPoint)}},
                 "codexCommand": {{JsonSerializer.Serialize(executable)}},
+                "codexHome": {{JsonSerializer.Serialize(cwd)}},
                 "rpcTimeoutMs": 1000,
                 "shutdownGraceMs": 100,
                 "maximumFrameUtf8Bytes": 1048576

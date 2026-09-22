@@ -27,7 +27,7 @@ dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.c
 |:--|:--|
 | `config.json` | V12；Characters 的身份/状态/home/连接与自主 interval、Players 的登录信息、Runtime 设置 |
 | 同目录 `connections.json` | V3；可用连接、可选连接列表，以及全部四个 feature bindings |
-| 同目录 `delegates.json` | V4；有效的 Node/Codex/sidecar 路径与 allowedRoots，不能留下模板占位路径 |
+| 同目录 `delegates.json` | V5；有效的 Node/Codex/sidecar 路径、已存在的 codexHome 与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
 | `runtime.recapGrid.historicalAgentControlProfileFiles` 指向的文件 | 可为空；非空时仅为 frozen exact tool recovery 保留历史 profile，不是新 work 或 bootstrap 的授权 |
 

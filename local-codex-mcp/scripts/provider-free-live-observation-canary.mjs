@@ -102,8 +102,8 @@ supports_websockets = false
 request_max_retries = 0
 stream_max_retries = 0
 `);
-  // The production account gate needs a non-null account. Only this synthetic
-  // credential exists here, and the localhost handler checks its exact value.
+  // This fixture exercises required OpenAI auth with a synthetic account;
+  // the localhost handler checks the exact synthetic credential.
   writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ OPENAI_API_KEY: syntheticKey }));
   const config = loadGalateaSidecarConfig({ CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([cwd]) });
   const client = new CodexAppServerClient({

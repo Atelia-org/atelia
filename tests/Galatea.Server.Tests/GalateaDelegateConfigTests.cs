@@ -7,7 +7,90 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaDelegateConfigTests {
     [Fact]
-    public void ValidClosedV4LoadsCanonicalExactCodexRouteWithoutImplicitConfig() {
+    public async Task PinnedConfigProbeThroughProductionStartEnvironment() {
+        string? repository = Environment.GetEnvironmentVariable("ATELIA_CODEX_HOME_CANARY_REPO");
+        if (repository is null) { return; }
+        string command = Environment.GetEnvironmentVariable("ATELIA_CODEX_HOME_CANARY_COMMAND")
+            ?? throw new InvalidOperationException("The pinned canary executable is required.");
+        using var fixture = new Fixture();
+        string personal = Path.Combine(fixture.Root, "personal");
+        string dedicated = Path.Combine(fixture.Root, "dedicated");
+        Directory.CreateDirectory(Path.Combine(personal, ".codex"));
+        Directory.CreateDirectory(dedicated);
+        File.WriteAllText(Path.Combine(personal, ".codex", "config.toml"), "model = \"personal-sentinel\"\n");
+        File.WriteAllText(Path.Combine(dedicated, "config.toml"), "model = \"dedicated-sentinel\"\n");
+        string probe = Path.Combine(fixture.Root, "probe.mjs");
+        string moduleRoot = new Uri(Path.Combine(repository, "local-codex-mcp", "dist", "src") + "/").AbsoluteUri;
+        File.WriteAllText(probe, $$"""
+            import assert from 'node:assert/strict';
+            import { CodexAppServerClient } from '{{moduleRoot}}codex/client.js';
+            import { loadGalateaSidecarConfig, createGalateaCodexChildEnvironment } from '{{moduleRoot}}galatea/sidecar-config.js';
+            import { NullLogger } from '{{moduleRoot}}logger.js';
+            const config = loadGalateaSidecarConfig();
+            const client = new CodexAppServerClient({ command: config.bridge.codexCommand,
+              args: config.bridge.codexArgs, env: createGalateaCodexChildEnvironment(process.env),
+              requestTimeoutMs: 15000, logger: new NullLogger() });
+            try {
+              await client.start();
+              assert.equal((await client.request('config/read', {})).config.model, 'dedicated-sentinel');
+              const thread = await client.request('thread/start', { cwd: {{JsonSerializer.Serialize(fixture.Root)}}, ephemeral: true });
+              assert.equal(thread.model, 'dedicated-sentinel');
+              console.log('dedicated-home-ok');
+            } finally { await client.stop(); }
+            """);
+        GalateaDelegateConfig config = fixture.Load();
+        await using var client = new GalateaCodexDurableSidecarClient(config with {
+            Sidecar = config.Sidecar with {
+                NodeCommand = "/usr/bin/node", EntryPoint = probe, CodexCommand = command, CodexHome = dedicated
+            }
+        });
+        ProcessStartInfo info = client.CreateStartInfoForTest();
+        // Keep the production injection; isolate all unrelated inherited state for this probe.
+        foreach (string key in info.Environment.Keys.ToArray()) {
+            if (key != "CODEX_HOME" && !key.StartsWith("CODEX_BRIDGE_", StringComparison.Ordinal)
+                && !key.StartsWith("GALATEA_CODEX_", StringComparison.Ordinal)) { info.Environment.Remove(key); }
+        }
+        info.Environment["HOME"] = personal;
+        info.Environment["PATH"] = "/usr/bin:/bin";
+        using Process process = Process.Start(info)!;
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        try {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await process.WaitForExitAsync(deadline.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal("dedicated-home-ok", (await stdout).Trim());
+            await stderr;
+        }
+        finally {
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+    }
+
+    [Fact]
+    public void CodexHomeIsRequiredAndValidatedForJsonAndProgrammaticConfig() {
+        using var fixture = new Fixture();
+        GalateaDelegateConfig valid = fixture.Load();
+        JsonObject missing = fixture.Parse();
+        missing["sidecar"]!.AsObject().Remove("codexHome");
+        Assert.Throws<InvalidDataException>(() => fixture.Load(missing));
+        string link = Path.Combine(fixture.Root, "home-link");
+        Directory.CreateSymbolicLink(link, fixture.Root);
+        foreach (string invalid in new[] { "", "relative", "~/.codex", fixture.Executable,
+                     Path.Combine(fixture.Root, "absent"), link, Path.Combine(link, ".") }) {
+            JsonObject root = fixture.Parse();
+            root["sidecar"]!["codexHome"] = invalid;
+            Assert.Throws<InvalidDataException>(() => fixture.Load(root));
+            Assert.Throws<InvalidDataException>(() => GalateaDelegateConfigReader.Validate(
+                valid with { Sidecar = valid.Sidecar with { CodexHome = invalid } }));
+        }
+        using JsonDocument template = JsonDocument.Parse(GalateaDelegateConfigReader.CreatePlaceholderTemplateUtf8());
+        Assert.Equal(5, template.RootElement.GetProperty("v").GetInt32());
+        Assert.Contains("EXISTING_CANONICAL_CODEX_HOME", template.RootElement.GetProperty("sidecar").GetProperty("codexHome").GetString());
+    }
+
+    [Fact]
+    public void ValidClosedV5LoadsCanonicalExactCodexRouteWithoutImplicitConfig() {
         using var fixture = new Fixture();
 
         GalateaDelegateConfig config = fixture.Load();
@@ -24,10 +107,11 @@ public sealed class GalateaDelegateConfigTests {
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
+    [InlineData(4)]
     public void LegacyVersionsAreRejectedWithoutCompatibilityFallback(int version) {
         using var fixture = new Fixture();
         string legacy = fixture.ValidJson.Replace(
-            "\"v\": 4,",
+            "\"v\": 5,",
             $"\"v\": {version},",
             StringComparison.Ordinal
         );
@@ -78,8 +162,8 @@ public sealed class GalateaDelegateConfigTests {
                 StringComparison.Ordinal
             ),
             "duplicate-case-variant" => json.Replace(
-                "\"v\": 4,",
-                "\"v\": 4,\n\"V\": 4,",
+                "\"v\": 5,",
+                "\"v\": 5,\n\"V\": 4,",
                 StringComparison.Ordinal
             ),
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
@@ -153,6 +237,7 @@ public sealed class GalateaDelegateConfigTests {
         JsonObject root = fixture.Parse();
         if (empty) { root["routes"]!.AsArray()[0]!.AsObject()["codexConfig"] = new JsonObject(); }
         await using var client = new GalateaCodexDurableSidecarClient(fixture.Load(root));
+        string? parentCodexHome = Environment.GetEnvironmentVariable("CODEX_HOME");
         ProcessStartInfo start = client.CreateStartInfoForTest();
         Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_CONFIG"));
         Assert.Equal(new[] { "app-server", "--listen", "stdio://" },
@@ -163,7 +248,12 @@ public sealed class GalateaDelegateConfigTests {
         Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_IMAGE_GENERATION"));
         Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_VIEW_IMAGE"));
         Assert.Equal(Environment.GetEnvironmentVariable("HOME"), (start.Environment.TryGetValue("HOME", out string? home) ? home : null));
-        Assert.Equal(Environment.GetEnvironmentVariable("CODEX_HOME"), (start.Environment.TryGetValue("CODEX_HOME", out string? codexHome) ? codexHome : null));
+        Assert.Equal(fixture.Root, (start.Environment.TryGetValue("CODEX_HOME", out string? codexHome) ? codexHome : null));
+        Assert.Equal(parentCodexHome, Environment.GetEnvironmentVariable("CODEX_HOME"));
+        foreach (string key in new[] { "CODEX_SQLITE_HOME", "HTTPS_PROXY", "DEEPSEEK_API_KEY" }) {
+            Assert.Equal(Environment.GetEnvironmentVariable(key), (start.Environment.TryGetValue(key, out string? value) ? value : null));
+        }
+        Assert.Equal("/", start.WorkingDirectory);
         Assert.False(start.Environment.ContainsKey("CODEX_THREAD_ID"));
         Assert.False(start.Environment.ContainsKey("CODEX_PERMISSION_PROFILE"));
     }
@@ -441,11 +531,12 @@ public sealed class GalateaDelegateConfigTests {
 
         private string BuildJson() => $$"""
         {
-          "v": 4,
+          "v": 5,
           "sidecar": {
             "nodeCommand": {{JsonSerializer.Serialize(Executable)}},
             "entryPoint": {{JsonSerializer.Serialize(EntryPoint)}},
             "codexCommand": {{JsonSerializer.Serialize(Executable)}},
+            "codexHome": {{JsonSerializer.Serialize(Root)}},
             "rpcTimeoutMs": 1000,
             "shutdownGraceMs": 100,
             "maximumFrameUtf8Bytes": 1048576

@@ -41,6 +41,7 @@ internal static class GalateaDelegateTestConfiguration {
                 executable,
                 entryPoint,
                 executable,
+                CodexHome: effectiveRoot,
                 RpcTimeoutMs: 1_000,
                 ShutdownGraceMs: 100,
                 MaximumFrameUtf8Bytes: 1_048_576

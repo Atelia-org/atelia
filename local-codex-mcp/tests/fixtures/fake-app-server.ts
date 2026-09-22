@@ -297,7 +297,9 @@ lines.on("line", async (line) => {
     case "account/read":
       send({
         id: message.id,
-        result: process.argv.includes("--unauth")
+        result: process.argv.includes("--no-openai-auth")
+          ? { account: null, requiresOpenaiAuth: false }
+          : process.argv.includes("--unauth")
           ? { account: null, requiresOpenaiAuth: true }
           : { account: { type: "chatgpt", email: "fake@example.com", planType: "plus" }, requiresOpenaiAuth: true },
       });

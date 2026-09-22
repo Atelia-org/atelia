@@ -160,15 +160,16 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
 
 ## `delegates.json`
 
-`delegates.json` 与 Completion catalog 分离，但同样位于 `config.json` 同目录，是 machine-local、启动必需的 Codex delegation 配置。它是 closed V4 schema，只允许一条大小写精确的 `recipient: "Codex"` / `kind: "codex-app-server"` route。bootstrap 写出的 placeholder 需要替换为本机已验证的 canonical path；不要保留 `REPLACE_WITH_...`。
+`delegates.json` 与 Completion catalog 分离，但同样位于 `config.json` 同目录，是 machine-local、启动必需的 Codex delegation 配置。它是 closed V5 schema，只允许一条大小写精确的 `recipient: "Codex"` / `kind: "codex-app-server"` route。bootstrap 写出的 placeholder 需要替换为本机已验证的 canonical path；不要保留 `REPLACE_WITH_...`。
 
 ```json
 {
-  "v": 4,
+  "v": 5,
   "sidecar": {
     "nodeCommand": "/canonical/path/to/node",
     "entryPoint": "/canonical/path/to/local-codex-mcp/dist/src/galatea-durable-sidecar.js",
     "codexCommand": "/canonical/path/to/codex.js",
+    "codexHome": "/srv/galatea/codex-home",
     "rpcTimeoutMs": 30000,
     "shutdownGraceMs": 5000,
     "maximumFrameUtf8Bytes": 1048576
@@ -190,11 +191,17 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
 }
 ```
 
-全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；每个 Character 的 `homeDir` 必须落在 `allowedRoots` 内；全局 route 不再接受 `cwd`。V4 删除了旧 `mode`、`localCommandNetwork`、`tools` 字段，不接受 V1–V3 配置。除可选 `codexConfig` 外，未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
+全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；每个 Character 的 `homeDir` 必须落在 `allowedRoots` 内；全局 route 不再接受 `cwd`。V5 必填 `sidecar.codexHome`，且不接受 V1–V4 配置；旧 `mode`、`localCommandNetwork`、`tools` 字段仍不接受。`codexHome` 必须预先创建，是实例共用的 Codex 配置与原生状态 Home，不受任务 `allowedRoots` 限制。除可选 `codexConfig` 外，未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
 
 `codexConfig` 使用 Codex 原生配置名，是传给 app-server thread 配置的 JSON object。省略或设为 `{}` 都不会添加配置覆盖；显式 `false` 等值会照常传递。对象可包含嵌套对象、数组、字符串、数字和布尔值，不能包含 TOML 无法表示的 `null`，各层对象键不能重复或存在大小写冲突。具体原生字段及其合法值交给 app-server 处理，Galatea 不维护另一套 Codex 配置 schema。上例显式关闭 Codex 沙盒并设置 `approval_policy: "never"`；删除整个 `codexConfig` 就恢复由 Codex 自身决定默认值。
 
-Galatea 保留父进程的 `HOME` / `CODEX_HOME`，不会因 Character 的 `homeDir` 创建另一套 Codex home。未显式配置时，新 thread 由 Codex 正常加载公共 `config.toml` 及其原生配置层级；恢复已有 thread 时也遵循 Codex 的恢复规则，可能沿用已持久化的设置，并不强制重置为公共默认值。Galatea 不再附加 `mcp_servers={}`、`features.apps=false` 启动参数，也不再替沙盒、审批、工具开关填入隐式覆盖。
+Galatea 在子进程环境将 `CODEX_HOME` 设为 `sidecar.codexHome`，保留父进程的 `HOME`、provider key、proxy 和 `CODEX_SQLITE_HOME`，不改变父进程环境或任务 CWD。Node 将该环境继续传给 Codex。未显式覆盖时，新 thread 由 Codex 加载专用 Home 的 `config.toml` 及其原生配置层级；恢复已有 thread 可能沿用已持久化的设置。Galatea 不附加 `mcp_servers={}`、`features.apps=false`，不替沙盒、审批或工具开关填默认值。
+
+从 V4 升级：停服，在 `sidecar` 加入现存 canonical `codexHome`，将 `v` 改为 `5`，校验后重启。可以显式填写原 Home，先完成软件升级再处理迁移。应用不创建目录或复制配置、认证、skills、plugins、历史。需要 ChatGPT 登录时，在目标 Home 下运行 `CODEX_HOME=/实际目录 codex login`。第三方 Provider 使用原生 `requires_openai_auth = false` 与 `env_key`；account 为空不再误判为缺 OpenAI 登录，但仍需验证目标 key、额度和能力。
+
+手动切 Provider：停服，修改该 Home 的 `config.toml`，先用隔离 canary 验证，再重启。避免 `routes[0].codexConfig` 重复覆盖 Provider/model。旧 thread 可能保留旧 Provider 身份，删除旧定义会使恢复失败；不会自动变成新上下文。独立的[离线解绑设计](codex-session-reset-design.md)尚未实现，此时不要执行文档中的拟议命令，也不要删除 delegation-state 来换 session。首次采用空 Home 的现有实例需另行安排状态处理，或暂时显式使用原 Home。
+
+专用 Home 不保证全部 SQLite 状态独立：显式 `sqlite_home` 或继承的 `CODEX_SQLITE_HOME` 仍可指向外部目录；部署时核查实际数据库位置。`config/read` 中 `sqlite_home: null` 不能排除环境覆盖。完整边界与验证记录见[专用 Home 设计](codex-home-isolation-design.md)。
 
 配置在 sidecar 启动时取得快照；修改 `delegates.json` 后需重启 Galatea 才会生效。显式配置会在创建 thread 和冷恢复已有 thread 时传入；同一 app-server 已加载的 thread 可能保留当前设置，不依赖 warm resume 热更新配置。bridge 仍是非交互客户端：如果继承的审批策略产生人工审批请求，现有客户端会拒绝该请求；无人值守且无需审批时应显式设置 `approval_policy: "never"`。
 

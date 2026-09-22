@@ -1,7 +1,7 @@
 # Galatea 专用 Codex Home 与手动 Provider 切换
 
-> 状态：设计已完成三位独立审阅者的两轮质疑与交叉质询，尚未实施。2026-09-23。
-> 范围：Galatea 的 `local-codex-mcp` durable sidecar；本轮只修改文档，不改真实配置、登录、线程或数据库。
+> 状态：基础 Home 软件切片已实施；设计曾完成三位独立审阅者的两轮质疑与交叉质询。2026-09-23。
+> 范围：Galatea 的 `local-codex-mcp` durable sidecar。实施与隔离验证见第 8 节；未修改真实配置、登录、线程或数据库。第 2–3、7 节保留设计期需求与取证记录。
 
 ## 1. 最小模型
 
@@ -188,3 +188,22 @@ else:
 相对初稿，删除一条隐式环境清理规则，收窄一条恢复约束，并分开两类验收的完成条件；新增运行时状态、API、业务持久化字段均为零。保留的新增应用配置只有 `sidecar.codexHome`。
 
 上述两轮裁决记录针对基础 Home 方案。后续新增的日常解绑需求与独立审阅见[新会话设计](codex-session-reset-design.md)；现在为 Home/Provider 切换提供显式采用新上下文的正常路径，保留历史迁移为可选部署工作。目录、认证和资源准备仍需真实部署时确认，文档完成不代表已操作真实状态。
+
+
+## 8. 软件实施与隔离验证（2026-09-23）
+
+已实现 closed delegates V5 的必填 `sidecar.codexHome`、JSON/template/programmatic 一致路径校验、C# 子环境注入，以及 `requiresOpenaiAuth && account == null` 认证判定。未新增 Node 配置字段、thread override、持久化状态或配置兼容分支。配置升级操作见 [configuration](configuration.md)。
+
+验证入口：
+
+- `GalateaDelegateConfigTests`：字段、非法路径、V4 拒绝、父环境不变及原生覆盖保留。可通过 `ATELIA_CODEX_HOME_CANARY_REPO`（仓库绝对路径）和 `ATELIA_CODEX_HOME_CANARY_COMMAND`（pinned executable canonical path）启用 `PinnedConfigProbeThroughProductionStartEnvironment`：使用生产 `CreateStartInfo` 启动 Node 探针，复用 Node loader/环境透传并调用 pinned `config/read` 与 `thread/start`；个人/专用 Home 哨兵不同，只读取专用哨兵。该探针替换 Node entrypoint，不声称覆盖全部 durable wire；wire 由既有 sidecar 测试覆盖。
+- `local-codex-mcp` 的 `npm test`：包括三种认证状态的新建与进程重启后 inspection，以及现有 Accepted/Unknown 不重发行为。
+- `npm run canary:home`：临时 HOME/CODEX_HOME、本地 Responses SSE 假 Provider、合成 env_key。无需 auth.json 即可完成真实 pinned turn；同 Home 冷重启后可恢复已完成任务并核对 ownership；空 Home 查不到旧 thread。
+- `npm run canary:config`：原生部分配置覆盖、冷/热恢复和临时目录读写。
+- `GalateaBoundedRecoveryVerticalTests`：既有有限恢复、NotDispatched 重绑与不明工作不重发。
+
+本轮执行结果：C# 配置/有限恢复及已启用的 pinned 启动环境探针 41 项通过，配置校验/durable transport 120 项通过；Node 全套 137 项通过、2 项 live 测试未启用；两个 provider-free canary 均通过；文档检查 59 文件、0 诊断。
+
+实测限制：Provider `first` 的旧 thread 在默认切到 `second` 并删除 `first` 定义后，`thread/resume` 仍要求 `first`，在派发前报 `Model provider first not found`，分类为 `not-dispatched`；它不会自动转换 Provider。新 thread 使用 `second` 的 model 和 localhost endpoint。canary 明确断言只有两个成功请求（旧配置一次、新线程一次），失败恢复没有发出请求。此证据加强了原设计中“新任务可用不代表旧历史可继续”的边界，不新增会话转换逻辑。
+
+日常解绑是 [独立设计](codex-session-reset-design.md)，本次未实施；其中拟议命令暂不可用。真实 Home 选址、V4 实例升级、Provider 认证和历史迁移均未执行，也未验证 Ark 的真实兼容性。

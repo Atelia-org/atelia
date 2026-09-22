@@ -26,6 +26,7 @@ public sealed record GalateaDelegateSidecarConfig(
     string NodeCommand,
     string EntryPoint,
     string CodexCommand,
+    string CodexHome,
     int RpcTimeoutMs,
     int ShutdownGraceMs,
     int MaximumFrameUtf8Bytes

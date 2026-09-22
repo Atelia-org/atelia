@@ -2,7 +2,6 @@ import { OperationDeadline } from "./operation-deadline.js";
 import { GalateaStartFailure, type GalateaDispatchState } from "../backend/galatea-staged-backend.js";
 import path from "node:path";
 import type { JsonValue } from "../../schemas/serde_json/JsonValue.js";
-import type { Account } from "../../schemas/v2/Account.js";
 import type { GetAccountResponse } from "../../schemas/v2/GetAccountResponse.js";
 import type { SandboxMode } from "../../schemas/v2/SandboxMode.js";
 import type { SandboxPolicy } from "../../schemas/v2/SandboxPolicy.js";
@@ -931,17 +930,13 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       refreshToken: false,
     }, deadline);
     this.throwIfStopped();
-    if (!this.isAuthenticated(response.account)) {
+    if (response.requiresOpenaiAuth && response.account === null) {
       throw new BridgeError(
         "CODEX_NOT_AUTHENTICATED",
-        "Codex is not authenticated. Run `codex login` locally, then retry.",
+        "Codex is not authenticated. Run `codex login` with the configured `CODEX_HOME`, then retry.",
       );
     }
     this.authenticated = true;
-  }
-
-  private isAuthenticated(account: Account | null): account is Account {
-    return account !== null;
   }
 
   private async startTurn(

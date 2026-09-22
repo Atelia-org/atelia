@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaDelegateConfigReader {
-    internal const int CurrentVersion = 4;
+    internal const int CurrentVersion = 5;
     internal const int MaximumInputUtf8Bytes = 256 * 1024;
     internal const string CanonicalRecipient = "Codex";
     internal const string CodexAppServerKind = "codex-app-server";
@@ -58,6 +58,8 @@ internal static class GalateaDelegateConfigReader {
             "sidecar.codexCommand",
             executable: true
         );
+        string codexHome = RequireCanonicalDirectory(
+            sidecarElement.GetProperty("codexHome").GetString(), "sidecar.codexHome");
         int rpcTimeoutMs = ReadBoundedInteger(
             sidecarElement,
             "rpcTimeoutMs",
@@ -164,6 +166,7 @@ internal static class GalateaDelegateConfigReader {
                 nodeCommand,
                 entryPoint,
                 codexCommand,
+                codexHome,
                 rpcTimeoutMs,
                 shutdownGraceMs,
                 maximumFrameUtf8Bytes
@@ -197,7 +200,7 @@ internal static class GalateaDelegateConfigReader {
             || config.Routes is not { Count: 1 }
             || config.Sidecar is null) {
             throw new InvalidOperationException(
-                "Galatea delegate configuration is not a closed V4 configuration."
+                "Galatea delegate configuration is not a closed V5 configuration."
             );
         }
         GalateaDelegateSidecarConfig sidecar = config.Sidecar;
@@ -216,6 +219,7 @@ internal static class GalateaDelegateConfigReader {
             "sidecar.codexCommand",
             executable: true
         );
+        string codexHome = RequireCanonicalDirectory(sidecar.CodexHome, "sidecar.codexHome");
         RequireBoundedInteger(sidecar.RpcTimeoutMs, "rpcTimeoutMs",
             MinimumRpcTimeoutMs, MaximumRpcTimeoutMs);
         RequireBoundedInteger(sidecar.ShutdownGraceMs, "shutdownGraceMs",
@@ -295,6 +299,7 @@ internal static class GalateaDelegateConfigReader {
                 nodeCommand,
                 entryPoint,
                 codexCommand,
+                codexHome,
                 sidecar.RpcTimeoutMs,
                 sidecar.ShutdownGraceMs,
                 sidecar.MaximumFrameUtf8Bytes
@@ -318,11 +323,12 @@ internal static class GalateaDelegateConfigReader {
     internal static byte[] CreatePlaceholderTemplateUtf8() =>
         """
         {
-          "v": 4,
+          "v": 5,
           "sidecar": {
             "nodeCommand": "/REPLACE_WITH_CANONICAL_NODE_EXECUTABLE",
             "entryPoint": "/REPLACE_WITH_GALATEA_SIDECAR_ENTRY_POINT",
             "codexCommand": "/REPLACE_WITH_CANONICAL_CODEX_EXECUTABLE",
+            "codexHome": "/REPLACE_WITH_EXISTING_CANONICAL_CODEX_HOME",
             "rpcTimeoutMs": 30000,
             "shutdownGraceMs": 5000,
             "maximumFrameUtf8Bytes": 1048576
@@ -358,7 +364,7 @@ internal static class GalateaDelegateConfigReader {
                         || !value.TryGetInt32(out int version)
                         || version != CurrentVersion) {
                         throw new InvalidDataException(
-                            "delegates requires exact integer version 'v': 4."
+                            "delegates requires exact integer version 'v': 5."
                         );
                     }
                 },
@@ -396,12 +402,13 @@ internal static class GalateaDelegateConfigReader {
             ["nodeCommand"] = RequireString,
             ["entryPoint"] = RequireString,
             ["codexCommand"] = RequireString,
+            ["codexHome"] = RequireString,
             ["rpcTimeoutMs"] = RequireNumber,
             ["shutdownGraceMs"] = RequireNumber,
             ["maximumFrameUtf8Bytes"] = RequireNumber
         });
         RequireExactProperties(seen, "sidecar", [
-            "nodeCommand", "entryPoint", "codexCommand", "rpcTimeoutMs",
+            "nodeCommand", "entryPoint", "codexCommand", "codexHome", "rpcTimeoutMs",
             "shutdownGraceMs", "maximumFrameUtf8Bytes"
         ]);
     }

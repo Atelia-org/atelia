@@ -19,6 +19,7 @@
     "codex:install": "node scripts/manage-pinned-codex.mjs install",
     "codex:verify": "node scripts/manage-pinned-codex.mjs verify",
     "canary:initialize": "node scripts/provider-free-initialize-canary.mjs",
+    "canary:home": "node scripts/provider-free-home-canary.mjs",
     "canary:config": "node scripts/provider-free-config-canary.mjs",
     "canary:live-observation": "node scripts/provider-free-live-observation-canary.mjs",
     "canary:projection": "node scripts/provider-free-projection-canary.mjs",

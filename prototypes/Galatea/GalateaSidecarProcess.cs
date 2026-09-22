@@ -227,6 +227,7 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
                      .ToArray()) {
             environment.Remove(inherited);
         }
+        environment["CODEX_HOME"] = sidecar.CodexHome;
         environment["CODEX_BRIDGE_TRANSPORT"] = "stdio";
         environment["CODEX_BRIDGE_HTTP_HOST"] = "127.0.0.1";
         environment["CODEX_BRIDGE_HTTP_PORT"] = "3000";

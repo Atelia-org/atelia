@@ -77,6 +77,7 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
             nodeExecutableForTest ?? "/usr/bin/dash",
             ScriptPath,
             "/usr/bin/true",
+            CodexHome: Root,
             RpcTimeoutMs: rpcTimeoutMs,
             ShutdownGraceMs: 100,
             MaximumFrameUtf8Bytes: maximumFrameUtf8Bytes

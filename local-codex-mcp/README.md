@@ -168,7 +168,7 @@ ensure/start 的单调总截止为 `5 × CODEX_BRIDGE_RPC_TIMEOUT_MS`；inspecti
 尚无 source rollout，因此不要求新空 thread 能调用 `thread/turns/list`。已有 dispatch 的 inspect
 仍使用完整分页校验，不把缺失 history 的错误伪装成 `not-found`。
 `ensure-binding`、`start-turn` 必须提供绝对 `cwd`；`inspect-dispatch` 不接受目录字段。
-frame 不接受原生 Codex 配置；这些设置由启动环境的 `GALATEA_CODEX_CONFIG` 决定，对应 strict delegates V4 的可选 `routes[0].codexConfig`。省略或 `{}` 不发送 thread `config`；显式值原样透传，Galatea 不补 sandbox、approval、reviewer、summary 或工具默认值，也不再用启动参数关闭 inherited MCP/apps。
+frame 不接受原生 Codex 配置；这些设置由启动环境的 `GALATEA_CODEX_CONFIG` 决定，对应 strict delegates V5 的可选 `routes[0].codexConfig`。省略或 `{}` 不发送 thread `config`；显式值原样透传，Galatea 不补 sandbox、approval、reviewer、summary 或工具默认值，也不再用启动参数关闭 inherited MCP/apps。
 
 可选边界配置：`GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
 `GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`、
@@ -190,6 +190,8 @@ continue，`source`同样不参与authorization。Galatea profile启动app-serve
 `CODEX_PERMISSION_PROFILE`、`CODEX_CI`，但保留`HOME`、`PATH`、`CODEX_HOME`及
 auth/provider/proxy环境；默认MCP profile不启用这层Galatea-specific scrub。
 原生配置在创建和冷恢复 thread 时应用；已加载 thread 的 resume 可能忽略新配置，所以修改配置后须重启 Galatea。省略设置不强制清除 Codex 为已有 thread 保存的设置。若继承的策略产生人工审批，现有非交互客户端会拒绝请求；`approval_policy: "never"` 不会询问命令审批。
+
+`npm run canary:home`（先 `npm run build`）验证专用 Home 哨兵、无需 OpenAI 登录的本地假 Provider、冷恢复 ownership、新线程切换 Provider 及空 Home 拒绝旧线程；所有状态与密钥均为临时合成数据。C# 通过 delegates V5 的必填 `sidecar.codexHome` 选择子进程 `CODEX_HOME`，Node 保留透传。
 
 `npm run canary:config`（先 `npm run build`）使用隔离的临时 `CODEX_HOME` 和 pinned app-server，
 验证公共配置继承、嵌套局部覆盖、已有 thread 的冷/热恢复，以及 `danger-full-access` 下 TMPDIR 的实际读写。
