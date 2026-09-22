@@ -1,9 +1,12 @@
 # RecapGrid Manager 65,537 规模性能候选设计
 
-状态：**Candidate design / 未实施。** 初稿 2026-09-22 01:08:45 CST；同日经三方独立
+状态：**P0、P1 两个启用点已实施；Timeline 有界分页已实施。** 当前验证与取舍见
+[后续实施记录](recap-grid-manager-65537-performance-follow-up.md)。§7 的 G3 stop
+与“写事务持久化主导”归因已被后续分阶段测量推翻，保留为历史记录，不再指导实施。
+初稿 2026-09-22 01:08:45 CST；同日经三方独立
 dialectical review（demand skeptic / minimal architect / semantic defender）交叉质询后收敛修订。
 
-本文只描述候选改进方向，不表示已经优化，也不改变当前 65,537 规模测试的语义或预算。
+§1–6 保留原始候选设计；实际实施状态与证据以上述后续记录为准。
 目标是把已观察到的耗时风险拆成可独立验证的小步，并明确哪些优化不允许以性能为名越过持久化合同。
 
 ## 1. 背景与现状

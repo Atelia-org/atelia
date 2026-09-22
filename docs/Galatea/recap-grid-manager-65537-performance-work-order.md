@@ -1,6 +1,9 @@
 # RecapGrid Manager 65,537 性能重构工作单（P0 计数 + P1 read session）
 
-状态：**Ready for implementation**（由用户另行启动实施 Goal）。2026-09-22 02:27 CST。
+状态：**历史工作单，已由后续授权与测量更新。** 2026-09-22 02:27 CST 初稿。
+P0/P1 启用点 1 已完成；G3 stop 后经重新归因，用户授权继续实施启用点 2 与 Timeline 分页。
+当前范围和验证见 [后续实施记录](recap-grid-manager-65537-performance-follow-up.md)。
+以下授权描述与禁区保留为当时的工作单内容，不覆盖后续用户授权。
 目标设计：[recap-grid-manager-65537-performance-candidate-design.md](recap-grid-manager-65537-performance-candidate-design.md)
 （已吸收施工勘误：P0 计数器形态、哨兵覆盖边界、TryObserve 排除理由）。
 实施提示词：[GOAL-recap-grid-manager-65537-performance.md](GOAL-recap-grid-manager-65537-performance.md)。
