@@ -10,7 +10,6 @@ using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
@@ -230,8 +229,7 @@ public sealed class GalateaSessionProvisioningTests {
             new CountingCompletionClientFactory(),
             DisabledGalateaUserMessageNormalizer.Instance,
             GalateaSessionProvisioning.CreateIfMissing,
-            maintenanceMode: true,
-            agentControlProfile: CreateNoControlCreateProfile()
+            maintenanceMode: true
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -322,8 +320,7 @@ public sealed class GalateaSessionProvisioningTests {
                 "current-model",
                 "current-surface"
             )],
-            characterContextTemplate: "current ${characterName} prompt",
-            agentControlProfile: CreateNoControlCreateProfile()
+            characterContextTemplate: "current ${characterName} prompt"
         );
         Atelia.EventJournal.EventAddress originalHead;
         using (SessionJournalEngine created = SessionJournalEngine.Create(
@@ -769,36 +766,7 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
-    public async Task MissingCreateIfMissing_HistoricalProfileCannotRestrictCodeOwnedBootstrap() {
-        var factory = new CountingCompletionClientFactory();
-        await using var host = GalateaTestHost.CreateMissingSession(
-            factory,
-            DisabledGalateaUserMessageNormalizer.Instance,
-            agentControlProfile: CreateNoControlCreateProfile()
-        );
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice", CancellationToken.None);
-
-        Assert.Same(session, await service.GetSessionAsync(
-            "alice", CancellationToken.None));
-        Assert.True(Directory.Exists(host.SessionDirectory));
-        Assert.Empty(Directory.EnumerateDirectories(
-            host.RootDirectory,
-            ".galatea-session-*.staging",
-            SearchOption.TopDirectoryOnly
-        ));
-        Assert.Equal(0, factory.CreateCallCount);
-        Assert.False(File.Exists(Path.Combine(
-            Path.GetDirectoryName(host.ConfigPath)!,
-            "recap-grid-routes.json"
-        )));
-    }
-
-    [Fact]
-    public async Task MissingCreateIfMissing_EmptyHistoricalProfilesBootstrapCodeOwnedBundleWithoutProvider() {
+    public async Task MissingCreateIfMissing_UnlistedDecoyProfileDoesNotAffectBootstrap() {
         var factory = new TwoTurnCompletionFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
             factory,
@@ -812,27 +780,10 @@ public sealed class GalateaSessionProvisioningTests {
         byte[] decoyBytes = "{ definitely-not-a-profile"u8.ToArray();
         File.WriteAllBytes(decoyPath, decoyBytes);
 
-        JsonObject root = Assert.IsType<JsonObject>(
-            JsonNode.Parse(File.ReadAllText(host.ConfigPath))
-        );
-        JsonObject runtime = Assert.IsType<JsonObject>(root["runtime"]);
-        JsonObject recapGrid = Assert.IsType<JsonObject>(
-            runtime["recapGrid"]
-        );
-        recapGrid["historicalAgentControlProfileFiles"] =
-            new JsonArray();
-        File.WriteAllText(
-            host.ConfigPath,
-            root.ToJsonString(new JsonSerializerOptions(
-                JsonSerializerDefaults.Web
-            ))
-        );
-
         GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
         GalateaRecapGridRuntimeConfig loadedRecap = Assert.IsType<
             GalateaRecapGridRuntimeConfig
         >(config.RecapGrid);
-        Assert.Null(loadedRecap.HistoricalAgentControlProfiles);
         Assert.Equal("test", loadedRecap.Maintenance.ConnectionId);
         Assert.Equal(1, loadedRecap.Maintenance.MaximumConcurrency);
         Assert.Equal(
@@ -1176,21 +1127,6 @@ public sealed class GalateaSessionProvisioningTests {
         "http://localhost:8000/",
         ApiKey: "test-key"
     );
-
-    private static RecapGridAgentControlProfile
-        CreateNoControlCreateProfile()
-        => RecapGridAgentControlProfile.Create(
-            "no-create",
-            new RecapGridControlAdmission(
-                RecapGridControlPermission.None,
-                Array.Empty<FamilyDefinitionDigest>(),
-                Array.Empty<string>(),
-                Array.Empty<ContextHeaderCarrier>(),
-                ["test."],
-                maximumBootstrapRows: 0,
-                maximumProjectedCalls: 0
-            )
-        );
 
     private static void AssertCompleteStagingCandidate(string stagingPath) {
         using SessionJournalEngine candidate =

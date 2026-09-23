@@ -2,10 +2,10 @@
 
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
-[runtime.md](runtime.md)。根配置当前为 [V12](../SessionJournal/current/contracts/galatea-root-config-v12.md)；exact 字段由
+[runtime.md](runtime.md)。根配置当前为 [V13](../SessionJournal/current/contracts/galatea-root-config-v13.md)；exact 字段由
 [`GalateaStrictConfigReader`](../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与
 [`GalateaRootFileConfig`](../../prototypes/Galatea/GalateaConfig.cs) 定义。
-[V11](../SessionJournal/current/contracts/galatea-root-config-v11.md)及更早合同仅用于历史与显式升级，不是当前配置入口。
+[V11](../SessionJournal/current/contracts/galatea-root-config-v11.md)及更早合同仅供历史查阅，不是当前配置入口。
 
 ## 配置目录与首次生成
 
@@ -27,22 +27,22 @@
 - 每个 Character 的缺失、且仍在配置目录内的 `characterContextTemplateFile`。
 
 生成后程序会故意退出，必须检查并修改模板后再次启动。它不会覆盖已有文件，不会猜测 Codex/Node 路径，也不会生成
-任何 historical Agent Control profile、独立 CLI route manifest 或 SessionJournal state。因此首次配置的顺序是：
+独立 CLI route manifest 或 SessionJournal state。因此首次配置的顺序是：
 先让模板生成并退出，修改密码、角色、连接和 delegate placeholder，创建各 Character 的 home，确认 maintenance connection，最后启动。
 
 默认模板有 `alice`、`bob` 两个示例 Character、独立的 `player-main` Player 和本地 `local` connection；密码、模型 ID 与 delegate 路径仍须由操作者填写。
 
 ## `config.json`
 
-根文件必须是 strict V12 JSON：`v` 必须是整数 `12`，根字段为 `v`、`characters`、`players`、`runtime`。
+根文件必须是 strict V13 JSON：`v` 必须是整数 `13`，根字段为 `v`、`characters`、`players`、`runtime`。
 `characters` 至少一项；`players` 可以为 `[]`。`runtime.recapGrid` 是必需 object。未知字段、旧版、未来版、
-`null` 或 `12.0` 都拒绝；正常启动不会迁移或重写旧文件。
+`null` 或 `13.0` 都拒绝；正常启动不会迁移或重写旧文件。
 
 下面展示当前字段归属，密码位置仅为占位符；除必需的 absolute `homeDir` 外，相对路径以配置文件目录解析。
 
 ```json
 {
-  "v": 12,
+  "v": 13,
   "characters": [{
     "id": "alice",
     "name": "Alice",
@@ -66,8 +66,7 @@
         "connectionId": "local",
         "maximumConcurrency": 1,
         "dispatchTimeoutMilliseconds": 900000
-      },
-      "historicalAgentControlProfileFiles": []
+      }
     }
   }
 }
@@ -213,33 +212,29 @@ task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经�
 
 ## RecapGrid 文件与首次 scaffold
 
-当前 V12 的 `runtime.recapGrid` 只有稳定用途的 `maintenance` 与
-`historicalAgentControlProfileFiles`，精确字段、取值范围和路径规则见
-[V12 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v12.md)。maintenance 的 connection、全局
+当前 V13 的 `runtime.recapGrid` 只含 `maintenance`，精确字段与取值范围见
+[V13 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v13.md)。maintenance 的 connection、全局
 并发预算与每次 attempt timeout 由 `GalateaCompletionOwner` 的同一 connection registry、retry invoker 和并发 lane
 使用；不得为每个 work 创建独立 semaphore。已持久化 `RowWork` 的 actual family、protocol 和 semantic key 在执行时构造
 exact route，因此新默认 family 与旧未完成 family 都可运行。已完成 Recap 的读取不需要 route 或可用 maintenance connection；
 只有需要新生成时才报告 maintenance 连接的具体阻塞。
 
-`historicalAgentControlProfileFiles` 可以是空数组。非空时每个 profile 必须是最多 128 KiB 的 strict no-follow regular file，
-只保存冻结的 exact tool recovery 所需 profile bytes/identity，不是 live admission、默认 profile 或新 work 的授权来源。fresh
-missing-session bootstrap 由 host 的 code-owned bundle 窄入口
-建立 Store、该 Character 的 asset、empty-Timeline full recipe 与 active recipe；它不会读取历史 profile、创建 Completion client
-或调用 provider，也不会为新 session 创建或扩展任何 Agent Control tool/family allowlist。
+`recap_grid_control` 模型工具已移除。fresh missing-session bootstrap 由 host 的 code-owned bundle 窄入口建立
+Store、该 Character 的 asset、empty-Timeline full recipe 与 active recipe；它不会创建 Completion client 或调用 provider。
+若历史 SessionJournal 尾部仍冻结着工具 runtime，恢复会明确返回 `tool-runtime-unsupported`，不会忽略工具调用并继续生成。
 
-独立 SessionJournal CLI 的 exact route manifest 仍保留，供显式 CLI 构建和 operator chain 使用；这不意味着 Galatea V12 root
+独立 SessionJournal CLI 的 exact route manifest 仍保留，供显式 CLI 构建和 operator chain 使用；这不意味着 Galatea V13 root
 config 仍接受 live `routeManifestPath`。该 CLI manifest 是普通 V2 JSON，可人工格式化，但仍拒绝重复、未知、缺失字段、重复 route
 key 和越界值。
 
-如需为独立 CLI/operator workflow 准备 route manifest 与 Agent Control profile，可使用 `recap-grid scaffold`。它不是 Galatea
-fresh bootstrap 的前置条件；三个输出路径必须不存在，CLI 以 create-new 写入：
+如需为独立 CLI/operator workflow 准备 admission 与 route manifest，可使用 `recap-grid scaffold`。它不是 Galatea
+fresh bootstrap 的前置条件；两个输出路径必须不存在，CLI 以 create-new 写入：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- \
   recap-grid scaffold \
   --asset galatea-rolling-rewrite-zh-cn-v7 \
   --character-name '<角色名>' \
-  --profile-id default \
   --connection-id '<RecapGrid连接ID>' \
   --permission create \
   --permission register-family \
@@ -253,7 +248,6 @@ dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- 
   --max-concurrency 2 \
   --dispatch-timeout-ms 30000 \
   --admission-output '<配置目录>/recap-grid-admission.json' \
-  --profile-output '<配置目录>/recap-grid-agent-control-profile.json' \
   --route-output '<配置目录>/recap-grid-routes.json'
 ```
 
@@ -267,19 +261,11 @@ context 仍是 raw-only。
 `RowWork` 的 actual producer 验真，不因当前 default 或 active recipe 变化而阻断。普通策略变化不改写 `ActiveRecipeDigest`。
 CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
 
-## V11 → V12 root config operator 升级
+## 从历史 root config 切换到 V13
 
-这只是 root config 的显式、provider-free 转换，不是 live 实例迁移授权；不会启动 host、调用 provider、改写
-SessionJournal、Store、Timeline、Control、prompt asset、delegation 或任何外部工作。先正常停服并确认 writer 已退出，且在状态目录之外
-备份整个配置目录。命令默认 dry-run：
-
-```bash
-dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.csproj -- \
-  operator upgrade-recap-grid-config-v12 --config /absolute/path/to/config.json
-```
-
-它读取 exact V11，解析旧 live route manifest，并打印按 `connectionId`、`maximumConcurrency`、
-`dispatchTimeoutMilliseconds` 去重且稳定排序的 candidate。若所有旧 route 的这三个值相同，会机械选择唯一 candidate；若不相同，
-dry-run 列出候选而不猜测第一项，operator 必须带 `--maintenance-route-index <index>` 重跑。确认 candidate 后追加 `--apply`：
-命令 create-new 写入带时间戳和随机后缀的 V11 backup，以临时文件替换 root config，并 strict reopen/validate 已写出的 V12。
-apply 后再用 V12 host 启动。旧 profile 路径原样转入 `historicalAgentControlProfileFiles`，不以旧 target 与当前默认不同拒绝配置。
+正常 host 只接受 V13，不会自动改写旧配置。停服并在状态目录外备份后，把 V12 的 `v` 改为 `13`，
+移除 `runtime.recapGrid.historicalAgentControlProfileFiles`，保留 `maintenance`。旧 profile 可单独归档；
+在移除其恢复实现前，先用 `SessionJournalEngine.OpenReadOnly` 检查每个 live session 的当前尾部。
+如果仍有 `FrozenCompletionRequired` 的工具身份或 `ToolContinuationRequired`，需要先决定如何处理该未完成回合；
+不能把它当成普通 `NewRequestRequired` 重派发。V11 及更早的配置需按当前 V13 合同显式重建，旧 V11→V12
+operator 命令已随 Agent 工具删除。

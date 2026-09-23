@@ -2,16 +2,13 @@ using System.Security.Cryptography;
 using System.Text;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 
 namespace Atelia.SessionJournal.Cli;
 
 /// <summary>
 /// Compile-time closed catalog for assets installed by the operator CLI.
-/// This is intentionally separate from the Agent Control built-in catalog:
-/// adding an operator-only asset must not rotate frozen Agent Control runtime
-/// identities.
+/// The operator catalog is independent of any model-visible tool runtime.
 /// </summary>
 internal static class RecapGridOperatorAssetCatalog {
     private static readonly string ProvisionRuntimeIdentityDigest =
@@ -25,14 +22,14 @@ internal static class RecapGridOperatorAssetCatalog {
         out RecapGridControlRegistrationBundle? bundle
     ) {
         switch (assetId) {
-            case RecapGridAgentControlBuiltIns.MysteryInvestigationV4:
+            case RecapGridSampleAssets.MysteryInvestigationV4:
                 if (characterName is not null) {
                     throw new ArgumentException(
                         "--character-name is not accepted "
                         + "by this operator asset."
                     );
                 }
-                return RecapGridAgentControlBuiltIns
+                return RecapGridSampleAssets
                     .TryCreateRegistrationBundle(assetId, out bundle);
             case GalateaRecapGridAssets.RollingRewriteZhCnV7:
                 if (characterName is null) {
@@ -62,7 +59,7 @@ internal static class RecapGridOperatorAssetCatalog {
         string assetId,
         ControlInstanceId controlInstanceId
     ) {
-        if (!RecapGridAgentControlBuiltIns.AssetIds.Contains(
+        if (!RecapGridSampleAssets.AssetIds.Contains(
                 assetId,
                 StringComparer.Ordinal)
             && !GalateaRecapGridAssets.AssetIds.Contains(

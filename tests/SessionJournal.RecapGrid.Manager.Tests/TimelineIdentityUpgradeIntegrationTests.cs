@@ -3,7 +3,6 @@ using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Runtime;
@@ -51,8 +50,8 @@ public sealed partial class ManagerVerticalTests {
 
         // The fixed old rules use test-only runtime-v1. Preserve them, then
         // register the real V3 built-in as a fresh operation after upgrade.
-        Assert.True(RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
-            RecapGridAgentControlBuiltIns.MysteryInvestigationV4, out RecapGridControlRegistrationBundle? builtIn));
+        Assert.True(RecapGridSampleAssets.TryCreateRegistrationBundle(
+            RecapGridSampleAssets.MysteryInvestigationV4, out RecapGridControlRegistrationBundle? builtIn));
         FamilyDefinition family = Assert.Single(builtIn!.Families);
         string[] columns = builtIn.Definitions.Select(value => value.LogicalColumnId.Value).ToArray();
         Assert.Equal(2, columns.Length);

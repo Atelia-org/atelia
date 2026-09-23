@@ -23,7 +23,6 @@ public sealed class GalateaOperatorConsoleCollection {
 public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
     private const string AgentConnectionId = "agent";
     private const string RecapConnectionId = "recap-maintainer";
-    private const string ProfileId = "rolling-operator";
     private readonly string _root = Path.Combine(
         Directory.Exists("/dev/shm") ? "/dev/shm" : Path.GetTempPath(),
         "atelia-galatea-public-operator-chain-tests",
@@ -35,7 +34,6 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
         Directory.CreateDirectory(_root);
         string repository = Path.Combine(_root, "session");
         string admission = Path.Combine(_root, "admission.json");
-        string profile = Path.Combine(_root, "profile.json");
         string routes = Path.Combine(_root, "routes.json");
         string recipePath = Path.Combine(_root, "full-recipe.json");
         string timelineConfirmation = Path.Combine(
@@ -48,7 +46,6 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "scaffold",
             "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
             "--character-name", "Galatea",
-            "--profile-id", ProfileId,
             "--connection-id", RecapConnectionId,
             "--permission", "create",
             "--permission", "register-family",
@@ -62,7 +59,6 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--max-concurrency", "2",
             "--dispatch-timeout-ms", "30000",
             "--admission-output", admission,
-            "--profile-output", profile,
             "--route-output", routes
         ));
         Assert.Equal(0, provider.CreateCallCount);
@@ -161,7 +157,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             ReadControlHead(repository, refId).ActiveRecipeDigest);
         Assert.Equal(0, provider.CreateCallCount);
 
-        WriteStrictConfig(repository, profile, routes);
+        WriteStrictConfig(repository, routes);
         string configPath = Path.Combine(_root, "config.json");
         GalateaConfig config = GalateaConfigLoader.Load(configPath);
         Assert.NotNull(config.RecapGrid);
@@ -203,7 +199,6 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
 
     private void WriteStrictConfig(
         string repository,
-        string profile,
         string routes
     ) {
         string configPath = Path.Combine(_root, "config.json");
@@ -227,8 +222,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         new GalateaPlayerFileConfig(player.PlayerId, player.Name.Value, player.Password)).ToArray(),
                     Runtime: new GalateaRuntimeFileConfig(RecapGrid: new GalateaRecapGridFileConfig(
                         new GalateaRecapGridMaintenanceFileConfig(
-                            AgentConnectionId, 1, 900_000),
-                        [Path.GetRelativePath(_root, profile)]
+                            AgentConnectionId, 1, 900_000)
                     ))
                 ),
                 GalateaJson.Options

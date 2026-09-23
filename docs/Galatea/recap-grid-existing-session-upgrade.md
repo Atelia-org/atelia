@@ -19,7 +19,7 @@
 只对以下受支持的起点使用本文：selected branch 的 validate 为 Idle；Cadence、Timeline、Control 均可 strict verify；Control 的 family、definition、recipe 为空且没有 active recipe；Grid Store 为 absent。已有 Store、非空 Control、active recipe、Prepared、Started、未知 dispatch、schema failure、Busy，或任何结果不明，均是 **stop**，不是重跑 init 的理由。
 
 1. 停止 Galatea 和一切可能持有该 session 的 CLI/测试进程；检查实际配置路径、实际 session path 和打开文件。lock 文件存在本身不等于 owner 已停止。
-2. 对本次会触及的完整状态范围做 create-new、可打开、带 hash 的备份；至少覆盖 root config、connections、profile/route/admission artifacts、目标 SessionJournal 及其 derived/control sidecars。不要把范围较小的机器脚本说成完整备份。
+2. 对本次会触及的完整状态范围做 create-new、可打开、带 hash 的备份；至少覆盖 root config、connections、route/admission artifacts、目标 SessionJournal 及其 derived/control sidecars。不要把范围较小的机器脚本说成完整备份。
 3. 在停服状态记录 validate 的 head/event count/phase，并运行下列只读检查。输出保存在备份之外、受限的 operator 目录；不把 session content、credential 或 opaque token 复制进 tracked 文档。
 
 ~~~bash
@@ -42,7 +42,7 @@ $cli recap-grid timeline history-load inspect --input "$repo" --branch "$branch"
 
 ## 3. 先生成有界 operator artifact
 
-scaffold 是 provider-free、create-only。它同时生成 admission、Agent Control profile 和 route manifest；每个输出必须是原先不存在的、互不嵌套的文件。对已有 session，最小必须使用新 admission；若还把新 profile/route 写入 config.json，必须保留所有历史 profile 以支持 frozen recovery，严格校验配置，并在后续重启中让 host 重新读取。
+scaffold 是 provider-free、create-only。它同时生成 admission 和 route manifest；两个输出必须是原先不存在的、互不嵌套的文件。对已有 session，使用新 admission 初始化 Control；route manifest 供显式 CLI 构建使用，不写入 Galatea V13 root config。
 
 在开始前，根据盘点的 selected path 和计划的受限 sync，明确批准：
 
@@ -65,12 +65,11 @@ maximum_concurrency='<approved-positive-concurrency>'
 dispatch_timeout_ms='<approved-positive-timeout-ms>'
 
 character_name="$(jq -er --arg user "$user_id" \
-  '.users[] | select(.userId == $user) | .characterName' "$config_dir/config.json")"
+  '.characters[] | select(.id == $user) | .name' "$config_dir/config.json")"
 
 scaffold_report="$($cli recap-grid scaffold \
   --asset galatea-rolling-rewrite-zh-cn-v7 \
   --character-name "$character_name" \
-  --profile-id '<new-profile-id>' \
   --connection-id "$recap_connection_id" \
   --permission create --permission register-family \
   --permission register-definition --permission register-recipe \
@@ -82,7 +81,6 @@ scaffold_report="$($cli recap-grid scaffold \
   --max-concurrency "$maximum_concurrency" \
   --dispatch-timeout-ms "$dispatch_timeout_ms" \
   --admission-output "$operator_dir/admission.json" \
-  --profile-output "$operator_dir/profile.json" \
   --route-output "$operator_dir/routes.json")"
 
 admission="$operator_dir/admission.json"
@@ -193,6 +191,6 @@ $cli recap-grid control promote --input "$repo" --branch "$branch" \
 
 停服后 strict reopen，再次运行 validate、Cadence/Timeline/Control verify、Store verify，以及 candidate progress --max-new-calls 0。记录 active recipe digest、Store identity、Timeline/Control whole head 与 backup location；不要用旧日志或上次 shell 变量代替 fresh inspection。
 
-如果第 3 节把 profile 或 route 写入 root config，或角色名改变，重启 Galatea 以重新加载 strict configuration。以该用户登录后，先查看 /api/v1/recent-turns：recapGridReadiness 应是 current exact candidate，且 contextHeader 在可 materialize 时含两个 Recap block。然后发送一条明确标为本次验收的最小 fresh message，确认其 SSE 是 done 而非 error、current 回到 Idle、回答可见，并冷重开再次读取同一 session。
+若角色名改变，重启 Galatea 以重新加载 strict configuration。以该用户登录后，先查看 /api/v1/recent-turns：recapGridReadiness 应是 current exact candidate，且 contextHeader 在可 materialize 时含两个 Recap block。然后发送一条明确标为本次验收的最小 fresh message，确认其 SSE 是 done 而非 error、current 回到 Idle、回答可见，并冷重开再次读取同一 session。
 
 这条 fresh message 是另一项 main-agent provider effect；它不是对 build 的重试，也不应用来掩盖 build 或 promote 的不确定结果。若要撤销验收输入，只能在确认最新真实用户卡片正是该输入后走页面 Undo；不得删除或重放既有剧情历史。

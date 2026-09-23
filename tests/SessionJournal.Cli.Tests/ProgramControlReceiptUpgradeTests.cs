@@ -12,7 +12,7 @@ public sealed partial class ProgramRecapGridCommandTests {
     [Theory]
     [InlineData("after-control-commit", false)]
     [InlineData("after-tool-result", true)]
-    public void LegacyControlReceiptContinuesAcrossJournalCommitWindows(
+    public void LegacyControlReceiptOnlyContinuesAfterToolResultIsCommitted(
         string fixtureName,
         bool resultAlreadyCommitted
     ) {
@@ -59,8 +59,16 @@ public sealed partial class ProgramRecapGridCommandTests {
         }
 
         var provider = new DeterministicCompletionClientFactory();
-        Assert.Equal(0, ResumeControlReceiptFixture(provider, refId,
-            includeAdmission: !resultAlreadyCommitted));
+        (int exitCode, JsonElement report) = ResumeControlReceiptFixture(provider, refId);
+        if (!resultAlreadyCommitted) {
+            Assert.Equal(2, exitCode);
+            Assert.Equal("tool-runtime-unsupported", report.GetProperty("status").GetString());
+            Assert.Empty(provider.Requests);
+            Assert.Equal(controlBytes, File.ReadAllBytes(controlPath));
+            Assert.Equal(before.Count, AuditReceiptFixture().Item2.Count);
+            return;
+        }
+        Assert.Equal(0, exitCode);
         CompletionRequest request = Assert.Single(provider.Requests);
         Assert.Equal(0, provider.RecapRequestCount);
         Assert.Equal(controlHead, ReadControlHead(refId));
@@ -137,7 +145,8 @@ public sealed partial class ProgramRecapGridCommandTests {
         Assert.Equal(expectedResult, ReadReceiptEventPayload(result));
 
         var provider = new DeterministicCompletionClientFactory();
-        Assert.Equal(0, ResumeControlReceiptFixture(provider, refId));
+        (int exitCode, JsonElement report) = ResumeControlReceiptFixture(provider, refId);
+        Assert.True(exitCode == 0, report.GetRawText());
         Assert.Equal(expectedRequest, SessionRequestCanonicalizer.Canonicalize(Assert.Single(provider.Requests)));
         Assert.Equal(0, provider.RecapRequestCount);
         Assert.Equal(originalControl, File.ReadAllBytes(controlPath));
@@ -177,10 +186,9 @@ public sealed partial class ProgramRecapGridCommandTests {
         }
     }
 
-    private int ResumeControlReceiptFixture(
+    private (int ExitCode, JsonElement Report) ResumeControlReceiptFixture(
         DeterministicCompletionClientFactory provider,
-        string refId,
-        bool includeAdmission = true
+        string refId
     ) {
         var arguments = new List<string> {
             "run-online-turn", "--input", _root,
@@ -189,12 +197,7 @@ public sealed partial class ProgramRecapGridCommandTests {
             "--connections", Path.Combine(_root, "connections.json"),
             "--routes", Path.Combine(_root, "routes.json")
         };
-        if (includeAdmission) {
-            arguments.AddRange(["--admission", Path.Combine(_root, "admission.json")]);
-        }
-        (int code, JsonElement report) = RunCapturedWithFactory(provider, arguments.ToArray());
-        Assert.True(code == 0, report.GetRawText());
-        return code;
+        return RunCapturedWithFactory(provider, arguments.ToArray());
     }
 
     private (SessionJournalAuditScanResult, List<SessionJournalAuditEvent>) AuditReceiptFixture() {

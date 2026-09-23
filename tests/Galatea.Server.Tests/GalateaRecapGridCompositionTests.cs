@@ -18,7 +18,6 @@ using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Online;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using Atelia.SessionJournal.RecapGrid.Store;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -429,7 +428,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         File.WriteAllBytes(
             producerTargetPath,
             targetRecipe.Target.ToCanonicalBytes());
-        RecapGridAgentControlProfile agentProfile = AgentProfile();
         string refId;
         using (SessionJournalEngine reader =
                SessionJournalEngine.OpenReadOnly(cliPath)) {
@@ -456,7 +454,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                 File.ReadAllBytes(routesPath)),
             Connections(connection),
             galateaFactory,
-            new RecapGridAgentControlProfileRegistry([agentProfile]),
             inputProjector: GalateaInputProjector.Instance);
         var candidate = new GalateaRecapGridComposition(
             completion,
@@ -535,6 +532,36 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             SessionInputContent.Structured(GalateaObservationContent.V1SchemaId, value));
         Assert.Equal("same next clue", playerTurnObservation.PlayerText);
         Assert.NotNull(playerTurnObservation.ExternalLocalTimestamp);
+    }
+
+    [Fact]
+    public async Task FrozenToolRuntimeFailsBeforeCompletionClientBinding() {
+        using SessionJournalEngine engine = SessionJournalEngine.Create(
+            NewPath(),
+            new SessionCreateOptions(
+                "model-a", "test system prompt", "openai-chat/strict"));
+        EventAddress head = engine.ReadCurrentHead()!.Value;
+        var frozen = new SessionRuntimeRecoveryRequirements.FrozenCompletionRequired(
+            head,
+            SessionExecutionPhase.AwaitingAgentAction,
+            SessionEventKind.CompletionRequestPrepared,
+            new SessionCompletionTargetIdentity("unavailable", "test", "fingerprint"),
+            "client", "api", new string('a', 64),
+            new SessionToolRuntimeIdentity("old-tool", "implementation", "capability"),
+            head);
+        var factory = new RejectingFactory();
+        await using var composition = new GalateaRecapGridComposition(
+            RecapGridCompletionHost.Create(
+                () => throw new InvalidOperationException("No route should load."),
+                Connections(Connection()),
+                factory),
+            RecapGridOnlineLimits.Production,
+            _estimator);
+
+        GalateaTurnException failure = Assert.Throws<GalateaTurnException>(
+            () => composition.BindPrepared(engine, frozen));
+        Assert.Equal("tool-runtime-unsupported", failure.FailureReason);
+        Assert.Equal(0, factory.CreateCallCount);
     }
 
     [Theory]
@@ -622,455 +649,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
     }
 
     [Fact]
-    public async Task ToolBearingPreparedBindsFrozenProfileWithoutDerivedOpen() {
-        string path = NewPath();
-        CompletionConnectionConfig connection = Connection();
-        RecapGridAgentControlProfile profile = AgentProfile();
-        EventAddress prepared;
-        var fixtureClient = new TrackingClient("prepared answer");
-        CompletionDispatchIdentity dispatch =
-            CompletionDispatchIdentityFactory.Create(
-                connection,
-                fixtureClient
-            );
-        using (SessionJournalEngine.Create(
-                   path,
-                   new SessionCreateOptions(
-                       connection.ModelId,
-                       "test system prompt",
-                       connection.CompletionSurfaceId))) { }
-        RecapGridAgentControlHandle agent;
-        using (SessionJournalEngine bindingOwner =
-               SessionJournalEngine.OpenReadOnly(path)) {
-            agent = Assert.IsType<
-                   RecapGridAgentControlOpenResult.Opened
-               >(RecapGridAgentControlFactory.Bind(
-                   bindingOwner.ReadView,
-                   profile,
-                   _estimator
-               )).Handle;
-        }
-        using (agent) {
-            var runtime = new SessionRuntime(
-                fixtureClient,
-                agent.ToolSession,
-                new SessionCompletionTargetIdentity(
-                    dispatch.ConnectionId,
-                    dispatch.Kind,
-                    dispatch.ConnectionFingerprint
-                ),
-                ToolRuntimeIdentity: agent.RuntimeIdentity,
-                ContextCandidateSource: new EmptyCandidateSource()
-            );
-            using SessionJournalEngine engine =
-                SessionJournalEngine.OpenForTest(
-                    path,
-                    runtime,
-                    new SessionJournalTestHooks(
-                        SessionJournalFailpoint
-                            .AfterRequestPreparedCommitted
-                    )
-                );
-            _ = await Assert.ThrowsAsync<
-                SessionJournalFailpointException>(() => engine.SendAsync(
-                    "freeze tool profile",
-                    CancellationToken.None
-                ));
-            prepared = engine.ReadCurrentHead()!.Value;
-        }
-        Assert.False(Directory.Exists(Path.Combine(path, "derived")));
-
-        var candidateFactory = new TrackingFactory("recovered candidate");
-        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
-            static () => throw new InvalidOperationException(
-                "Prepared recovery must not load routes."
-            ),
-            Connections(connection),
-            candidateFactory,
-            new RecapGridAgentControlProfileRegistry([profile]),
-            inputProjector: GalateaInputProjector.Instance
-        );
-        var candidate = new GalateaRecapGridComposition(
-            completion,
-            RecapGridOnlineLimits.Production,
-            _estimator
-        );
-        await using var service = new GalateaHostService(
-            Config(path, connection),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            candidate
-        );
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        GalateaLiveTurn turn = service.StartRecovery(
-            session,
-            new GalateaTurnOptions(
-                connection.Id,
-                GalateaTurnMode.Resume,
-                ExpectedHead: prepared
-            )
-        );
-
-        await service.RunTurnAsync(session, turn, CancellationToken.None);
-        service.FinishTurn(session, turn);
-
-        Assert.Equal("completed", turn.Status);
-        Assert.Equal(1, candidateFactory.CreateCallCount);
-        Assert.False(Directory.Exists(Path.Combine(path, "derived")));
-    }
-
-    [Fact]
-    public async Task ActualServiceToolContinuationUsesFrozenProfileAndReceipt() {
-        string path = NewPath();
-        CompletionConnectionConfig connection = Connection();
-        RecapGridAgentControlProfile profile = AgentProfile();
-        using (SessionJournalEngine provisioner = SessionJournalEngine.Create(
-                   path,
-                   new SessionCreateOptions(
-                       connection.ModelId,
-                       "test system prompt",
-                       connection.CompletionSurfaceId))) {
-            ProvisionTimelineAndControl(provisioner);
-        }
-        EventAddress actionHead;
-        RecapGridAgentControlHandle agent;
-        using (SessionJournalEngine bindingOwner =
-               SessionJournalEngine.OpenReadOnly(path)) {
-            agent = Assert.IsType<RecapGridAgentControlOpenResult.Opened>(
-                RecapGridAgentControlFactory.Bind(
-                    bindingOwner.ReadView,
-                    profile,
-                    _estimator
-                )
-            ).Handle;
-        }
-        using (agent) {
-            var fixtureClient = new ControlToolCallClient();
-            CompletionDispatchIdentity identity =
-                CompletionDispatchIdentityFactory.Create(
-                    connection,
-                    fixtureClient
-                );
-            var runtime = new SessionRuntime(
-                fixtureClient,
-                agent.ToolSession,
-                new SessionCompletionTargetIdentity(
-                    identity.ConnectionId,
-                    identity.Kind,
-                    identity.ConnectionFingerprint
-                ),
-                ToolRuntimeIdentity: agent.RuntimeIdentity,
-                ContextCandidateSource: new EmptyCandidateSource()
-            );
-            using SessionJournalEngine engine =
-                SessionJournalEngine.OpenForTest(
-                    path,
-                    runtime,
-                    new SessionJournalTestHooks(
-                        SessionJournalFailpoint.AfterActionCommitted
-                    )
-                );
-            _ = await Assert.ThrowsAsync<
-                SessionJournalFailpointException>(() => engine.SendAsync(
-                    engine.ReadCurrentHead()!.Value,
-                    "provision from Galatea tool"
-                ));
-            actionHead = engine.ReadCurrentHead()!.Value;
-        }
-
-        var candidateFactory = new TrackingFactory("continued candidate");
-        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
-            static () => throw new InvalidOperationException(
-                "Raw-only tool continuation must not load recap routes."
-            ),
-            Connections(connection),
-            candidateFactory,
-            new RecapGridAgentControlProfileRegistry([profile]),
-            inputProjector: GalateaInputProjector.Instance
-        );
-        var candidate = new GalateaRecapGridComposition(
-            completion,
-            RecapGridOnlineLimits.Production,
-            _estimator
-        );
-        await using var service = new GalateaHostService(
-            Config(path, connection),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            candidate
-        );
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        GalateaLiveTurn turn = service.StartRecovery(
-            session,
-            new GalateaTurnOptions(
-                connection.Id,
-                GalateaTurnMode.Resume,
-                ExpectedHead: actionHead
-            )
-        );
-
-        await service.RunTurnAsync(session, turn, CancellationToken.None);
-        service.FinishTurn(session, turn);
-
-        Assert.Equal("completed", turn.Status);
-        Assert.Empty(Assert.Single(candidateFactory.Client.AgentRequests)
-            .PromptPrefix.OutputContract.Tools);
-        Assert.Equal(
-            SessionExecutionPhase.Idle,
-            session.Engine.InspectExecutionBoundary().Phase
-        );
-        using RecapGridControlReaderHandle control = Assert.IsType<
-            RecapGridControlReaderOpenResult.Opened
-        >(RecapGridControlFactory.OpenReader(
-            path,
-            session.Engine.BranchRefId
-        )).Handle;
-        RecapGridControlSnapshot snapshot = Assert.IsType<
-            RecapGridControlSnapshotResult.Available
-        >(control.Reader.ReadSnapshot()).Snapshot;
-        AssertRecoveredToolAndDefaultBundles(snapshot);
-    }
-
-    [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public async Task RecoveredTwoToolBatch_StopOrGenerationRetryNeverRepeatsTools(bool afterFirstTool, bool retryAfterTools) {
-        string path = NewPath();
-        CompletionConnectionConfig connection = Connection();
-        RecapGridAgentControlProfile profile = AgentProfile();
-        EventAddress actionHead = await CreateAgentControlRecoveryBoundaryAsync(path, connection, profile,
-            SessionJournalFailpoint.AfterActionCommitted, SessionExecutionPhase.AwaitingToolExecution,
-            new TwoControlInspectionsClient());
-        int routeLoads = 0;
-        var factory = new TrackingFactory("must not dispatch");
-        var retryFactory = new FlakyContinuationFactory();
-        if (!afterFirstTool && !retryAfterTools) {
-            await using GalateaTestHost httpHost = GalateaTestHost.OpenExisting(path, [connection], connection.Id,
-                factory, DisabledGalateaUserMessageNormalizer.Instance, agentControlProfile: profile);
-            using HttpClient http = httpHost.CreateClient();
-            using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
-            Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-            using HttpResponseMessage rejected = await http.PostAsJsonAsync(
-                "/api/v1/characters/alice/chat/turns/pending/stop",
-                new StopPendingTurnRequest(EventAddressTextCodec.Format(actionHead)));
-            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
-            var httpService = httpHost.Factory.Services.GetRequiredService<GalateaHostService>();
-            var pending = await httpService.GetSessionAsync("alice", CancellationToken.None);
-            Assert.Null(pending.GetCurrentTurn());
-            Assert.Equal(actionHead, pending.Engine.ReadCurrentHead());
-            Assert.Equal(SessionExecutionPhase.AwaitingToolExecution, pending.Engine.InspectExecutionBoundary().Phase);
-            Assert.Equal(0, factory.CreateCallCount);
-            Assert.Equal(0, factory.Client.DispatchCallCount);
-        }
-        var completion = RecapGridCompletionHost.Create(
-            () => { routeLoads++; throw new InvalidOperationException("Stopped tool continuation must not run maintenance."); },
-            Connections(connection), retryAfterTools ? retryFactory : factory, new RecapGridAgentControlProfileRegistry([profile]),
-            inputProjector: GalateaInputProjector.Instance);
-        var candidate = new GalateaRecapGridComposition(completion, RecapGridOnlineLimits.Production, _estimator);
-        await using var service = new GalateaHostService(Config(path, connection), DisabledGalateaUserMessageNormalizer.Instance, candidate);
-        GalateaLiveTurn? live = null;
-        int committedTools = 0;
-        service.OpenSessionForTest = sessionPath => SessionJournalEngine.OpenForTest(sessionPath, runtime: null,
-            new SessionJournalTestHooks(AfterCommitBeforeReturn: (kind, _) => {
-                if (kind == SessionEventKind.ToolResultObserved && ++committedTools == 1 && afterFirstTool) {
-                    Assert.True(live!.RequestStop());
-                }
-            }), new EventJournalOptions());
-        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
-        await session.TurnLock.WaitAsync();
-        try {
-            var turn = service.StartRecovery(session, new(connection.Id, GalateaTurnMode.Resume, actionHead));
-            live = turn;
-            // The preparation token is already cancelled when the runner
-            // starts. Both durably committed tools still have to settle.
-            if (!afterFirstTool && !retryAfterTools) { Assert.True(service.RequestStop(session, turn.TurnId)); }
-            await service.RunTurnAsync(session, turn, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
-            service.FinishTurn(session, turn);
-            turn.Complete();
-            Assert.Equal(retryAfterTools ? "completed" : "terminated", turn.Status);
-            Assert.Equal(SessionExecutionPhase.Idle, session.Engine.InspectExecutionBoundary().Phase);
-            SessionClosedTurnOutcome outcome = Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns).Outcome;
-            if (retryAfterTools) { Assert.IsType<SessionClosedTurnOutcome.Completed>(outcome); }
-            else { Assert.IsType<SessionClosedTurnOutcome.Terminated>(outcome); }
-        }
-        finally { session.TurnLock.Release(); }
-        Assert.Equal(0, routeLoads);
-        Assert.Equal(2, committedTools);
-        Assert.Equal(0, factory.CreateCallCount);
-        Assert.Equal(0, factory.Client.DispatchCallCount);
-        Assert.Equal(retryAfterTools ? 2 : 0, retryFactory.Calls);
-        await service.DisposeAsync();
-        using var reopened = SessionJournalEngine.OpenReadOnly(path);
-        var audit = new List<SessionJournalAuditEvent>();
-        _ = reopened.ScanCheckedAuditEvents(audit.Add);
-        Assert.Contains(audit, item => item.Address == actionHead && item.Kind == SessionEventKind.AgentActionProduced);
-        var results = audit.Select(item => item.Fact).OfType<SessionJournalAuditToolResultObservedFact>().ToArray();
-        Assert.Equal(["inspect-one", "inspect-two"], results.Select(result => result.ToolCallId));
-        Assert.All(results, result => Assert.Equal(ToolExecutionStatus.Success, result.Status));
-        Assert.Single(audit, item => item.Kind == SessionEventKind.ObservationAccepted);
-        Assert.Equal(retryAfterTools ? SessionEventKind.AgentActionProduced : SessionEventKind.TurnEnded, audit[^1].Kind);
-        Assert.Equal(2, audit.Count(item => item.Kind == SessionEventKind.ToolExecutionStarted));
-        if (retryAfterTools) {
-            Assert.Equal(2, audit.Count(item => item.Kind == SessionEventKind.CompletionRequestPrepared));
-            Assert.DoesNotContain(audit, item => item.Kind is SessionEventKind.CompletionAttemptStarted or SessionEventKind.CompletionAttemptFailed);
-        }
-    }
-
-    [Fact]
-    public async Task PendingToolBoundaryIsHeadBoundAndNeverDispatchesCompletion() {
-        string path = NewPath();
-        CompletionConnectionConfig connection = Connection();
-        RecapGridAgentControlProfile profile = AgentProfile();
-        EventAddress actionHead = await
-            CreateAgentControlRecoveryBoundaryAsync(
-                path,
-                connection,
-                profile,
-                SessionJournalFailpoint.AfterActionCommitted,
-                SessionExecutionPhase.AwaitingToolExecution
-            );
-        using SessionJournalEngine engine = SessionJournalEngine.Open(path);
-        using RecapGridAgentControlHandle agent = Assert.IsType<
-            RecapGridAgentControlOpenResult.Opened
-        >(RecapGridAgentControlFactory.Bind(
-            engine.ReadView,
-            profile,
-            _estimator
-        )).Handle;
-        await Assert.ThrowsAsync<SessionJournalExpectedHeadMismatchException>(
-            () => engine.ExecutePendingToolToBoundaryAsync(
-                default,
-                agent.ToolSession,
-                agent.RuntimeIdentity));
-        Assert.Equal(actionHead, engine.ReadCurrentHead());
-
-        SessionPendingToolBoundaryResult settled = await engine
-            .ExecutePendingToolToBoundaryAsync(
-                actionHead,
-                agent.ToolSession,
-                agent.RuntimeIdentity);
-        EventAddress resultHead = Assert.IsType<
-            SessionPendingToolBoundaryResult.Settled>(settled).Head;
-        Assert.Equal(resultHead, engine.ReadCurrentHead());
-        Assert.Equal(
-            SessionExecutionPhase.AwaitingAgentAction,
-            engine.InspectExecutionBoundary().Phase);
-    }
-
-    [Fact]
-    public async Task ToolContinuationSettlesBeforeMaintenanceAndDoesNotCreateCurrentClientWhenCadenceIsAbsent() {
-        string path = NewPath();
-        CompletionConnectionConfig connection = Connection();
-        RecapGridAgentControlProfile profile = AgentProfile();
-        EventAddress actionHead = await
-            CreateAgentControlRecoveryBoundaryAsync(
-                path,
-                connection,
-                profile,
-                SessionJournalFailpoint.AfterActionCommitted,
-                SessionExecutionPhase.AwaitingToolExecution
-            );
-        string cadencePath;
-        using (SessionJournalEngine reader =
-               SessionJournalEngine.OpenReadOnly(path)) {
-            cadencePath = Path.Combine(
-                path,
-                "control",
-                "recap-grid",
-                "v1",
-                "refs",
-                reader.BranchRefId.ToHexString(),
-                "cadence",
-                "cadence.json"
-            );
-        }
-        File.Delete(cadencePath);
-
-        var factory = new TrackingFactory("must not dispatch");
-        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
-            static () => throw new InvalidOperationException(
-                "Missing cadence must fail before recap route loading."
-            ),
-            Connections(connection),
-            factory,
-            new RecapGridAgentControlProfileRegistry([profile]),
-            inputProjector: GalateaInputProjector.Instance
-        );
-        var candidate = new GalateaRecapGridComposition(
-            completion,
-            RecapGridOnlineLimits.Production,
-            _estimator
-        );
-        await using var service = new GalateaHostService(
-            Config(path, connection),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            candidate
-        );
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        GalateaLiveTurn turn = service.StartRecovery(
-            session,
-            new GalateaTurnOptions(
-                connection.Id,
-                GalateaTurnMode.Resume,
-                ExpectedHead: actionHead
-            )
-        );
-
-        GalateaTurnException failure = await Assert.ThrowsAsync<
-            GalateaTurnException
-        >(() => service.RunTurnAsync(
-            session,
-            turn,
-            CancellationToken.None
-        ));
-        Assert.Equal("recap-grid-unprovisioned", failure.FailureReason);
-        Assert.Equal(0, factory.CreateCallCount);
-        Assert.Equal(0, factory.Client.DispatchCallCount);
-        Assert.Equal(
-            SessionExecutionPhase.AwaitingAgentAction,
-            session.Engine.InspectExecutionBoundary().Phase
-        );
-        Assert.Equal(
-            SessionEventKind.ToolResultObserved,
-            session.Engine.InspectExecutionBoundary().HeadKind
-        );
-
-        Assert.IsType<RecapGridCadenceCreateResult.Created>(
-            RecapGridCadenceFactory.Create(
-                session.Engine,
-                new RecapGridCadencePolicySpec(
-                    minimumRecentHistoryLoad: 1,
-                    HistoryPartitionAlgorithms
-                        .FirstReplaySafeBoundaryAtTargetV1,
-                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
-                    targetHistoryLoad: 1,
-                    maxRawEvents: 64,
-                    maxRenderedBytes: 1024 * 1024
-                )
-            )
-        );
-        await using GalateaRecapGridTurn reopened = await candidate
-            .OpenFreshAsync(
-                session.Engine,
-                connection.Id,
-                pendingObservation: null,
-                defaultPolicy: session.DefaultPolicy,
-                CancellationToken.None
-            );
-        Assert.Equal(1, factory.CreateCallCount);
-        Assert.Equal(0, factory.Client.DispatchCallCount);
-        Assert.NotNull(reopened.MaintenanceEvidence);
-    }
-
-    [Fact]
     public async Task CancelledFreshBindingDisposesLocalOnlineBeforeClientAndCanReopen() {
         string path = NewPath();
         CompletionConnectionConfig connection = Connection();
@@ -1114,161 +692,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             Assert.Equal(0, factory.Client.DispatchCallCount);
             Assert.NotNull(reopened.MaintenanceEvidence);
         }
-    }
-
-    [Theory]
-    [InlineData(
-        nameof(SessionJournalFailpoint.AfterActionCommitted),
-        SessionExecutionPhase.AwaitingToolExecution)]
-    [InlineData(
-        nameof(SessionJournalFailpoint.AfterToolStartedCommitted),
-        SessionExecutionPhase.AwaitingToolExecution)]
-    [InlineData(
-        nameof(SessionJournalFailpoint.AfterToolResultCommitted),
-        SessionExecutionPhase.AwaitingAgentAction)]
-    public async Task HttpResumeUsesFormalFrozenToolAndToolResultRecovery(
-        string failpointName,
-        SessionExecutionPhase expectedPhase
-    ) {
-        string path = NewPath();
-        CompletionConnectionConfig connection = Connection();
-        RecapGridAgentControlProfile profile = AgentProfile();
-        EventAddress recoveryHead = await
-            CreateAgentControlRecoveryBoundaryAsync(
-                path,
-                connection,
-                profile,
-                Enum.Parse<SessionJournalFailpoint>(failpointName),
-                expectedPhase
-            );
-        var factory = new TrackingFactory("HTTP recovery completed");
-        await using GalateaTestHost host = GalateaTestHost.OpenExisting(
-            path,
-            [connection],
-            connection.Id,
-            factory,
-            DisabledGalateaUserMessageNormalizer.Instance,
-            agentControlProfile: profile
-        );
-        using HttpClient client = host.CreateClient();
-        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(
-            client
-        );
-        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-
-        using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/characters/alice/chat/turns/resume",
-            new ResumeTurnRequest(
-                EventAddressTextCodec.Format(recoveryHead),
-                connection.Id
-            )
-        );
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        StartTurnResponseDto? accepted = await response.Content
-            .ReadFromJsonAsync<StartTurnResponseDto>();
-        Assert.NotNull(accepted);
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(
-            service.FindTurn(session, accepted!.TurnId)
-        );
-        await Assert.IsAssignableFrom<Task>(turn.RunTask)
-            .WaitAsync(HttpCompletionDeadline);
-
-        Assert.Equal("completed", turn.Status);
-        Assert.Equal(1, factory.CreateCallCount);
-        Assert.Equal(1, factory.Client.DispatchCallCount);
-        Assert.Equal(
-            SessionExecutionPhase.Idle,
-            session.Engine.InspectExecutionBoundary().Phase
-        );
-        using RecapGridControlReaderHandle control = Assert.IsType<
-            RecapGridControlReaderOpenResult.Opened
-        >(RecapGridControlFactory.OpenReader(
-            path,
-            session.Engine.BranchRefId
-        )).Handle;
-        RecapGridControlSnapshot snapshot = Assert.IsType<
-            RecapGridControlSnapshotResult.Available
-        >(control.Reader.ReadSnapshot()).Snapshot;
-        AssertRecoveredToolAndDefaultBundles(snapshot);
-    }
-
-    [Fact]
-    public async Task HttpToolContinuationRejectsHiddenCurrentConnectionAfterToolSettlement() {
-        string path = NewPath();
-        CompletionConnectionConfig visible = Connection();
-        CompletionConnectionConfig hidden = visible with {
-            Id = "hidden-helper",
-            ModelId = "hidden-model",
-        };
-        RecapGridAgentControlProfile profile = AgentProfile();
-        EventAddress recoveryHead = await
-            CreateAgentControlRecoveryBoundaryAsync(
-                path,
-                visible,
-                profile,
-                SessionJournalFailpoint.AfterActionCommitted,
-                SessionExecutionPhase.AwaitingToolExecution
-            );
-        var factory = new TrackingFactory("must not dispatch");
-        await using GalateaTestHost host = GalateaTestHost.OpenExisting(
-            path,
-            [visible, hidden],
-            visible.Id,
-            factory,
-            DisabledGalateaUserMessageNormalizer.Instance,
-            agentControlProfile: profile,
-            selectableConnectionIds: [visible.Id]
-        );
-        using HttpClient client = host.CreateClient();
-        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(
-            client
-        );
-        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
-
-        using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/characters/alice/chat/turns/resume",
-            new ResumeTurnRequest(
-                EventAddressTextCodec.Format(recoveryHead),
-                hidden.Id
-            )
-        );
-
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        StartTurnResponseDto? accepted = await response.Content
-            .ReadFromJsonAsync<StartTurnResponseDto>();
-        Assert.NotNull(accepted);
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        CharacterSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(
-            service.FindTurn(session, accepted!.TurnId)
-        );
-        await Assert.IsAssignableFrom<Task>(turn.RunTask)
-            .WaitAsync(HttpCompletionDeadline);
-
-        Assert.Equal("failed", turn.Status);
-        Assert.Equal(0, factory.CreateCallCount);
-        Assert.NotEqual(recoveryHead, session.Engine.ReadCurrentHead());
-        Assert.Equal(
-            SessionExecutionPhase.AwaitingAgentAction,
-            session.Engine.InspectExecutionBoundary().Phase
-        );
-        Assert.Equal(
-            SessionEventKind.ToolResultObserved,
-            session.Engine.InspectExecutionBoundary().HeadKind
-        );
-        Assert.Null(session.GetCurrentTurn());
-        Assert.True(session.TurnLock.Wait(0));
-        session.TurnLock.Release();
     }
 
     [Fact]
@@ -1432,72 +855,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         return legacyStarted ? LegacyPreparedV7Fixture.AppendStarted(path, head) : head;
     }
 
-    private async Task<EventAddress>
-        CreateAgentControlRecoveryBoundaryAsync(
-        string path,
-        CompletionConnectionConfig connection,
-        RecapGridAgentControlProfile profile,
-        SessionJournalFailpoint failpoint,
-        SessionExecutionPhase expectedPhase,
-        ICompletionClient? completionClient = null
-    ) {
-        using (SessionJournalEngine provisioner = SessionJournalEngine.Create(
-                   path,
-                   new SessionCreateOptions(
-                       connection.ModelId,
-                       "test system prompt",
-                       connection.CompletionSurfaceId))) {
-            ProvisionTimelineAndControl(provisioner);
-        }
-        var fixtureClient = completionClient ?? new ControlToolCallClient();
-        CompletionDispatchIdentity identity =
-            CompletionDispatchIdentityFactory.Create(
-                connection,
-                fixtureClient
-            );
-        var completionTarget = new SessionCompletionTargetIdentity(
-            identity.ConnectionId,
-            identity.Kind,
-            identity.ConnectionFingerprint
-        );
-        var initialRuntime = new SessionRuntime(
-            fixtureClient,
-            CompletionTarget: completionTarget,
-            ContextCandidateSource: new EmptyCandidateSource()
-        );
-        using SessionJournalEngine engine = SessionJournalEngine.OpenForTest(
-            path,
-            initialRuntime,
-            new SessionJournalTestHooks(failpoint)
-        );
-        using RecapGridAgentControlHandle agent = Assert.IsType<
-            RecapGridAgentControlOpenResult.Opened
-        >(RecapGridAgentControlFactory.Bind(
-            engine.ReadView,
-            profile,
-            _estimator
-        )).Handle;
-        engine.UseRuntime(new SessionRuntime(
-            fixtureClient,
-            agent.ToolSession,
-            completionTarget,
-            ToolRuntimeIdentity: agent.RuntimeIdentity,
-            ContextCandidateSource: new EmptyCandidateSource()
-        ));
-        SessionJournalFailpointException exception = await Assert.ThrowsAsync<
-            SessionJournalFailpointException
-        >(() => engine.SendAsync(
-            engine.ReadCurrentHead()!.Value,
-            "formal HTTP recovery fixture"
-        ));
-        Assert.Equal(failpoint, exception.Failpoint);
-        SessionExecutionBoundaryInspection boundary =
-            engine.InspectExecutionBoundary();
-        Assert.Equal(expectedPhase, boundary.Phase);
-        Assert.NotNull(boundary.Head);
-        return boundary.Head!.Value;
-    }
-
     private void ProvisionTimelineAndControl(SessionJournalEngine writer) {
         ProvisionTimeline(writer);
         ProvisionCadenceAndControl(writer);
@@ -1571,28 +928,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                     policy.MaxRenderedBytes)));
     }
 
-    private static RecapGridAgentControlProfile AgentProfile() {
-        Assert.True(RecapGridAgentControlBuiltIns
-            .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
-                out RecapGridControlRegistrationBundle? builtIn
-            ));
-        var admission = new RecapGridControlAdmission(
-            RecapGridControlPermission.All,
-            [builtIn!.Families[0].Digest],
-            builtIn.Definitions.Select(static value =>
-                value.Capability.CapabilityFingerprint),
-            [ContextHeaderCarrier.System],
-            ["case."],
-            maximumBootstrapRows: 64,
-            maximumProjectedCalls: 1_024
-        );
-        return RecapGridAgentControlProfile.Create(
-            "galatea-recap-grid-v1",
-            admission
-        );
-    }
-
     private static RecapGridControlRegistrationBundle GalateaBundle(
         string characterName
     ) {
@@ -1604,35 +939,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             out RecapGridControlRegistrationBundle? bundle
         ));
         return bundle!;
-    }
-
-    private static void AssertRecoveredToolAndDefaultBundles(
-        RecapGridControlSnapshot snapshot
-    ) {
-        Assert.True(RecapGridAgentControlBuiltIns
-            .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
-                out RecapGridControlRegistrationBundle? toolBundle
-            ));
-        RecapGridControlRegistrationBundle defaultBundle = GalateaBundle(
-            "Galatea");
-        Assert.Equal(4, snapshot.Head.Generation);
-        Assert.Null(snapshot.Head.ActiveRecipeDigest);
-        Assert.Equal(
-            toolBundle!.Families.Concat(defaultBundle.Families)
-                .Select(static family => family.Digest)
-                .OrderBy(static digest => digest.Value, StringComparer.Ordinal),
-            snapshot.Families.Select(static family => family.Digest)
-                .OrderBy(static digest => digest.Value, StringComparer.Ordinal)
-        );
-        Assert.Equal(
-            toolBundle.Definitions.Concat(defaultBundle.Definitions)
-                .Select(static definition => definition.Digest)
-                .OrderBy(static digest => digest.Value, StringComparer.Ordinal),
-            snapshot.Definitions.Select(static definition => definition.Digest)
-                .OrderBy(static digest => digest.Value, StringComparer.Ordinal)
-        );
-        Assert.Empty(snapshot.Recipes);
     }
 
     private static BuildTarget BundleTarget(
@@ -2300,51 +1606,6 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                 new CompletionDescriptor(
                     Name, ApiSpecId, request.ModelId)));
         }
-    }
-
-    private sealed class FlakyContinuationFactory : ICompletionClientFactory, ICompletionClient {
-        public string Name => "galatea-flaky-continuation";
-        public string ApiSpecId => "openai-chat-v1";
-        internal int Calls { get; private set; }
-        public ICompletionClient Create(CompletionConnectionConfig connection) => this;
-        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer,
-            CancellationToken cancellationToken = default) {
-            if (++Calls == 1) {
-                throw new CompletionFailureException(new(CompletionFailureKind.Transport), "scripted disconnect");
-            }
-            return Task.FromResult(new CompletionResult(new ActionMessage([new ActionBlock.Text("continued after retry")]),
-                CompletionDescriptor.From(this, request)));
-        }
-    }
-
-    private sealed class TwoControlInspectionsClient : ICompletionClient {
-        public string Name => "galatea-recap-grid-test";
-        public string ApiSpecId => "openai-chat-v1";
-        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer,
-            CancellationToken cancellationToken = default) => Task.FromResult(new CompletionResult(
-                new ActionMessage([
-                    new ActionBlock.ToolCall(new RawToolCall("recap_grid_control", "inspect-one", "{\"action\":\"inspect\"}")),
-                    new ActionBlock.ToolCall(new RawToolCall("recap_grid_control", "inspect-two", "{\"action\":\"inspect\"}"))
-                ]), CompletionDescriptor.From(this, request)));
-    }
-
-    private sealed class ControlToolCallClient : ICompletionClient {
-        public string Name => "galatea-recap-grid-test";
-        public string ApiSpecId => "openai-chat-v1";
-
-        public Task<CompletionResult> StreamCompletionAsync(
-            CompletionRequest request,
-            CompletionStreamObserver? observer,
-            CancellationToken cancellationToken = default
-        ) => Task.FromResult(new CompletionResult(
-            new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                "recap_grid_control",
-                "control-call",
-                "{\"action\":\"provision-built-in\","
-                + "\"builtInAssetId\":\"mystery-investigation-v4\"}"
-            ))]),
-            new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
-        ));
     }
 
     private sealed record DerivedSnapshot(

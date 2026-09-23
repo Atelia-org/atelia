@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 using Atelia.Completion;
 using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 
 namespace Atelia.Galatea.Server;
 
@@ -172,14 +171,7 @@ internal sealed record GalateaCharacterRecipient(
 
 public sealed record GalateaRecapGridRuntimeConfig(
     GalateaRecapGridMaintenanceConfig Maintenance
-) {
-    // Historical profile bytes are intentionally not decoded while config is
-    // loaded. Only frozen exact AgentControl recovery can force this lookup.
-    internal IRecapGridAgentControlProfileLookup? HistoricalAgentControlProfiles {
-        get;
-        init;
-    }
-}
+);
 
 public sealed record GalateaRecapGridMaintenanceConfig(
     string ConnectionId,
@@ -189,8 +181,7 @@ public sealed record GalateaRecapGridMaintenanceConfig(
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record GalateaRecapGridFileConfig(
-    GalateaRecapGridMaintenanceFileConfig Maintenance,
-    IReadOnlyList<string> HistoricalAgentControlProfileFiles
+    GalateaRecapGridMaintenanceFileConfig Maintenance
 );
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

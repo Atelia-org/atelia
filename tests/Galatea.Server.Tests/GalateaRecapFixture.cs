@@ -12,7 +12,6 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.Cli;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
@@ -56,8 +55,6 @@ internal static class GalateaRecapFixture {
                 fixture = Provision(engine, new O200kBaseHistoryUnitLoadEstimator());
             }
             string configDirectory = Path.GetDirectoryName(lab.Host.ConfigPath)!;
-            File.WriteAllBytes(Path.Combine(configDirectory, "recap-grid-profile.json"),
-                RecapGridAgentControlProfile.Create("test-profile", fixture.Admission).ToCanonicalBytes());
             File.WriteAllBytes(Path.Combine(configDirectory, "recap-grid-routes.json"),
                 Routes(fixture.Family.Digest).ToCanonicalBytes());
             return lab;

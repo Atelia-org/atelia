@@ -83,7 +83,6 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                         recapGrid.Maintenance.DispatchTimeout
                     ),
                     _registry,
-                    recapGrid.HistoricalAgentControlProfiles,
                     runtimeOptions: new RecapCompletionRuntimeOptions(
                         maximumGlobalConcurrency:
                             recapGrid.Maintenance.MaximumConcurrency

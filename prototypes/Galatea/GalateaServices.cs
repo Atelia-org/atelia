@@ -19,7 +19,6 @@ using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Online;
@@ -3407,10 +3406,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     cancellationToken);
                 host.Engine.UseRuntime(new SessionRuntime(
                     CreateRetryClient(turn.Client, liveTurn),
-                    turn.AgentControl?.ToolSession,
                     CompletionTarget: frozen.CompletionTarget,
-                    ToolRuntimeIdentity:
-                        turn.AgentControl?.RuntimeIdentity,
                     InputProjector: GalateaInputProjector.Instance));
                 SessionPreparedCompletionBoundaryResult committed = await host.Engine
                     .ResumePreparedCompletionToBoundaryAsync(capturedHead, observer, cancellationToken)
@@ -3431,33 +3427,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     .ConfigureAwait(false);
             }
             else if (requirement is SessionRuntimeRecoveryRequirements
-                         .ToolContinuationRequired toolContinuation) {
-                turn = await recapGrid.BindToolContinuationAsync(
-                    host.Engine,
-                    liveTurn.Options.ConnectionId,
-                    id => _connectionCatalog.ContainsKey(id),
-                    toolContinuation,
-                    host.DefaultPolicy,
-                    cancellationToken,
-                    liveTurn.StopController.UserStopToken
-                ).ConfigureAwait(false);
-                RecapGridOnlineContextHandle online = turn.Online
-                    ?? throw new InvalidDataException(
-                        "Tool continuation has no Online context."
-                    );
-                // Pending tools were already durably committed. User Stop
-                // must not cancel their execution token during recovery.
-                liveTurn.StopController.EnterDispatchOrThrow(cancellationToken);
-                var lifecycle = new GalateaRecoveryLifecycleGate(
-                    online.Lifecycle,
-                    liveTurn.StopController
-                );
-                host.Engine.UseRuntime(CreateRecapGridRuntime(
-                    turn,
-                    online.CandidateSource,
-                    lifecycle,
-                    liveTurn
-                ));
+                         .ToolContinuationRequired) {
+                throw new GalateaTurnException(
+                    "冻结回合需要已移除的历史RecapGrid工具运行环境。",
+                    "tool-runtime-unsupported");
             }
             else {
                 throw RecoveryRequired(requirement);
@@ -3502,12 +3475,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaLiveTurn liveTurn
     ) => new(
         CreateRetryClient(turn.Client, liveTurn),
-        turn.AgentControl?.ToolSession,
         CompletionTarget: new SessionCompletionTargetIdentity(
             turn.Identity.ConnectionId,
             turn.Identity.Kind,
             turn.Identity.ConnectionFingerprint),
-        ToolRuntimeIdentity: turn.AgentControl?.RuntimeIdentity,
         ContextCandidateSource: candidates,
         ContextLifecycle: lifecycle,
         InputProjector: GalateaInputProjector.Instance);
@@ -4415,7 +4386,6 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
 internal static class GalateaConfigLoader {
     public const string ConnectionsFileName = "connections.json";
     public const string DelegatesFileName = "delegates.json";
-    private const int MaximumAgentControlProfileCount = 256;
 
     private static IReadOnlyList<GalateaPlayerConfig> ResolvePlayers(IReadOnlyList<GalateaPlayerFileConfig> players) {
         ArgumentNullException.ThrowIfNull(players);
@@ -4526,7 +4496,7 @@ internal static class GalateaConfigLoader {
                 configDir
             ),
             MaintenanceMode: rootFile.Runtime.MaintenanceMode,
-            RecapGrid: LoadRecapGridConfig(rootFile.Runtime.RecapGrid, configDir),
+            RecapGrid: LoadRecapGridConfig(rootFile.Runtime.RecapGrid),
             CompletionAttemptTimeoutSeconds: rootFile.Runtime.CompletionAttemptTimeoutSeconds
         ) with {
             CharacterRecipientDirectory = characterRecipientDirectory
@@ -4562,8 +4532,7 @@ internal static class GalateaConfigLoader {
     }
 
     private static GalateaRecapGridRuntimeConfig LoadRecapGridConfig(
-        GalateaRecapGridFileConfig? configured,
-        string configDirectory
+        GalateaRecapGridFileConfig? configured
     ) {
         if (configured is null) {
             throw new InvalidOperationException(
@@ -4581,43 +4550,6 @@ internal static class GalateaConfigLoader {
                 "recapGrid.maintenance is invalid."
             );
         }
-        IReadOnlyList<string>? profileFiles =
-            configured.HistoricalAgentControlProfileFiles;
-        if (profileFiles is null
-            || profileFiles.Count > MaximumAgentControlProfileCount) {
-            throw new InvalidOperationException(
-                "recapGrid.historicalAgentControlProfileFiles must contain "
-                + "at most 256 exact profile paths."
-            );
-        }
-        var resolvedProfiles = new HashSet<string>(
-            OperatingSystem.IsWindows()
-                ? StringComparer.OrdinalIgnoreCase
-                : StringComparer.Ordinal
-        );
-        var canonicalProfilePaths = new List<string>(
-            profileFiles.Count
-        );
-        for (int index = 0; index < profileFiles.Count; index++) {
-            string path = ResolveRequiredFilePath(
-                profileFiles[index],
-                configDirectory,
-                $"recapGrid.historicalAgentControlProfileFiles[{index}]",
-                requireExistingFile: true
-            );
-            if (!resolvedProfiles.Add(path)) {
-                throw new InvalidOperationException(
-                    "recapGrid.historicalAgentControlProfileFiles contains a "
-                    + "duplicate canonical path."
-                );
-            }
-            GalateaStrictConfigReader.RequireBoundedRegularFileNoFollow(
-                path,
-                GalateaHistoricalAgentControlProfiles.MaximumProfileUtf8Bytes,
-                "historical Agent Control profile"
-            );
-            canonicalProfilePaths.Add(path);
-        }
         return new GalateaRecapGridRuntimeConfig(
             new GalateaRecapGridMaintenanceConfig(
                 maintenance.ConnectionId,
@@ -4626,34 +4558,7 @@ internal static class GalateaConfigLoader {
                     maintenance.DispatchTimeoutMilliseconds
                 )
             )
-        ) {
-            HistoricalAgentControlProfiles = canonicalProfilePaths.Count == 0
-                ? null
-                : new GalateaHistoricalAgentControlProfiles(
-                    canonicalProfilePaths)
-        };
-    }
-
-    private static string ResolveRequiredFilePath(
-        string configuredPath,
-        string configDirectory,
-        string field,
-        bool requireExistingFile
-    ) {
-        if (string.IsNullOrWhiteSpace(configuredPath)) {
-            throw new InvalidOperationException(
-                $"{field} must be non-empty."
-            );
-        }
-        string resolved = Path.GetFullPath(configuredPath, configDirectory);
-        RejectReparsePointsOnExistingPath(resolved, field);
-        if (requireExistingFile && !File.Exists(resolved)) {
-            throw new FileNotFoundException(
-                $"{field} was not found: {resolved}",
-                resolved
-            );
-        }
-        return resolved;
+        );
     }
 
     private static byte[] ReadBoundedFile(
@@ -5105,8 +5010,7 @@ internal static class GalateaConfigTemplateFactory {
                     ConnectionId: DefaultConnectionId,
                     MaximumConcurrency: 1,
                     DispatchTimeoutMilliseconds: 900_000
-                ),
-                HistoricalAgentControlProfileFiles: []
+                )
               )
             )
         );

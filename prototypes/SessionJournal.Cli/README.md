@@ -76,8 +76,7 @@ independent review已PASS。
 `--minimum-recent-history-load`是必需输入；其他命令不自动
 创建。Family、Definition、Recipe 输入必须是 formal canonical bytes；
 `provision-asset` 只接受CLI compile-time closed operator catalog中的code-owned exact
-asset ID；Galatea operator asset不会进入AgentControl built-in catalog或其implementation
-fingerprint。Control admission 是独立 strict
+asset ID；operator asset 与模型可见工具 runtime 无关。Control admission 是独立 strict
 canonical 文件，不能从 payload 自授权。
 
 当前 Galatea selector 为 `galatea-rolling-rewrite-zh-cn-v7`。`scaffold` 与
@@ -94,13 +93,13 @@ recipe/build/fulfillment/promotion 流程重建变更的列，注册新资产本
 
 `recap-grid scaffold` 是 provider-free、create-only 的operator bootstrap：对一个
 code-owned operator asset，把operator显式给出的permissions、logical-column prefixes、
-Control budgets和route execution limits组合成三份strict canonical文件——Control admission、
-AgentControl profile、Hosting route manifest。family/capability/carrier只来自code-owned
-registration bundle；三个output必须pairwise distinct且全部不存在，任一existing时零写。
+Control budgets和route execution limits组合成两份strict canonical文件——Control admission
+和Hosting route manifest。family/capability/carrier只来自code-owned
+registration bundle；两个output必须pairwise distinct且全部不存在，任一existing时零写。
 命令会在每次写前与写后调用正式`DecodeCanonical`做exact self-check，并报告bounded
-length/SHA-256/runtime identity。built-in capability的semantic model为null时必须省略
+length/SHA-256。built-in capability的semantic model为null时必须省略
 `--semantic-model-id`，wire中仍是explicit null；不存在wildcard/default fallback。生成后可把
-admission交给`init`，profile/route路径交给Galatea strict config。
+admission交给`init`；route manifest 只用于显式 CLI build/online workflow，不进入 Galatea V13 root config。
 
 `recap-grid build --connections` 读取 Completion V3 catalog，可直接使用 Galatea 的 `connections.json`，
 不要求或虚构 `defaultConnectionId`，不猜测格式或回退 V2。`--routes` 使用 `RecapGridRouteManifest.ParseJson`：
@@ -143,9 +142,9 @@ head-through proof 后执行 Promotion CAS；build 本身不 activate。`materia
 
 ### 构建与即时诊断
 
-下面复用已配置的 route 和 V3 catalog，不新增 profile 或默认连接。先关闭该 repository 的其他 owner，
-使用已核验的 branch/ref；`<配置目录>` 可取 Galatea `config.json` 所在目录，route 路径以其中 `routeManifestPath` 为准。
-`build` 不接收 profile：当前构建读取已经注册的规则，已有 profile 仍用于各自的 bootstrap/历史工具恢复入口。
+下面复用 operator 显式指定的 route 和 V3 catalog，不新增默认连接。先关闭该 repository 的其他 owner，
+使用已核验的 branch/ref；`<配置目录>` 可取 Galatea `config.json` 所在目录，但 V13 root config 不含 route 路径。
+`build` 读取已经注册的规则，不接收工具 profile。
 
 ```bash
 dotnet run --no-build --project prototypes/SessionJournal.Cli -- recap-grid progress \
@@ -233,9 +232,10 @@ inspect；restore 的 pre-replace temporary 删除失败目前只有有限 P2 �
 
 `run-online-turn` 是唯一正式 online CLI。Prepared 按 frozen identity exact bind；
 启动时strict config/connections已经冻结；Started/Refuse早于本次current connection
-selection/client、route与derived owner。Fresh/NewRequest不绑定current Agent Control
-profile，也不向新的completion注入`recap_grid_control`；`--admission`只在恢复历史上
-已经frozen的Prepared/ToolContinuation tool runtime时提供exact profile。报告使用
+selection/client、route与derived owner。模型可见的 `recap_grid_control` 已移除；
+带旧工具 runtime 身份的 Prepared/ToolContinuation 返回 `tool-runtime-unsupported`，
+不会忽略已提交工具调用并继续生成。`--admission` 仍用于独立的 Control operator 命令，
+不再用于 `run-online-turn`。报告使用
 `atelia.session-journal.recap-grid-cli.v1`：syntax/confirmation 返回 1，typed
 operational failure 返回 2，success/idempotent 返回 0；Busy、Stale、Unsupported、
 Indeterminate 均不自动 retry。
@@ -244,7 +244,7 @@ Control 新写入文件为 schema v4；旧 v2/v3 按各自原格式验证后投�
 纯读、receipt 成功重放及 export/backup 保留原 Head/bytes，下一真实 mutation 才写 v4。receipt 的
 operationKey、command/runtime/sequence 与首次生效坐标仍保留。Recipes 非空 registration 的新命令摘要改变，
 旧 receipt 按新命令会 Conflict；family/definition-only 与 promotion 的命令不变，空 bundle 仍拒绝。
-AgentControl 输出继续 schemaVersion 2/operationKey，Journal 旧工具结果不重渲染。最终 pending 收敛与回退边界见
+Journal 旧工具结果不重渲染；若仍需已移除的工具 runtime，则明确返回 `tool-runtime-unsupported`。最终 pending 收敛与回退边界见
 [Timeline 单一行身份计划](../../docs/Galatea/timeline-row-identity-simplification-plan.md)。
 
 `recap-grid legacy-root` 只处理固定七个旧 slot。`inspect` 产生 bounded opaque

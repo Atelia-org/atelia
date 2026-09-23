@@ -5,7 +5,6 @@ using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Xunit;
@@ -40,10 +39,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
             File.ReadAllBytes(second.Admission)
         );
         Assert.Equal(
-            File.ReadAllBytes(first.Profile),
-            File.ReadAllBytes(second.Profile)
-        );
-        Assert.Equal(
             File.ReadAllBytes(first.Route),
             File.ReadAllBytes(second.Route)
         );
@@ -52,19 +47,11 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
             RecapGridControlAdmission.DecodeCanonical(
                 File.ReadAllBytes(first.Admission)
             );
-        RecapGridAgentControlProfile profile =
-            RecapGridAgentControlProfile.DecodeCanonical(
-                File.ReadAllBytes(first.Profile)
-            );
         RecapGridRouteManifest route =
             RecapGridRouteManifest.DecodeCanonical(
                 File.ReadAllBytes(first.Route)
             );
-        Assert.Equal("operator-profile", profile.ProfileId);
-        Assert.Equal(
-            admission.ToCanonicalBytes(),
-            profile.Admission.ToCanonicalBytes()
-        );
+        Assert.NotEmpty(admission.ToCanonicalBytes());
         RecapGridRouteManifestEntry entry = Assert.Single(route.Routes);
         Assert.Null(entry.Key.SemanticModelId);
         Assert.Equal("agent-connection", entry.ConnectionId);
@@ -73,8 +60,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
 
         JsonElement detail = report.GetProperty("detail");
         Assert.Equal(64, detail.GetProperty("admission")
-            .GetProperty("sha256").GetString()!.Length);
-        Assert.Equal(64, detail.GetProperty("profile")
             .GetProperty("sha256").GetString()!.Length);
         Assert.Equal(64, detail.GetProperty("route")
             .GetProperty("sha256").GetString()!.Length);
@@ -184,16 +169,15 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
     public void ExistingOrInvalidInputRejectsBeforeAnyOutputOrProvider() {
         Directory.CreateDirectory(_root);
         ScaffoldPaths paths = Paths("existing");
-        Directory.CreateDirectory(Path.GetDirectoryName(paths.Profile)!);
-        File.WriteAllBytes(paths.Profile, [4, 2]);
+        Directory.CreateDirectory(Path.GetDirectoryName(paths.Route)!);
+        File.WriteAllBytes(paths.Route, [4, 2]);
         Assert.Equal(1, Run(ScaffoldArguments(paths)));
         Assert.False(File.Exists(paths.Admission));
-        Assert.False(File.Exists(paths.Route));
-        Assert.Equal(new byte[] { 4, 2 }, File.ReadAllBytes(paths.Profile));
+        Assert.Equal(new byte[] { 4, 2 }, File.ReadAllBytes(paths.Route));
 
         string[] duplicateOutputs = ScaffoldArguments(Paths("same-output"));
         duplicateOutputs = duplicateOutputs.ReplaceOption(
-            "profile-output",
+            "route-output",
             OptionValue(duplicateOutputs, "admission-output")
         );
         foreach (string[] invalid in new[] {
@@ -237,7 +221,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
                  }) {
             Assert.NotEqual(0, Run(invalid));
             Assert.False(File.Exists(OptionValue(invalid, "admission-output")));
-            Assert.False(File.Exists(OptionValue(invalid, "profile-output")));
             Assert.False(File.Exists(OptionValue(invalid, "route-output")));
         }
         Assert.Equal(0, _factory.CreateCallCount);
@@ -279,13 +262,11 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         string parentAsFile = Path.Combine(_root, "nested", "admission.json");
         var paths = new ScaffoldPaths(
             parentAsFile,
-            Path.Combine(parentAsFile, "profile.json"),
-            Path.Combine(_root, "nested", "routes.json")
+            Path.Combine(parentAsFile, "routes.json")
         );
 
         Assert.Equal(1, Run(ScaffoldArguments(paths)));
         Assert.False(File.Exists(paths.Admission));
-        Assert.False(File.Exists(paths.Profile));
         Assert.False(File.Exists(paths.Route));
         Assert.False(Directory.Exists(parentAsFile));
         Assert.Equal(0, _factory.CreateCallCount);
@@ -293,8 +274,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
 
     private string[] ScaffoldArguments(ScaffoldPaths paths) => [
         "scaffold",
-        "--asset", RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
-        "--profile-id", "operator-profile",
+        "--asset", RecapGridSampleAssets.MysteryInvestigationV4,
         "--connection-id", "agent-connection",
         "--permission", "create",
         "--permission", "register-family",
@@ -308,7 +288,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         "--max-concurrency", "2",
         "--dispatch-timeout-ms", "30000",
         "--admission-output", paths.Admission,
-        "--profile-output", paths.Profile,
         "--route-output", paths.Route
     ];
 
@@ -316,7 +295,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         string directory = Path.Combine(_root, name);
         return new ScaffoldPaths(
             Path.Combine(directory, "admission.json"),
-            Path.Combine(directory, "profile.json"),
             Path.Combine(directory, "routes.json")
         );
     }
@@ -374,7 +352,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
 
     private sealed record ScaffoldPaths(
         string Admission,
-        string Profile,
         string Route
     );
 }

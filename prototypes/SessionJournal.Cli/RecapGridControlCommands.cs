@@ -1,7 +1,6 @@
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 
 namespace Atelia.SessionJournal.Cli;

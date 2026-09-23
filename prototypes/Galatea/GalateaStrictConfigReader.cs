@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 12;
+    internal const int CurrentConfigVersion = 13;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumCharacterCount = 256;
@@ -290,13 +290,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("12"u8)) {
+            || !reader.ValueSpan.SequenceEqual("13"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 12; "
+        "Galatea config requires exact integer version 'v': 13; "
         + "migrate the config before retrying."
     );
 
@@ -450,21 +450,11 @@ internal static class GalateaStrictConfigReader {
                         property);
                     ValidateRecapGridMaintenanceObject(ref reader);
                     break;
-                case "historicalAgentControlProfileFiles":
-                    ValidateStringArrayOrNull(
-                        ref reader,
-                        256,
-                        property,
-                        allowNull: false
-                    );
-                    break;
                 default:
                     throw Unknown("recapGrid", property);
             }
         }
-        foreach (string field in new[] {
-                     "maintenance", "historicalAgentControlProfileFiles"
-                 }) {
+        foreach (string field in new[] { "maintenance" }) {
             if (!seen.Contains(field)) {
                 throw new InvalidDataException(
                     "recapGrid requires '" + field + "'."

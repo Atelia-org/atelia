@@ -6,7 +6,6 @@ using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Microsoft.AspNetCore.Hosting;
@@ -103,7 +102,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool deleteFilesOnDispose = true,
         string? callLogDirectory = null,
         bool maintenanceMode = false,
-        RecapGridAgentControlProfile? agentControlProfile = null,
         bool provisionRawOnly = true,
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
         IReadOnlyList<string>? selectableConnectionIds = null,
@@ -168,7 +166,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             "test ${characterName} system prompt",
             callLogDirectory,
             maintenanceMode,
-            agentControlProfile,
             selectableConnectionIds: selectableConnectionIds,
             inputNormalizerConnectionId: inputNormalizerConnectionId,
             outboundMailExtractorConnectionId:
@@ -210,7 +207,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             "test ${characterName} system prompt",
         bool maintenanceMode = false,
         bool deleteFilesOnDispose = true,
-        RecapGridAgentControlProfile? agentControlProfile = null,
         string characterName = "Galatea",
         string playerName = "刘世超"
     ) {
@@ -254,8 +250,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 characterContextTemplate,
                 callLogDirectory: null,
                 maintenanceMode,
-                agentControlProfile,
-                sessionProvisioning,
+                    sessionProvisioning,
                 characterName: characterName,
                 playerName: playerName
             );
@@ -293,7 +288,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             "test ${characterName} system prompt",
         string? callLogDirectory = null,
         bool maintenanceMode = false,
-        RecapGridAgentControlProfile? agentControlProfile = null,
         GalateaSessionProvisioning sessionProvisioning =
             GalateaSessionProvisioning.ExistingOnly,
         IReadOnlyList<string>? selectableConnectionIds = null,
@@ -310,7 +304,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         characterContextTemplate,
         callLogDirectory,
         maintenanceMode,
-        agentControlProfile,
         sessionProvisioning,
         requireExistingDirectory: true,
         selectableConnectionIds,
@@ -346,7 +339,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         characterContextTemplate,
         callLogDirectory: null,
         maintenanceMode: false,
-        agentControlProfile: null,
         sessionProvisioning,
         requireExistingDirectory: false,
         selectableConnectionIds,
@@ -365,7 +357,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string characterContextTemplate,
         string? callLogDirectory,
         bool maintenanceMode,
-        RecapGridAgentControlProfile? agentControlProfile,
         GalateaSessionProvisioning sessionProvisioning,
         bool requireExistingDirectory,
         IReadOnlyList<string>? selectableConnectionIds,
@@ -409,8 +400,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 characterContextTemplate,
                 callLogDirectory,
                 maintenanceMode,
-                agentControlProfile,
-                sessionProvisioning,
+                    sessionProvisioning,
                 selectableConnectionIds,
                 inputNormalizerConnectionId,
                 outboundMailExtractorConnectionId,
@@ -524,7 +514,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string characterContextTemplate,
         string? callLogDirectory,
         bool maintenanceMode,
-        RecapGridAgentControlProfile? agentControlProfile,
         GalateaSessionProvisioning sessionProvisioning =
             GalateaSessionProvisioning.ExistingOnly,
         IReadOnlyList<string>? selectableConnectionIds = null,
@@ -537,16 +526,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string characterName = "Galatea",
         string playerName = "刘世超"
     ) {
-        string agentControlProfileFile = "recap-grid-profile.json";
-        RecapGridAgentControlProfile profile = agentControlProfile
-            ?? CreateGalateaV7Profile();
-        File.WriteAllBytes(
-            Path.Combine(
-                configurationDirectory,
-                agentControlProfileFile
-            ),
-            profile.ToCanonicalBytes()
-        );
         var users = new GalateaRootFileConfig(
             Version: GalateaStrictConfigReader.CurrentConfigVersion,
             Characters: [
@@ -582,8 +561,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     recapMaintenanceConnectionId ?? defaultConnectionId,
                     MaximumConcurrency: 1,
                     DispatchTimeoutMilliseconds: 900_000
-                ),
-                [agentControlProfileFile]
+                )
               )
             )
         );
@@ -765,38 +743,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         byte[] bytes = output.WrittenSpan.ToArray();
         _ = CompletionConnectionConfigLoader.DecodeCatalog(bytes);
         File.WriteAllBytes(path, bytes);
-    }
-
-    internal static RecapGridAgentControlProfile CreateGalateaV7Profile(
-        RecapGridControlPermission permissions =
-            RecapGridControlPermission.All,
-        string profileId = "test-profile"
-    ) {
-        if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
-                new GalateaRecapGridAssetParameters(
-                    new GalateaCharacterName("Galatea")
-                ),
-                out RecapGridControlRegistrationBundle? bundle)
-            || bundle is null) {
-            throw new InvalidOperationException(
-                "The code-owned Galatea RecapGrid test asset is unavailable."
-            );
-        }
-        return RecapGridAgentControlProfile.Create(
-            profileId,
-            new RecapGridControlAdmission(
-                permissions,
-                bundle.Families.Select(static value => value.Digest),
-                bundle.Definitions.Select(static value =>
-                    value.Capability.CapabilityFingerprint).Distinct(),
-                bundle.Definitions.Select(static value => value.Target.Carrier)
-                    .Distinct(),
-                ["world-understanding", "autobiography"],
-                maximumBootstrapRows: 64,
-                maximumProjectedCalls: 1_024
-            )
-        );
     }
 
     internal static void ProvisionRawOnlyRecapGrid(

@@ -25,15 +25,14 @@ dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.c
 
 | 文件 | 需要准备什么 |
 |:--|:--|
-| `config.json` | V12；Characters 的身份/状态/home/连接与自主 interval、Players 的登录信息、Runtime 设置 |
+| `config.json` | V13；Characters 的身份/状态/home/连接与自主 interval、Players 的登录信息、Runtime 设置 |
 | 同目录 `connections.json` | V3；可用连接、可选连接列表，以及全部四个 feature bindings |
 | 同目录 `delegates.json` | V5；有效的 Node/Codex/sidecar 路径、已存在的 codexHome 与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
-| `runtime.recapGrid.historicalAgentControlProfileFiles` 指向的文件 | 可为空；非空时仅为 frozen exact tool recovery 保留历史 profile，不是新 work 或 bootstrap 的授权 |
 
-字段说明、operator V11→V12 升级、独立 CLI scaffold 和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。V12 host 的
-`runtime.recapGrid` 只配置 maintenance（connection、全局并发、attempt timeout）与可选 historical profiles；fresh bootstrap 使用
-code-owned bundle，不读取 profile、创建 Completion client 或调用 provider。每个 persisted RowWork 以其 actual family/protocol/semantic
+字段说明、独立 CLI scaffold 和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。V13 host 的
+`runtime.recapGrid` 只配置 maintenance（connection、全局并发、attempt timeout）；fresh bootstrap 使用
+code-owned bundle，不创建 Completion client 或调用 provider。每个 persisted RowWork 以其 actual family/protocol/semantic
 key 延迟构造 exact route，并复用共享 connection registry、retry 与全局 lane；已完成 Recap 的读取不依赖 route。独立 CLI 的 exact
 route manifest 仍保留，不能误解为全仓删除；它也不再是 Galatea root config 的 live authority。
 
@@ -45,7 +44,7 @@ route manifest 仍保留，不能误解为全仓删除；它也不再是 Galatea
 
 ## 启用服务端自主运行
 
-在 V12 `config.json` 的每个 `characters[]` 项内设置必填的分钟数：
+在 V13 `config.json` 的每个 `characters[]` 项内设置必填的分钟数：
 
 ```json
 "autonomyIntervalMinutes": 30
@@ -131,7 +130,7 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 
 | 现象 | 先检查 |
 |:--|:--|
-| 启动后生成模板并退出 | 按提示检查模板、准备有效 delegates 路径；只有 `historicalAgentControlProfileFiles` 非空且需 frozen tool recovery 时才准备相应 Agent Control profile，`[]` fresh bootstrap 不需要 |
+| 启动后生成模板并退出 | 按提示检查模板并准备有效 delegates 路径；RecapGrid 只需配置 maintenance |
 | Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和服务端异常日志 |
 | interval 为 `0` 但期待自主活动 | 将 `autonomyIntervalMinutes` 设为正整数后重启；`0` 仍恢复已有任务和 durable reply，但不创建空闲 heartbeat |
 | `blocked` 或需要恢复 | 页面原因码、当前轮次、`Galatea.Autonomy` 与相关服务端错误日志 |
@@ -154,6 +153,6 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 
 新 Observation 和 system setup 保存机读 JSON 事实与来源快照，给 LLM 的 Markdown 在请求时生成。
 新 Prepared 保存所选语义计划，每次 Started 记录实际请求摘要；换格式不授权重发结果未知的调用。
-旧 v7/v8 exact 请求仍走旧恢复合同。V11 config 不能由 V12 host 正常启动；必须停服、确认 writer 已退出、在状态目录外备份，并以默认 dry-run 的显式 operator command 升级。候选不唯一时必须选择 index，`--apply` 会备份并 strict reopen；这不授权 live SessionJournal/Store/Control 迁移，详见[配置指南](../../docs/Galatea/configuration.md#v11--v12-root-config-operator-升级)。
+旧 v7/v8 exact 请求仍走旧恢复合同。当前 V13 host 不接受旧 root config；停服、备份并只读检查 live session 后显式转换，详见[配置指南](../../docs/Galatea/configuration.md#从历史-root-config-切换到-v13)。旧工具 runtime 若仍处于当前尾部会明确拒绝恢复。
 
 停服后需让后续委派使用新 Codex session，可运行 `operator reset-codex-binding --config <absolute-path> --character <id>` 预览，再追加 `--apply`。活动邮件默认拒绝；精确放弃和恢复边界见[日常解绑说明](../../docs/Galatea/codex-session-reset-design.md)。

@@ -2,7 +2,6 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Runtime;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.HistoryTimeline;
 using System.Text;
 
@@ -352,7 +351,6 @@ public abstract record RecapGridAgentConnectionResult {
 public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     private readonly CompletionConnectionRegistry _registry;
     private readonly DeferredSharedRegistryRouteResolver _routeResolver;
-    private readonly IRecapGridAgentControlProfileLookup? _agentControl;
     private readonly bool _ownsRegistry;
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
@@ -362,14 +360,12 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         DeferredSharedRegistryRouteResolver routeResolver,
         RecapCompletionRuntime runtime,
         BoundedRecapCompletionTelemetry telemetry,
-        IRecapGridAgentControlProfileLookup? agentControl,
         bool ownsRegistry
     ) {
         _registry = registry;
         _routeResolver = routeResolver;
         Runtime = runtime;
         Telemetry = telemetry;
-        _agentControl = agentControl;
         _ownsRegistry = ownsRegistry;
     }
 
@@ -391,32 +387,10 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         routeManifestLoader,
         connections,
         clientFactory,
-        agentControl: null,
         runtimeOptions,
         maximumTelemetryEvents,
         inputProjector
     );
-
-    public static RecapGridCompletionHost Create(
-        Func<RecapGridRouteManifest> routeManifestLoader,
-        CompletionConnectionsFileConfig connections,
-        ICompletionClientFactory clientFactory,
-        RecapGridAgentControlProfileRegistry agentControl,
-        RecapCompletionRuntimeOptions? runtimeOptions = null,
-        int maximumTelemetryEvents = 1_024,
-        ISessionInputProjector? inputProjector = null
-    ) {
-        ArgumentNullException.ThrowIfNull(agentControl);
-        return CreateCore(
-            routeManifestLoader,
-            connections,
-            clientFactory,
-            agentControl,
-            runtimeOptions,
-            maximumTelemetryEvents,
-            inputProjector
-        );
-    }
 
     /// <summary>
     /// Creates a host that borrows one caller-owned connection registry while
@@ -437,7 +411,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     ) => CreateWithRegistry(
         routeManifestLoader,
         registry,
-        agentControl: null,
         runtimeOptions,
         maximumTelemetryEvents,
         ownsRegistry: false,
@@ -445,39 +418,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         inputProjector: inputProjector,
         maintenanceInvokerFactory: maintenanceInvokerFactory
     );
-
-    /// <summary>
-    /// Creates a host that borrows one caller-owned connection registry while
-    /// owning its RecapGrid runtime, route resolver, telemetry, and exact Agent
-    /// Control profile lookup. The caller must supply a registry created from
-    /// already normalized and frozen connection configuration, keep it alive
-    /// until this host is disposed, and dispose it after this host has drained.
-    /// Disposing this host never disposes the borrowed registry or any client
-    /// owned by it.
-    /// </summary>
-    public static RecapGridCompletionHost CreateBorrowingRegistry(
-        Func<RecapGridRouteManifest> routeManifestLoader,
-        CompletionConnectionRegistry registry,
-        RecapGridAgentControlProfileRegistry agentControl,
-        RecapCompletionRuntimeOptions? runtimeOptions = null,
-        int maximumTelemetryEvents = 1_024,
-        IRecapCompletionTelemetry? liveTelemetry = null,
-        ISessionInputProjector? inputProjector = null,
-        Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>? maintenanceInvokerFactory = null
-    ) {
-        ArgumentNullException.ThrowIfNull(agentControl);
-        return CreateWithRegistry(
-            routeManifestLoader,
-            registry,
-            agentControl,
-            runtimeOptions,
-            maximumTelemetryEvents,
-            ownsRegistry: false,
-            liveTelemetry: liveTelemetry,
-            inputProjector: inputProjector,
-            maintenanceInvokerFactory: maintenanceInvokerFactory
-        );
-    }
 
     /// <summary>
     /// Creates a host backed by one exact-route factory. The factory is asked
@@ -490,7 +430,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         Func<RecapCompletionRouteKey, RecapGridRouteManifestEntry?>
             exactRouteFactory,
         CompletionConnectionRegistry registry,
-        IRecapGridAgentControlProfileLookup? agentControl = null,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
         int maximumTelemetryEvents = 1_024,
         IRecapCompletionTelemetry? liveTelemetry = null,
@@ -503,7 +442,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         return CreateWithRegistry(
             exactRouteFactory,
             registry,
-            agentControl,
             runtimeOptions,
             maximumTelemetryEvents,
             ownsRegistry: false,
@@ -517,7 +455,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         Func<RecapGridRouteManifest> routeManifestLoader,
         CompletionConnectionsFileConfig connections,
         ICompletionClientFactory clientFactory,
-        IRecapGridAgentControlProfileLookup? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
         ISessionInputProjector? inputProjector
@@ -532,7 +469,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             return CreateWithRegistry(
                 routeManifestLoader,
                 registry,
-                agentControl,
                 runtimeOptions,
                 maximumTelemetryEvents,
                 ownsRegistry: true,
@@ -548,7 +484,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     private static RecapGridCompletionHost CreateWithRegistry(
         Func<RecapGridRouteManifest> routeManifestLoader,
         CompletionConnectionRegistry registry,
-        IRecapGridAgentControlProfileLookup? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
         bool ownsRegistry,
@@ -571,7 +506,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             resolver,
             runtime,
             telemetry,
-            agentControl,
             ownsRegistry
         );
     }
@@ -580,7 +514,6 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         Func<RecapCompletionRouteKey, RecapGridRouteManifestEntry?>
             exactRouteFactory,
         CompletionConnectionRegistry registry,
-        IRecapGridAgentControlProfileLookup? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
         bool ownsRegistry,
@@ -607,47 +540,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             resolver,
             runtime,
             telemetry,
-            agentControl,
             ownsRegistry
-        );
-    }
-
-    public RecapGridAgentControlOpenResult OpenAgentControl(
-        SessionJournalReadView selectedRef,
-        string profileId,
-        params IHistoryUnitLoadEstimator[] estimators
-    ) {
-        ArgumentNullException.ThrowIfNull(selectedRef);
-        if (_agentControl is null
-            || !_agentControl.TryGet(profileId, out var profile)) {
-            return new RecapGridAgentControlOpenResult.ProfileAbsent(
-                profileId
-            );
-        }
-        return RecapGridAgentControlFactory.Bind(
-            selectedRef,
-            profile,
-            estimators
-        );
-    }
-
-    public RecapGridAgentControlOpenResult BindAgentControlExact(
-        SessionJournalReadView selectedRef,
-        SessionToolRuntimeIdentity runtimeIdentity,
-        params IHistoryUnitLoadEstimator[] estimators
-    ) {
-        ArgumentNullException.ThrowIfNull(selectedRef);
-        ArgumentNullException.ThrowIfNull(runtimeIdentity);
-        if (_agentControl is null
-            || !_agentControl.TryBindExact(runtimeIdentity, out var profile)) {
-            return new RecapGridAgentControlOpenResult.ProfileAbsent(
-                runtimeIdentity.CapabilitySetFingerprint
-            );
-        }
-        return RecapGridAgentControlFactory.Bind(
-            selectedRef,
-            profile,
-            estimators
         );
     }
 

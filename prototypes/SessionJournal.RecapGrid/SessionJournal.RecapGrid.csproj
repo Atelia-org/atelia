@@ -36,7 +36,6 @@
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Getter.Tests" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Hosting.Tests" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Online.Tests" />
-    <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.AgentControl.Tests" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Abstractions.Tests" />
   </ItemGroup>
 

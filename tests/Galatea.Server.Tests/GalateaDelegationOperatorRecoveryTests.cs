@@ -9,7 +9,6 @@ using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.Testing;
 using Xunit;
@@ -705,11 +704,6 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
         }
 
         internal string WriteConfigFiles() {
-            RecapGridAgentControlProfile profile = CreateProfile();
-            File.WriteAllBytes(
-                Path.Combine(_root, "profile.json"),
-                profile.ToCanonicalBytes()
-            );
             var users = new GalateaRootFileConfig(
                 GalateaStrictConfigReader.CurrentConfigVersion,
                 [new GalateaCharacterFileConfig(
@@ -726,8 +720,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 [],
                 new GalateaRuntimeFileConfig(RecapGrid: new GalateaRecapGridFileConfig(
                     new GalateaRecapGridMaintenanceFileConfig(
-                        "test", 1, 900_000),
-                    ["profile.json"]))
+                        "test", 1, 900_000)))
             );
             string configPath = Path.Combine(_root, "config.json");
             File.WriteAllText(
@@ -749,27 +742,6 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             );
             GalateaTestHost.WriteDelegatesFile(_root);
             return configPath;
-        }
-
-        private static RecapGridAgentControlProfile CreateProfile() {
-            Assert.True(RecapGridAgentControlBuiltIns
-                .TryCreateRegistrationBundle(
-                    RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
-                    out RecapGridControlRegistrationBundle? builtIn
-                ));
-            return RecapGridAgentControlProfile.Create(
-                "operator-recovery-profile",
-                new RecapGridControlAdmission(
-                    RecapGridControlPermission.All,
-                    [builtIn!.Families[0].Digest],
-                    builtIn.Definitions.Select(static value =>
-                        value.Capability.CapabilityFingerprint),
-                    [ContextHeaderCarrier.System],
-                    ["case."],
-                    maximumBootstrapRows: 64,
-                    maximumProjectedCalls: 1_024
-                )
-            );
         }
 
         private static SendMailIntent Mail(string body) => new(

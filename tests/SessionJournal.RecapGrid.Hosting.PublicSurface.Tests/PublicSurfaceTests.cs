@@ -1,6 +1,5 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using System.Text;
@@ -168,7 +167,7 @@ public sealed class PublicSurfaceTests {
     }
 
     [Fact]
-    public void BorrowingFactoryExposesOptionalAgentControlTelemetryAndMaintenanceDeadlineOwner() {
+    public void BorrowingFactoryExposesOptionalTelemetryAndMaintenanceDeadlineOwner() {
         var factories = typeof(RecapGridCompletionHost).GetMethods()
             .Where(static method => string.Equals(
                 method.Name,
@@ -180,7 +179,7 @@ public sealed class PublicSurfaceTests {
                 .ToArray())
             .ToArray();
 
-        Assert.Equal(3, signatures.Length);
+        Assert.Equal(2, signatures.Length);
         Assert.Contains(signatures, static signature => signature.SequenceEqual([
             typeof(Func<RecapGridRouteManifest>),
             typeof(CompletionConnectionRegistry),
@@ -194,23 +193,12 @@ public sealed class PublicSurfaceTests {
             typeof(Func<RecapCompletionRouteKey,
                 RecapGridRouteManifestEntry>),
             typeof(CompletionConnectionRegistry),
-            typeof(IRecapGridAgentControlProfileLookup),
             typeof(RecapCompletionRuntimeOptions),
             typeof(int),
             typeof(IRecapCompletionTelemetry),
             typeof(ISessionInputProjector),
             typeof(Func<string, ICompletionClient, TimeSpan,
                 IRecapCompletionAttemptDeadlineInvoker>)
-        ]));
-        Assert.Contains(signatures, static signature => signature.SequenceEqual([
-            typeof(Func<RecapGridRouteManifest>),
-            typeof(CompletionConnectionRegistry),
-            typeof(RecapGridAgentControlProfileRegistry),
-            typeof(RecapCompletionRuntimeOptions),
-            typeof(int),
-            typeof(IRecapCompletionTelemetry),
-            typeof(ISessionInputProjector),
-            typeof(Func<string, ICompletionClient, TimeSpan, IRecapCompletionAttemptDeadlineInvoker>)
         ]));
         Assert.All(factories, static method => {
             var liveTelemetry = method.GetParameters()[^3];

@@ -2,7 +2,6 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
@@ -23,7 +22,6 @@ public sealed partial class GalateaRecapGridCompositionTests {
             (family, _, recipe) = ProvisionActiveEmptyRecipe(provisioner);
         }
         var connection = Connection();
-        var profile = AgentProfile();
         var config = Config(path, connection) with {
             RecapGrid = new(
                 new GalateaRecapGridMaintenanceConfig(
@@ -31,10 +29,7 @@ public sealed partial class GalateaRecapGridCompositionTests {
                     1,
                     TimeSpan.FromMilliseconds(30)
                 )
-            ) {
-                HistoricalAgentControlProfiles =
-                    new RecapGridAgentControlProfileRegistry([profile])
-            }
+            )
         };
         var clock = new GalateaLabClock();
         var provider = new RetryMaintenanceClient();

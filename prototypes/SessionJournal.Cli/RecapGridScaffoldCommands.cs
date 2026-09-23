@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
@@ -14,7 +13,6 @@ internal static partial class RecapGridCommands {
         options.EnsureOnly(
             "asset",
             "character-name",
-            "profile-id",
             "connection-id",
             "semantic-model-id",
             "permission",
@@ -24,7 +22,6 @@ internal static partial class RecapGridCommands {
             "max-concurrency",
             "dispatch-timeout-ms",
             "admission-output",
-            "profile-output",
             "route-output"
         );
         string assetId = options.RequireSingle("asset");
@@ -90,11 +87,6 @@ internal static partial class RecapGridCommands {
             maximumBootstrapRows,
             maximumProjectedCalls
         );
-        var profile = RecapGridAgentControlProfile.Create(
-            options.RequireSingle("profile-id"),
-            admission
-        );
-
         RecapCompletionRouteKey[] exactKeys = [.. bundle.Definitions
             .Select(static definition => new RecapCompletionRouteKey(
                 definition.FamilyDigest,
@@ -135,19 +127,12 @@ internal static partial class RecapGridCommands {
         );
 
         byte[] admissionBytes = admission.ToCanonicalBytes();
-        byte[] profileBytes = profile.ToCanonicalBytes();
         byte[] routeBytes = route.ToCanonicalBytes();
         RequireExactScaffoldRoundTrip(
             admissionBytes,
             static bytes => RecapGridControlAdmission.DecodeCanonical(bytes)
                 .ToCanonicalBytes(),
             "Control admission"
-        );
-        RequireExactScaffoldRoundTrip(
-            profileBytes,
-            static bytes => RecapGridAgentControlProfile.DecodeCanonical(bytes)
-                .ToCanonicalBytes(),
-            "Agent Control profile"
         );
         RequireExactScaffoldRoundTrip(
             routeBytes,
@@ -159,15 +144,11 @@ internal static partial class RecapGridCommands {
         string admissionOutput = Path.GetFullPath(
             options.RequireSingle("admission-output")
         );
-        string profileOutput = Path.GetFullPath(
-            options.RequireSingle("profile-output")
-        );
         string routeOutput = Path.GetFullPath(
             options.RequireSingle("route-output")
         );
         RequireDistinctCreateOnlyScaffoldOutputs([
             admissionOutput,
-            profileOutput,
             routeOutput
         ]);
 
@@ -178,14 +159,6 @@ internal static partial class RecapGridCommands {
             static bytes => RecapGridControlAdmission.DecodeCanonical(bytes)
                 .ToCanonicalBytes(),
             "Control admission"
-        );
-        WriteExternalCreateNew(profileOutput, profileBytes);
-        VerifyWrittenScaffoldFile(
-            profileOutput,
-            profileBytes,
-            static bytes => RecapGridAgentControlProfile.DecodeCanonical(bytes)
-                .ToCanonicalBytes(),
-            "Agent Control profile"
         );
         WriteExternalCreateNew(routeOutput, routeBytes);
         VerifyWrittenScaffoldFile(
@@ -218,16 +191,10 @@ internal static partial class RecapGridCommands {
                             definition.Target.SemanticHeading,
                         digest = definition.Digest.Value
                     }),
-                profileId = profile.ProfileId,
-                runtimeIdentity = profile.RuntimeIdentity,
                 routeCount = route.Routes.Count,
                 admission = DescribeScaffoldOutput(
                     admissionOutput,
                     admissionBytes
-                ),
-                profile = DescribeScaffoldOutput(
-                    profileOutput,
-                    profileBytes
                 ),
                 route = DescribeScaffoldOutput(routeOutput, routeBytes)
             }

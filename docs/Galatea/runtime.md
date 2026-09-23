@@ -173,26 +173,25 @@ admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细�
 
 ## SessionJournal / RecapGrid 恢复顺序
 
-恢复先服从已经 durable 的 Journal 状态，不能拿 current 配置、current route 或当前 provider 猜测旧回合。历史 Agent Control profile 必须保留，供 `Prepared`/`ToolContinuation` 按 frozen identity 绑定；fresh `NewRequest` 不再绑定 current profile，也不会向新模型请求注入 `recap_grid_control`。current profile 仅提供 missing-session structural bootstrap 的 admission authority。route manifest 在首次 RecapGrid work 才延迟读取；canonical V2 只保存 exact per-route `connectionId` 与并发/timeout 调度 policy。Completion 不提供 caller-selected output cap，也没有 wildcard/default fallback。
+恢复先服从已经 durable 的 Journal 状态，不能拿 current 配置、current route 或当前 provider 猜测旧回合。模型可见的 `recap_grid_control` 已移除：若当前尾部仍冻结着旧工具 runtime，Prepared/ToolContinuation 会返回 `tool-runtime-unsupported`，不会忽略工具调用继续生成。fresh `NewRequest` 使用代码拥有的 RecapGrid bundle；已持久化 `RowWork` 按 actual producer 构造维护 route，V13 root config 只含 maintenance 设置。Completion 不提供 caller-selected output cap，也没有 wildcard/default fallback。
 
 恢复按以下顺序处理：
 
-1. **`Prepared`**：先验证 raw/setup/工具与持久计划，再 exact bind completion/tool identity；v9 使用当前 projector 表达同一计划，v7/v8 仍重建原 exact 请求。不打开 Online 或 derived store。
+1. **`Prepared`**：先验证 raw/setup/持久计划，再 exact bind completion identity；若还有冻结工具身份，返回 `tool-runtime-unsupported`。v9 使用当前 projector 表达同一计划，v7/v8 仍重建原 exact 请求。不打开 Online 或 derived store。
 2. **旧 `Started`**：验证旧 schema、父链及请求承诺后找到来源 Prepared，按同一纯生成恢复路径执行，不再有 Refuse/确认开关，也不追加新 Started。旧 Failed 不走此路径，保持 blocked，允许安全边界上的显式 TurnEnded。
-3. **`ToolContinuation`**：先 bind frozen tool profile/operation，再以无工具的 current completion 继续；tool settlement 后才打开 Online readiness。
-4. **`ToolResult` 后的 `NewRequest`**：不绑定 current tool profile，保留 ToolResult raw tail；只有它和 fresh request 创建 per-turn Online context。
+3. **`ToolContinuation`**：旧工具实现已移除，当前返回 `tool-runtime-unsupported`，不派发工具或 completion。
+4. **`ToolResult` 后的 `NewRequest`**：保留已结清的 ToolResult raw tail，创建新的 per-turn Online context。
 
 Control 回执以既有 `OperationKey` 引用，不再附带派生 `ResultIdentity`。writer v4 删除 bootstrap 的第二行身份；
 旧 Control v2/v3 按源格式验证后投影到同一 graph，保持原 Head/bytes，下一真实 mutation 才写 v4。
-receipt 仍匹配 frozen runtime、command 和 sequence，成功重放不重复推进 Control。尚未写入 Journal 的工具结果
-用既有 schemaVersion 2 与 operationKey 输出；已有旧工具结果保持原文，tool input/catalog/runtime identity 不变。
+旧 receipt 仍是可读取的持久事实；当前工具执行路径已移除，不再用它重放待执行的历史工具。
 
 Recipes 非空 registration 的 command preimage 删除旧字段，旧 recipe receipt 按新命令会 Conflict；
 family/definition-only registration 与 promotion 命令不变。最终真实切换前须在旧状态可读时正常收敛受影响的
 recipe registration，以及依赖旧 Store proof 的 promotion，不能以 receipt 存在绕过 command/proof 检查。
 当前实施与最终处置见 [Timeline 单一行身份](timeline-row-identity-simplification-plan.md)。
 
-当前 root strict config language 为 V11，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V4，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
+当前 root strict config language 为 V13，connections 是 Completion-owned V3 catalog，delegates 使用当前独立合同。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。
 

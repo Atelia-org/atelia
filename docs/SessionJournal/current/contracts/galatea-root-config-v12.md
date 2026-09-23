@@ -1,6 +1,9 @@
-# Galatea root config V12（当前合同）
+# Galatea root config V12（历史合同）
 
-此页定义当前 `config.json` 的 strict V12 root contract。正常 Galatea host 只接受整数
+当前宿主使用 [V13](galatea-root-config-v13.md)。本页记录旧版字段，不代表当前代码仍提供
+`recap_grid_control` 或 V11→V12 operator 命令。
+
+此页记录旧 `config.json` 的 strict V12 root contract。当时的 Galatea host 只接受整数
 `"v": 12`；未知、重复、缺失字段，以及旧版、未来版、`12.0`、`null`、注释、尾随逗号或尾随数据均
 fail closed。实现 owner 是
 [`GalateaStrictConfigReader`](../../../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与

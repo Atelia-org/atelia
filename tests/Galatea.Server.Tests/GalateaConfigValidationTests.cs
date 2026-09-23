@@ -8,7 +8,6 @@ using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid;
-using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
@@ -17,182 +16,6 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaConfigValidationTests {
-    [Fact]
-    public void RecapGridConfigUpgrade_DryRunIsBytePreservingAndApplyPreservesHistoricalProfile() {
-        string root = NewRoot();
-        try {
-            RecapGridAgentControlProfile profile =
-                GalateaTestHost.CreateGalateaV7Profile();
-            string profilePath = Path.Combine(root, "profile.json");
-            byte[] profileBytes = profile.ToCanonicalBytes();
-            File.WriteAllBytes(profilePath, profileBytes);
-            Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
-                new GalateaRecapGridAssetParameters(
-                    new GalateaCharacterName("Galatea")),
-                out RecapGridControlRegistrationBundle? bundle));
-            Assert.NotNull(bundle);
-            string routePath = Path.Combine(root, "routes.json");
-            File.WriteAllBytes(routePath, RecapGridRouteManifest.Create([
-                new RecapGridRouteManifestEntry(
-                    new RecapCompletionRouteKey(
-                        bundle!.Families[0].Digest,
-                        RecapRewriterProtocolV3.RuntimeProtocolId,
-                        null),
-                    "maintenance",
-                    3,
-                    TimeSpan.FromMinutes(7))
-            ]).ToCanonicalBytes());
-            string configPath = Path.Combine(root, "config.json");
-            File.WriteAllText(configPath, V11Config());
-            byte[] before = File.ReadAllBytes(configPath);
-
-            GalateaRecapGridConfigUpgrade.UpgradeResult dryRun = Assert.IsType<
-                GalateaRecapGridConfigUpgrade.UpgradeResolution.Ready>(
-                GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, null, Apply: false))).Result;
-
-            Assert.Equal("DryRunReady", dryRun.Outcome);
-            Assert.Equal(before, File.ReadAllBytes(configPath));
-            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
-
-            GalateaRecapGridConfigUpgrade.UpgradeResult applied = Assert.IsType<
-                GalateaRecapGridConfigUpgrade.UpgradeResolution.Ready>(
-                GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, null, Apply: true))).Result;
-
-            Assert.Equal("Upgraded", applied.Outcome);
-            Assert.NotNull(applied.BackupPath);
-            Assert.Equal(before, File.ReadAllBytes(applied.BackupPath!));
-            byte[] converted = File.ReadAllBytes(configPath);
-            GalateaStrictConfigReader.ValidateRoot(converted);
-            using JsonDocument document = JsonDocument.Parse(converted);
-            JsonElement recap = document.RootElement.GetProperty("runtime")
-                .GetProperty("recapGrid");
-            Assert.Equal(12, document.RootElement.GetProperty("v").GetInt32());
-            Assert.Equal("maintenance", recap.GetProperty("maintenance")
-                .GetProperty("connectionId").GetString());
-            Assert.Equal(3, recap.GetProperty("maintenance")
-                .GetProperty("maximumConcurrency").GetInt32());
-            Assert.Equal(420_000, recap.GetProperty("maintenance")
-                .GetProperty("dispatchTimeoutMilliseconds").GetInt64());
-            Assert.Equal(["profile.json"], recap.GetProperty(
-                "historicalAgentControlProfileFiles").EnumerateArray()
-                .Select(static value => value.GetString()!).ToArray());
-            Assert.Equal(profileBytes, File.ReadAllBytes(profilePath));
-        }
-        finally {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void RecapGridConfigUpgrade_AmbiguityRequiresExplicitCandidateAndDoesNotWriteDryRun() {
-        string root = NewRoot();
-        try {
-            RecapGridAgentControlProfile profile =
-                GalateaTestHost.CreateGalateaV7Profile();
-            File.WriteAllBytes(Path.Combine(root, "profile.json"),
-                profile.ToCanonicalBytes());
-            Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
-                new GalateaRecapGridAssetParameters(
-                    new GalateaCharacterName("Galatea")),
-                out RecapGridControlRegistrationBundle? bundle));
-            string routePath = Path.Combine(root, "routes.json");
-            File.WriteAllBytes(routePath, RecapGridRouteManifest.Create([
-                new RecapGridRouteManifestEntry(new(
-                    bundle!.Families[0].Digest,
-                    RecapRewriterProtocolV3.RuntimeProtocolId, null),
-                    "a", 1, TimeSpan.FromMinutes(1)),
-                new RecapGridRouteManifestEntry(new(
-                    new FamilyDefinitionDigest(
-                        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-                    RecapRewriterProtocolV3.RuntimeProtocolId, null),
-                    "b", 2, TimeSpan.FromMinutes(2))
-            ]).ToCanonicalBytes());
-            string configPath = Path.Combine(root, "config.json");
-            File.WriteAllText(configPath, V11Config());
-            byte[] before = File.ReadAllBytes(configPath);
-
-            var ambiguous = Assert.IsType<
-                GalateaRecapGridConfigUpgrade.UpgradeResolution.MaintenanceRouteSelectionRequired>(
-                GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, null, Apply: false)));
-            Assert.Collection(ambiguous.Candidates,
-                candidate => {
-                    Assert.Equal(0, candidate.Index);
-                    Assert.Equal("a", candidate.ConnectionId);
-                    Assert.Equal(1, candidate.MaximumConcurrency);
-                    Assert.Equal(60_000, candidate.DispatchTimeoutMilliseconds);
-                },
-                candidate => {
-                    Assert.Equal(1, candidate.Index);
-                    Assert.Equal("b", candidate.ConnectionId);
-                    Assert.Equal(2, candidate.MaximumConcurrency);
-                    Assert.Equal(120_000, candidate.DispatchTimeoutMilliseconds);
-                });
-            Assert.Equal(before, File.ReadAllBytes(configPath));
-            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
-
-            Assert.IsType<
-                GalateaRecapGridConfigUpgrade.UpgradeResolution.MaintenanceRouteSelectionRequired>(
-                GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, null, Apply: true)));
-            Assert.Equal(before, File.ReadAllBytes(configPath));
-            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
-
-            var ambiguousOutput = new StringWriter();
-            var ambiguousError = new StringWriter();
-            int ambiguousExit = GalateaRecapGridConfigUpgrade.Run(
-                ["operator", GalateaRecapGridConfigUpgrade.CommandName,
-                    "--config", configPath],
-                ambiguousOutput,
-                ambiguousError);
-            Assert.Equal(3, ambiguousExit);
-            Assert.Equal(
-                "candidate=0 connectionId=a maximumConcurrency=1 dispatchTimeoutMilliseconds=60000"
-                + Environment.NewLine
-                + "candidate=1 connectionId=b maximumConcurrency=2 dispatchTimeoutMilliseconds=120000"
-                + Environment.NewLine,
-                ambiguousOutput.ToString());
-            Assert.Equal("code=maintenance-route-selection-required"
-                + Environment.NewLine
-                + "hint=rerun with --maintenance-route-index <index> (0-1)."
-                + Environment.NewLine,
-                ambiguousError.ToString());
-            Assert.Equal(before, File.ReadAllBytes(configPath));
-            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
-
-            var selectedOutput = new StringWriter();
-            var selectedError = new StringWriter();
-            int selectedExit = GalateaRecapGridConfigUpgrade.Run(
-                ["operator", GalateaRecapGridConfigUpgrade.CommandName,
-                    "--config", configPath,
-                    "--maintenance-route-index", "1"],
-                selectedOutput,
-                selectedError);
-            Assert.Equal(0, selectedExit);
-            Assert.Equal(string.Empty, selectedError.ToString());
-            Assert.Contains("outcome=DryRunReady" + Environment.NewLine,
-                selectedOutput.ToString(), StringComparison.Ordinal);
-            GalateaRecapGridConfigUpgrade.UpgradeResult selected = Assert.IsType<
-                GalateaRecapGridConfigUpgrade.UpgradeResolution.Ready>(
-                GalateaRecapGridConfigUpgrade.Upgrade(new(
-                    configPath, MaintenanceRouteIndex: 1, Apply: false))).Result;
-            Assert.Equal("b", selected.Candidates[1].ConnectionId);
-            Assert.Equal(before, File.ReadAllBytes(configPath));
-            Assert.Empty(Directory.EnumerateFiles(root, "*.v11-backup-*.json"));
-        }
-        finally {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    private static string V11Config() => """
-        {"v":11,"characters":[{"id":"alice","name":"Galatea","homeDir":"/tmp/home","sessionDir":"sessions/alice","delegationStateDir":"delegation-state/alice","characterMemoryStateDir":"character-memory/alice","sessionProvisioning":"existing-only","defaultConnectionId":"maintenance","characterContextTemplate":"inline ${characterName}","autonomyIntervalMinutes":0}],"players":[],"runtime":{"recapGrid":{"routeManifestPath":"routes.json","agentControlProfileFiles":["profile.json"],"currentAgentControlProfileId":"test-profile"}}}
-        """;
-
     [Fact]
     public void LoadRouteManifest_AcceptsFormattedOperatorJsonWithFinalNewline() {
         string path = Path.GetTempFileName();
@@ -330,7 +153,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigTemplateStartsWithExactV12AndRoundTrips() {
+    public void RootConfigTemplateStartsWithExactV13AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
             GalateaConfigTemplateFactory.CreateRootFile(),
             GalateaJson.Options
@@ -342,7 +165,7 @@ public sealed class GalateaConfigValidationTests {
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("12", first.Value.GetRawText());
+        Assert.Equal("13", first.Value.GetRawText());
 
         GalateaRootFileConfig? decoded = JsonSerializer.Deserialize(
             template,
@@ -404,14 +227,6 @@ public sealed class GalateaConfigValidationTests {
         string root = NewRoot();
         try {
             string configPath = Path.Combine(root, "config.json");
-            File.WriteAllBytes(
-                Path.Combine(
-                    root,
-                    "recap-grid-agent-control-profile.json"
-                ),
-                CreateProfile("default").ToCanonicalBytes()
-            );
-
             Assert.Throws<InvalidOperationException>(() =>
                 GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath)
             );
@@ -1185,7 +1000,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV12OutsideFirstProperty() {
+    public void RootConfigAcceptsExactV13OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1193,11 +1008,11 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":12,";
+            const string LeadingVersion = "{\"v\":13,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":12}";
+                + ",\"v\":13}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -1209,7 +1024,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV12AndRejectsOtherVersions() {
+    public void RootConfigRequiresExactIntegerV13AndRejectsOtherVersions() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1217,7 +1032,7 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":12";
+            const string Version = "\"v\":13";
             Assert.Contains(Version, original, StringComparison.Ordinal);
             Assert.Equal("alice", Assert.Single(GalateaConfigLoader.Load(configPath).Characters).CharacterId);
 
@@ -1253,11 +1068,15 @@ public sealed class GalateaConfigValidationTests {
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":10",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":12.0",
+                original.Replace(Version, "\"v\":11",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":12e0",
+                original.Replace(Version, "\"v\":12",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":12",
+                original.Replace(Version, "\"v\":13.0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"v\":13e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":13",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -1345,11 +1164,11 @@ public sealed class GalateaConfigValidationTests {
                 GalateaConfigLoader.ConnectionsFileName
             );
             byte[] original = File.ReadAllBytes(configPath);
-            Assert.Contains("\"v\":12,", System.Text.Encoding.UTF8.GetString(original), StringComparison.Ordinal);
+            Assert.Contains("\"v\":13,", System.Text.Encoding.UTF8.GetString(original), StringComparison.Ordinal);
             byte[] versionless = original;
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":12,",
+                    "\"v\":13,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
@@ -1475,15 +1294,13 @@ public sealed class GalateaConfigValidationTests {
         string root = NewRoot();
         try {
             string admission = Path.Combine(root, "admission.json");
-            string profile = Path.Combine(root, "profile.json");
             string routes = Path.Combine(root, "routes.json");
             var provider = new TrackingFactory();
             int scaffold = Atelia.SessionJournal.Cli.Program.MainCore(
                 [
                     "recap-grid", "scaffold",
                     "--asset",
-                    RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
-                    "--profile-id", "test-profile",
+                    RecapGridSampleAssets.MysteryInvestigationV4,
                     "--connection-id", "test",
                     "--permission", "create",
                     "--permission", "register-family",
@@ -1497,7 +1314,6 @@ public sealed class GalateaConfigValidationTests {
                     "--max-concurrency", "2",
                     "--dispatch-timeout-ms", "30000",
                     "--admission-output", admission,
-                    "--profile-output", profile,
                     "--route-output", routes
                 ],
                 provider
@@ -1518,8 +1334,7 @@ public sealed class GalateaConfigValidationTests {
                     Runtime: new GalateaRuntimeFileConfig(
                         RecapGrid: new GalateaRecapGridFileConfig(
                             new GalateaRecapGridMaintenanceFileConfig(
-                                "test", 1, 900_000),
-                            ["profile.json"]
+                                "test", 1, 900_000)
                         )
                     )
                 ),
@@ -1535,7 +1350,6 @@ public sealed class GalateaConfigValidationTests {
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
             Assert.NotNull(loaded.RecapGrid);
-            Assert.NotNull(loaded.RecapGrid.HistoricalAgentControlProfiles);
             Assert.Equal("test", loaded.RecapGrid.Maintenance.ConnectionId);
             Assert.Equal(0, provider.CreateCallCount);
         }
@@ -1561,8 +1375,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":12,\"characters\"",
-                    "{\"v\":12,\"unknown\":1,\"characters\"",
+                    "{\"v\":13,\"characters\"",
+                    "{\"v\":13,\"unknown\":1,\"characters\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
@@ -2106,7 +1920,6 @@ public sealed class GalateaConfigValidationTests {
     public void StrictConfigCapsAreExactAndPathsAreNoFollow() {
         if (!OperatingSystem.IsLinux()) { return; }
         string root = NewRoot();
-        string external = NewRoot();
         try {
             string configPath = WriteConfig(
                 root,
@@ -2126,16 +1939,6 @@ public sealed class GalateaConfigValidationTests {
                 root,
                 [User("alice", Path.Combine(root, "session"))]
             );
-            string profile = Path.Combine(root, "profile.json");
-            string externalProfile = Path.Combine(external, "profile.json");
-            File.Move(profile, externalProfile);
-            File.CreateSymbolicLink(profile, externalProfile);
-            Assert.Throws<InvalidOperationException>(
-                () => GalateaConfigLoader.Load(configPath)
-            );
-
-            File.Delete(profile);
-            File.Move(externalProfile, profile);
             string prompt = Path.Combine(root, "prompt.txt");
             File.WriteAllText(prompt, "${characterName}");
             configPath = WriteFileConfig(
@@ -2165,7 +1968,6 @@ public sealed class GalateaConfigValidationTests {
         }
         finally {
             Directory.Delete(root, recursive: true);
-            Directory.Delete(external, recursive: true);
         }
     }
 
@@ -2183,7 +1985,6 @@ public sealed class GalateaConfigValidationTests {
             foreach (string kind in new[] {
                          "config",
                          "connections",
-                         "Agent Control profile",
                          "RecapGrid route manifest",
                          "characterContextTemplateFile"
                      }) {
@@ -2382,17 +2183,12 @@ public sealed class GalateaConfigValidationTests {
                     CallLogDir: callLogDirectory,
                     RecapGrid: new GalateaRecapGridFileConfig(
                         new GalateaRecapGridMaintenanceFileConfig(
-                            defaultConnectionId, 1, 900_000),
-                        ["profile.json"]
+                            defaultConnectionId, 1, 900_000)
                     )
                 )
                 ),
                 GalateaJson.Options
             )
-        );
-        File.WriteAllBytes(
-            Path.Combine(root, "profile.json"),
-            CreateProfile().ToCanonicalBytes()
         );
         GalateaTestHost.WriteConnectionsFile(
             Path.Combine(root, GalateaConfigLoader.ConnectionsFileName),
@@ -2424,17 +2220,12 @@ public sealed class GalateaConfigValidationTests {
                     Runtime: new GalateaRuntimeFileConfig(
                     RecapGrid: new GalateaRecapGridFileConfig(
                         new GalateaRecapGridMaintenanceFileConfig(
-                            "test", 1, 900_000),
-                        ["profile.json"]
+                            "test", 1, 900_000)
                     )
                 )
                 ),
                 GalateaJson.Options
             )
-        );
-        File.WriteAllBytes(
-            Path.Combine(root, "profile.json"),
-            CreateProfile().ToCanonicalBytes()
         );
         GalateaTestHost.WriteConnectionsFile(
             Path.Combine(root, GalateaConfigLoader.ConnectionsFileName),
@@ -2458,29 +2249,6 @@ public sealed class GalateaConfigValidationTests {
         user.DefaultConnectionId,
         CharacterContextTemplate: "prompt ${characterName}"
     );
-
-    private static RecapGridAgentControlProfile CreateProfile(
-        string profileId = "test-profile"
-    ) {
-        Assert.True(RecapGridAgentControlBuiltIns
-            .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
-                out RecapGridControlRegistrationBundle? builtIn
-            ));
-        return RecapGridAgentControlProfile.Create(
-            profileId,
-            new RecapGridControlAdmission(
-                RecapGridControlPermission.All,
-                [builtIn!.Families[0].Digest],
-                builtIn.Definitions.Select(static value =>
-                    value.Capability.CapabilityFingerprint),
-                [ContextHeaderCarrier.System],
-                ["case."],
-                maximumBootstrapRows: 64,
-                maximumProjectedCalls: 1_024
-            )
-        );
-    }
 
     private static CompletionConnectionRegistry CreateRegistry(
         TrackingFactory factory

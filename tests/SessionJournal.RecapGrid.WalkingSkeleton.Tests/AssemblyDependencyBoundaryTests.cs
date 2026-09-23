@@ -154,7 +154,6 @@ public sealed class AssemblyDependencyBoundaryTests {
                 "Atelia.SessionJournal.RecapGrid.Getter.Tests",
                 "Atelia.SessionJournal.RecapGrid.Hosting.Tests",
                 "Atelia.SessionJournal.RecapGrid.Online.Tests",
-                "Atelia.SessionJournal.RecapGrid.AgentControl.Tests",
                 "Atelia.SessionJournal.RecapGrid.Abstractions.Tests"
             ],
             recapGridDocument.Descendants("InternalsVisibleTo")

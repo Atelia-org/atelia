@@ -111,18 +111,17 @@ public sealed partial class ProgramRecapGridCommandTests {
             }
         }
         string admission = ExternalPath("structured-admission.json");
-        string profile = ExternalPath("structured-profile.json");
         string routes = ExternalPath("structured-routes.json");
         (int scaffoldCode, JsonElement scaffold) = RunCaptured(
             "scaffold", "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
-            "--character-name", "Galatea", "--profile-id", "structured-build",
+            "--character-name", "Galatea",
             "--connection-id", "test", "--permission", "create",
             "--permission", "register-family", "--permission", "register-definition",
             "--permission", "register-recipe", "--permission", "promote",
             "--logical-column-prefix", "world-understanding", "--logical-column-prefix", "autobiography",
             "--max-bootstrap-rows", "64", "--max-projected-calls", "128",
             "--max-concurrency", "1", "--dispatch-timeout-ms", "10000",
-            "--admission-output", admission, "--profile-output", profile, "--route-output", routes);
+            "--admission-output", admission, "--route-output", routes);
         Assert.Equal(0, scaffoldCode);
         Assert.Equal(0, RunInit(SessionJournalDefaults.MainBranchName, refId, admission));
         Assert.Equal(0, Run("timeline", "sync", "--input", _root,
