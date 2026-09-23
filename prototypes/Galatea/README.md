@@ -7,7 +7,7 @@ Galatea.Server 是基于 SessionJournal 的Player 与 Character 分离的 Role-P
 ## 启动服务
 
 需要 Linux、仓库固定的 .NET 10 SDK，以及已配置的 Completion connection。当前 Completion 包
-`0.1.0-preview.2` 已发布到 nuget.org；按[依赖指南](../../docs/completion-dependency.md)使用根 nuget.config。以下命令在仓库根目录执行：
+`0.1.0-preview.3` 已发布到 nuget.org；按[依赖指南](../../docs/completion-dependency.md)使用根 nuget.config。以下命令在仓库根目录执行：
 
 ```bash
 dotnet restore prototypes/Galatea/Galatea.Server.csproj

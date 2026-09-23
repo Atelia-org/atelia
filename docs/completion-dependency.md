@@ -7,12 +7,12 @@ Diagnostics、Completion.Abstractions、Completion、Completion.Tools 的源码�
 
 ## 当前包交付
 
-当前 pin 为 `0.1.0-preview.2`，源码身份
-`8828ceaa03cb490cf29e3e9ba8ff4129763e9d51`。四包
+当前 pin 为 `0.1.0-preview.3`，源码身份
+`bbce08b85aec114463313f6d9b539e8412b740eb`。四包
 （Atelia.Diagnostics、Atelia.Completion.Abstractions、Atelia.Completion、Atelia.Completion.Tools）
-已公开发布到 nuget.org；上游 tag `v0.1.0-preview.2` 指向同一提交。
+已公开发布到 nuget.org；上游 tag `v0.1.0-preview.3` 指向同一提交。
 
-普通 restore/build 直接使用根 [nuget.config](../nuget.config)，无须本地冻结 feed：
+没有本地 override 的 clone，普通 restore/build 直接使用根 [nuget.config](../nuget.config)，无须本地冻结 feed：
 
 ```sh
 dotnet restore tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj -p:UseCompletionSources=false -m:1 -nr:false
@@ -21,10 +21,10 @@ dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -c Release -p
 
 旧本地试运行产物保留为历史证据：[NuGet.Completion.Local.config](../eng/NuGet.Completion.Local.config)
 和 `gitignore/completion-packages/0.1.0-dev.20260916114103/` 只对应当时的唯一 dev 包交付，
-不再用于当前 preview.2 流程；该 feed/cache 是 ignored 本地产物，不随 Git clone 搬运。
+不再用于当前 preview.3 流程；该 feed/cache 是 ignored 本地产物，不随 Git clone 搬运。
 不要用旧本地配置消费新 pin，也不要在相同版本下重新打包覆盖。
 
-对应源码指南可从 tag `v0.1.0-preview.2` 取得：`docs/Completion/quick-start.md`、
+对应源码指南可从 tag `v0.1.0-preview.3` 取得：`docs/Completion/quick-start.md`、
 `src/Completion/README.md`、`src/Completion.Tools/README.md`、`src/Diagnostics/README.md`。
 本轮验收与试运行注意事项见[实施记录](Galatea/completion-auto-retry-implementation.md)。
 
@@ -73,8 +73,8 @@ dotnet build Atelia.sln -c Debug -p:UseCompletionSources=true -p:CompletionSourc
 dotnet test tests/SessionJournal.RecapGrid.Runtime.Tests/SessionJournal.RecapGrid.Runtime.Tests.csproj -c Debug -p:UseCompletionSources=true -p:CompletionSourceRoot=E:/repos/Atelia-org/atelia-completion
 ```
 
-源码根必须是包含四个项目的绝对路径；包模式联调以 `v0.1.0-preview.2` /
-`8828ceaa03cb490cf29e3e9ba8ff4129763e9d51` 为基准，其他需求使用明确 revision，不自动探测兄弟目录。
+源码根必须是包含四个项目的绝对路径；包模式联调以 `v0.1.0-preview.3` /
+`bbce08b85aec114463313f6d9b539e8412b740eb` 为基准，其他需求使用明确 revision，不自动探测兄弟目录。
 四库随开关整体切换，避免包和项目中出现相同程序集的两份身份。切回包模式时重新 restore。
 Storage 开关独立；通常只需 Completion 源码 + Storage 包。源码模式禁止 consumer pack。
 如需打包消费者，先将上游变更打成唯一开发版本，再显式选用该包版本。

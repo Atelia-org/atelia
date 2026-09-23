@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
-    <CompletionPackageVersion Condition="'$(CompletionPackageVersion)' == ''">0.1.0-preview.2</CompletionPackageVersion>
-    <CompletionSourceRevision>8828ceaa03cb490cf29e3e9ba8ff4129763e9d51</CompletionSourceRevision>
+    <CompletionPackageVersion Condition="'$(CompletionPackageVersion)' == ''">0.1.0-preview.3</CompletionPackageVersion>
+    <CompletionSourceRevision>bbce08b85aec114463313f6d9b539e8412b740eb</CompletionSourceRevision>
     <CompletionRepositoryUrl>https://github.com/Atelia-org/atelia-completion.git</CompletionRepositoryUrl>
     <UseCompletionSources Condition="'$(UseCompletionSources)' == ''">false</UseCompletionSources>
   </PropertyGroup>
