@@ -59,6 +59,9 @@ async function start(value: Awaited<ReturnType<typeof harness>>, threadId: strin
 
 const configCases: (Record<string, JsonValue> | undefined)[] = [undefined, {}, {
   sandbox_mode: "danger-full-access",
+}, {
+  model: "gpt-6-sol",
+  sandbox_mode: "danger-full-access",
   approval_policy: "never",
   features: { apps: true, image_generation: false },
   sandbox_workspace_write: { writable_roots: ["/tmp/shared"], exclude_tmpdir_env_var: false },
@@ -70,6 +73,7 @@ for (const codexConfig of configCases) {
     const value = await harness(t, { codexConfig });
     // The sidecar owns a configuration snapshot; caller mutation cannot change it.
     if (codexConfig && "features" in codexConfig) codexConfig.features = { apps: false };
+    if (codexConfig && "model" in codexConfig) codexConfig.model = "gpt-5.6";
     const binding = await bind(value);
     await start(value, binding.threadId, "config-warmup", "[EARLY][NATURAL] warmup");
     await start(value, binding.threadId, "config-mail", "[EARLY][NATURAL] task");
@@ -77,6 +81,7 @@ for (const codexConfig of configCases) {
       lastThreadStartParams: Record<string, unknown>;
       lastResumeParams: Record<string, unknown>;
       lastTurnParams: Record<string, unknown>;
+      allTurnParams: Record<string, unknown>[];
     }>("test/lastRequests", {});
     for (const params of [requests.lastThreadStartParams, requests.lastResumeParams]) {
       if (expected && Object.keys(expected).length > 0) assert.deepEqual(params.config, expected);
@@ -87,6 +92,11 @@ for (const codexConfig of configCases) {
     }
     for (const key of ["config", "approvalPolicy", "approvalsReviewer", "sandboxPolicy", "summary"]) {
       assert.equal(Object.hasOwn(requests.lastTurnParams, key), false, key);
+    }
+    assert.equal(requests.allTurnParams.length, 2);
+    for (const params of requests.allTurnParams) {
+      if (expected?.model === undefined) assert.equal(Object.hasOwn(params, "model"), false);
+      else assert.equal(params.model, expected.model);
     }
     assert.equal(requests.lastTurnParams.cwd, value.root);
     assert.equal(requests.lastTurnParams.clientUserMessageId, "config-mail");

@@ -10,9 +10,9 @@ ChatGPT -> Secure MCP Tunnel -> local-codex-mcp -> codex app-server -> allowed r
 
 本配置不开放入站端口。`tunnel-client` 只向 OpenAI 发起出站 HTTPS 连接，并在本机以 stdio 启动 Bridge。
 
-## 当前机器配置
+## 历史机器配置
 
-截至 2026-08-18，本机配置为：
+截至 2026-08-18，当时的 Windows 机器配置为；升级该机器前应重新核对本地安装状态：
 
 - allowed root / default cwd：`E:\repos\drama-board`
 - Bridge：`E:\repos\Atelia-org\atelia\local-codex-mcp`
@@ -22,7 +22,7 @@ ChatGPT -> Secure MCP Tunnel -> local-codex-mcp -> codex app-server -> allowed r
 - profile 文件：`C:\Users\gdtut\AppData\Roaming\tunnel-client\local-codex-drama-board.yaml`
 - 本地状态页：`http://127.0.0.1:18080/ui`
 - Node.js：`D:\Program Files\nodejs\node.exe`，已验证版本 `24.11.1`
-- Codex：Bridge repo-local ignored `@openai/codex@0.154.0-alpha.3` exact pin
+- Codex：当时的 Bridge repo-local ignored `@openai/codex@0.154.0-alpha.3` exact pin
 
 profile 只保存 `env:CONTROL_PLANE_API_KEY` 引用，不保存 runtime key 本身。Tunnel 与 ChatGPT workspace 的远端关联仍由 Platform / ChatGPT 设置管理。
 
@@ -66,7 +66,7 @@ $mcpCommand = 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolic
 ```powershell
 npm run codex:verify
 npm run schemas:verify
-node .codex-packages/0.154.0-alpha.3/node_modules/@openai/codex/bin/codex.js login status
+node .codex-packages/0.156.1/node_modules/@openai/codex/bin/codex.js login status
 ```
 
 Codex升级必须按主README hard-cut更新lock/SRI/content manifest/runtime version并重生成schema；profile无需保存binary路径。

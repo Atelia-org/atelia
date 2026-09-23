@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-export const PINNED_CODEX_VERSION = "0.154.0-alpha.3";
+export const PINNED_CODEX_VERSION = "0.156.1";
 export const CODEX_BRIDGE_CLIENT_NAME = "atelia_local_codex_mcp";
 
 export const PINNED_CODEX_ENTRYPOINT = fileURLToPath(

@@ -301,6 +301,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private readonly freshGalateaBindings = new Map<string, number>();
   private readonly profile: CodexBackendProfile;
   private readonly galateaConfigParams: { config?: Record<string, JsonValue> };
+  private readonly galateaTurnModelParams: Pick<TurnStartParams, "model">;
   private readonly liveObservations: LiveTurnObservations;
   private stopped = false;
   private stopPromise?: Promise<void>;
@@ -310,6 +311,11 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.galateaConfigParams = options.galateaCodexConfig && Object.keys(options.galateaCodexConfig).length > 0
       ? { config: structuredClone(options.galateaCodexConfig) }
       : {};
+    const configuredModel = this.galateaConfigParams.config?.model;
+    if (configuredModel !== undefined && typeof configuredModel !== "string") {
+      throw new BridgeError("INVALID_CONFIG", "Galatea codexConfig.model must be a string.");
+    }
+    this.galateaTurnModelParams = configuredModel === undefined ? {} : { model: configuredModel };
     this.liveObservations = new LiveTurnObservations({
       maximumObservations: MAXIMUM_LIVE_TURN_OBSERVATIONS,
       maximumFinalUtf8Bytes: options.galateaMaximumFinalUtf8Bytes
@@ -422,7 +428,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input.threadId,
           input.task,
           cwd,
-          {},
+          this.galateaTurnModelParams,
           input.dispatchId,
           deadline,
           () => { dispatchState = "may-have-dispatched"; },
@@ -971,7 +977,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     threadId: string,
     task: string,
     cwd: string,
-    overrides: Pick<TurnStartParams, "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy" | "summary">,
+    overrides: Pick<TurnStartParams, "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy" | "summary" | "model">,
     clientUserMessageId?: string,
     deadline?: OperationDeadline,
     beforeDispatch?: () => void,

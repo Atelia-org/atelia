@@ -1,6 +1,6 @@
 # Generated Codex app-server protocol
 
-这些文件由 repo-local exact-pinned `codex-cli 0.154.0-alpha.3` 生成：
+这些文件由 repo-local exact-pinned `codex-cli 0.156.1` 生成：
 
 ```bash
 npm run codex:install

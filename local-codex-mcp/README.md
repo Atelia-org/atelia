@@ -23,7 +23,7 @@ MVP 暴露五个 tools：
 - 一个或多个允许 ChatGPT 委派任务的绝对目录。
 - Secure MCP Tunnel 还需要 Platform tunnel 权限、`tunnel_id` 与 runtime/control-plane API key。
 
-本工程只支持 repo-local `@openai/codex@0.154.0-alpha.3`。它包含 official SQLite thread-history
+本工程只支持 repo-local `@openai/codex@0.156.1`。它包含 official SQLite thread-history
 projector 对 malformed/discontinuous records（包括 duplicate/regressed ordinal）的容错修复
 ([#42369](https://github.com/openai/codex/pull/42369)、
 [`095ac4f`](https://github.com/openai/codex/commit/095ac4f131e759b204fa6368dc42d2feff6eb21a))，以及 rollout
@@ -45,11 +45,11 @@ npm run schemas:verify
 npm run build
 ```
 
-installer 只写 ignored `.codex-packages/0.154.0-alpha.3/`，不会安装或覆盖全局 npm Codex。
+installer 只写 ignored `.codex-packages/0.156.1/`，不会安装或覆盖全局 npm Codex。
 它以 tracked `scripts/pinned-codex/package-lock.json` 的 exact version/registry SRI和
 `content-manifest.json`逐文件SHA-256执行并复核`npm ci`；重复执行会验证并复用，
 但若同版本目录内容漂移会 fail closed，要求人工移走后再装。Bridge 未配置 command override 时直接通过 Node 启动该 repo-local
-wrapper；`initialize.userAgent` 若不报告 exact `0.154.0-alpha.3`，sidecar 会以 `CODEX_VERSION_MISMATCH` 退出并只记录
+wrapper；`initialize.userAgent` 若不报告 exact `0.156.1`，sidecar 会以 `CODEX_VERSION_MISMATCH` 退出并只记录
 expected/actual 规范化版本。
 
 升级流程是一个 hard cut：先审阅新 package 与平台 package 的 registry SRI，更新
@@ -63,13 +63,13 @@ tracked verifier/manifest的恶意同用户进程。
 ## 2. 确认 Codex auth
 
 ```bash
-node .codex-packages/0.154.0-alpha.3/node_modules/@openai/codex/bin/codex.js login status
+node .codex-packages/0.156.1/node_modules/@openai/codex/bin/codex.js login status
 ```
 
 若未登录，先运行：
 
 ```bash
-node .codex-packages/0.154.0-alpha.3/node_modules/@openai/codex/bin/codex.js login
+node .codex-packages/0.156.1/node_modules/@openai/codex/bin/codex.js login
 ```
 
 Bridge 启动和每次进程恢复都会调用 `account/read`。未登录时 tool 返回稳定错误 `CODEX_NOT_AUTHENTICATED`；Bridge 不读取、复制或代理 ChatGPT OAuth token。
@@ -125,7 +125,7 @@ Linux配置必须把该字段精确设为安装后的executable wrapper：
 ```json
 {
   "sidecar": {
-    "codexCommand": "/repos/focus/atelia/local-codex-mcp/.codex-packages/0.154.0-alpha.3/node_modules/@openai/codex/bin/codex.js"
+    "codexCommand": "/repos/focus/atelia/local-codex-mcp/.codex-packages/0.156.1/node_modules/@openai/codex/bin/codex.js"
   }
 }
 ```
@@ -169,6 +169,7 @@ ensure/start 的单调总截止为 `5 × CODEX_BRIDGE_RPC_TIMEOUT_MS`；inspecti
 仍使用完整分页校验，不把缺失 history 的错误伪装成 `not-found`。
 `ensure-binding`、`start-turn` 必须提供绝对 `cwd`；`inspect-dispatch` 不接受目录字段。
 frame 不接受原生 Codex 配置；这些设置由启动环境的 `GALATEA_CODEX_CONFIG` 决定，对应 strict delegates V5 的可选 `routes[0].codexConfig`。省略或 `{}` 不发送 thread `config`；显式值原样透传，Galatea 不补 sandbox、approval、reviewer、summary 或工具默认值，也不再用启动参数关闭 inherited MCP/apps。
+若 `codexConfig.model` 是字符串，Galatea 还会在每次 `turn/start` 显式传入该 model，使已加载 thread 的下一回合也采用它；省略 `model` 时不发送 turn model。新 thread 从 Codex Home 取得默认配置，已有 thread 则可能恢复先前保存的 model。
 
 可选边界配置：`GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
 `GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`、

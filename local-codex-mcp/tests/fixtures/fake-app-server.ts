@@ -32,7 +32,7 @@ const inspectionFixture = inspectionFixtureArgument
   : undefined;
 const userAgentArgument = process.argv.find((argument) => argument.startsWith("--user-agent="));
 const userAgent = userAgentArgument?.slice("--user-agent=".length)
-  ?? "atelia_local_codex_mcp/0.154.0-alpha.3 (fixture) unknown (fixture; 0.1.0)";
+  ?? "atelia_local_codex_mcp/0.156.1 (fixture) unknown (fixture; 0.1.0)";
 
 let inspectionRpcDelayMs = 0;
 let initialized = false;

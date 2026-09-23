@@ -73,7 +73,7 @@ test("initialize rejects a Codex version mismatch and logs only normalized versi
     const mismatch = logger.entries.find((entry) => entry.event === "codex_version_mismatch");
     assert.equal(mismatch?.level, "error");
     assert.deepEqual(mismatch?.fields, {
-      expected_version: "0.154.0-alpha.3",
+      expected_version: "0.156.1",
       actual_version: "0.151.0",
     });
     assert.doesNotMatch(JSON.stringify(logger.entries), /fixture secret detail/);
@@ -84,8 +84,8 @@ test("initialize rejects a Codex version mismatch and logs only normalized versi
 
 test("initialize rejects a foreign or ambiguous user-agent product token", async () => {
   for (const userAgent of [
-    "codex_vscode/0.154.0-alpha.3 (fixture)",
-    "atelia_local_codex_mcp/0.154.0-alpha.3/other (fixture)",
+    "codex_vscode/0.156.1 (fixture)",
+    "atelia_local_codex_mcp/0.156.1/other (fixture)",
   ]) {
     const value = new CodexAppServerClient({
       command: process.execPath,
