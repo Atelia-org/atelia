@@ -5,8 +5,8 @@
   -->
   <!-- 方式 A：本地 feed 包。gitignore/completion-local-feed 为累积 feed，多版本共存。 -->
   <PropertyGroup>
-    <CompletionPackageVersion>0.1.0-dev.20260921145510</CompletionPackageVersion>
-    <CompletionSourceRevision>649f282f1c8ce1c08aa33dcea2387dcda1fb5d3f</CompletionSourceRevision>
+    <CompletionPackageVersion>0.1.0-dev.20260923164148</CompletionPackageVersion>
+    <CompletionSourceRevision>cc9d4cefa433f31183095eaaf451a894b88d4244</CompletionSourceRevision>
     <RestoreConfigFile>$(MSBuildThisFileDirectory)NuGet.Completion.LocalFeed.config</RestoreConfigFile>
   </PropertyGroup>
   <!--

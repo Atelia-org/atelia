@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
-using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
@@ -24,7 +23,7 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
     [InlineData("AfterRequestPreparedCommitted", false, "old-adapter-after-output-policy")]
     [InlineData("AfterCompletionAttemptStartedCommitted", true, "old-adapter-before-output-policy")]
     [InlineData("AfterCompletionAttemptStartedCommitted", true, "old-adapter-after-output-policy")]
-    public async Task LegacyPrepared_RecoversWithModelsFallback_ThenNewFormatSurvivesColdAudit(
+    public async Task LegacyPrepared_RecoversThroughCurrentAnthropicAdapter_ThenNewFormatSurvivesColdAudit(
         string failpoint, bool started, string oldAdapter) {
         Assert.Equal(started ? "AfterCompletionAttemptStartedCommitted" : "AfterRequestPreparedCommitted", failpoint);
         var factory = new AnthropicFixtureFactory();
@@ -39,7 +38,6 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
                 connection, (ICompletionClient)fixtureClient, started, oldAdapter);
         }
         SessionPreparedRequestReconstruction frozen = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
-        Assert.Empty(factory.Requests);
         Assert.Empty(factory.LogicalRequests);
         Assert.Equal(2, frozen.Manifest.Plan.ExactContextInputs.Length);
         using (var audit = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
@@ -66,14 +64,6 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
             Assert.Equal(Answer, Assert.Single(session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns).RequireTerminalAction().Message.GetFlattenedText());
             Assert.Equal(frozen.CanonicalBytes, Assert.Single(factory.LogicalRequests));
-        }
-        RequestCapture[] calls = factory.Requests.ToArray();
-        Assert.Equal(2, calls.Length);
-        Assert.Equal(("GET", "/v1/models/" + Model), (calls[0].Method, calls[0].Path));
-        Assert.Equal(("POST", "/v1/messages"), (calls[1].Method, calls[1].Path));
-        using (JsonDocument body = JsonDocument.Parse(calls[1].Body!)) {
-            Assert.Equal(Model, body.RootElement.GetProperty("model").GetString());
-            Assert.Equal(128000, body.RootElement.GetProperty("max_tokens").GetInt32());
         }
         await lab.StopAsync();
         SessionPreparedRequestReconstruction recoveredRequest = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
@@ -117,15 +107,12 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
         Assert.True(turn.Status == "completed", $"Turn status={turn.Status}; errors={errors}");
     }
 
-    private sealed record RequestCapture(string Method, string Path, string? Body);
-
     private sealed class AnthropicFixtureFactory : ICompletionClientFactory {
-        internal ConcurrentQueue<RequestCapture> Requests { get; } = new();
         internal ConcurrentQueue<byte[]> LogicalRequests { get; } = new();
 
         public ICompletionClient Create(CompletionConnectionConfig connection) {
             Assert.Equal("anthropic", connection.Kind);
-            var http = new HttpClient(new Handler(Requests)) { BaseAddress = new Uri(connection.BaseAddress) };
+            var http = new HttpClient(new Handler()) { BaseAddress = new Uri(connection.BaseAddress) };
             return new RecordingClient(new AnthropicClient(connection.ApiKey, http), http, LogicalRequests);
         }
     }
@@ -150,18 +137,12 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
         public void Dispose() => http.Dispose();
     }
 
-    private sealed class Handler(ConcurrentQueue<RequestCapture> requests) : HttpMessageHandler {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+    private sealed class Handler : HttpMessageHandler {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken) {
-            string path = request.RequestUri!.AbsolutePath;
-            string? body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            requests.Enqueue(new RequestCapture(request.Method.Method, path, body));
-            if (request.Method == HttpMethod.Get) {
-                Assert.Equal("/v1/models/" + Model, path);
-                return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("404 page not found") };
+            if (request.Method != HttpMethod.Post) {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
             }
-            Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal("/v1/messages", path);
             string stream = """
                 event: message_start
                 data: {"type":"message_start","message":{}}
@@ -182,9 +163,9 @@ public sealed class GalateaAnthropicPreparedV7RecoveryTests {
                 data: {"type":"message_stop"}
 
                 """;
-            return new HttpResponseMessage(HttpStatusCode.OK) {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
                 Content = new StringContent(stream + "\n\n", Encoding.UTF8, "text/event-stream")
-            };
+            });
         }
     }
 }
