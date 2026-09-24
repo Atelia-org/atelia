@@ -73,7 +73,7 @@
 }
 ```
 
-Character 的 `id`/`name`、状态目录、home、默认连接、可选连接与心跳独立于 Player。`connectionOptions` 必须有 1..256 项，`connectionId` 在 catalog 中精确存在且同一角色内不重复；`defaultConnectionId` 必须列在本角色的选项中。`name` 和 `trigger` 是必填字符串，各不超过 4096 UTF-8 bytes，可以暂填空字符串。本轮它们只作为配置数据保留，不驱动选择，网页也只显示 connectionId/modelId。诊断选择及进程内 runtime override 都受当前角色的选项约束。Player 只提供 `id`、`name`、
+Character 的 `id`/`name`、状态目录、home、默认连接、可选连接与心跳独立于 Player。`connectionOptions` 必须有 1..256 项，`connectionId` 在 catalog 中精确存在且同一角色内不重复；`defaultConnectionId` 必须列在本角色的选项中。`name` 和 `trigger` 是必填字符串，各不超过 4096 UTF-8 bytes，可以暂填空字符串。状态识别 binding 启用且角色至少有一个非空 `trigger` 时，`trigger` 表示回合末状态条件，`name` 用于展示匹配含义；空 trigger 只供诊断选择，不参与自动识别。网页仍只显示 connectionId/modelId。诊断选择及进程内 runtime override 都受当前角色的选项约束。细节见[状态驱动的连接选择](character-connection-state-design.md)。Player 只提供 `id`、`name`、
 `password`；当前所有已配置并认证的 Player 都是同一级管理员，可以选择任意 Character。`player-main` 是
 bootstrap 示例 ID，不是硬编码角色或权限。`players: []` 没有可登录身份，但不停止角色心跳、来信投递或委派。
 
@@ -121,7 +121,7 @@ Recap maintenance 使用 `runtime.recapGrid.maintenance.dispatchTimeoutMilliseco
 
 ## `connections.json`
 
-`connections.json` 是 Completion endpoint catalog，与 Character/session 身份分离。Galatea 只接受 V3：根对象必须有非空 `connections` 和恰好四个 `bindings`；全局 `selectableConnectionIds` 必须省略：
+`connections.json` 是 Completion endpoint catalog，与 Character/session 身份分离。Galatea 只接受 V3：根对象必须有非空 `connections` 和恰好五个 `bindings`；全局 `selectableConnectionIds` 必须省略：
 
 根 `defaultConnectionId` 已移到 `config.json` 的每个 Character，不能留在 V3 catalog 中；Galatea 不读取 V1/V2 connections。
 
@@ -130,13 +130,14 @@ Recap maintenance 使用 `runtime.recapGrid.maintenance.dispatchTimeoutMilliseco
   "galatea.input-normalizer": null,
   "galatea.outbound-mail-extractor": null,
   "galatea.character-note-extractor": null,
-  "galatea.memo-recall": null
+  "galatea.memo-recall": null,
+  "galatea.character-connection-state-extractor": null
 }
 ```
 
 每个 non-null binding 必须精确指向 catalog connection；缺失、拼写大小写不符或额外 binding 会拒绝启动。每个 Character 的 `connectionOptions` 是该角色的主线模型选择范围；RecapGrid 和 helper 可以使用不在任何角色选项中、但由 exact route/binding 指定的连接。
 
-四个 binding 都是显式开关：`galatea.input-normalizer` 在首次实际需要时清洗玩家输入；`galatea.outbound-mail-extractor` 从可见 Action 提取发给 Codex 的邮件；`galatea.character-note-extractor` 提取并保存 Character Note；`galatea.memo-recall` 在允许的触发点检索 Default MemoPod。值为 `null` 即禁用对应能力，非 `null` 时 client 仍按实际使用惰性创建。Memo recall 是独立 binding，可以显式复用 Character Note 的 connection ID，但不隐式复用；其非 `null` 前提是 Character Note binding 也非 `null`。
+五个 binding 都是显式开关：`galatea.input-normalizer` 在首次实际需要时清洗玩家输入；`galatea.outbound-mail-extractor` 从可见 Action 提取发给 Codex 的邮件；`galatea.character-note-extractor` 提取并保存 Character Note；`galatea.memo-recall` 在允许的触发点检索 Default MemoPod；`galatea.character-connection-state-extractor` 以独立辅助连接识别角色回合末状态并选择后续新回合的连接。值为 `null` 即禁用对应能力，非 `null` 时 client 仍按实际使用惰性创建。状态识别还要求该角色至少有一个非空 trigger；首次生成模板将此 binding 设为 `null`。Memo recall 是独立 binding，可以显式复用 Character Note 的 connection ID，但不隐式复用；其非 `null` 前提是 Character Note binding 也非 `null`。
 
 一个普通 connection 必须显式给出 `completionSurfaceId`，并在 `baseAddress`/`baseAddressEnv` 中二选一、在 `apiKey`/`apiKeyEnv` 中至多选一。把 secret 放入 `*Env` locator，而不是提交到配置文件。
 

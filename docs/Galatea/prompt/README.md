@@ -1,9 +1,9 @@
 # Galatea 主 system prompt source 导航
 
 状态：**Current source ownership router**  
-Current contract：[V11 配置](../configuration.md)、[typed setup / Prepared v9](../../SessionJournal/current/contracts/completion-request-prepared-v9.md)
+Current contract：[V14 配置](../configuration.md)、[typed setup / Prepared v9](../../SessionJournal/current/contracts/completion-request-prepared-v9.md)
 
-Galatea 主system prompt不是一份可由operator整体替换的文件。指令源包含以下五份 tracked resource，另有代码拥有的输入种类/来源解释：
+Galatea 主system prompt不是一份可由operator整体替换的文件。指令源包含以下六份 tracked resource，另有代码拥有的输入种类/来源解释：
 
 1. [`trpg-protocol-prefix-zh-cn.md`](trpg-protocol-prefix-zh-cn.md)：Galatea.Server embedded、code-owned；
    定义TRPG GM、voice/output grammar与GM carrier来源边界。
@@ -19,12 +19,18 @@ Galatea 主system prompt不是一份可由operator整体替换的文件。指令
 5. [`trpg-character-note-save-appendix-zh-cn.md`](trpg-character-note-save-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned；仅当validated `galatea.character-note-extractor` binding非`null`时追加，
    定义长期Note保存Quick Start；只有runtime保存回执证明成功，不承诺分类、metadata补全或召回。
+6. [`trpg-character-connection-state-appendix-zh-cn.md`](trpg-character-connection-state-appendix-zh-cn.md)：
+   Galatea.Server embedded、code-owned；仅当validated `galatea.character-connection-state-extractor` binding非`null`
+   且本角色至少有一个非空trigger时追加，说明持续状态摘要、连接快照和连接不能反推剧情事实。
 
 ## 机读指令源与瞬态投影
 
 `GalateaSystemInstructionContent` 按顺序保存 `protocol`、`character-context`、`mailbox-protocol`、
 可选 `outbound-mail`、可选 `character-note-save`，最后是代码拥有的 `input-meaning`。
 `galatea.system-instructions.v1` 同时保存 Character id/name、homeDir、capabilities 与 characterPeers 绑定快照。
+启用状态识别时使用 `galatea.system-instructions.v2`，在 `input-meaning` 前加入
+`character-connection-state` source，并在 bindings 保存 `characterConnectionState` capability 与完整
+`connectionOptions` 快照（包括空 trigger 的选项）。既有 v1 Setup 仍按原字段和顺序读取。
 SystemPromptSetup 保存这一机读内容，不保存带分隔线的整段 prompt、后置 roster 字符串或模板展开结果。
 
 是否包含 appendix 只看各自 validated feature binding，不根据 heading/自然语言决定。
@@ -32,7 +38,7 @@ Character context 必须含 `${characterName}`；新 source 拒绝 `${playerName
 Player 是独立的外部访问者，零 Player 时同一角色设定仍可使用；旧模板中的固定玩家内容应显式离线处理。
 
 请求时 `GalateaInputProjector` 读取所选 Setup 的内容，单遍替换 `${characterName}`，把每个 instruction source
-通过局部 JSON Pointer 投影到 md-json fence。插入的名字不递归解释。peer roster、home、能力快照继续作为
+通过局部 JSON Pointer 投影到 md-json fence。插入的名字不递归解释。peer roster、home、能力及连接选项快照继续作为
 数据携带，不能取当前配置代替已有 Prepared 的绑定。清理渲染缓存或改变围栏布局不改变 Setup equality。
 正文/指令含义变化仍是语义变更，须走已有 setup 与资产采用边界。
 

@@ -1470,7 +1470,10 @@ public sealed class GalateaConfigValidationTests {
         Assert.Null(decoded.Bindings[
             GalateaCompletionOwner.MemoRecallBindingKey
         ]);
-        Assert.Equal(4, decoded.Bindings.Count);
+        Assert.Null(decoded.Bindings[
+            GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey
+        ]);
+        Assert.Equal(5, decoded.Bindings.Count);
         using (JsonDocument document = JsonDocument.Parse(template)) {
             JsonElement root = document.RootElement;
             Assert.Equal("3", root.GetProperty("v").GetRawText());
@@ -1707,6 +1710,7 @@ public sealed class GalateaConfigValidationTests {
                 outboundDisabled.CharacterNoteExtractorConnectionId
             );
             Assert.Null(outboundDisabled.MemoRecallConnectionId);
+            Assert.Null(outboundDisabled.CharacterConnectionStateExtractorConnectionId);
             Assert.Contains("## 界外邮箱", disabledPrompt,
                 StringComparison.Ordinal);
             Assert.DoesNotContain("### 发信给 Codex", disabledPrompt,
@@ -1817,6 +1821,12 @@ public sealed class GalateaConfigValidationTests {
                 missingKey
             ));
 
+            JsonObject missingStateExtractor = original.DeepClone().AsObject();
+            Assert.True(missingStateExtractor["bindings"]!.AsObject().Remove(
+                GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey
+            ));
+            Assert.Throws<InvalidDataException>(() => Load(missingStateExtractor));
+
             JsonObject wrongCase = original.DeepClone().AsObject();
             wrongCase["bindings"] = new JsonObject {
                 [GalateaCompletionOwner.InputNormalizerBindingKey] = null,
@@ -1824,6 +1834,7 @@ public sealed class GalateaConfigValidationTests {
                     null,
                 ["Galatea.Character-Note-Extractor"] = null,
                 [GalateaCompletionOwner.MemoRecallBindingKey] = null,
+                [GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey] = null,
             };
             Assert.Throws<InvalidDataException>(() => Load(wrongCase));
 
@@ -1832,6 +1843,21 @@ public sealed class GalateaConfigValidationTests {
                 GalateaCompletionOwner.CharacterNoteExtractorBindingKey
             ] = "unknown";
             Assert.Throws<InvalidDataException>(() => Load(unknown));
+
+            JsonObject unknownStateExtractor = original.DeepClone().AsObject();
+            unknownStateExtractor["bindings"]!.AsObject()[
+                GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey
+            ] = "unknown";
+            Assert.Throws<InvalidDataException>(() => Load(unknownStateExtractor));
+
+            JsonObject enabledStateExtractor = original.DeepClone().AsObject();
+            enabledStateExtractor["bindings"]!.AsObject()[
+                GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey
+            ] = "test";
+            Assert.Equal(
+                "test",
+                Load(enabledStateExtractor).CharacterConnectionStateExtractorConnectionId
+            );
 
             JsonObject blank = original.DeepClone().AsObject();
             blank["bindings"]!.AsObject()[

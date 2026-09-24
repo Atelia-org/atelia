@@ -158,32 +158,17 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             CancellationToken.None
         );
         var initialHead = session.Engine.ReadCurrentHead();
-        GalateaLiveTurn turn = service.StartTurn(
+        Assert.Throws<ArgumentException>(() => service.StartTurn(
             session,
             "direct hidden fresh",
             new GalateaTurnOptions(hidden.Id),
             GalateaDelegateTestConfiguration.PlayerSender
-        );
-        try {
-            GalateaTurnException failure = await Assert.ThrowsAsync<
-                GalateaTurnException>(() => service.RunTurnAsync(
-                    session,
-                    turn,
-                    CancellationToken.None
-                ));
-
-            Assert.Equal(
-                "recap-grid-connection-absent",
-                failure.FailureReason
-            );
-            Assert.Empty(factory.CreatedConnectionIds);
-            Assert.Equal(0, normalizer.NormalizeCallCount);
-            Assert.Equal(0, completion.DispatchCallCount);
-            Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
-        }
-        finally {
-            service.FinishTurn(session, turn);
-        }
+        ));
+        Assert.Empty(factory.CreatedConnectionIds);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(0, completion.DispatchCallCount);
+        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
+        Assert.Null(session.GetCurrentTurn());
     }
 
     [Fact]
@@ -289,7 +274,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             requestedObservation.Content
         );
         SessionInputContent projectedInput = SessionInputContent.Structured(
-            GalateaObservationContent.V1SchemaId, MdJsonSerializer.Read(wrapped));
+            GalateaObservationContent.V3SchemaId, MdJsonSerializer.Read(wrapped));
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         Assert.Equal("normalized input", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);
@@ -413,7 +398,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         Assert.Contains("memo-gist", wrapped, StringComparison.Ordinal);
         SessionInputContent projectedInput = SessionInputContent.Structured(
-            GalateaObservationContent.V1SchemaId, MdJsonSerializer.Read(wrapped));
+            GalateaObservationContent.V3SchemaId, MdJsonSerializer.Read(wrapped));
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         PlayerTurnRecall parsedRecall = Assert.Single(observation.Recalls);
         Assert.Equal(RecallType.MemoGist,

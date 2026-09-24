@@ -315,9 +315,18 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .RequireSnapshot().Turns).ObservationContent);
 
     // This decoder asserts the actual transient md-json request; durable reads above use typed facts.
-    private static PlayerTurnObservation ReadRequestedObservation(string requestText) =>
-        GalateaObservationContent.ReadPlayerTurn(SessionInputContent.Structured(GalateaObservationContent.V1SchemaId,
-            Atelia.MdJson.MdJsonSerializer.Read(requestText)));
+    private static PlayerTurnObservation ReadRequestedObservation(string requestText) {
+        JsonElement value = Atelia.MdJson.MdJsonSerializer.Read(requestText);
+        // Direct typed heartbeat fixtures can still produce v2; service
+        // admissions freeze connectionState and project v3.
+        string schemaId = value.TryGetProperty("connectionState", out _)
+            ? GalateaObservationContent.V3SchemaId
+            : value.GetProperty("kind").GetString() == "heartbeat-activation"
+                ? GalateaObservationContent.V2SchemaId
+                : GalateaObservationContent.V1SchemaId;
+        return GalateaObservationContent.ReadPlayerTurn(
+            SessionInputContent.Structured(schemaId, value));
+    }
 
 
     [Fact]

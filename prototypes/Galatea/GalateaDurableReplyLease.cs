@@ -286,7 +286,7 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
                 proposed = [.. proposed, reservedReceipt];
             }
             if (!GalateaObservationContent
-                    .FitsEveryValidPlayerText(proposed)) {
+                    .FitsEveryValidPlayerText(proposed, reserveConnectionState: true)) {
                 break;
             }
             selected.Add(notice);

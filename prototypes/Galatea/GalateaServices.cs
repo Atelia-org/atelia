@@ -34,7 +34,7 @@ internal abstract record GalateaReadyReplyTurnStartResult {
         : GalateaReadyReplyTurnStartResult;
 }
 
-public sealed class GalateaHostService : IAsyncDisposable {
+public sealed partial class GalateaHostService : IAsyncDisposable {
     internal const int RecentTurnLimit = 6;
     internal const int MaximumRecentResponseUtf8Bytes = 4 * 1024 * 1024;
     internal const int MaximumRecapCadenceProgressResponseUtf8Bytes =
@@ -46,6 +46,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _outboundMailExtractors;
     private readonly IReadOnlyDictionary<string, ICharacterNoteExtractor>
         _characterNoteExtractors;
+    private readonly IReadOnlyDictionary<string, ICharacterConnectionStateExtractor>
+        _characterConnectionStateExtractors;
     private readonly IReadOnlyDictionary<string,
         ICharacterNoteDerivedInfoEnricher>
         _characterNoteDerivedInfoEnrichers;
@@ -95,7 +97,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly IReadOnlyDictionary<string, GalateaPlayerConfig> _players;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
         _connectionCatalog;
-    private readonly ConcurrentDictionary<string, string>
+    private readonly ConcurrentDictionary<string, RuntimeConnectionSelection>
         _runtimeConnectionOverrides = new(StringComparer.Ordinal);
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
     internal IReadOnlyList<string> AutonomyCharacterIds { get; }
@@ -168,6 +170,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
         _characterNoteExtractors = components.CharacterNoteExtractors;
+        _characterConnectionStateExtractors = components.CharacterConnectionStateExtractors;
         _characterNoteDerivedInfoEnrichers =
             components.CharacterNoteDerivedInfoEnrichers;
         _characterNoteBindingEnabled =
@@ -193,7 +196,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory = null,
         IReadOnlyDictionary<string, ICharacterNoteDerivedInfoEnricher>?
-            characterNoteDerivedInfoEnrichers = null
+            characterNoteDerivedInfoEnrichers = null,
+        IReadOnlyDictionary<string, ICharacterConnectionStateExtractor>?
+            characterConnectionStateExtractors = null
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
@@ -218,6 +223,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         config.CharacterNoteExtractorConnectionId,
                     [GalateaCompletionOwner.MemoRecallBindingKey] =
                         config.MemoRecallConnectionId,
+                    [GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey] =
+                        config.CharacterConnectionStateExtractorConnectionId,
                 }
             ));
         GalateaCompletionOwner.ValidateGalateaRouting(normalized);
@@ -243,6 +250,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             StringComparer.Ordinal
         );
         CharacterIds = _characters.Keys.ToArray();
+        _characterConnectionStateExtractors = characterConnectionStateExtractors
+            ?? new Dictionary<string, ICharacterConnectionStateExtractor>(StringComparer.Ordinal);
         GalateaConfigValidation.RequireValidPlayers(config.Players);
         _players = config.Players.ToDictionary(static player => player.PlayerId, StringComparer.Ordinal);
         _outboundMailExtractors = _characters.Keys.ToDictionary(
@@ -346,6 +355,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     );
             IReadOnlyDictionary<string, GalateaRecapGridDefaultPolicy>
                 defaultPolicies = CreateDefaultPolicies(characters);
+            IReadOnlyDictionary<string, ICharacterConnectionStateExtractor> connectionStateExtractors =
+                characters.ToDictionary(
+                    entry => entry.Key,
+                    entry => config.MaintenanceMode
+                        || owner.CharacterConnectionStateExtractorConnection is null
+                        || !entry.Value.ConnectionOptions.Any(option => !string.IsNullOrWhiteSpace(option.Trigger))
+                        ? (ICharacterConnectionStateExtractor)DisabledCharacterConnectionStateExtractor.Instance
+                        : new CharacterConnectionStateExtractor(entry.Value.CharacterName,
+                            entry.Value.ConnectionOptions, owner.CharacterConnectionStateExtractorConnection,
+                            owner.GetCharacterConnectionStateExtractorClient),
+                    StringComparer.Ordinal);
             IReadOnlyDictionary<string, CompletionConnectionConfig>
                 connectionCatalog = SelectCharacterConnectionCatalog(
                     config.Characters,
@@ -372,6 +392,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 inputPreprocessor,
                 outboundMailExtractors,
                 characterNoteExtractors,
+                connectionStateExtractors,
                 characterNoteDerivedInfoEnrichers,
                 owner.CharacterNoteExtractorConnection is not null,
                 defaultPolicies,
@@ -438,6 +459,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             OutboundMailExtractors,
         IReadOnlyDictionary<string, ICharacterNoteExtractor>
             CharacterNoteExtractors,
+        IReadOnlyDictionary<string, ICharacterConnectionStateExtractor>
+            CharacterConnectionStateExtractors,
         IReadOnlyDictionary<string, ICharacterNoteDerivedInfoEnricher>
             CharacterNoteDerivedInfoEnrichers,
         bool CharacterNoteBindingEnabled,
@@ -705,7 +728,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     internal string? ReadRuntimeConnectionOverride(string characterId) =>
-        _runtimeConnectionOverrides.GetValueOrDefault(characterId);
+        _runtimeConnectionOverrides.GetValueOrDefault(characterId)?.ConnectionId;
 
     internal void SetRuntimeConnectionOverride(
         string characterId,
@@ -724,7 +747,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "Runtime connection override must exactly match a selectable connection.",
                 nameof(connectionId));
         }
-        _runtimeConnectionOverrides[characterId] = connectionId;
+        _runtimeConnectionOverrides[characterId] = new RuntimeConnectionSelection(connectionId, null);
     }
 
     private static bool IsSelectableFor(
@@ -1643,6 +1666,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (sender.Kind != "player") {
             throw new ArgumentException("Player admission requires a Player identity.", nameof(sender));
         }
+        options = FreezeConnectionState(host, options);
         string? messageError = GalateaHttpV1.ValidateMessage(userMessage);
         if (messageError is not null) {
             throw new ArgumentException(messageError, nameof(userMessage));
@@ -1714,6 +1738,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
+        options = FreezeConnectionState(host, options);
         GalateaDurableReplyLeaseBeginResult cutoff = host
             .ReplyLeaseReconciler.BeginCutoff(
                 PlayerTurnObservationEnvelope
@@ -1857,6 +1882,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(options);
+        options = FreezeConnectionState(host, options);
         if (internalDelivery is not null && injectedBy is not null) {
             throw new ArgumentException("Internal relay cannot acquire an external Player injector.", nameof(injectedBy));
         }
@@ -1969,6 +1995,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (committed is not SessionTurnRetractionResult.Moved) {
             return null;
         }
+        SetRuntimeConnectionOverride(host.Character.CharacterId, null);
         host.SetRecentTurns(preparedStaleSnapshot);
         return preparedReceipt;
     }
@@ -2045,6 +2072,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
+        options = FreezeConnectionState(host, options);
         GalateaAutonomyCadence cadence = host.AutonomyCadence
             ?? throw new InvalidOperationException(
                 "Heartbeat activation requires a positive autonomy interval."
@@ -2238,6 +2266,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ?? throw new InvalidDataException(
                 "A completed Galatea operation must leave a non-empty durable head."
             );
+        using (var stateCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct, liveTurn.StopController.UserStopToken)) {
+            try {
+                await ExtractConnectionStateAfterCompletionAsync(host, completedHead, stateCancellation.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && liveTurn.StopRequested) {
+                // The Action is committed. A later completed turn can supply state again.
+            }
+        }
         GalateaDurableReplyLeaseReconcileResult leaseSettlement =
             ReconcileDurableDeliveries(host, ct);
         if (leaseSettlement is GalateaDurableReplyLeaseReconcileResult
@@ -2984,12 +3021,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (receiptDelivery is not null) {
             PlayerTurnNotice.NoteSaveReceipt selectedReceipt = CharacterNoteSaveReceipt.SelectForObservation(
                 receiptDelivery,
-                receipt => FitsStructuredObservation(fresh, observationTimestamp, characterSnapshot, [.. notices, receipt], []));
+                receipt => FitsStructuredObservation(fresh, observationTimestamp, characterSnapshot, [.. notices, receipt], [], liveTurn.Options.ConnectionState));
             notices = [.. notices, selectedReceipt];
             preliminaryPlayerObservation = preliminaryPlayerObservation!.WithNotices(notices);
         }
         SessionInputContent prompted = GalateaObservationContent.Create(fresh,
-            observationTimestamp, characterSnapshot, notices, []);
+            observationTimestamp, characterSnapshot, notices, [], liveTurn.Options.ConnectionState);
         await using GalateaRecapGridTurn turn =
             await recapGrid.OpenFreshAsync(
                 host.Engine,
@@ -3058,12 +3095,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     preliminaryPlayerObservation,
                     recallContext,
                     cancellationToken,
-                    candidates => FitsStructuredObservation(fresh, observationTimestamp, characterSnapshot, notices, candidates),
+                    candidates => FitsStructuredObservation(fresh, observationTimestamp, characterSnapshot, notices, candidates, liveTurn.Options.ConnectionState),
                     prompted
                 ).ConfigureAwait(false);
             if (recalls.Count > 0) {
                 prompted = GalateaObservationContent.Create(fresh,
-                    observationTimestamp, characterSnapshot, notices, recalls);
+                    observationTimestamp, characterSnapshot, notices, recalls, liveTurn.Options.ConnectionState);
             }
         }
         _ = liveTurn.DurableReplyLease?.BindObservationBase(
@@ -3101,10 +3138,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         DateTimeOffset timestamp,
         GalateaSenderSnapshot character,
         IReadOnlyList<PlayerTurnNotice> notices,
-        IReadOnlyList<PlayerTurnRecall> recalls
+        IReadOnlyList<PlayerTurnRecall> recalls,
+        GalateaConnectionStateSnapshot? connectionState = null
     ) {
         try {
-            _ = GalateaObservationContent.Create(fresh, timestamp, character, notices, recalls);
+            _ = GalateaObservationContent.Create(fresh, timestamp, character, notices, recalls, connectionState);
             return true;
         }
         catch (ArgumentOutOfRangeException) {
@@ -4510,6 +4548,8 @@ internal static class GalateaConfigLoader {
         string? memoRecallConnectionId = connectionsFile.Bindings[
             GalateaCompletionOwner.MemoRecallBindingKey
         ];
+        string? characterConnectionStateExtractorConnectionId = connectionsFile.Bindings[
+            GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey];
         if (!File.Exists(delegatesPath)) {
             throw new FileNotFoundException(
                 $"Galatea delegates file was not found: {delegatesPath}",
@@ -4529,6 +4569,7 @@ internal static class GalateaConfigLoader {
                 delegates.AllowedRoots,
                 outboundMailExtractorConnectionId is not null,
                 characterNoteExtractorConnectionId is not null,
+                characterConnectionStateExtractorConnectionId is not null,
                 projectedSources
             );
         GalateaConfigValidation.RequireValidConnectionDefaults(
@@ -4556,7 +4597,8 @@ internal static class GalateaConfigLoader {
             ),
             MaintenanceMode: rootFile.Runtime.MaintenanceMode,
             RecapGrid: LoadRecapGridConfig(rootFile.Runtime.RecapGrid),
-            CompletionAttemptTimeoutSeconds: rootFile.Runtime.CompletionAttemptTimeoutSeconds
+            CompletionAttemptTimeoutSeconds: rootFile.Runtime.CompletionAttemptTimeoutSeconds,
+            CharacterConnectionStateExtractorConnectionId: characterConnectionStateExtractorConnectionId
         ) with {
             CharacterRecipientDirectory = characterRecipientDirectory
         };
@@ -4651,6 +4693,7 @@ internal static class GalateaConfigLoader {
             IReadOnlyList<string> allowedRoots,
             bool outboundMailEnabled,
             bool characterNoteRequestEnabled,
+            bool characterConnectionStateEnabled,
             IReadOnlyDictionary<string, string>? projectedSources
         ) {
         var namedCharacters = new (string CharacterId, GalateaCharacterName CharacterName)[
@@ -4743,7 +4786,9 @@ internal static class GalateaConfigLoader {
                     characterRecipientDirectory.Recipients
                         .Where(peer => !string.Equals(peer.CharacterId, character.CharacterId, StringComparison.Ordinal))
                         .Select(peer => new GalateaSenderSnapshot("character", peer.CharacterId, peer.CharacterName.Value))
-                        .ToArray()
+                        .ToArray(),
+                    characterConnectionStateEnabled,
+                    character.ConnectionOptions
                 );
             }
             catch (Exception exception) when (exception is ArgumentException or InvalidDataException) {
@@ -5113,6 +5158,7 @@ internal static class GalateaConfigTemplateFactory {
             writer.WriteNull(
                 GalateaCompletionOwner.MemoRecallBindingKey
             );
+            writer.WriteNull(GalateaCompletionOwner.CharacterConnectionStateExtractorBindingKey);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }

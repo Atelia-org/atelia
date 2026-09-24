@@ -19,7 +19,7 @@ Codex 有跨模型 live 实验依据；公共 Responses 的相同行为为 opera
 已冻结的模型、prompt、history、tools 及逻辑请求 commitment 仍保留；connection、client/API、原生载荷和工具权限检查继续有效。
 旧 Started 仍按原 schema 验证，但纯生成恢复不再要求页面授权重发；恢复同一冻结任务不能据此更换连接或模型。
 
-新 Prepared 写 v9 语义计划，Observation/Setup 写 v2；新调用不再写 `CompletionAttemptStarted` 或逐次 `CompletionAttemptFailed`。完整、校验通过的结果才提交 Action，旧 Started/Failed 的读取验证保留。旧 v7/v8 保持 exact 恢复，v5 保持历史审计可读、completion 不可执行。部署前正常停服并保留完整数据快照，
+新 Prepared 写 v9 语义计划；新主线 Observation 写 v3，启用角色状态识别的 SystemInstruction Setup 写 v2，旧 schema 保持精确读取。新调用不再写 `CompletionAttemptStarted` 或逐次 `CompletionAttemptFailed`。完整、校验通过的结果才提交 Action，旧 Started/Failed 的读取验证保留。旧 v7/v8 保持 exact 恢复，v5 保持历史审计可读、completion 不可执行。部署前正常停服并保留完整数据快照，
 回退旧程序时需要匹配的数据快照，不能只换回二进制；恢复旧快照不保留升级后新增轮次。
 详见 [Prepared v9 与旧版本矩阵](../SessionJournal/current/contracts/completion-request-prepared-v9.md)。
 若其余绑定检查失败，应先核查实际连接/载荷差异，不要连续点击恢复或修改冻结身份。
@@ -51,7 +51,7 @@ Action/TurnEnded 的提交发布结果不确定时必须停用当前 writer、�
 
 `TextExtractor` 是 internal、ephemeral 的结构化提取器：构造时冻结 system prompt、不可变 `TextExtractorToolSet`、connection 与借用 client accessor；调用只提供 `targetText` 和 `userPrompt`。它不拥有 HTTP、SessionJournal、持久化或 client dispose。一次 logical extraction 会建立独立 `ToolSession`/collector，故同一实例可并发使用而不串线，也没有 durable dedupe/recovery 语义。
 
-TextExtractor 本身不再拥有 Codex 专属五次重试循环。input normalizer、outbound-mail extractor、Character Note extractor 与 Memo recall 的纯生成 client 统一借用上述 retry decorator；各 feature 仍负责自己的输入、验证和领域结算，重试不包围 capture/apply。每次 attempt 只发一个 Completion，请求使用 `Auto` 与 parallel tool calls；artifact tool call 是终态输出，不进入 tool-result 或 repair loop。0 个 tool call 表示没有产物，普通文本只是受限 diagnostics。未知、重复或畸形 call、schema/DataAnnotations/custom validation、invocation/termination/error 不匹配都会使整个 extraction 失败，不返回 partial result。工具名、arguments、call 数量和 UTF-8 文本均有代码边界；`openai-codex-responses` 工具名还受其 ASCII 命名限制。connection 未向调用者暴露业务 output cap；adapter 只在 provider 已报告的模型上限适用时传递该字段。
+TextExtractor 本身不再拥有 Codex 专属五次重试循环。input normalizer、outbound-mail extractor、Character Note extractor、Character connection-state extractor 与 Memo recall 的纯生成 client 统一借用上述 retry decorator；各 feature 仍负责自己的输入、验证和领域结算，重试不包围 capture/apply。每次 attempt 只发一个 Completion，请求使用 `Auto` 与 parallel tool calls；artifact tool call 是终态输出，不进入 tool-result 或 repair loop。0 个 tool call 表示没有产物，普通文本只是受限 diagnostics。未知、重复或畸形 call、schema/DataAnnotations/custom validation、invocation/termination/error 不匹配都会使整个 extraction 失败，不返回 partial result。工具名、arguments、call 数量和 UTF-8 文本均有代码边界；`openai-codex-responses` 工具名还受其 ASCII 命名限制。connection 未向调用者暴露业务 output cap；adapter 只在 provider 已报告的模型上限适用时传递该字段。
 
 artifact 包装与 Observation 的协作模式、Mailbox 和 Character Note 的接点见 [TextExtractor / Observation Bridge](text-extractor-observation-bridge.md)。Character Note 的现行保存合同见 [Default MemoPod V1](character-note-default-memopod-v1.md)；[自动记忆工作单](automatic-memory-work-order.md)记录回执、DerivedInfo background pump 与 Memo recall 闭环的已批准实施范围，当前行为以对应源码和测试复核。
 
@@ -63,7 +63,7 @@ session attach 是 provider-free：只做本地打开、durable delivery proof �
 
 ## Observation 与回合入口
 
-新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v1` 或 `galatea.observation.v2` 的机读 JSON，外层由 SessionJournal
+新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v3` 的机读 JSON；旧 `galatea.observation.v1/v2` 继续精确读取。外层由 SessionJournal
 `SessionInputContent.Structured` 明确标记。`GalateaInputProjector` 在请求时用 md-json 投影；正文的空白、换行、
 Unicode 和 Markdown 不被当成 runtime 元数据解析。存储、查询、Undo、exact append proof 不读取生成的 fence。
 
@@ -78,6 +78,8 @@ notices 与 recalls 各自保留来源；不能把整个 composite 当成 Player
 末尾；Heartbeat 不带外界 Reply/DeliveryFailure，DelegateReply 必须有外界 notice。业务时间在形成 Observation
 时采样，不能因重渲染变成当前时间。具体字段、数量、UTF-8 边界和闭合 schema 由
 [`GalateaObservationContent`](../../prototypes/Galatea/GalateaObservationContent.cs) 验证。
+
+v3 输入在接纳时冻结 `connectionState`：`runtimeOverrideConnectionId` 是当时的进程内选择，`effectiveConnectionId` 是常规新回合选择，`turnConnectionId` 是该回合实际使用的连接，`lastChange` 是最近一次有效切换的可空历史记录。它覆盖全部新回合来源，包括 inbound-mail。快照随 Observation 正常落盘，仅是当时输入证据；恢复已有输入不从当前内存重算，也不从历史快照恢复 override。旧 v1/v2 没有此字段，按原 schema 投影。具体语义见[状态驱动的连接选择](character-connection-state-design.md)。
 
 ### Canonical grammar 与兼容读取
 
@@ -165,7 +167,7 @@ Delivered 只证明 Observation append，不证明 provider 收到或理解；Te
 
 没有 pending 时，Ready reply 优先，Empty 才按正 interval 的 process-local monotonic cadence 决定 `HeartbeatActivation`。busy 跳过、不补 tick；首次启动重新 arm，不恢复停机期间的 deadline。完成或合法业务结束后重新计时；临时纯生成故障在同一个 runner 内退避，不变成失败 heartbeat 的永久暂停。环境/协议 blocked 和旧 Failed 保留原任务并阻止普通 pulse 重试，不能借新 heartbeat 覆盖；损坏、quarantine 或未知工具副作用仍 fail closed。原 cadence 设计背景见[自主 interval 设计](per-character-autonomy-interval-design.md)，自动恢复增量以[实施记录](completion-auto-retry-implementation.md)为准。
 
-所有从 Idle 接纳的新主线回合在接纳时按 `diagnosticConnectionId ?? runtimeConnectionOverrideId ?? defaultConnectionId` 选一次连接，包含人工输入/注入邮件、Ready reply、心跳和角色间信。候选连接必须在目标 Character 的 `connectionOptions` 中。`runtimeConnectionOverrideId` 由 `GalateaHostService` 按 Character 保存在进程内，设置和清除均精确校验该角色选项；目前只有内部方法，没有角色意图解析或外部写入 API。网页诊断选择只随下一次人工发送传入，发送即清除，不沿用旧的 localStorage 值。辅助 LLM 与 RecapGrid maintenance 仍走各自 binding/route。已接纳的恢复回合继续使用 governing setup 或 Prepared target，不读取该新回合 override。
+所有从 Idle 接纳的新主线回合在接纳时按 `diagnosticConnectionId ?? runtimeConnectionOverrideId ?? defaultConnectionId` 选一次连接，包含人工输入/注入邮件、Ready reply、心跳和角色间信。候选连接必须在目标 Character 的 `connectionOptions` 中。启用状态识别时，成功终结 Action 落盘后、仍持有该角色 `TurnLock` 时，以 30 秒整体时限识别最终状态；唯一有效匹配设置该角色的进程内 override，下一新回合生效。识别失败、超时、未知或冲突保留原值，不使剧情回合失败。诊断连接不会直接写入 override，但该回合的剧情仍参与识别。冷启动从 default 开始，可能经过多回合才重新识别；成功 Undo 清除该角色的 override 和最近切换记录。网页诊断选择只随下一次人工发送传入，发送即清除，不沿用旧的 localStorage 值。辅助 LLM 与 RecapGrid maintenance 仍走各自 binding/route。已接纳的恢复回合继续使用 governing setup 或 Prepared target，不读取该新回合 override。详见[状态驱动的连接选择](character-connection-state-design.md)。
 
 admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细节。显式`POST /api/v1/characters/{characterId}/agent/retry-admission`在同一`TurnLock`内复用`ReconcileDurableAdmissionAsync`，只处理旧lease、extraction gap与保存恢复；它不`StartTurn`，不跳过真实provider/结构错误。处理成功且runtime为Idle后才清除admission失败，独立reply失败与runtime recovery仍保留各自约束。忙碌或失败返回409，具体HTTP合同见[Server API](server-api.md)。
 

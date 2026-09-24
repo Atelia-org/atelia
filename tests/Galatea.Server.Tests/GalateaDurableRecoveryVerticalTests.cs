@@ -419,39 +419,24 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             .LegacyFailedTurnBlocked>(
                 session.Engine.InspectRuntimeRecoveryRequirements()
             );
-        GalateaLiveTurn turn = service.StartTurn(
+        Assert.Throws<ArgumentException>(() => service.StartTurn(
             session,
             "must not abandon failed turn",
             new GalateaTurnOptions(hidden.Id),
             GalateaDelegateTestConfiguration.PlayerSender
-        );
-        try {
-            GalateaTurnException failure = await Assert.ThrowsAsync<
-                GalateaTurnException>(() => service.RunTurnAsync(
-                    session,
-                    turn,
-                    CancellationToken.None
-                ));
-
-            Assert.Equal(
-                "recap-grid-connection-absent",
-                failure.FailureReason
-            );
-            Assert.Equal(0, normalizer.NormalizeCallCount);
-            Assert.Equal(0, completionFactory.CreateCallCount);
-            Assert.Equal(0, completionFactory.Client.DispatchCallCount);
-            Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
-            Assert.Equal(before, session.Engine.InspectExecutionBoundary());
-            SessionRuntimeRecoveryRequirements.LegacyFailedTurnBlocked
-                after = Assert.IsType<SessionRuntimeRecoveryRequirements
-                    .LegacyFailedTurnBlocked>(
-                        session.Engine.InspectRuntimeRecoveryRequirements()
-                    );
-            Assert.Equal(failedHead, after.FailedHead);
-        }
-        finally {
-            service.FinishTurn(session, turn);
-        }
+        ));
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+        Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(before, session.Engine.InspectExecutionBoundary());
+        SessionRuntimeRecoveryRequirements.LegacyFailedTurnBlocked
+            after = Assert.IsType<SessionRuntimeRecoveryRequirements
+                .LegacyFailedTurnBlocked>(
+                    session.Engine.InspectRuntimeRecoveryRequirements()
+                );
+        Assert.Equal(failedHead, after.FailedHead);
+        Assert.Null(session.GetCurrentTurn());
     }
 
     [Fact]

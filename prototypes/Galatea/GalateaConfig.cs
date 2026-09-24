@@ -24,7 +24,8 @@ public sealed record GalateaConfig(
     bool MaintenanceMode = false,
     GalateaRecapGridRuntimeConfig? RecapGrid = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null
+    IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null,
+    string? CharacterConnectionStateExtractorConnectionId = null
 ) {
     // This directory is derived once from the complete config-file character set.
     // Direct in-process test configurations intentionally leave it unset; the

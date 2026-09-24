@@ -14,8 +14,11 @@ Galatea host 只接受精确整数 `"v": 14`。根字段仍为 `v`、`characters
 
 每项的三个字段均为必填字符串。`connectionId` 须在 Completion catalog 中精确存在、在该角色内不重复，
 且 `defaultConnectionId` 须包含在该角色的选项中。`name` 和 `trigger` 各最多 4096 UTF-8 bytes；
-当前只保留配置，不参与模型选择，也不在网页显示。`connections.json` 仍是 V3 catalog，但 Galatea 拒绝
-全局 `selectableConnectionIds`；浏览器诊断选择与进程内 runtime override 均受目标角色的选项约束。
+`name` 在状态识别中用于展示匹配含义；非空 `trigger` 是回合末状态条件，空 trigger 只供诊断选择。
+`connections.json` 仍是 V3 catalog，Galatea 要求五个大小写精确的可空 feature bindings，首次模板中
+`galatea.character-connection-state-extractor` 为 `null`；同时拒绝全局 `selectableConnectionIds`。
+浏览器诊断选择与进程内 runtime override 均受目标角色的选项约束。根 V14 的字段形状不因自动识别改变；
+运行时行为见[状态驱动的连接选择](../../../Galatea/character-connection-state-design.md)。
 
 `runtime.recapGrid` 仍是必需的 exact object，只有 `maintenance`：
 

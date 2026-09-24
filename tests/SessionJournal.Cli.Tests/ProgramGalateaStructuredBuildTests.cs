@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.RecapGrid;
@@ -15,6 +16,7 @@ public sealed partial class ProgramRecapGridCommandTests {
             SessionInputContent.Text("legacy text remains exact\r\n```\nlegacy\n```"),
             StructuredBuildPlayer(),
             StructuredBuildHeartbeat(),
+            StructuredBuildConnectionState(),
             // Leave a complete recent turn after the input under examination,
             // so cadence can retain its required recent reserve.
             SessionInputContent.Text("recent reserve after structured history")
@@ -149,7 +151,8 @@ public sealed partial class ProgramRecapGridCommandTests {
                 ["galatea.input-normalizer"] = null,
                 ["galatea.outbound-mail-extractor"] = null,
                 ["galatea.character-note-extractor"] = null,
-                ["galatea.memo-recall"] = null
+                ["galatea.memo-recall"] = null,
+                ["galatea.character-connection-state-extractor"] = null
             }
         }));
         return new(refId.ToHexString(), compose.GetProperty("detail").GetProperty("recipeDigest").GetString()!, routes, connections);
@@ -167,6 +170,17 @@ public sealed partial class ProgramRecapGridCommandTests {
         SessionInputContent[] actual = Assert.IsType<SessionCompletedTurnsReadResult.Snapshot>(reader.ReadRecentCompletedTurns(32)).Value.Turns
             .Select(turn => turn.ObservationContent).Reverse().ToArray();
         Assert.Equal(expected, actual);
+    }
+
+    private static SessionInputContent StructuredBuildConnectionState() {
+        JsonObject value = JsonNode.Parse(StructuredBuildPlayer().JsonValue.GetRawText())!.AsObject();
+        value["connectionState"] = new JsonObject {
+            ["runtimeOverrideConnectionId"] = "regular",
+            ["effectiveConnectionId"] = "regular",
+            ["turnConnectionId"] = "diagnostic",
+            ["lastChange"] = null
+        };
+        return SessionInputContent.Structured("galatea.observation.v3", JsonSerializer.SerializeToElement(value));
     }
 
     private static SessionInputContent StructuredBuildPlayer() => SessionInputContent.Structured("galatea.observation.v1",

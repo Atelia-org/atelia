@@ -13,8 +13,12 @@ namespace Atelia.Galatea.Server;
 
 /// <summary>Stable input facts. Encoding, decoding and proofs do not invoke an LLM renderer.</summary>
 internal static class GalateaObservationContent {
+    // Five IDs, option name, source address and evidence; JSON may escape each
+    // input byte as six ASCII bytes. Reserve before claiming a new reply lease.
+    internal const int MaximumConnectionStateJsonUtf8Bytes = (5 * 128 + 4096 + 256 + 2048) * 6 + 1024;
     internal const string V1SchemaId = GalateaObservationSchema.V1SchemaId;
     internal const string V2SchemaId = GalateaObservationSchema.V2SchemaId;
+    internal const string V3SchemaId = GalateaObservationSchema.V3SchemaId;
     internal const int MaximumContentUtf8Bytes = GalateaObservationLimits.MaximumContentUtf8Bytes;
     internal static GalateaSenderSnapshot RuntimeSender { get; } = new("runtime", "galatea", "Galatea runtime");
 
@@ -30,7 +34,8 @@ internal static class GalateaObservationContent {
 
     internal static SessionInputContent Create(
         GalateaFreshInput fresh, DateTimeOffset timestamp, GalateaSenderSnapshot character,
-        IReadOnlyList<PlayerTurnNotice>? notices = null, IReadOnlyList<PlayerTurnRecall>? recalls = null
+        IReadOnlyList<PlayerTurnNotice>? notices = null, IReadOnlyList<PlayerTurnRecall>? recalls = null,
+        GalateaConnectionStateSnapshot? connectionState = null
     ) {
         ArgumentNullException.ThrowIfNull(fresh);
         if (character.Kind != "character") { throw new ArgumentException("A target Character snapshot is required.", nameof(character)); }
@@ -40,43 +45,65 @@ internal static class GalateaObservationContent {
             _ => []
         };
         return fresh switch {
-            GalateaFreshInput.PlayerAction player => Encode(V1SchemaId, "player-action", player.Sender, timestamp,
-                new { text = player.Text }, selected, recalls ?? []),
-            GalateaFreshInput.HeartbeatActivation heartbeat => Encode(V2SchemaId, "heartbeat-activation", RuntimeSender, timestamp,
-                new { character = SenderJson(character), externalIntervalMinutes = heartbeat.IntervalMinutes }, selected, recalls ?? []),
-            GalateaFreshInput.DelegateReply => Encode(V1SchemaId, "delegate-reply", RuntimeSender, timestamp,
-                new { }, selected, recalls ?? []),
-            GalateaFreshInput.InboundMail mail => Encode(V1SchemaId, "inbound-mail",
+            GalateaFreshInput.PlayerAction player => Encode(connectionState is null ? V1SchemaId : V3SchemaId, "player-action", player.Sender, timestamp,
+                new { text = player.Text }, selected, recalls ?? [], connectionState),
+            GalateaFreshInput.HeartbeatActivation heartbeat => Encode(connectionState is null ? V2SchemaId : V3SchemaId, "heartbeat-activation", RuntimeSender, timestamp,
+                new { character = SenderJson(character), externalIntervalMinutes = heartbeat.IntervalMinutes }, selected, recalls ?? [], connectionState),
+            GalateaFreshInput.DelegateReply => Encode(connectionState is null ? V1SchemaId : V3SchemaId, "delegate-reply", RuntimeSender, timestamp,
+                new { }, selected, recalls ?? [], connectionState),
+            GalateaFreshInput.InboundMail mail => Encode(connectionState is null ? V1SchemaId : V3SchemaId, "inbound-mail",
                 mail.Sender ?? mail.InjectedBy ?? throw new InvalidDataException("Inbound mail requires its accepted sender identity."),
                 timestamp, new {
                     messageId = mail.Message.MessageId, from = mail.Message.From, to = mail.Message.To,
                     subject = mail.Message.Subject, body = mail.Message.Body,
                     injectedBy = mail.InjectedBy is null ? null : SenderJson(mail.InjectedBy)
-                }, selected, recalls ?? []),
+                }, selected, recalls ?? [], connectionState),
             _ => throw new NotSupportedException("Unsupported Galatea fresh input.")
         };
     }
 
     private static SessionInputContent Encode(string schemaId, string kind, GalateaSenderSnapshot sender, DateTimeOffset timestamp,
-        object action, IReadOnlyList<PlayerTurnNotice> notices, IReadOnlyList<PlayerTurnRecall> recalls) {
-        JsonElement value = JsonSerializer.SerializeToElement(new {
-            v = 1, kind, sender = SenderJson(sender),
-            externalLocalTimestamp = timestamp.ToString("O", CultureInfo.InvariantCulture), action,
-            notices = notices.Select(NoticeJson).ToArray(), recalls = recalls.Select(RecallJson).ToArray()
-        });
+        object action, IReadOnlyList<PlayerTurnNotice> notices, IReadOnlyList<PlayerTurnRecall> recalls,
+        GalateaConnectionStateSnapshot? connectionState = null) {
+        object[] noticeValues = notices.Select(NoticeJson).ToArray();
+        object[] recallValues = recalls.Select(RecallJson).ToArray();
+        JsonElement value = connectionState is null
+            ? JsonSerializer.SerializeToElement(new {
+                v = 1, kind, sender = SenderJson(sender),
+                externalLocalTimestamp = timestamp.ToString("O", CultureInfo.InvariantCulture), action,
+                notices = noticeValues, recalls = recallValues
+            })
+            : JsonSerializer.SerializeToElement(new {
+                v = 1, kind, sender = SenderJson(sender),
+                externalLocalTimestamp = timestamp.ToString("O", CultureInfo.InvariantCulture), action,
+                notices = noticeValues, recalls = recallValues,
+                connectionState = new {
+                    runtimeOverrideConnectionId = connectionState.RuntimeOverrideConnectionId,
+                    effectiveConnectionId = connectionState.EffectiveConnectionId,
+                    turnConnectionId = connectionState.TurnConnectionId,
+                    lastChange = connectionState.LastChange is { } change ? new {
+                        sourceActionAddress = change.SourceActionAddress,
+                        previousConnectionId = change.PreviousConnectionId,
+                        connectionId = change.ConnectionId,
+                        name = change.Name,
+                        evidence = change.Evidence
+                    } : null
+                }
+            });
         Validate(schemaId, value);
         return SessionInputContent.Structured(schemaId, value);
     }
 
     private static object SenderJson(GalateaSenderSnapshot sender) => new { kind = sender.Kind, id = sender.Id, name = sender.Name };
 
-    internal static bool FitsEveryValidPlayerText(IReadOnlyList<PlayerTurnNotice> notices) {
+    internal static bool FitsEveryValidPlayerText(IReadOnlyList<PlayerTurnNotice> notices, bool reserveConnectionState = false) {
         if (notices.Count > PlayerTurnObservationEnvelope.MaximumNoticeCount) { return false; }
         JsonElement value = JsonSerializer.SerializeToElement(notices.Select(NoticeJson).ToArray());
         // JSON can encode one control character in six bytes. Reserve the complete
         // admitted Player text budget and bounded wrapper/identity fields.
         return GalateaBoundedJson.StrictUtf8.GetByteCount(value.GetRawText())
-            + GalateaHttpV1.MaximumMessageUtf8Bytes * 6L + 16 * 1024 <= MaximumContentUtf8Bytes;
+            + GalateaHttpV1.MaximumMessageUtf8Bytes * 6L + 16 * 1024
+            + (reserveConnectionState ? MaximumConnectionStateJsonUtf8Bytes : 0) <= MaximumContentUtf8Bytes;
     }
 
     internal static bool FitsPlayerTurnContent(PlayerTurnObservation observation) {
@@ -207,6 +234,24 @@ internal static class GalateaObservationContent {
         };
     }
 
+    internal static GalateaConnectionStateSnapshot? ReadConnectionState(SessionInputContent content) {
+        if (!content.IsStructured || !IsSupportedSchemaId(content.SchemaId)) { return null; }
+        Validate(content);
+        if (content.SchemaId != V3SchemaId) { return null; }
+        JsonElement state = content.JsonValue.GetProperty("connectionState");
+        JsonElement change = state.GetProperty("lastChange");
+        return new GalateaConnectionStateSnapshot(
+            NullableString(state, "runtimeOverrideConnectionId"),
+            state.GetProperty("effectiveConnectionId").GetString()!,
+            state.GetProperty("turnConnectionId").GetString()!,
+            change.ValueKind == JsonValueKind.Null ? null : new GalateaConnectionStateChange(
+                change.GetProperty("sourceActionAddress").GetString()!,
+                change.GetProperty("previousConnectionId").GetString()!,
+                change.GetProperty("connectionId").GetString()!,
+                change.GetProperty("name").GetString()!,
+                change.GetProperty("evidence").GetString()!));
+    }
+
     internal static IReadOnlyList<string> ExternalStringPaths(string? schemaId, JsonElement value) => GalateaObservationSchema.ExternalStringPaths(schemaId, value);
 
     internal static string DisplayText(SessionInputContent content) {
@@ -223,7 +268,7 @@ internal static class GalateaObservationContent {
             return GalateaMailboxObservationEnvelope.TryUnwrap(content.TextValue, out MailboxMessage legacy)
                 ? legacy : throw new InvalidDataException("Unsupported legacy mailbox input.");
         }
-        if (content.SchemaId != V1SchemaId) { throw new InvalidDataException("Unsupported mailbox schema."); }
+        if (content.SchemaId is not (V1SchemaId or V3SchemaId)) { throw new InvalidDataException("Unsupported mailbox schema."); }
         Validate(content);
         if (content.JsonValue.GetProperty("kind").GetString() != "inbound-mail") { throw new InvalidDataException("Expected inbound-mail input."); }
         return ReadMailbox(content.JsonValue.GetProperty("action"));

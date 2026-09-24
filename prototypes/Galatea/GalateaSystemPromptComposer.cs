@@ -10,9 +10,12 @@ internal static class GalateaSystemPromptComposer {
         bool outboundMailEnabled,
         bool characterNoteSaveEnabled,
         string? homeDir,
-        IReadOnlyList<GalateaSenderSnapshot>? characterPeers = null
+        IReadOnlyList<GalateaSenderSnapshot>? characterPeers = null,
+        bool characterConnectionStateEnabled = false,
+        IReadOnlyList<GalateaCharacterConnectionOption>? connectionOptions = null
     ) => GalateaSystemInstructionContent.Create(character, characterContextSource,
-        outboundMailEnabled, characterNoteSaveEnabled, homeDir, characterPeers);
+        outboundMailEnabled, characterNoteSaveEnabled, homeDir, characterPeers,
+        characterConnectionStateEnabled, connectionOptions);
 
     internal const string ProtocolPrefixResourceName =
         "Atelia.Galatea.Server.PromptTemplates.TrpgHost.ProtocolPrefix.zh-CN.md";
@@ -22,6 +25,8 @@ internal static class GalateaSystemPromptComposer {
         "Atelia.Galatea.Server.PromptTemplates.TrpgHost.OutboundMailProtocolAppendix.zh-CN.md";
     internal const string CharacterNoteSaveAppendixResourceName =
         "Atelia.Galatea.Server.PromptTemplates.TrpgHost.CharacterNoteSaveAppendix.zh-CN.md";
+    internal const string CharacterConnectionStateAppendixResourceName =
+        "Atelia.Galatea.Server.PromptTemplates.TrpgHost.CharacterConnectionStateAppendix.zh-CN.md";
 
     private static readonly Lazy<GalateaEmbeddedPromptResource>
         ProtocolPrefix = new(() => LoadProtocol(
@@ -43,6 +48,11 @@ internal static class GalateaSystemPromptComposer {
             CharacterNoteSaveAppendixResourceName,
             "Galatea Character Note save appendix"
         ));
+    private static readonly Lazy<GalateaEmbeddedPromptResource>
+        CharacterConnectionStateAppendix = new(() => LoadProtocol(
+            CharacterConnectionStateAppendixResourceName,
+            "Galatea Character connection state appendix"
+        ));
 
     internal static string ProtocolPrefixSource =>
         ProtocolPrefix.Value.Source;
@@ -55,6 +65,9 @@ internal static class GalateaSystemPromptComposer {
 
     internal static string CharacterNoteSaveAppendixSource =>
         CharacterNoteSaveAppendix.Value.Source;
+
+    internal static string CharacterConnectionStateAppendixSource =>
+        CharacterConnectionStateAppendix.Value.Source;
 
     private static GalateaEmbeddedPromptResource LoadProtocol(
         string resourceName,

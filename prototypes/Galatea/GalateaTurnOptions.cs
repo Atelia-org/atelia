@@ -10,5 +10,6 @@ internal enum GalateaTurnMode {
 internal sealed record GalateaTurnOptions(
     string ConnectionId,
     GalateaTurnMode Mode = GalateaTurnMode.FreshSend,
-    EventAddress? ExpectedHead = null
+    EventAddress? ExpectedHead = null,
+    GalateaConnectionStateSnapshot? ConnectionState = null
 );

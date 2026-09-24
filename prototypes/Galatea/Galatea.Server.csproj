@@ -56,6 +56,10 @@
       <Link>PromptTemplates/trpg-character-note-save-appendix-zh-cn.md</Link>
       <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.CharacterNoteSaveAppendix.zh-CN.md</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/trpg-character-connection-state-appendix-zh-cn.md">
+      <Link>PromptTemplates/trpg-character-connection-state-appendix-zh-cn.md</Link>
+      <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.CharacterConnectionStateAppendix.zh-CN.md</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

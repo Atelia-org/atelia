@@ -21,6 +21,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         "galatea.character-note-extractor";
     internal const string MemoRecallBindingKey =
         "galatea.memo-recall";
+    internal const string CharacterConnectionStateExtractorBindingKey =
+        "galatea.character-connection-state-extractor";
 
     private readonly CompletionConnectionRegistry _registry;
     private readonly IReadOnlyDictionary<string, int> _attemptTimeoutSeconds;
@@ -55,6 +57,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                         config.CharacterNoteExtractorConnectionId,
                     [MemoRecallBindingKey] =
                         config.MemoRecallConnectionId,
+                    [CharacterConnectionStateExtractorBindingKey] =
+                        config.CharacterConnectionStateExtractorConnectionId,
                 }
             ));
         ValidateGalateaRouting(normalized);
@@ -118,6 +122,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         MemoRecallConnectionId = normalized.Bindings[
             MemoRecallBindingKey
         ];
+        CharacterConnectionStateExtractorConnectionId = normalized.Bindings[
+            CharacterConnectionStateExtractorBindingKey];
     }
 
     internal GalateaRecapGridComposition RecapGrid { get; }
@@ -171,6 +177,17 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
 
     internal string? MemoRecallConnectionId { get; }
 
+    internal string? CharacterConnectionStateExtractorConnectionId { get; }
+
+    internal CompletionConnectionConfig? CharacterConnectionStateExtractorConnection =>
+        CharacterConnectionStateExtractorConnectionId is null
+            ? null : TryGetConnectionExact(CharacterConnectionStateExtractorConnectionId);
+
+    internal ICompletionClient GetCharacterConnectionStateExtractorClient() =>
+        CharacterConnectionStateExtractorConnectionId is null
+            ? throw new InvalidOperationException("Character connection state extraction is disabled.")
+            : GetRepeatableFeatureClient(CharacterConnectionStateExtractorConnectionId);
+
     internal CompletionConnectionConfig? MemoRecallConnection =>
         MemoRecallConnectionId is null
             ? null
@@ -211,7 +228,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(config);
         if (config.Bindings is null
-            || config.Bindings.Count != 4
+            || config.Bindings.Count != 5
+            || !config.Bindings.ContainsKey(CharacterConnectionStateExtractorBindingKey)
             || !config.Bindings.ContainsKey(InputNormalizerBindingKey)
             || !config.Bindings.ContainsKey(
                 OutboundMailExtractorBindingKey
@@ -227,7 +245,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                 + $"'{InputNormalizerBindingKey}' and "
                 + $"'{OutboundMailExtractorBindingKey}' and "
                 + $"'{CharacterNoteExtractorBindingKey}' and "
-                + $"'{MemoRecallBindingKey}' bindings."
+                + $"'{MemoRecallBindingKey}' and "
+                + $"'{CharacterConnectionStateExtractorBindingKey}' bindings."
             );
         }
         if (config.Bindings[MemoRecallBindingKey] is not null

@@ -1652,9 +1652,13 @@ public sealed class CharacterNoteRuntimeTests {
     private static async Task ProduceReadyReplyAsync(CharacterSessionHost session) {
         const string VisibleAction = "ready reply source";
         GalateaDelegationSqliteStore store = session.DelegationHandle!.Store;
-        string sourceAction = EventAddressTextCodec.Format(
-            AppendAction(session.Engine, VisibleAction)
-        );
+        string sourceAction;
+        // Derived-info completion also reads the Journal under TurnLock.
+        await session.TurnLock.WaitAsync();
+        try {
+            sourceAction = EventAddressTextCodec.Format(AppendAction(session.Engine, VisibleAction));
+        }
+        finally { session.TurnLock.Release(); }
         GalateaDelegationCaptureResult captured = store.CaptureActionBatch(
             new GalateaDelegationCaptureRequest(
                 sourceAction,

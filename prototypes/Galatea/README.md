@@ -26,7 +26,7 @@ dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.c
 | 文件 | 需要准备什么 |
 |:--|:--|
 | `config.json` | V14；Characters 的身份/状态/home、各自的 `connectionOptions` 与自主 interval、Players 的登录信息、Runtime 设置 |
-| 同目录 `connections.json` | V3；连接 catalog 与全部四个 feature bindings |
+| 同目录 `connections.json` | V3；连接 catalog 与全部五个 feature bindings；状态识别 binding 的模板值为 `null` |
 | 同目录 `delegates.json` | V5；有效的 Node/Codex/sidecar 路径、已存在的 codexHome 与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
 
@@ -57,7 +57,7 @@ route manifest 仍保留，不能误解为全仓删除；它也不再是 Galatea
 - 服务端每个 Character 每 10 秒检查一次。已有 session 的待处理生成优先恢复，包括 interval 为 `0`；缺失且没有其他 wake 的 `0` 角色不会因此 provision。
 - 有 durable Ready reply 或 active reply lease 时，任意 interval 都可按既有 recovery/lease 规则续接 `DelegateReply`；它不是空闲自主激活。
 - 正 interval 角色在没有 Ready reply 时，完整空闲该分钟数后可启动一次自主轮次。成功完成主线轮次会重新计时；重启重新 arm，不补跑停机期间的轮次。
-- 新自动轮次优先使用该角色的进程内 `runtimeConnectionOverrideId`，为空才用 `defaultConnectionId`；恢复已有 Prepared 使用其绑定连接与原计划。网页诊断模型只影响下一次人工发送。
+- 新自动轮次优先使用该角色的进程内 `runtimeConnectionOverrideId`，为空才用 `defaultConnectionId`；启用[回合末状态识别](../../docs/Galatea/character-connection-state-design.md)后，成功完成的剧情可更新后续新回合连接。冷启动从 default 开始，成功撤销最新回合会清空该角色的运行时选择；恢复已有 Prepared 使用其绑定连接与原计划。网页诊断模型只影响下一次人工发送。
 - 关闭或休眠网页不会停止后台 Agent。重启重新计时，不补跑停机期间的轮次。
 
 自主轮次会正常调用模型；启用的 recall、邮件和笔记处理也会照常执行。当前服务需要由你启动和管理，尚未提供开机启动或进程崩溃后的自动重启部署。
@@ -151,7 +151,7 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 
 ## 输入保存与升级
 
-新 Observation 和 system setup 保存机读 JSON 事实与来源快照，给 LLM 的 Markdown 在请求时生成。
+新 Observation v3 保存接纳时冻结的连接快照，启用状态识别的 SystemInstruction v2 Setup 保存机制说明与角色选项；给 LLM 的 Markdown 在请求时生成。旧 schema 精确读取，不从历史快照重建进程内选择。
 新 Prepared 保存所选语义计划，每次 Started 记录实际请求摘要；换格式不授权重发结果未知的调用。
 旧 v7/v8 exact 请求仍走旧恢复合同。当前 V14 host 不接受旧 root config；停服、备份并只读检查 live session 后显式转换，详见[配置指南](../../docs/Galatea/configuration.md#从历史-root-config-切换到-v14)。旧工具 runtime 若仍处于当前尾部会明确拒绝恢复。
 

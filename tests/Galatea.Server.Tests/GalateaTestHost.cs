@@ -115,7 +115,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             playerTurnRecallProviderFactory = null,
         TimeProvider? timeProvider = null,
         IReadOnlyList<string>? autonomyCharacterIds = null,
-        bool enableServerAgentHostedService = false
+        bool enableServerAgentHostedService = false,
+        string? characterConnectionStateExtractorConnectionId = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -173,6 +174,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             characterNoteExtractorConnectionId:
                 characterNoteExtractorConnectionId,
             memoRecallConnectionId: memoRecallConnectionId,
+            characterConnectionStateExtractorConnectionId:
+                characterConnectionStateExtractorConnectionId,
             recapMaintenanceConnectionId: recapMaintenanceConnectionId,
             autonomyCharacterIds: autonomyCharacterIds
         );
@@ -294,7 +297,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
-        string? memoRecallConnectionId = null
+        string? memoRecallConnectionId = null,
+        string? characterConnectionStateExtractorConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -310,7 +314,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         inputNormalizerConnectionId,
         outboundMailExtractorConnectionId,
         characterNoteExtractorConnectionId,
-        memoRecallConnectionId
+        memoRecallConnectionId,
+        characterConnectionStateExtractorConnectionId
     );
 
     /// <summary>
@@ -329,7 +334,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
-        string? memoRecallConnectionId = null
+        string? memoRecallConnectionId = null,
+        string? characterConnectionStateExtractorConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -345,7 +351,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         inputNormalizerConnectionId,
         outboundMailExtractorConnectionId,
         characterNoteExtractorConnectionId,
-        memoRecallConnectionId
+        memoRecallConnectionId,
+        characterConnectionStateExtractorConnectionId
     );
 
     private static GalateaTestHost PointAtSessionCore(
@@ -363,7 +370,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? inputNormalizerConnectionId,
         string? outboundMailExtractorConnectionId,
         string? characterNoteExtractorConnectionId,
-        string? memoRecallConnectionId
+        string? memoRecallConnectionId,
+        string? characterConnectionStateExtractorConnectionId
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -405,7 +413,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 inputNormalizerConnectionId,
                 outboundMailExtractorConnectionId,
                 characterNoteExtractorConnectionId,
-                memoRecallConnectionId
+                memoRecallConnectionId,
+                characterConnectionStateExtractorConnectionId:
+                    characterConnectionStateExtractorConnectionId
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -524,7 +534,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? recapMaintenanceConnectionId = null,
         IReadOnlyList<string>? autonomyCharacterIds = null,
         string characterName = "Galatea",
-        string playerName = "刘世超"
+        string playerName = "刘世超",
+        string? characterConnectionStateExtractorConnectionId = null
     ) {
         var users = new GalateaRootFileConfig(
             Version: GalateaStrictConfigReader.CurrentConfigVersion,
@@ -589,7 +600,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             inputNormalizerConnectionId,
             outboundMailExtractorConnectionId,
             characterNoteExtractorConnectionId,
-            memoRecallConnectionId
+            memoRecallConnectionId,
+            characterConnectionStateExtractorConnectionId
         );
         WriteDelegatesFile(configurationDirectory);
         return configPath;
@@ -651,7 +663,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
-        string? memoRecallConnectionId = null
+        string? memoRecallConnectionId = null,
+        string? characterConnectionStateExtractorConnectionId = null
     ) {
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output)) {
@@ -727,6 +740,19 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 writer.WriteString(
                     GalateaCompletionOwner.MemoRecallBindingKey,
                     memoRecallConnectionId
+                );
+            }
+            if (characterConnectionStateExtractorConnectionId is null) {
+                writer.WriteNull(
+                    GalateaCompletionOwner
+                        .CharacterConnectionStateExtractorBindingKey
+                );
+            }
+            else {
+                writer.WriteString(
+                    GalateaCompletionOwner
+                        .CharacterConnectionStateExtractorBindingKey,
+                    characterConnectionStateExtractorConnectionId
                 );
             }
             writer.WriteEndObject();
