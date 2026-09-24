@@ -1012,10 +1012,10 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             GalateaDelegateTestConfiguration.CreateHomeDirectory(path, "alice"),
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt",
-            AgentConnectionId)],
+            AgentConnectionId,
+            [new(AgentConnectionId, "", "")])],
         GalateaDelegateTestConfiguration.Players,
         connections,
-        [AgentConnectionId],
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create()
     );

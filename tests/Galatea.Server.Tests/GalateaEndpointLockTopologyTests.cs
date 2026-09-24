@@ -814,7 +814,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             factory,
             new PassThroughNormalizer(),
             connections: [visible, hidden],
-            selectableConnectionIds: [visible.Id]
+            connectionOptionIds: [visible.Id]
         );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);

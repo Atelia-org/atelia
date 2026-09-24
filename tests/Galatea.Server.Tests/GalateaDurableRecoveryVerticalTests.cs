@@ -401,7 +401,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             completionFactory,
             normalizer,
             connections: [visible, hidden],
-            selectableConnectionIds: [visible.Id]
+            connectionOptionIds: [visible.Id]
         );
         EventAddress failedHead = await CreateFailedBoundaryAsync(
             host.SessionDirectory,
@@ -742,7 +742,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             completionFactory,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [visible, hidden],
-            selectableConnectionIds: [visible.Id]
+            connectionOptionIds: [visible.Id]
         );
         EventAddress pendingHead = AppendPendingObservation(
             host.SessionDirectory
@@ -790,7 +790,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             completionFactory,
             normalizer,
             connections: [visible, hidden],
-            selectableConnectionIds: [visible.Id]
+            connectionOptionIds: [visible.Id]
         );
         EventAddress pendingHead = AppendPendingObservation(
             host.SessionDirectory
@@ -903,7 +903,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             completionFactory,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [visible, historical],
-            selectableConnectionIds: [visible.Id]
+            connectionOptionIds: [visible.Id]
         );
         EventAddress preparedHead = await CreateRecoveryBoundaryAsync(
             host.SessionDirectory,

@@ -517,7 +517,8 @@ public sealed class CharacterNoteExtractorTests {
         GalateaDelegateTestConfiguration.CreateHomeDirectory(Path.Combine(Path.GetTempPath(), "character-note", userId), userId),
         GalateaSessionProvisioning.ExistingOnly,
         "system prompt",
-        "note-extractor"
+        "note-extractor",
+        [new("note-extractor", "", "")]
     );
 
     private static ActionBlock.ToolCall Tool(

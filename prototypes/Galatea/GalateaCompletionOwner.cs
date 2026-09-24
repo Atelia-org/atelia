@@ -45,7 +45,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         CompletionConnectionCatalogConfig normalized =
             CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(new(
                 config.Connections,
-                config.SelectableConnectionIds,
+                SelectableConnectionIds: null,
                 new Dictionary<string, string?>(StringComparer.Ordinal) {
                     [InputNormalizerBindingKey] =
                         config.InputNormalizerConnectionId,
@@ -106,7 +106,6 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         }
 
         Connections = normalized.Connections;
-        SelectableConnectionIds = normalized.SelectableConnectionIds!;
         InputNormalizerConnectionId = normalized.Bindings![
             InputNormalizerBindingKey
         ];
@@ -127,7 +126,6 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         get;
     }
 
-    internal IReadOnlyList<string> SelectableConnectionIds { get; }
 
     internal string? InputNormalizerConnectionId { get; }
 
@@ -212,11 +210,6 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         CompletionConnectionCatalogConfig config
     ) {
         ArgumentNullException.ThrowIfNull(config);
-        if (config.SelectableConnectionIds is null) {
-            throw new InvalidDataException(
-                "Galatea connections require selectableConnectionIds."
-            );
-        }
         if (config.Bindings is null
             || config.Bindings.Count != 4
             || !config.Bindings.ContainsKey(InputNormalizerBindingKey)

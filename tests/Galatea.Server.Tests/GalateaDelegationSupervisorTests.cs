@@ -722,7 +722,6 @@ public sealed class GalateaDelegationSupervisorTests {
         Characters: users,
         Players: [],
         Connections: [],
-        SelectableConnectionIds: [],
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create(root),
         MaintenanceMode: maintenanceMode
@@ -743,7 +742,8 @@ public sealed class GalateaDelegationSupervisorTests {
         Directory.CreateDirectory(statePath + "-home").FullName,
         provisioning,
         SystemPrompt: "prompt",
-        DefaultConnectionId: "unused"
+        DefaultConnectionId: "unused",
+        ConnectionOptions: [new("unused", "", "")]
     );
 
     private static GalateaDelegationSqliteStore CreateStore(

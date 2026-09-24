@@ -47,7 +47,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, helper],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: helper.Id,
             characterNoteExtractorConnectionId: helper.Id,
             playerTurnRecallProviderFactory: (_, _) => recall,

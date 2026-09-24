@@ -25,12 +25,12 @@ dotnet run --no-restore -c Release --project prototypes/Galatea/Galatea.Server.c
 
 | 文件 | 需要准备什么 |
 |:--|:--|
-| `config.json` | V13；Characters 的身份/状态/home/连接与自主 interval、Players 的登录信息、Runtime 设置 |
-| 同目录 `connections.json` | V3；可用连接、可选连接列表，以及全部四个 feature bindings |
+| `config.json` | V14；Characters 的身份/状态/home、各自的 `connectionOptions` 与自主 interval、Players 的登录信息、Runtime 设置 |
+| 同目录 `connections.json` | V3；连接 catalog 与全部四个 feature bindings |
 | 同目录 `delegates.json` | V5；有效的 Node/Codex/sidecar 路径、已存在的 codexHome 与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
 
-字段说明、独立 CLI scaffold 和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。V13 host 的
+字段说明、独立 CLI scaffold 和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。V14 host 的
 `runtime.recapGrid` 只配置 maintenance（connection、全局并发、attempt timeout）；fresh bootstrap 使用
 code-owned bundle，不创建 Completion client 或调用 provider。每个 persisted RowWork 以其 actual family/protocol/semantic
 key 延迟构造 exact route，并复用共享 connection registry、retry 与全局 lane；已完成 Recap 的读取不依赖 route。独立 CLI 的 exact
@@ -44,7 +44,7 @@ route manifest 仍保留，不能误解为全仓删除；它也不再是 Galatea
 
 ## 启用服务端自主运行
 
-在 V13 `config.json` 的每个 `characters[]` 项内设置必填的分钟数：
+在 V14 `config.json` 的每个 `characters[]` 项内设置必填的分钟数：
 
 ```json
 "autonomyIntervalMinutes": 30
@@ -153,6 +153,6 @@ dotnet run --no-restore -c Debug --project prototypes/Galatea/Galatea.Server.csp
 
 新 Observation 和 system setup 保存机读 JSON 事实与来源快照，给 LLM 的 Markdown 在请求时生成。
 新 Prepared 保存所选语义计划，每次 Started 记录实际请求摘要；换格式不授权重发结果未知的调用。
-旧 v7/v8 exact 请求仍走旧恢复合同。当前 V13 host 不接受旧 root config；停服、备份并只读检查 live session 后显式转换，详见[配置指南](../../docs/Galatea/configuration.md#从历史-root-config-切换到-v13)。旧工具 runtime 若仍处于当前尾部会明确拒绝恢复。
+旧 v7/v8 exact 请求仍走旧恢复合同。当前 V14 host 不接受旧 root config；停服、备份并只读检查 live session 后显式转换，详见[配置指南](../../docs/Galatea/configuration.md#从历史-root-config-切换到-v14)。旧工具 runtime 若仍处于当前尾部会明确拒绝恢复。
 
 停服后需让后续委派使用新 Codex session，可运行 `operator reset-codex-binding --config <absolute-path> --character <id>` 预览，再追加 `--apply`。活动邮件默认拒绝；精确放弃和恢复边界见[日常解绑说明](../../docs/Galatea/codex-session-reset-design.md)。

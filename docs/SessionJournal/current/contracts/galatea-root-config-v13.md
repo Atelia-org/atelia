@@ -1,4 +1,6 @@
-# Galatea root config V13（当前合同）
+# Galatea root config V13（历史合同）
+
+当前宿主使用 [V14](galatea-root-config-v14.md)。本页记录 V13，不代表当前代码接受此版本。
 
 Galatea host 只接受精确整数 `"v": 13`。根字段仍为 `v`、`characters`、`players`、`runtime`；
 其余 Character、Player、connections 与 delegates 合同见[配置指南](../../../Galatea/configuration.md)。

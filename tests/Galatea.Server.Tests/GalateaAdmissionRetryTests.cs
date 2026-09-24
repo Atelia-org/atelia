@@ -21,7 +21,7 @@ public sealed class GalateaAdmissionRetryTests {
         await using var fixture = GalateaTestHost.Create(completion,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [Connection("test"), Connection("note")],
-            selectableConnectionIds: ["test"], characterNoteExtractorConnectionId: "note",
+            connectionOptionIds: ["test"], characterNoteExtractorConnectionId: "note",
             autonomyCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();

@@ -235,7 +235,7 @@ public sealed class GalateaCharacterMailDeliveryTests {
         }
 
         private GalateaConfig Config() => new(
-            [Alice, Bob], [], [], [], null,
+            [Alice, Bob], [], [], null,
             GalateaDelegateTestConfiguration.Create(_root)
         );
 
@@ -247,7 +247,8 @@ public sealed class GalateaCharacterMailDeliveryTests {
                 state + "-memory",
                 GalateaDelegateTestConfiguration.CreateHomeDirectory(
                     Path.Combine(_root, "session", userId), userId),
-                GalateaSessionProvisioning.ExistingOnly, "system", "unused");
+                GalateaSessionProvisioning.ExistingOnly, "system", "unused",
+                [new("unused", "", "")]);
         }
 
         public async ValueTask DisposeAsync() {

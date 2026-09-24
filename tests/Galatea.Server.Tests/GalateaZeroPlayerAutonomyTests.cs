@@ -24,7 +24,7 @@ public sealed class GalateaZeroPlayerAutonomyTests {
         await using GalateaTestHost fixture = GalateaTestHost.Create(
             completion, DisabledGalateaUserMessageNormalizer.Instance,
             connections: [Connection("test"), Connection("helper")],
-            selectableConnectionIds: ["test"],
+            connectionOptionIds: ["test"],
             outboundMailExtractorConnectionId: "helper", delegateTransport: transport,
             timeProvider: clock, autonomyCharacterIds: ["alice"],
             enableServerAgentHostedService: true);

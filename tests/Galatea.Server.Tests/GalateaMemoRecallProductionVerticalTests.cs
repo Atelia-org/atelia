@@ -532,7 +532,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                 Connection("test", "main-model"),
                 Connection("recall", "recall-model"),
             ],
-            selectableConnectionIds: ["test"],
+            connectionOptionIds: ["test"],
             characterNoteExtractorConnectionId: "recall",
             memoRecallConnectionId: memoRecallEnabled ? "recall" : null,
             delegateTransport: new CompletedDelegateTransport()

@@ -305,7 +305,7 @@ public sealed class GalateaCompletionRetryHostTests {
         var main = new CompletionConnectionConfig("test", "openai-chat", "model-a", "openai-chat/strict", "http://localhost:8000/", ApiKey: "test-key");
         var helper = main with { Id = "helper" };
         await using var fixture = GalateaTestHost.Create(provider, DisabledGalateaUserMessageNormalizer.Instance,
-            connections: [main, helper], selectableConnectionIds: ["test"], outboundMailExtractorConnectionId: "helper");
+            connections: [main, helper], connectionOptionIds: ["test"], outboundMailExtractorConnectionId: "helper");
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var runner = fixture.Factory.Services.GetRequiredService<GalateaAcceptedTurnRunner>();
         var session = await host.GetSessionAsync("alice", CancellationToken.None);

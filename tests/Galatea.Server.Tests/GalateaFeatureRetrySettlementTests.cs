@@ -27,7 +27,7 @@ public sealed class GalateaFeatureRetrySettlementTests {
             "http://localhost:8000/", ApiKey: "synthetic-key");
         var helper = main with { Id = "helper", ModelId = "helper-model" };
         await using var first = GalateaTestHost.Create(provider, DisabledGalateaUserMessageNormalizer.Instance,
-            deleteFilesOnDispose: false, connections: [main, helper], selectableConnectionIds: [main.Id],
+            deleteFilesOnDispose: false, connections: [main, helper], connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: note ? null : helper.Id,
             characterNoteExtractorConnectionId: note ? helper.Id : null,
             delegateTransport: transport, timeProvider: clock);

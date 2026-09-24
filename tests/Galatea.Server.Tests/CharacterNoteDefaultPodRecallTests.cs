@@ -645,7 +645,8 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             GalateaDelegateTestConfiguration.CreateHomeDirectory("/session", "alice"),
             GalateaSessionProvisioning.ExistingOnly,
             "system",
-            "memo-recall"
+            "memo-recall",
+            [new("memo-recall", "", "")]
         ),
         new EventAddress(
             Atelia.Data.SizedPtr.Create(4, 4),

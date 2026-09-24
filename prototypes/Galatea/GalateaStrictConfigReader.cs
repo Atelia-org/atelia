@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 13;
+    internal const int CurrentConfigVersion = 14;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumCharacterCount = 256;
@@ -290,13 +290,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("13"u8)) {
+            || !reader.ValueSpan.SequenceEqual("14"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 13; "
+        "Galatea config requires exact integer version 'v': 14; "
         + "migrate the config before retrying."
     );
 
@@ -314,6 +314,10 @@ internal static class GalateaStrictConfigReader {
                 case "defaultConnectionId":
                 case "characterContextTemplate":
                     RequireToken(reader.TokenType, JsonTokenType.String, property);
+                    break;
+                case "connectionOptions":
+                    ValidateObjectArray(ref reader, 256, property,
+                        ValidateConnectionOptionObject);
                     break;
                 case "sessionProvisioning":
                     RequireExactSessionProvisioning(ref reader);
@@ -344,10 +348,33 @@ internal static class GalateaStrictConfigReader {
                 "character requires string field 'defaultConnectionId'."
             );
         }
+        if (!seen.Contains("connectionOptions")) {
+            throw new InvalidDataException(
+                "character requires array field 'connectionOptions'."
+            );
+        }
         if (!seen.Contains("autonomyIntervalMinutes")) {
             throw new InvalidDataException(
                 "character requires integer field 'autonomyIntervalMinutes'."
             );
+        }
+    }
+
+    private static void ValidateConnectionOptionObject(ref Utf8JsonReader reader) {
+        var seen = NewPropertySet();
+        while (ReadProperty(ref reader, seen, "connectionOption", out string property)) {
+            RequireReadValue(ref reader, property);
+            if (property is not ("connectionId" or "name" or "trigger")) {
+                throw Unknown("connectionOption", property);
+            }
+            RequireToken(reader.TokenType, JsonTokenType.String, property);
+        }
+        foreach (string field in new[] { "connectionId", "name", "trigger" }) {
+            if (!seen.Contains(field)) {
+                throw new InvalidDataException(
+                    "connectionOption requires string field '" + field + "'."
+                );
+            }
         }
     }
 

@@ -23,7 +23,7 @@ public sealed class GalateaServerAgentRuntimeTests {
                 Connection("other") with { ModelId = "model-b" },
                 Connection("diagnostic") with { ModelId = "model-c" }
             ],
-            selectableConnectionIds: ["test", "other", "diagnostic"]
+            connectionOptionIds: ["test", "other", "diagnostic"]
         );
         using HttpClient client = fixture.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
@@ -63,7 +63,7 @@ public sealed class GalateaServerAgentRuntimeTests {
         await using var fixture = GalateaTestHost.Create(
             completion, new Normalizer(),
             connections: [Connection("test"), Connection("other")],
-            selectableConnectionIds: ["test", "other"]
+            connectionOptionIds: ["test", "other"]
         );
         using HttpClient client = fixture.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
@@ -104,7 +104,7 @@ public sealed class GalateaServerAgentRuntimeTests {
         await using var fixture = GalateaTestHost.Create(
             completion, new Normalizer(), timeProvider: clock,
             connections: [Connection("other"), Connection("test")],
-            selectableConnectionIds: ["other", "test"],
+            connectionOptionIds: ["other", "test"],
             autonomyCharacterIds: ["alice"], enableServerAgentHostedService: true
         );
         JsonObject config = JsonNode.Parse(File.ReadAllText(fixture.ConfigPath))!.AsObject();

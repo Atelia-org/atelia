@@ -66,7 +66,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             factory,
             normalizer,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             playerTurnRecallProviderFactory: (_, _) => recallProvider,
@@ -290,7 +290,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             playerTurnRecallProviderFactory: (_, _) => recallProvider,
             timeProvider: clock
         );
@@ -369,7 +369,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             timeProvider: clock,
             autonomyCharacterIds: ["alice"]
         );
@@ -463,7 +463,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             timeProvider: clock,
             autonomyCharacterIds: ["alice"]
         );
@@ -536,7 +536,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             timeProvider: clock,
             autonomyCharacterIds: ["alice"]
         );
@@ -624,7 +624,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             timeProvider: clock,
             autonomyCharacterIds: ["alice"]
         );
@@ -683,7 +683,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             timeProvider: clock,
@@ -784,7 +784,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             autonomyCharacterIds: ["alice"]
@@ -961,7 +961,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             playerTurnRecallProviderFactory: (_, _) => recallProvider
@@ -1084,7 +1084,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             autonomyCharacterIds: ["alice"]
@@ -1213,7 +1213,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             deleteFilesOnDispose: false,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend)
         );
@@ -1314,7 +1314,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             deleteFilesOnDispose: false,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(
                 backend,

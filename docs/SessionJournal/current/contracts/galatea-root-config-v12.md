@@ -1,6 +1,6 @@
 # Galatea root config V12（历史合同）
 
-当前宿主使用 [V13](galatea-root-config-v13.md)。本页记录旧版字段，不代表当前代码仍提供
+当前宿主使用 [V14](galatea-root-config-v14.md)。本页记录旧版字段，不代表当前代码仍提供
 `recap_grid_control` 或 V11→V12 operator 命令。
 
 此页记录旧 `config.json` 的 strict V12 root contract。当时的 Galatea host 只接受整数

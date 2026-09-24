@@ -452,6 +452,7 @@ public sealed class GalateaMemoRecallContractsTests {
         GalateaDelegateTestConfiguration.CreateHomeDirectory("/session", "alice"),
         GalateaSessionProvisioning.ExistingOnly,
         "system",
-        "memo-recall"
+        "memo-recall",
+        [new("memo-recall", "", "")]
     );
 }

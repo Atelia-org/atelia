@@ -2,10 +2,10 @@
 
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
-[runtime.md](runtime.md)。根配置当前为 [V13](../SessionJournal/current/contracts/galatea-root-config-v13.md)；exact 字段由
+[runtime.md](runtime.md)。根配置当前为 [V14](../SessionJournal/current/contracts/galatea-root-config-v14.md)；exact 字段由
 [`GalateaStrictConfigReader`](../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与
 [`GalateaRootFileConfig`](../../prototypes/Galatea/GalateaConfig.cs) 定义。
-[V11](../SessionJournal/current/contracts/galatea-root-config-v11.md)及更早合同仅供历史查阅，不是当前配置入口。
+[V13](../SessionJournal/current/contracts/galatea-root-config-v13.md)及更早合同仅供历史查阅，不是当前配置入口。
 
 ## 配置目录与首次生成
 
@@ -34,15 +34,15 @@
 
 ## `config.json`
 
-根文件必须是 strict V13 JSON：`v` 必须是整数 `13`，根字段为 `v`、`characters`、`players`、`runtime`。
+根文件必须是 strict V14 JSON：`v` 必须是整数 `14`，根字段为 `v`、`characters`、`players`、`runtime`。
 `characters` 至少一项；`players` 可以为 `[]`。`runtime.recapGrid` 是必需 object。未知字段、旧版、未来版、
-`null` 或 `13.0` 都拒绝；正常启动不会迁移或重写旧文件。
+`null` 或 `14.0` 都拒绝；正常启动不会迁移或重写旧文件。
 
 下面展示当前字段归属，密码位置仅为占位符；除必需的 absolute `homeDir` 外，相对路径以配置文件目录解析。
 
 ```json
 {
-  "v": 13,
+  "v": 14,
   "characters": [{
     "id": "alice",
     "name": "Alice",
@@ -52,6 +52,7 @@
     "homeDir": "/galatea-homes/alice",
     "sessionProvisioning": "create-if-missing",
     "defaultConnectionId": "local",
+    "connectionOptions": [{"connectionId": "local", "name": "", "trigger": ""}],
     "autonomyIntervalMinutes": 0,
     "characterContextTemplate": "",
     "characterContextTemplateFile": "prompts/character-context-standard-zh-cn.md"
@@ -72,7 +73,7 @@
 }
 ```
 
-Character 的 `id`/`name`、状态目录、home、默认连接与心跳独立于 Player。Player 只提供 `id`、`name`、
+Character 的 `id`/`name`、状态目录、home、默认连接、可选连接与心跳独立于 Player。`connectionOptions` 必须有 1..256 项，`connectionId` 在 catalog 中精确存在且同一角色内不重复；`defaultConnectionId` 必须列在本角色的选项中。`name` 和 `trigger` 是必填字符串，各不超过 4096 UTF-8 bytes，可以暂填空字符串。本轮它们只作为配置数据保留，不驱动选择，网页也只显示 connectionId/modelId。诊断选择及进程内 runtime override 都受当前角色的选项约束。Player 只提供 `id`、`name`、
 `password`；当前所有已配置并认证的 Player 都是同一级管理员，可以选择任意 Character。`player-main` 是
 bootstrap 示例 ID，不是硬编码角色或权限。`players: []` 没有可登录身份，但不停止角色心跳、来信投递或委派。
 
@@ -120,7 +121,7 @@ Recap maintenance 使用 `runtime.recapGrid.maintenance.dispatchTimeoutMilliseco
 
 ## `connections.json`
 
-`connections.json` 是 Completion endpoint catalog，与 Character/session 身份分离。Galatea 只接受 V3：根对象必须有非空 `connections`、非空 `selectableConnectionIds` 和恰好四个 `bindings`：
+`connections.json` 是 Completion endpoint catalog，与 Character/session 身份分离。Galatea 只接受 V3：根对象必须有非空 `connections` 和恰好四个 `bindings`；全局 `selectableConnectionIds` 必须省略：
 
 根 `defaultConnectionId` 已移到 `config.json` 的每个 Character，不能留在 V3 catalog 中；Galatea 不读取 V1/V2 connections。
 
@@ -133,7 +134,7 @@ Recap maintenance 使用 `runtime.recapGrid.maintenance.dispatchTimeoutMilliseco
 }
 ```
 
-每个 non-null binding 必须精确指向 catalog connection；缺失、拼写大小写不符或额外 binding 会拒绝启动。`selectableConnectionIds` 是浏览器和普通 Agent 可选的 allowlist；每个 Character 的 `defaultConnectionId` 也必须在其中。RecapGrid 和 helper 可以使用不在该 allowlist 中、但由 exact route/binding 指定的连接。
+每个 non-null binding 必须精确指向 catalog connection；缺失、拼写大小写不符或额外 binding 会拒绝启动。每个 Character 的 `connectionOptions` 是该角色的主线模型选择范围；RecapGrid 和 helper 可以使用不在任何角色选项中、但由 exact route/binding 指定的连接。
 
 四个 binding 都是显式开关：`galatea.input-normalizer` 在首次实际需要时清洗玩家输入；`galatea.outbound-mail-extractor` 从可见 Action 提取发给 Codex 的邮件；`galatea.character-note-extractor` 提取并保存 Character Note；`galatea.memo-recall` 在允许的触发点检索 Default MemoPod。值为 `null` 即禁用对应能力，非 `null` 时 client 仍按实际使用惰性创建。Memo recall 是独立 binding，可以显式复用 Character Note 的 connection ID，但不隐式复用；其非 `null` 前提是 Character Note binding 也非 `null`。
 
@@ -212,8 +213,8 @@ task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经�
 
 ## RecapGrid 文件与首次 scaffold
 
-当前 V13 的 `runtime.recapGrid` 只含 `maintenance`，精确字段与取值范围见
-[V13 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v13.md)。maintenance 的 connection、全局
+当前 V14 的 `runtime.recapGrid` 只含 `maintenance`，精确字段与取值范围见
+[V14 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v14.md)。maintenance 的 connection、全局
 并发预算与每次 attempt timeout 由 `GalateaCompletionOwner` 的同一 connection registry、retry invoker 和并发 lane
 使用；不得为每个 work 创建独立 semaphore。已持久化 `RowWork` 的 actual family、protocol 和 semantic key 在执行时构造
 exact route，因此新默认 family 与旧未完成 family 都可运行。已完成 Recap 的读取不需要 route 或可用 maintenance connection；
@@ -223,7 +224,7 @@ exact route，因此新默认 family 与旧未完成 family 都可运行。已�
 Store、该 Character 的 asset、empty-Timeline full recipe 与 active recipe；它不会创建 Completion client 或调用 provider。
 若历史 SessionJournal 尾部仍冻结着工具 runtime，恢复会明确返回 `tool-runtime-unsupported`，不会忽略工具调用并继续生成。
 
-独立 SessionJournal CLI 的 exact route manifest 仍保留，供显式 CLI 构建和 operator chain 使用；这不意味着 Galatea V13 root
+独立 SessionJournal CLI 的 exact route manifest 仍保留，供显式 CLI 构建和 operator chain 使用；这不意味着 Galatea V14 root
 config 仍接受 live `routeManifestPath`。该 CLI manifest 是普通 V2 JSON，可人工格式化，但仍拒绝重复、未知、缺失字段、重复 route
 key 和越界值。
 
@@ -261,11 +262,6 @@ context 仍是 raw-only。
 `RowWork` 的 actual producer 验真，不因当前 default 或 active recipe 变化而阻断。普通策略变化不改写 `ActiveRecipeDigest`。
 CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。
 
-## 从历史 root config 切换到 V13
+## 从历史 root config 切换到 V14
 
-正常 host 只接受 V13，不会自动改写旧配置。停服并在状态目录外备份后，把 V12 的 `v` 改为 `13`，
-移除 `runtime.recapGrid.historicalAgentControlProfileFiles`，保留 `maintenance`。旧 profile 可单独归档；
-在移除其恢复实现前，先用 `SessionJournalEngine.OpenReadOnly` 检查每个 live session 的当前尾部。
-如果仍有 `FrozenCompletionRequired` 的工具身份或 `ToolContinuationRequired`，需要先决定如何处理该未完成回合；
-不能把它当成普通 `NewRequestRequired` 重派发。V11 及更早的配置需按当前 V13 合同显式重建，旧 V11→V12
-operator 命令已随 Agent 工具删除。
+正常 host 只接受 V14，不会自动改写旧配置。现有 V13 实例应在停服并备份配置后，将每个角色允许的连接写入该角色的 `connectionOptions`，每项提供 `connectionId`、`name`、`trigger` 三个字符串，并确保默认连接包含在内；删除 `connections.json` 的全局 `selectableConnectionIds`，最后将根 `v` 改为 `14`。旧配置合同见 [V13](../SessionJournal/current/contracts/galatea-root-config-v13.md)。更早版本需先按相应历史合同处理，不能只改版本号。已有 session 的冻结请求仍按持久化身份恢复，不因这次配置迁移获得换模授权。

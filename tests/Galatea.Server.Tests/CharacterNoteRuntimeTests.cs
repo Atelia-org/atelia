@@ -49,7 +49,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, helper],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: helper.Id,
             characterNoteExtractorConnectionId: helper.Id
         );
@@ -161,7 +161,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             characterNoteExtractorConnectionId: note.Id,
             playerTurnRecallProviderFactory: (_, _) => recallProvider
         );
@@ -263,7 +263,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -378,7 +378,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -488,7 +488,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -560,7 +560,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -629,7 +629,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -696,7 +696,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -767,7 +767,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -826,7 +826,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -902,7 +902,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -962,7 +962,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -1021,7 +1021,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -1089,7 +1089,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -1151,7 +1151,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -1240,7 +1240,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -1309,7 +1309,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -1520,7 +1520,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, mail, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: mail.Id,
             characterNoteExtractorConnectionId: note.Id
         );
@@ -1622,7 +1622,7 @@ public sealed class CharacterNoteRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, note],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             characterNoteExtractorConnectionId: note.Id,
             delegateTransport: delegateTransport);
     }

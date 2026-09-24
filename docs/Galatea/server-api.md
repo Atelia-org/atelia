@@ -66,7 +66,7 @@ Fresh player turn：
 {"message":"向北走。","diagnosticConnectionId":null}
 ```
 
-`message` required；`diagnosticConnectionId` optional，省略或 null 时使用目标 Character 的进程内 `runtimeConnectionOverrideId`，若没有则使用 `defaultConnectionId`。显式诊断 ID 必须精确命中 `selectableConnectionIds`，只影响本次新回合；original 与 normalized message 各最多 64 KiB UTF-8，连接 ID 最多 128 UTF-8 bytes。202 只表示已接纳；随后订阅返回的 `turnId` 对应 SSE 才能观察 terminal。response-loss 后只能查询 current/recent reconciliation，不得自动重发 mutation。
+`message` required；`diagnosticConnectionId` optional，省略或 null 时使用目标 Character 的进程内 `runtimeConnectionOverrideId`，若没有则使用 `defaultConnectionId`。显式诊断 ID 必须精确命中目标 Character 的 `connectionOptions[].connectionId`，只影响本次新回合；original 与 normalized message 各最多 64 KiB UTF-8，连接 ID 最多 128 UTF-8 bytes。202 只表示已接纳；随后订阅返回的 `turnId` 对应 SSE 才能观察 terminal。response-loss 后只能查询 current/recent reconciliation，不得自动重发 mutation。
 
 Resume：
 

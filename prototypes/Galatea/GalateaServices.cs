@@ -97,8 +97,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _connectionCatalog;
     private readonly ConcurrentDictionary<string, string>
         _runtimeConnectionOverrides = new(StringComparer.Ordinal);
-    private readonly IReadOnlyList<GalateaConnectionInfoDto>
-        _selectableConnections;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
     internal IReadOnlyList<string> AutonomyCharacterIds { get; }
     internal IReadOnlyList<string> CharacterIds { get; }
@@ -181,7 +179,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaConfigValidation.RequireValidPlayers(config.Players);
         _players = config.Players.ToDictionary(static player => player.PlayerId, StringComparer.Ordinal);
         _connectionCatalog = components.ConnectionCatalog;
-        _selectableConnections = components.SelectableConnections;
         AutonomyCharacterIds = components.AutonomyCharacterIds;
         CharacterIds = _characters.Keys.ToArray();
     }
@@ -211,7 +208,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CompletionConnectionCatalogConfig normalized =
             CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(new(
                 config.Connections,
-                config.SelectableConnectionIds,
+                SelectableConnectionIds: null,
                 new Dictionary<string, string?>(StringComparer.Ordinal) {
                     [GalateaCompletionOwner.InputNormalizerBindingKey] =
                         config.InputNormalizerConnectionId,
@@ -267,25 +264,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         _defaultPolicies = defaultPolicies
             ?? CreateDefaultPolicies(_characters);
-        IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
-            normalized.Connections.ToDictionary(
-                static value => value.Id,
-                StringComparer.Ordinal
-            );
-        CompletionConnectionConfig[] selectable = normalized
-            .SelectableConnectionIds!
-            .Select(id => fullCatalog[id])
-            .ToArray();
-        _connectionCatalog = selectable.ToDictionary(
-            static value => value.Id,
-            StringComparer.Ordinal
+        _connectionCatalog = SelectCharacterConnectionCatalog(
+            config.Characters,
+            normalized.Connections
         );
-        _selectableConnections = Array.AsReadOnly(selectable
-            .Select(static value => new GalateaConnectionInfoDto(
-                value.Id,
-                value.ModelId
-            ))
-            .ToArray());
         _sessionBootstrapAdmission = config.RecapGrid is { } configured
             ? ResolveSessionBootstrapAdmission(configured)
             : null;
@@ -365,23 +347,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
             IReadOnlyDictionary<string, GalateaRecapGridDefaultPolicy>
                 defaultPolicies = CreateDefaultPolicies(characters);
             IReadOnlyDictionary<string, CompletionConnectionConfig>
-                fullCatalog = owner.Connections.ToDictionary(
-                    static value => value.Id,
-                    StringComparer.Ordinal
+                connectionCatalog = SelectCharacterConnectionCatalog(
+                    config.Characters,
+                    owner.Connections
                 );
-            CompletionConnectionConfig[] selectable = owner
-                .SelectableConnectionIds
-                .Select(id => fullCatalog[id])
-                .ToArray();
-            IReadOnlyDictionary<string, CompletionConnectionConfig>
-                connectionCatalog = selectable.ToDictionary(
-                    static value => value.Id,
-                    StringComparer.Ordinal
-                );
-            IReadOnlyList<GalateaConnectionInfoDto> selectableConnections =
-                Array.AsReadOnly(selectable.Select(static value =>
-                    new GalateaConnectionInfoDto(value.Id, value.ModelId)
-                ).ToArray());
             GalateaPlayerTurnRecallProviderFactory?
                 configuredRecallFactory =
                     CreateMemoRecallProviderFactory(owner);
@@ -412,7 +381,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 config.MaintenanceMode,
                 characters,
                 connectionCatalog,
-                selectableConnections,
                 autonomyCharacterIds
             );
         }
@@ -483,9 +451,24 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IReadOnlyDictionary<string, GalateaCharacterConfig> Characters,
         IReadOnlyDictionary<string, CompletionConnectionConfig>
             ConnectionCatalog,
-        IReadOnlyList<GalateaConnectionInfoDto> SelectableConnections,
         IReadOnlyList<string> AutonomyCharacterIds
     );
+
+    private static IReadOnlyDictionary<string, CompletionConnectionConfig>
+        SelectCharacterConnectionCatalog(
+            IReadOnlyList<GalateaCharacterConfig> characters,
+            IReadOnlyList<CompletionConnectionConfig> connections
+        ) {
+        IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
+            connections.ToDictionary(static value => value.Id,
+                StringComparer.Ordinal);
+        return characters
+            .SelectMany(static character => character.ConnectionOptions)
+            .Select(static option => option.ConnectionId)
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(static id => id, id => fullCatalog[id],
+                StringComparer.Ordinal);
+    }
 
     internal static IReadOnlyDictionary<string, IOutboundMailExtractor>
         CreateOutboundMailExtractors(
@@ -667,8 +650,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return task.IsCompletedSuccessfully ? task.Result : null;
     }
 
-    public IReadOnlyList<GalateaConnectionInfoDto> Connections =>
-        _selectableConnections;
+    public IReadOnlyList<GalateaConnectionInfoDto> ConnectionsFor(string characterId) {
+        GalateaCharacterConfig character = _characters[characterId];
+        return Array.AsReadOnly(character.ConnectionOptions.Select(option =>
+            new GalateaConnectionInfoDto(
+                option.ConnectionId,
+                _connectionCatalog[option.ConnectionId].ModelId
+            )).ToArray());
+    }
 
     internal GalateaDelegationSupervisor DelegationSupervisor =>
         _delegationSupervisor;
@@ -694,7 +683,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string id = requestedConnectionId is null
             ? character.DefaultConnectionId
             : requestedConnectionId;
-        return _connectionCatalog.TryGetValue(id, out connection!);
+        connection = null!;
+        return IsSelectableFor(character, id)
+            && _connectionCatalog.TryGetValue(id, out connection!);
     }
 
     // Only fresh turns consult this process-local Character choice. Recovery
@@ -708,7 +699,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string id = diagnosticConnectionId
             ?? ReadRuntimeConnectionOverride(character.CharacterId)
             ?? character.DefaultConnectionId;
-        return _connectionCatalog.TryGetValue(id, out connection!);
+        connection = null!;
+        return IsSelectableFor(character, id)
+            && _connectionCatalog.TryGetValue(id, out connection!);
     }
 
     internal string? ReadRuntimeConnectionOverride(string characterId) =>
@@ -726,13 +719,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
             return;
         }
         if (GalateaHttpV1.ValidateConnectionId(connectionId) is not null
-            || !_connectionCatalog.ContainsKey(connectionId)) {
+            || !IsSelectableFor(_characters[characterId], connectionId)) {
             throw new ArgumentException(
                 "Runtime connection override must exactly match a selectable connection.",
                 nameof(connectionId));
         }
         _runtimeConnectionOverrides[characterId] = connectionId;
     }
+
+    private static bool IsSelectableFor(
+        GalateaCharacterConfig character,
+        string connectionId
+    ) => character.ConnectionOptions.Any(option =>
+        string.Equals(option.ConnectionId, connectionId, StringComparison.Ordinal));
 
     internal GalateaAgentStatusDto WithConnectionSelection(
         string characterId,
@@ -2802,7 +2801,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CompletionStreamObserver observer,
         CancellationToken cancellationToken
     ) {
-        RequireCurrentConnectionSelectable(
+        RequireCurrentConnectionSelectable(host.Character,
             liveTurn.Options.ConnectionId
         );
         SessionRuntimeRecoveryRequirements requirement =
@@ -3425,7 +3424,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         try {
             if (requirement is SessionRuntimeRecoveryRequirements
                     .NewRequestRequired) {
-                RequireCurrentConnectionSelectable(
+                RequireCurrentConnectionSelectable(host.Character,
                     liveTurn.Options.ConnectionId
                 );
                 CompletionConnectionConfig inspected =
@@ -3513,8 +3512,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private void RequireCurrentConnectionSelectable(string connectionId) {
-        if (!_connectionCatalog.ContainsKey(connectionId)) {
+    private void RequireCurrentConnectionSelectable(
+        GalateaCharacterConfig character,
+        string connectionId
+    ) {
+        if (!IsSelectableFor(character, connectionId)) {
             throw new GalateaTurnException(
                 "当前模型连接不在Galatea可选连接集合中。",
                 "recap-grid-connection-absent"
@@ -4491,6 +4493,11 @@ internal static class GalateaConfigLoader {
             );
         CompletionConnectionCatalogConfig connectionsFile =
             CompletionConnectionConfigLoader.DecodeCatalog(connectionsJson);
+        if (connectionsFile.SelectableConnectionIds is not null) {
+            throw new InvalidDataException(
+                "Galatea connections must not define selectableConnectionIds; configure connectionOptions per character."
+            );
+        }
         GalateaCompletionOwner.ValidateGalateaRouting(connectionsFile);
         string? outboundMailExtractorConnectionId =
             connectionsFile.Bindings![
@@ -4533,8 +4540,6 @@ internal static class GalateaConfigLoader {
             Characters: characters,
             Players: ResolvePlayers(rootFile.Players),
             Connections: connectionsFile.Connections,
-            SelectableConnectionIds:
-                connectionsFile.SelectableConnectionIds!,
             InputNormalizerConnectionId: connectionsFile.Bindings![
                 GalateaCompletionOwner.InputNormalizerBindingKey
             ],
@@ -4760,6 +4765,7 @@ internal static class GalateaConfigLoader {
                 character.SessionProvisioning,
                 systemPrompt,
                 character.DefaultConnectionId,
+                character.ConnectionOptions,
                 character.AutonomyIntervalMinutes
             ));
         }
@@ -5094,9 +5100,6 @@ internal static class GalateaConfigTemplateFactory {
             writer.WriteString("apiKey", "sk-local-placeholder");
             writer.WriteEndObject();
             writer.WriteEndArray();
-            writer.WriteStartArray("selectableConnectionIds");
-            writer.WriteStringValue(DefaultConnectionId);
-            writer.WriteEndArray();
             writer.WriteStartObject("bindings");
             writer.WriteNull(
                 GalateaCompletionOwner.InputNormalizerBindingKey
@@ -5138,6 +5141,7 @@ internal static class GalateaConfigTemplateFactory {
             SessionProvisioning:
                 GalateaSessionProvisioning.CreateIfMissing,
             DefaultConnectionId: DefaultConnectionId,
+            ConnectionOptions: [new(DefaultConnectionId, "", "")],
             CharacterContextTemplate: "",
             CharacterContextTemplateFile:
                 GalateaDefaults.CharacterContextTemplateFile,

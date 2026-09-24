@@ -44,7 +44,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, helper],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             characterNoteExtractorConnectionId: helper.Id
         );
         GalateaHostService service = host.Factory.Services
@@ -125,7 +125,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, helper],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             characterNoteExtractorConnectionId: helper.Id
         );
         GalateaHostService service = host.Factory.Services
@@ -292,7 +292,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
-            selectableConnectionIds: [main.Id]
+            connectionOptionIds: [main.Id]
         )) {
             GalateaHostService service = disabled.Factory.Services
                 .GetRequiredService<GalateaHostService>();
@@ -309,7 +309,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             maintenanceMode: true,
             connections: [main],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             characterNoteExtractorConnectionId: main.Id
         );
         GalateaHostService maintenanceService = maintenance.Factory.Services
@@ -405,7 +405,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         GalateaDelegateTestConfiguration.CreateHomeDirectory("/session/" + id, id),
         GalateaSessionProvisioning.ExistingOnly,
         "system",
-        "agent"
+        "agent",
+        [new("agent", "", "")]
     );
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>
@@ -847,7 +848,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 GalateaDelegateTestConfiguration.CreateHomeDirectory(Engine.Path, "user"),
                 GalateaSessionProvisioning.ExistingOnly,
                 "system",
-                "agent"
+                "agent",
+                [new("agent", "", "")]
             );
             return new CharacterSessionHost(
                 user,

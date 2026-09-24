@@ -125,7 +125,7 @@ public sealed class GalateaMailboxTests {
         await using GalateaTestHost testHost = GalateaTestHost.Create(
             factory, normalizer: null,
             connections: [main, extractor],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id
         );
         AddSecondLoaderUser(testHost, "bob", "Bob");
@@ -414,7 +414,7 @@ public sealed class GalateaMailboxTests {
             factory,
             normalizer,
             connections: [main, extractorConnection],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractorConnection.Id
         );
         using HttpClient http = host.CreateClient();
@@ -441,7 +441,7 @@ public sealed class GalateaMailboxTests {
         Assert.Equal("completed", turn.Status);
         Assert.Equal(0, normalizer.CallCount);
         Assert.Equal([main.Id, extractorConnection.Id], factory.CreatedIds);
-        Assert.Equal([main.Id], service.Connections.Select(static x => x.Id));
+        Assert.Equal([main.Id], service.ConnectionsFor("alice").Select(static x => x.Id));
         SessionCompletedTurnProjection persisted = Assert.Single(
             session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns
@@ -497,7 +497,7 @@ public sealed class GalateaMailboxTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractorConnection],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractorConnection.Id
         );
         using HttpClient http = host.CreateClient();
@@ -564,7 +564,7 @@ public sealed class GalateaMailboxTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractorConnection],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             outboundMailExtractorConnectionId: extractorConnection.Id
         );
         using HttpClient http = host.CreateClient();
@@ -779,7 +779,8 @@ public sealed class GalateaMailboxTests {
         GalateaDelegateTestConfiguration.CreateHomeDirectory("/tmp/session-" + userId, userId),
         GalateaSessionProvisioning.ExistingOnly,
         "system " + characterName,
-        "agent"
+        "agent",
+        [new("agent", "", "")]
     );
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>

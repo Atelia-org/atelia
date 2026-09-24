@@ -14,7 +14,6 @@ public sealed record GalateaConfig(
     IReadOnlyList<GalateaCharacterConfig> Characters,
     IReadOnlyList<GalateaPlayerConfig> Players,
     IReadOnlyList<CompletionConnectionConfig> Connections,
-    IReadOnlyList<string> SelectableConnectionIds,
     string? InputNormalizerConnectionId,
     GalateaDelegateConfig Delegates,
     string? OutboundMailExtractorConnectionId = null,
@@ -224,6 +223,7 @@ internal sealed record GalateaCharacterFileConfig(
     string HomeDir,
     GalateaSessionProvisioning SessionProvisioning,
     string DefaultConnectionId,
+    IReadOnlyList<GalateaCharacterConnectionOption> ConnectionOptions,
     string CharacterContextTemplate = "",
     string? CharacterContextTemplateFile = null,
     int AutonomyIntervalMinutes = 0
@@ -251,7 +251,14 @@ public sealed record GalateaCharacterConfig(
     GalateaSessionProvisioning SessionProvisioning,
     SessionInputContent SystemPrompt,
     string DefaultConnectionId,
+    IReadOnlyList<GalateaCharacterConnectionOption> ConnectionOptions,
     int AutonomyIntervalMinutes = 0
+);
+
+public sealed record GalateaCharacterConnectionOption(
+    string ConnectionId,
+    string Name,
+    string Trigger
 );
 
 [JsonConverter(typeof(JsonStringEnumConverter<GalateaSessionProvisioning>))]
@@ -316,19 +323,9 @@ internal static class GalateaConfigValidation {
     ) {
         ArgumentNullException.ThrowIfNull(characters);
         ArgumentNullException.ThrowIfNull(catalog);
-        if (catalog.SelectableConnectionIds is null) {
-            throw new InvalidOperationException(
-                "Galatea connections require selectableConnectionIds before "
-                + "per-character defaults can be validated."
-            );
-        }
-
         var connectionIds = catalog.Connections
             .Select(static connection => connection.Id)
             .ToHashSet(StringComparer.Ordinal);
-        var selectable = catalog.SelectableConnectionIds.ToHashSet(
-            StringComparer.Ordinal
-        );
         for (int index = 0; index < characters.Count; index++) {
             GalateaCharacterConfig character = characters[index]
                 ?? throw new InvalidOperationException(
@@ -353,6 +350,29 @@ internal static class GalateaConfigValidation {
                     + $"'{character.DefaultConnectionId}' does not exactly match a "
                     + "catalog connection id."
                 );
+            }
+            if (character.ConnectionOptions is not { Count: > 0 and <= 256 }) {
+                throw new InvalidOperationException(
+                    $"Galatea config character '{character.CharacterId}' requires 1..256 connectionOptions."
+                );
+            }
+            var selectable = new HashSet<string>(StringComparer.Ordinal);
+            foreach (GalateaCharacterConnectionOption option in character.ConnectionOptions) {
+                if (option is null || string.IsNullOrWhiteSpace(option.ConnectionId)
+                    || Encoding.UTF8.GetByteCount(option.ConnectionId) > MaximumConnectionIdUtf8Bytes
+                    || !connectionIds.Contains(option.ConnectionId)
+                    || !selectable.Add(option.ConnectionId)) {
+                    throw new InvalidOperationException(
+                        $"Galatea config character '{character.CharacterId}' has an invalid or duplicate connectionOptions connectionId."
+                    );
+                }
+                if (option.Name is null || option.Trigger is null
+                    || Encoding.UTF8.GetByteCount(option.Name) > 4096
+                    || Encoding.UTF8.GetByteCount(option.Trigger) > 4096) {
+                    throw new InvalidOperationException(
+                        $"Galatea config character '{character.CharacterId}' connectionOptions name/trigger must be bounded strings."
+                    );
+                }
             }
             if (!selectable.Contains(character.DefaultConnectionId)) {
                 throw new InvalidOperationException(

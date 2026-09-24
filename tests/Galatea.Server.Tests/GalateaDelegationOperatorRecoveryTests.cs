@@ -539,7 +539,8 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 GalateaDelegateTestConfiguration.CreateHomeDirectory(sessionDirectory, "gpt"),
                 GalateaSessionProvisioning.ExistingOnly,
                 "system prompt",
-                "test"
+                "test",
+                [new("test", "", "")]
             );
             GalateaDelegationStoreLimits limits =
                 GalateaDelegationSupervisor.CreateLimits(Route);
@@ -715,6 +716,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     User.HomeDir,
                     User.SessionProvisioning,
                     User.DefaultConnectionId,
+                    User.ConnectionOptions,
                     CharacterContextTemplate: "prompt ${characterName}"
                 )],
                 [],
@@ -737,8 +739,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             );
             GalateaTestHost.WriteConnectionsFile(
                 Path.Combine(_root, GalateaConfigLoader.ConnectionsFileName),
-                [connection],
-                connection.Id
+                [connection]
             );
             GalateaTestHost.WriteDelegatesFile(_root);
             return configPath;

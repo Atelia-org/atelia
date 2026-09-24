@@ -792,7 +792,8 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                         GalateaDelegateTestConfiguration.CreateHomeDirectory(first, "alice"),
                         GalateaSessionProvisioning.ExistingOnly,
                         "test system prompt",
-                        connection.Id),
+                        connection.Id,
+                        [new(connection.Id, "", "")]),
                     new GalateaCharacterConfig(
                         "bob",
                         new GalateaCharacterName("Galatea-bob"),
@@ -802,11 +803,11 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
                         GalateaDelegateTestConfiguration.CreateHomeDirectory(second, "bob"),
                         GalateaSessionProvisioning.ExistingOnly,
                         "test system prompt",
-                        connection.Id)
+                        connection.Id,
+                        [new(connection.Id, "", "")])
                 ],
                 GalateaDelegateTestConfiguration.Players,
                 [connection],
-                [connection.Id],
                 InputNormalizerConnectionId: null,
                 Delegates: GalateaDelegateTestConfiguration.Create()),
             DisabledGalateaUserMessageNormalizer.Instance,
@@ -1450,10 +1451,10 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
             GalateaDelegateTestConfiguration.CreateHomeDirectory(path, "alice"),
             GalateaSessionProvisioning.ExistingOnly,
             systemPrompt,
-            connection.Id)],
+            connection.Id,
+            [new(connection.Id, "", "")])],
         GalateaDelegateTestConfiguration.Players,
         [connection],
-        [connection.Id],
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create());
 

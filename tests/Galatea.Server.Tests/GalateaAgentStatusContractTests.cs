@@ -72,7 +72,7 @@ public sealed class GalateaAgentStatusContractTests {
         await using var fixture = GalateaTestHost.Create(
             factory, DisabledGalateaUserMessageNormalizer.Instance,
             connections: [defaultConnection, runtimeConnection, diagnosticConnection],
-            selectableConnectionIds: ["test", "runtime", "diagnostic"]
+            connectionOptionIds: ["test", "runtime", "diagnostic"]
         );
         using HttpClient client = fixture.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);

@@ -165,7 +165,7 @@ Delivered 只证明 Observation append，不证明 provider 收到或理解；Te
 
 没有 pending 时，Ready reply 优先，Empty 才按正 interval 的 process-local monotonic cadence 决定 `HeartbeatActivation`。busy 跳过、不补 tick；首次启动重新 arm，不恢复停机期间的 deadline。完成或合法业务结束后重新计时；临时纯生成故障在同一个 runner 内退避，不变成失败 heartbeat 的永久暂停。环境/协议 blocked 和旧 Failed 保留原任务并阻止普通 pulse 重试，不能借新 heartbeat 覆盖；损坏、quarantine 或未知工具副作用仍 fail closed。原 cadence 设计背景见[自主 interval 设计](per-character-autonomy-interval-design.md)，自动恢复增量以[实施记录](completion-auto-retry-implementation.md)为准。
 
-所有从 Idle 接纳的新主线回合在接纳时按 `diagnosticConnectionId ?? runtimeConnectionOverrideId ?? defaultConnectionId` 选一次连接，包含人工输入/注入邮件、Ready reply、心跳和角色间信。`runtimeConnectionOverrideId` 由 `GalateaHostService` 按 Character 保存在进程内，设置和清除均精确校验可选连接；目前只有内部方法，没有角色意图解析或外部写入 API。网页诊断选择只随下一次人工发送传入，发送即清除，不沿用旧的 localStorage 值。辅助 LLM 与 RecapGrid maintenance 仍走各自 binding/route。已接纳的恢复回合继续使用 governing setup 或 Prepared target，不读取该新回合 override。
+所有从 Idle 接纳的新主线回合在接纳时按 `diagnosticConnectionId ?? runtimeConnectionOverrideId ?? defaultConnectionId` 选一次连接，包含人工输入/注入邮件、Ready reply、心跳和角色间信。候选连接必须在目标 Character 的 `connectionOptions` 中。`runtimeConnectionOverrideId` 由 `GalateaHostService` 按 Character 保存在进程内，设置和清除均精确校验该角色选项；目前只有内部方法，没有角色意图解析或外部写入 API。网页诊断选择只随下一次人工发送传入，发送即清除，不沿用旧的 localStorage 值。辅助 LLM 与 RecapGrid maintenance 仍走各自 binding/route。已接纳的恢复回合继续使用 governing setup 或 Prepared target，不读取该新回合 override。
 
 admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细节。显式`POST /api/v1/characters/{characterId}/agent/retry-admission`在同一`TurnLock`内复用`ReconcileDurableAdmissionAsync`，只处理旧lease、extraction gap与保存恢复；它不`StartTurn`，不跳过真实provider/结构错误。处理成功且runtime为Idle后才清除admission失败，独立reply失败与runtime recovery仍保留各自约束。忙碌或失败返回409，具体HTTP合同见[Server API](server-api.md)。
 
@@ -175,7 +175,7 @@ admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细�
 
 ## SessionJournal / RecapGrid 恢复顺序
 
-恢复先服从已经 durable 的 Journal 状态，不能拿 current 配置、current route 或当前 provider 猜测旧回合。模型可见的 `recap_grid_control` 已移除：若当前尾部仍冻结着旧工具 runtime，Prepared/ToolContinuation 会返回 `tool-runtime-unsupported`，不会忽略工具调用继续生成。fresh `NewRequest` 使用代码拥有的 RecapGrid bundle；已持久化 `RowWork` 按 actual producer 构造维护 route，V13 root config 只含 maintenance 设置。Completion 不提供 caller-selected output cap，也没有 wildcard/default fallback。
+恢复先服从已经 durable 的 Journal 状态，不能拿 current 配置、current route 或当前 provider 猜测旧回合。模型可见的 `recap_grid_control` 已移除：若当前尾部仍冻结着旧工具 runtime，Prepared/ToolContinuation 会返回 `tool-runtime-unsupported`，不会忽略工具调用继续生成。fresh `NewRequest` 使用代码拥有的 RecapGrid bundle；已持久化 `RowWork` 按 actual producer 构造维护 route，V14 root config 只含 maintenance 设置。Completion 不提供 caller-selected output cap，也没有 wildcard/default fallback。
 
 恢复按以下顺序处理：
 
@@ -193,7 +193,7 @@ family/definition-only registration 与 promotion 命令不变。最终真实切
 recipe registration，以及依赖旧 Store proof 的 promotion，不能以 receipt 存在绕过 command/proof 检查。
 当前实施与最终处置见 [Timeline 单一行身份](timeline-row-identity-simplification-plan.md)。
 
-当前 root strict config language 为 V13，connections 是 Completion-owned V3 catalog，delegates 使用当前独立合同。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
+当前 root strict config language 为 V14，connections 是 Completion-owned V3 catalog，delegates 使用当前独立合同。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。
 

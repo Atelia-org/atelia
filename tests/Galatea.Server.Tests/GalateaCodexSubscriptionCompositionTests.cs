@@ -157,7 +157,6 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
             users ?? [User("alice", effectiveConnections[0].Id)],
             GalateaDelegateTestConfiguration.Players,
             effectiveConnections,
-            effectiveConnections.Select(static value => value.Id).ToArray(),
             InputNormalizerConnectionId: null,
             Delegates: GalateaDelegateTestConfiguration.Create(),
             ListenUrls: useDefaultListenUrls
@@ -186,7 +185,8 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         GalateaDelegateTestConfiguration.CreateHomeDirectory(Path.Combine(Path.GetTempPath(), "galatea-codex", id), id),
         GalateaSessionProvisioning.ExistingOnly,
         SystemPrompt: "prompt",
-        DefaultConnectionId: defaultConnectionId
+        DefaultConnectionId: defaultConnectionId,
+        ConnectionOptions: [new(defaultConnectionId, "", "")]
     );
 
     private static CompletionConnectionConfig CodexConnection(

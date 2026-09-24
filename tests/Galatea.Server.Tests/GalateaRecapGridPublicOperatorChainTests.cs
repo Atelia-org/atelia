@@ -216,7 +216,8 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         GalateaDelegateTestConfiguration.CreateHomeDirectory(repository, "alice"),
                         GalateaSessionProvisioning.ExistingOnly,
                         AgentConnectionId,
-                        "operator-chain ${characterName} system prompt"
+                        [new(AgentConnectionId, "", "")],
+                        CharacterContextTemplate: "operator-chain ${characterName} system prompt"
                     )],
                     Players: GalateaDelegateTestConfiguration.Players.Select(player =>
                         new GalateaPlayerFileConfig(player.PlayerId, player.Name.Value, player.Password)).ToArray(),
@@ -233,8 +234,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             [
                 Connection(AgentConnectionId, "agent-model"),
                 Connection(RecapConnectionId, "recap-model")
-            ],
-            AgentConnectionId
+            ]
         );
         GalateaTestHost.WriteDelegatesFile(_root);
     }

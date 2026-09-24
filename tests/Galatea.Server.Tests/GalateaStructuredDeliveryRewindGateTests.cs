@@ -16,7 +16,7 @@ public sealed class GalateaStructuredDeliveryRewindGateTests {
         await using GalateaTestHost fixture = GalateaTestHost.Create(provider,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [Connection("test"), Connection("note-helper")],
-            selectableConnectionIds: ["test"], characterNoteExtractorConnectionId: "note-helper");
+            connectionOptionIds: ["test"], characterNoteExtractorConnectionId: "note-helper");
         GalateaHostService service = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();

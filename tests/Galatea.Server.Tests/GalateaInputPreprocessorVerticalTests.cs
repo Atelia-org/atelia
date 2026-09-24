@@ -40,7 +40,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             factory,
             normalizer: null,
             connections: [main, helper],
-            selectableConnectionIds: [main.Id],
+            connectionOptionIds: [main.Id],
             inputNormalizerConnectionId: helper.Id
         );
         using HttpClient client = host.CreateClient();
@@ -67,7 +67,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Equal("helper-model", helperClient.LastRequest!.ModelId);
         Assert.Equal(1, helperClient.DispatchCallCount);
         Assert.Equal(1, mainClient.DispatchCallCount);
-        Assert.Equal([main.Id], service.Connections.Select(
+        Assert.Equal([main.Id], service.ConnectionsFor("alice").Select(
             static value => value.Id
         ));
         Assert.False(service.TryGetRecoveryConnection(
@@ -149,7 +149,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             factory,
             normalizer,
             connections: [visible, hidden],
-            selectableConnectionIds: [visible.Id]
+            connectionOptionIds: [visible.Id]
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();

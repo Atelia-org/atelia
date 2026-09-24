@@ -318,7 +318,7 @@ app.MapGet(
             return Results.NotFound();
         }
         return Results.Content(
-            GalateaHtml.RenderAppPage(character, player, hostService.Connections,
+            GalateaHtml.RenderAppPage(character, player, hostService.ConnectionsFor(characterId),
                 config.MaintenanceMode, assetVersion),
             "text/html; charset=utf-8"
         );

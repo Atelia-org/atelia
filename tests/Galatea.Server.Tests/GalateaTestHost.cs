@@ -104,7 +104,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool maintenanceMode = false,
         bool provisionRawOnly = true,
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
-        IReadOnlyList<string>? selectableConnectionIds = null,
+        IReadOnlyList<string>? connectionOptionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
@@ -166,7 +166,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             "test ${characterName} system prompt",
             callLogDirectory,
             maintenanceMode,
-            selectableConnectionIds: selectableConnectionIds,
+            connectionOptionIds: connectionOptionIds,
             inputNormalizerConnectionId: inputNormalizerConnectionId,
             outboundMailExtractorConnectionId:
                 outboundMailExtractorConnectionId,
@@ -290,7 +290,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool maintenanceMode = false,
         GalateaSessionProvisioning sessionProvisioning =
             GalateaSessionProvisioning.ExistingOnly,
-        IReadOnlyList<string>? selectableConnectionIds = null,
+        IReadOnlyList<string>? connectionOptionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
@@ -306,7 +306,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         maintenanceMode,
         sessionProvisioning,
         requireExistingDirectory: true,
-        selectableConnectionIds,
+        connectionOptionIds,
         inputNormalizerConnectionId,
         outboundMailExtractorConnectionId,
         characterNoteExtractorConnectionId,
@@ -325,7 +325,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IGalateaUserMessageNormalizer normalizer,
         string characterContextTemplate,
         GalateaSessionProvisioning sessionProvisioning,
-        IReadOnlyList<string>? selectableConnectionIds = null,
+        IReadOnlyList<string>? connectionOptionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
@@ -341,7 +341,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         maintenanceMode: false,
         sessionProvisioning,
         requireExistingDirectory: false,
-        selectableConnectionIds,
+        connectionOptionIds,
         inputNormalizerConnectionId,
         outboundMailExtractorConnectionId,
         characterNoteExtractorConnectionId,
@@ -359,7 +359,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool maintenanceMode,
         GalateaSessionProvisioning sessionProvisioning,
         bool requireExistingDirectory,
-        IReadOnlyList<string>? selectableConnectionIds,
+        IReadOnlyList<string>? connectionOptionIds,
         string? inputNormalizerConnectionId,
         string? outboundMailExtractorConnectionId,
         string? characterNoteExtractorConnectionId,
@@ -401,7 +401,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 callLogDirectory,
                 maintenanceMode,
                     sessionProvisioning,
-                selectableConnectionIds,
+                connectionOptionIds,
                 inputNormalizerConnectionId,
                 outboundMailExtractorConnectionId,
                 characterNoteExtractorConnectionId,
@@ -516,7 +516,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool maintenanceMode,
         GalateaSessionProvisioning sessionProvisioning =
             GalateaSessionProvisioning.ExistingOnly,
-        IReadOnlyList<string>? selectableConnectionIds = null,
+        IReadOnlyList<string>? connectionOptionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
@@ -546,6 +546,10 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     Directory.CreateDirectory(Path.Combine(configurationDirectory, "homes", TestCharacterId)).FullName,
                     sessionProvisioning,
                     defaultConnectionId,
+                    ConnectionOptions: (connectionOptionIds
+                        ?? connections.Select(static connection => connection.Id).ToArray())
+                        .Select(static id => new GalateaCharacterConnectionOption(id, "", ""))
+                        .ToArray(),
                     CharacterContextTemplate: characterContextTemplate,
                     AutonomyIntervalMinutes: autonomyCharacterIds?.Contains(TestCharacterId, StringComparer.Ordinal) == true
                         ? 10
@@ -582,8 +586,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 GalateaConfigLoader.ConnectionsFileName
             ),
             connections,
-            defaultConnectionId,
-            selectableConnectionIds,
             inputNormalizerConnectionId,
             outboundMailExtractorConnectionId,
             characterNoteExtractorConnectionId,
@@ -646,14 +648,11 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     internal static void WriteConnectionsFile(
         string path,
         IReadOnlyList<CompletionConnectionConfig> connections,
-        string defaultConnectionId,
-        IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
         string? memoRecallConnectionId = null
     ) {
-        _ = defaultConnectionId;
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output)) {
             writer.WriteStartObject();
@@ -679,13 +678,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     writer.WriteString("apiKey", connection.ApiKey);
                 }
                 writer.WriteEndObject();
-            }
-            writer.WriteEndArray();
-            writer.WriteStartArray("selectableConnectionIds");
-            foreach (string connectionId
-                     in selectableConnectionIds
-                        ?? connections.Select(static value => value.Id)) {
-                writer.WriteStringValue(connectionId);
             }
             writer.WriteEndArray();
             writer.WriteStartObject("bindings");

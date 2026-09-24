@@ -445,7 +445,8 @@ public sealed class GalateaSseV1Tests {
                 GalateaDelegateTestConfiguration.CreateHomeDirectory("/session", "alice"),
                 GalateaSessionProvisioning.ExistingOnly,
                 "prompt",
-                "test"
+                "test",
+                [new("test", "", "")]
             ),
             GalateaDelegateTestConfiguration.Players[0],
             [new GalateaConnectionInfoDto("test", "model")],

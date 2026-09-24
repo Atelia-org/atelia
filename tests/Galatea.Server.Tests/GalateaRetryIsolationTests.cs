@@ -18,7 +18,7 @@ public sealed class GalateaRetryIsolationTests {
         var clock = new GalateaLabClock();
         var provider = new RoutingFactory(retryAlice: true);
         await using var fixture = GalateaTestHost.Create(provider, DisabledGalateaUserMessageNormalizer.Instance,
-            connections: [Connection("test"), Connection("bob")], selectableConnectionIds: ["test", "bob"],
+            connections: [Connection("test"), Connection("bob")], connectionOptionIds: ["test", "bob"],
             timeProvider: clock, autonomyCharacterIds: ["alice"], enableServerAgentHostedService: true);
         JsonObject config = JsonNode.Parse(File.ReadAllText(fixture.ConfigPath))!.AsObject();
         JsonObject bob = config["characters"]![0]!.DeepClone().AsObject();
