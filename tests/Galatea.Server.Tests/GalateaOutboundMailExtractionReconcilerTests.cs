@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Data;
 using Atelia.EventJournal;
@@ -95,6 +96,174 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             mail.InReplyToMessageId,
             mail.EvidenceQuote!
         ));
+    }
+
+    [CapturedMailDiagnosticsBuildFact(true)]
+    public async Task TwoCapturedMails_EmitDistinctContentFreeDurableIdentities() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        using GalateaDelegationSqliteStore store = CreateStore(
+            paths.StorePath,
+            engine
+        );
+        EventAddress action = AppendAction(engine, "synthetic Action");
+        var intents = new[] {
+            new SendMailIntent("Codex", "secret-subject-one",
+                "secret-body-one", null, "secret-evidence-one"),
+            new SendMailIntent("Peer", "secret-subject-two",
+                "secret-body-two", null, "secret-evidence-two"),
+        };
+        var extractor = new RecordingExtractor(_ => intents);
+        var diagnostics = new List<string>();
+        var reconciler = new GalateaOutboundMailExtractionReconciler(
+            store,
+            extractor,
+            GalateaDelegationTestInputs.Sender(store, "Galatea"),
+            intent => intent.Recipient == "Peer"
+                ? new GalateaInternalMailTarget(
+                    "peer-id", "peer-repository", "Galatea")
+                : null
+        ) { CapturedMailDiagnosticSinkForTest = diagnostics.Add };
+
+        var captured = Assert.IsType<
+            GalateaOutboundMailExtractionReconcileResult.Captured
+        >(await reconciler.ReconcileAsync(engine));
+
+        Assert.Equal(2, captured.DispatchIds.Count);
+        Assert.Equal(2, diagnostics.Count);
+        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
+        Assert.Equal(2, snapshot.Mails.Count);
+        string sourceAction = EventAddressTextCodec.Format(action);
+        Assert.Equal(2, captured.DispatchIds.Distinct().Count());
+        for (int ordinal = 0; ordinal < intents.Length; ordinal++) {
+            GalateaOutboundMailSnapshot mail = Assert.Single(
+                snapshot.Mails,
+                value => value.SourceActionAddress == sourceAction
+                    && value.ArtifactOrdinal == ordinal
+            );
+            Assert.Equal(captured.DispatchIds[ordinal], mail.DispatchId);
+            Assert.Equal(intents[ordinal].Recipient, mail.Recipient);
+            Assert.Equal(ordinal == 0, mail.IsCodexRouted);
+        }
+        GalateaInternalMailOutboxSnapshot outbox = Assert.Single(
+            snapshot.InternalMailOutboxes);
+        Assert.Equal(sourceAction, outbox.SourceActionAddress);
+        Assert.Equal(1, outbox.ArtifactOrdinal);
+        Assert.Equal(captured.DispatchIds[1], outbox.DispatchId);
+        Assert.Equal(captured.StoreRevision, outbox.CaptureSequence);
+        Assert.Equal("peer-id", outbox.TargetCharacterId);
+        Assert.Equal("peer-repository", outbox.TargetSessionRepositoryId);
+        for (int ordinal = 0; ordinal < diagnostics.Count; ordinal++) {
+            using JsonDocument document = JsonDocument.Parse(
+                diagnostics[ordinal]);
+            JsonElement record = document.RootElement;
+            Assert.Equal("outbound-mail-captured",
+                record.GetProperty("event").GetString());
+            Assert.Equal("user", record.GetProperty("characterId").GetString());
+            Assert.Equal(sourceAction,
+                record.GetProperty("sourceAction").GetString());
+            Assert.Equal(ordinal,
+                record.GetProperty("artifactOrdinal").GetInt32());
+            Assert.Equal(captured.DispatchIds[ordinal],
+                record.GetProperty("dispatchId").GetString());
+            Assert.Equal(captured.StoreRevision,
+                record.GetProperty("captureSequence").GetInt64());
+            Assert.Equal(ordinal == 0 ? "Codex" : "Character",
+                record.GetProperty("resolvedRecipientKind").GetString());
+            Assert.Equal(ordinal == 0 ? "Codex" : "peer-id",
+                record.GetProperty("recipientId").GetString());
+        }
+        string joined = string.Join("\n", diagnostics);
+        foreach (SendMailIntent intent in intents) {
+            Assert.DoesNotContain(intent.Body, joined, StringComparison.Ordinal);
+            Assert.DoesNotContain(intent.Subject!, joined,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(intent.EvidenceQuote, joined,
+                StringComparison.Ordinal);
+        }
+
+        Assert.IsType<
+            GalateaOutboundMailExtractionReconcileResult.AlreadyCaptured
+        >(await reconciler.ReconcileAsync(engine));
+        Assert.Equal(2, diagnostics.Count);
+    }
+
+    [CapturedMailDiagnosticsBuildFact(true)]
+    public async Task UnroutedCapture_DoesNotLogUnverifiedRecipient() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        using GalateaDelegationSqliteStore store = CreateStore(
+            paths.StorePath, engine);
+        _ = AppendAction(engine, "synthetic unrouted Action");
+        const string UnverifiedRecipient = "unverified-recipient-secret";
+        var diagnostics = new List<string>();
+        var reconciler = new GalateaOutboundMailExtractionReconciler(
+            store,
+            new RecordingExtractor(_ => [Mail(UnverifiedRecipient,
+                "private-body")]),
+            GalateaDelegationTestInputs.Sender(store, "Galatea"),
+            _ => null
+        ) { CapturedMailDiagnosticSinkForTest = diagnostics.Add };
+
+        Assert.IsType<GalateaOutboundMailExtractionReconcileResult.Captured>(
+            await reconciler.ReconcileAsync(engine));
+
+        string diagnostic = Assert.Single(diagnostics);
+        using JsonDocument document = JsonDocument.Parse(diagnostic);
+        Assert.Equal("Unrouted", document.RootElement
+            .GetProperty("resolvedRecipientKind").GetString());
+        Assert.Equal(JsonValueKind.Null, document.RootElement
+            .GetProperty("recipientId").ValueKind);
+        Assert.DoesNotContain(UnverifiedRecipient, diagnostic,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("private-body", diagnostic,
+            StringComparison.Ordinal);
+    }
+
+    [CapturedMailDiagnosticsBuildFact(true)]
+    public async Task DiagnosticSinkFailure_DoesNotUndoCommittedCapture() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        using GalateaDelegationSqliteStore store = CreateStore(
+            paths.StorePath, engine);
+        _ = AppendAction(engine, "synthetic Action");
+        var reconciler = new GalateaOutboundMailExtractionReconciler(
+            store,
+            new RecordingExtractor(_ => [Mail("Codex", "private-body")]),
+            GalateaDelegationTestInputs.Sender(store, "Galatea")
+        ) { CapturedMailDiagnosticSinkForTest = _ =>
+            throw new IOException("diagnostic sink unavailable") };
+
+        Assert.IsType<GalateaOutboundMailExtractionReconcileResult.Captured>(
+            await reconciler.ReconcileAsync(engine));
+        Assert.Single(store.ReadSnapshot().Mails);
+    }
+
+    [CapturedMailDiagnosticsBuildFact(false)]
+    public async Task ReleaseCapture_PersistsWithoutDiagnostic() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        using GalateaDelegationSqliteStore store = CreateStore(
+            paths.StorePath, engine);
+        EventAddress action = AppendAction(engine, "synthetic Action");
+        var diagnostics = new List<string>();
+        var reconciler = new GalateaOutboundMailExtractionReconciler(
+            store,
+            new RecordingExtractor(_ => [Mail("Codex", "private-body")]),
+            GalateaDelegationTestInputs.Sender(store, "Galatea")
+        ) { CapturedMailDiagnosticSinkForTest = diagnostics.Add };
+
+        var captured = Assert.IsType<
+            GalateaOutboundMailExtractionReconcileResult.Captured
+        >(await reconciler.ReconcileAsync(engine));
+
+        GalateaOutboundMailSnapshot mail = Assert.Single(
+            store.ReadSnapshot().Mails);
+        Assert.Equal(EventAddressTextCodec.Format(action),
+            mail.SourceActionAddress);
+        Assert.Equal(0, mail.ArtifactOrdinal);
+        Assert.Equal(Assert.Single(captured.DispatchIds), mail.DispatchId);
+        Assert.Empty(diagnostics);
     }
 
     [Fact]
@@ -420,17 +589,22 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             return [Mail("Codex", "must be discarded")];
         });
 
+        var diagnostics = new List<string>();
+        var reconciler = new GalateaOutboundMailExtractionReconciler(
+            store,
+            extractor,
+            GalateaDelegationTestInputs.Sender(store, "Galatea")
+        ) { CapturedMailDiagnosticSinkForTest = diagnostics.Add };
+
         var stale = Assert.IsType<
             GalateaOutboundMailExtractionReconcileResult.SelectedHeadChanged
-        >(await new GalateaOutboundMailExtractionReconciler(
-            store,
-            extractor
-        , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine));
+        >(await reconciler.ReconcileAsync(engine));
 
         Assert.Equal(action, stale.ExpectedHead);
         Assert.Equal(rewoundHead, stale.ObservedHead);
         Assert.Equal(1, extractor.CallCount);
         Assert.Empty(store.ReadSnapshot().Captures);
+        Assert.Empty(diagnostics);
     }
 
     [Fact]
@@ -597,12 +771,16 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             Mail("Codex", "second")
         ]);
 
+        var diagnostics = new List<string>();
+        var reconciler = new GalateaOutboundMailExtractionReconciler(
+            store,
+            extractor,
+            GalateaDelegationTestInputs.Sender(store, "Galatea")
+        ) { CapturedMailDiagnosticSinkForTest = diagnostics.Add };
+
         InvalidOperationException conflict = await Assert.ThrowsAsync<
             InvalidOperationException>(async () =>
-                await new GalateaOutboundMailExtractionReconciler(
-                    store,
-                    extractor
-                , GalateaDelegationTestInputs.Sender(store, "Galatea")).ReconcileAsync(engine)
+                await reconciler.ReconcileAsync(engine)
             );
 
         Assert.Equal(
@@ -618,6 +796,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
                 StringComparison.Ordinal
             )
         );
+        Assert.Empty(diagnostics);
     }
 
     private static SessionJournalEngine CreateEngine(string path) =>
@@ -774,5 +953,19 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
 
         public void Dispose() =>
             TestDirectorySafety.DeleteOwnedTreeNoFollow(Root);
+    }
+}
+
+// xUnit v2 cannot dynamically skip inside a test. Decide applicability using
+// the compiled service assembly, which need not share the test assembly's DEBUG.
+[AttributeUsage(AttributeTargets.Method)]
+internal sealed class CapturedMailDiagnosticsBuildFactAttribute : FactAttribute {
+    public CapturedMailDiagnosticsBuildFactAttribute(bool expectedEnabled) {
+        if (GalateaOutboundMailExtractionReconciler
+                .CompilesCapturedMailDiagnostics != expectedEnabled) {
+            Skip = expectedEnabled
+                ? "Requires a DEBUG build of Galatea.Server."
+                : "Requires a non-DEBUG build of Galatea.Server.";
+        }
     }
 }

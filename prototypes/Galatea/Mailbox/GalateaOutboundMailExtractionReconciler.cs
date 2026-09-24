@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Text.Json;
+using Atelia.Diagnostics;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server;
 using Atelia.SessionJournal;
@@ -84,11 +87,19 @@ internal abstract record GalateaOutboundMailExtractionReconcileResult {
 /// selected head and never scans complete history.
 /// </summary>
 internal sealed class GalateaOutboundMailExtractionReconciler {
+#if DEBUG
+    internal static bool CompilesCapturedMailDiagnostics => true;
+#else
+    internal static bool CompilesCapturedMailDiagnostics => false;
+#endif
+
     private readonly GalateaDelegationSqliteStore _store;
     private readonly IOutboundMailExtractor _extractor;
     private readonly GalateaSenderSnapshot _sender;
     private readonly Func<SendMailIntent, GalateaInternalMailTarget?>?
         _resolveInternalTarget;
+
+    internal Action<string>? CapturedMailDiagnosticSinkForTest { get; set; }
 
     internal GalateaOutboundMailExtractionReconciler(
         GalateaDelegationSqliteStore store,
@@ -229,6 +240,10 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
             _store.CaptureActionBatch(request);
         if (capture.Disposition
                 == GalateaDelegationCaptureDisposition.Captured) {
+            for (int ordinal = 0; ordinal < capture.DispatchIds.Count;
+                 ordinal++) {
+                LogCapturedMail(request, capture, ordinal);
+            }
             return new GalateaOutboundMailExtractionReconcileResult.Captured(
                 selectedHead,
                 intents.Count,
@@ -246,6 +261,52 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
             settled.ArtifactCount,
             capture.StoreRevision
         );
+    }
+
+    /// <summary>
+    /// A best-effort, content-free diagnostic emitted only after the complete
+    /// capture transaction has committed. The dispatch ID is the durable
+    /// outbound_mail key and also identifies an internal outbox when present.
+    /// resolvedRecipientKind is a diagnostic target category, not the
+    /// outbound_mail route_class stored for the mail.
+    /// </summary>
+    [Conditional("DEBUG")]
+    private void LogCapturedMail(
+        GalateaDelegationCaptureRequest request,
+        GalateaDelegationCaptureResult capture,
+        int ordinal
+    ) {
+        try {
+            GalateaInternalMailTarget? internalTarget =
+                request.InternalTargets?[ordinal];
+            bool isCodex = string.Equals(
+                request.Intents[ordinal].Recipient,
+                GalateaDelegateConfigReader.CanonicalRecipient,
+                StringComparison.Ordinal
+            );
+            string resolvedRecipientKind = isCodex ? "Codex" :
+                internalTarget is not null ? "Character" : "Unrouted";
+            string? recipientId = isCodex
+                ? GalateaDelegateConfigReader.CanonicalRecipient
+                : internalTarget?.TargetCharacterId;
+            string diagnostic = JsonSerializer.Serialize(new {
+                @event = "outbound-mail-captured",
+                characterId = _sender.Id,
+                sourceAction = request.SourceActionAddress,
+                artifactOrdinal = ordinal,
+                resolvedRecipientKind,
+                recipientId,
+                dispatchId = capture.DispatchIds[ordinal],
+                captureSequence = capture.StoreRevision,
+            });
+            CapturedMailDiagnosticSinkForTest?.Invoke(diagnostic);
+            DebugUtil.Debug("Galatea.Delegation", diagnostic);
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            // A diagnostic failure must not turn a committed capture into a
+            // retryable business failure or prevent its dispatch signal.
+        }
     }
 
     private GalateaActionCaptureSnapshot RequireExistingCapture(
