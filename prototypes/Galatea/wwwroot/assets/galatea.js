@@ -1382,6 +1382,7 @@ function startGalateaApp() {
     attemptPreview: null,
     streaming: false,
     retryingAdmission: false,
+    resumingAutonomy: false,
     stoppingAdmission: false,
     stopRequested: false,
     activeTurnId: null,
@@ -1415,6 +1416,7 @@ function startGalateaApp() {
   const autonomyStatus = document.getElementById("autonomy-status");
   const autonomyState = document.getElementById("autonomy-state");
   const retryAdmissionButton = document.getElementById("retry-admission");
+  const resumeAutonomyButton = document.getElementById("resume-autonomy");
   const stopAdmissionButton = document.getElementById("stop-admission");
   const autonomyCountdown = document.getElementById("autonomy-countdown");
   const autonomyLastActivation = document.getElementById(
@@ -1644,7 +1646,7 @@ function startGalateaApp() {
   }
 
   function refreshInteractionControls() {
-    const admissionBusy = state.initializing || state.streaming || state.retryingAdmission;
+    const admissionBusy = state.initializing || state.streaming || state.retryingAdmission || state.resumingAutonomy;
     if (stopAdmissionButton) {
       const admissionRunning = state.agentStatus?.state === "running"
         && ["ADMISSION_RUNNING", "ADMISSION_STOPPING"].includes(state.agentStatus.code);
@@ -1657,6 +1659,12 @@ function startGalateaApp() {
     if (retryAdmissionButton) {
       retryAdmissionButton.classList.toggle("hidden", state.agentStatus?.admissionFailure == null);
       retryAdmissionButton.disabled = maintenanceMode || admissionBusy;
+    }
+    if (resumeAutonomyButton) {
+      const paused = state.agentStatus?.state === "autonomy-paused"
+        && state.agentStatus?.code === "AUTONOMOUS_TURN_FAILED";
+      resumeAutonomyButton.classList.toggle("hidden", !paused);
+      resumeAutonomyButton.disabled = maintenanceMode || admissionBusy || state.recoveryTurn !== null;
     }
     sendButton.disabled = maintenanceMode || admissionBusy || state.recoveryTurn !== null;
     input.disabled = maintenanceMode || admissionBusy || state.recoveryTurn !== null;
@@ -2677,6 +2685,36 @@ function startGalateaApp() {
   });
 
   let initialized = false;
+  resumeAutonomyButton?.addEventListener("click", async () => {
+    if (maintenanceMode || state.initializing || state.streaming || state.resumingAutonomy
+        || state.agentStatus?.state !== "autonomy-paused"
+        || state.agentStatus?.code !== "AUTONOMOUS_TURN_FAILED") return;
+    state.resumingAutonomy = true;
+    state.uiRevision += 1;
+    refreshInteractionControls();
+    statusText.textContent = "正在检查会话边界并恢复自主活动…";
+    try {
+      const response = await fetch(`${apiBase}/agent/resume-autonomy`, {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      if (response.ok) {
+        publishAgentStatus(await readJsonResponse(response, requireAgentStatus));
+        statusText.textContent = "自主活动已恢复，将从现在重新计时。";
+      } else {
+        const error = await readJsonResponse(response, (value) =>
+          value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+        statusText.textContent = error.error;
+      }
+    } catch (error) {
+      statusText.textContent = `恢复结果未确认：${error.message || "连接失败"}；正在刷新状态。`;
+    } finally {
+      state.resumingAutonomy = false;
+      state.uiRevision += 1;
+      refreshInteractionControls();
+      if (document.visibilityState !== "hidden") agentFollower.start();
+    }
+  });
   retryAdmissionButton?.addEventListener("click", async () => {
     if (maintenanceMode || state.initializing || state.streaming || state.retryingAdmission
         || state.agentStatus?.admissionFailure == null) return;

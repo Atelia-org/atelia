@@ -148,6 +148,7 @@ internal static class GalateaHtml {
           <span id="autonomy-countdown" aria-live="off"></span>
           <span id="autonomy-last-activation" aria-live="off">上次自主激活：尚无</span>
           <button id="retry-admission" type="button" class="hidden">重试未完成处理</button>
+          <button id="resume-autonomy" type="button" class="hidden">恢复自主活动</button>
           <button id="stop-admission" type="button" class="hidden">停止本次整理</button>
         </div>
         <div id="mailbox-status" class="mailbox-status" role="status" aria-live="polite">邮箱状态：正在读取…</div>

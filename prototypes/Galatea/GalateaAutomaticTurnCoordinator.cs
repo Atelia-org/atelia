@@ -50,6 +50,46 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         if (session is null) { _attachFailures[characterId] = "AUTOMATIC_ADMISSION_FAILED"; }
     }
 
+    // Clears only the process-local failed autonomous cadence. No turn is
+    // created and no durable recovery boundary is changed.
+    internal GalateaAutomaticTurnResult ResumeAutonomy(string characterId, CancellationToken ct) {
+        GalateaAgentStatusDto status = ReadStatus(characterId);
+        if (status.State is "disabled" or "maintenance" or "stopping") {
+            return new GalateaAutomaticTurnResult.Status(status);
+        }
+        CharacterSessionHost? session = host.ReadAttachedSession(characterId);
+        if (session is null) {
+            return new GalateaAutomaticTurnResult.Blocked("session-unavailable", "会话尚未就绪。令其完成初始化后重试。");
+        }
+        if (!session.TurnLock.Wait(0)) {
+            return new GalateaAutomaticTurnResult.Busy(session.GetCurrentTurn()?.TurnId);
+        }
+        try {
+            ct.ThrowIfCancellationRequested();
+            host.RequireRunning();
+            if (session.GetCurrentTurn() is not null
+                || session.ReadAdmissionStatus().OperationId is not null) {
+                return new GalateaAutomaticTurnResult.Busy(session.GetCurrentTurn()?.TurnId);
+            }
+            if (session.GenerationBlocked || session.AutomaticAdmissionFailed
+                || session.AutomaticReplyFailed || _attachFailures.ContainsKey(characterId)) {
+                return new GalateaAutomaticTurnResult.Blocked("automatic-work-blocked", "角色仍有待处理的自动工作。请先处理对应状态。");
+            }
+            if (session.AutonomyCadence is not { IsArmed: true } cadence
+                || cadence.ProjectStatus().State != GalateaAutonomyCadence.PausedState) {
+                return new GalateaAutomaticTurnResult.Blocked("autonomy-not-paused", "自主活动当前没有因失败暂停。");
+            }
+            SessionRuntimeRecoveryRequirements recovery = session.Engine.InspectRuntimeRecoveryRequirements(ct);
+            if (recovery is not SessionRuntimeRecoveryRequirements.NoRuntimeRequired { Phase: SessionExecutionPhase.Idle }) {
+                return new GalateaAutomaticTurnResult.Blocked("recovery-required", "会话存在待恢复轮次；请先完成恢复。");
+            }
+            cadence.ResumeAfterPendingTermination();
+            session.PublishAutonomyStatus();
+            return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
+        }
+        finally { session.TurnLock.Release(); }
+    }
+
     // Explicitly retries settlement only. It never claims a reply or creates a
     // main-model turn; automatic pulses share this same TurnLock.
     internal async Task<GalateaAutomaticTurnResult> RetryAdmissionAsync(string characterId, CancellationToken ct) {

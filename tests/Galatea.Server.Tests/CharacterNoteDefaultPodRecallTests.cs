@@ -78,6 +78,27 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             MemoRecallFailureKind.InvalidModelOutput,
             failure.FailureKind
         );
+        Assert.Equal(MemoRecallOutputFailureCode.UnknownMemoId,
+            failure.OutputFailureCode);
+        Assert.Equal(2, client.Requests.Count);
+    }
+
+    [Fact]
+    public async Task InvalidSelectorOutputIsRetriedOnceBeforePlanning() {
+        using var fixture = await RuntimeFixture.CreateAsync();
+        int attempts = 0;
+        var client = new RecallCompletionClient(_ =>
+            ++attempts == 1 ? ["m1:00000001"] : []);
+        var provider = new GalateaDefaultMemoPodRecallProvider(
+            fixture.Reconciler, Connection(), () => client);
+
+        IReadOnlyList<PlayerTurnRecall> recalls = await provider.SelectRecallsAsync(
+            Request(RecallBarrier.Empty, CharacterNoteOriginBarrier.Empty),
+            CancellationToken.None);
+
+        Assert.Empty(recalls);
+        Assert.Equal(2, attempts);
+        Assert.Equal(2, client.Requests.Count);
     }
 
     [Fact]

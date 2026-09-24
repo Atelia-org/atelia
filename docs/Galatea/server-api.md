@@ -41,6 +41,7 @@ matched V1 endpoint 的 failure 只有 `turn-busy` 使用 `{code,error,turnId}`�
 | GET | `/api/v1/characters/{characterId}/mailbox/status` | 200；delegation store 的只读聚合状态 |
 | GET | `/api/v1/characters/{characterId}/agent/status` | 200；server Agent loop 的只读状态 |
 | POST | `/api/v1/characters/{characterId}/agent/retry-admission` | strict `{}`；200 Agent 状态，或 409 busy/具体未完成原因；不创建主线轮次 |
+| POST | `/api/v1/characters/{characterId}/agent/resume-autonomy` | strict `{}`；仅在失败暂停且会话 Idle 时重新计时；200 Agent 状态或 409 |
 | GET | `/api/v1/characters/{characterId}/chat/turns/current` | 200；current/recovery 状态 |
 | POST | `/api/v1/characters/{characterId}/chat/turns` | 202 `{turnId}`；接纳 fresh player turn |
 | POST | `/api/v1/characters/{characterId}/chat/turns/resume` | 202 `{turnId}`；在 exact recovery head 恢复 |
@@ -154,6 +155,8 @@ session attach 本身不执行 provider 整理调用，关机信号同时取消�
 它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`。`effectiveConnectionId` 是下一次**新**回合不带诊断 ID 时的选择：进程内 `runtimeConnectionOverrideId ?? defaultConnectionId`；绑定启用时，成功回合末状态识别可自动设置该角色的运行时值，没有对外设置 API。进程重启即清空，成功 Undo 也清除该角色的运行时选择。它不表示当前运行或待恢复回合的连接；已发布的运行回合以 `/chat/turns/current.connectionId` 为准。细节见[状态驱动的连接选择](character-connection-state-design.md)。时间字段只作诊断。`waiting` 且 `nextActivationAtUnixTimeMilliseconds=null` 表示该 Character 的 interval 为 `0`：没有自主 deadline、仍监视 durable reply；正 interval 的 waiting 才有 deadline。`disabled` 是保留内部投影，正常 API 的未知 Character 会先返回 404。blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
 
 `POST /api/v1/characters/{characterId}/agent/retry-admission`接受strict `{}`，遵守同一认证、JSON与Maintenance写操作guard；维护模式返回503。它尝试立即取得目标角色`TurnLock`，只重试旧的未完成admission处理，不创建角色轮次、不领取新轮次的cutoff。旧Action尚未capture时，此操作可能调用extractor provider；已capture内容沿原有恢复流程处理。
+
+`POST /api/v1/characters/{characterId}/agent/resume-autonomy`接受strict `{}`，只对已 attach 且处于 `autonomy-paused/AUTONOMOUS_TURN_FAILED` 的角色生效。它在 `TurnLock` 内确认没有运行中的回合、admission 操作、自动工作阻塞或待恢复 Journal 轮次，随后从当前时间重新计算自主活动 deadline；不创建轮次、不调用 provider、不修改 Journal。成功返回200 Agent 状态；忙碌、未暂停或需要恢复时返回409。Maintenance 写操作 guard 同样适用。
 
 成功返回200及上述Agent状态；没有admission失败时只返回当前状态。200不承诺已经开始自主活动，也不清除独立的reply失败暂停。interval 为 `0` 且无 durable wake evidence 时它不 attach；有 evidence 时也只 reconciliation/settlement，绝不领取新 cutoff 或创建主线回合。已有运行/恢复需求仍须按其入口处理，不能借此跳过runtime recovery。忙碌返回409 `{code:"turn-busy",error,turnId}`；提取、存储、会话未就绪或恢复未完成返回409 `{code,error}`，保留阻断和具体原因。它不把失败写成零Note结果，也不在失败后推进角色head。示例：
 

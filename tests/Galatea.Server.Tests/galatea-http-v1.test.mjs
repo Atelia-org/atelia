@@ -159,7 +159,9 @@ assert.deepEqual(clearedMailboxTimers, [scheduledMailboxTimers[0].id]);
 
 const waitingPulseStatus = {
   state: "waiting",
-  connectionId: "codex",
+  defaultConnectionId: "codex",
+  runtimeConnectionOverrideId: null,
+  effectiveConnectionId: "codex",
   nextActivationAtUnixTimeMilliseconds: 11_000,
   lastActivationAtUnixTimeMilliseconds: null,
   code: null,
@@ -167,7 +169,9 @@ const waitingPulseStatus = {
 };
 const pausedPulseStatus = {
   state: "autonomy-paused",
-  connectionId: "codex",
+  defaultConnectionId: "codex",
+  runtimeConnectionOverrideId: null,
+  effectiveConnectionId: "codex",
   nextActivationAtUnixTimeMilliseconds: null,
   lastActivationAtUnixTimeMilliseconds: 7_000,
   code: "AUTONOMOUS_TURN_FAILED",

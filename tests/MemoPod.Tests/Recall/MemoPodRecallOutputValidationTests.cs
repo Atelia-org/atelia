@@ -135,7 +135,21 @@ public sealed class MemoPodRecallOutputValidationTests {
             return Task.FromResult(self.Result(request, blocks));
         };
 
-        await AssertInvalidOutputAndUnchanged(fixture, client);
+        MemoRecallException failure = await AssertInvalidOutputAndUnchanged(fixture, client);
+        Assert.Equal(shape switch {
+            InvalidBlockShape.Empty or InvalidBlockShape.ReasoningOnly =>
+                MemoRecallOutputFailureCode.MissingToolCall,
+            InvalidBlockShape.WrongTool => MemoRecallOutputFailureCode.WrongToolName,
+            InvalidBlockShape.TextOnly or InvalidBlockShape.EmptyTextOnly
+                or InvalidBlockShape.ToolAndText or InvalidBlockShape.TextAndTool
+                or InvalidBlockShape.ReasoningTextAndTool =>
+                MemoRecallOutputFailureCode.TextBlock,
+            InvalidBlockShape.TwoTools or InvalidBlockShape.ReasoningAndTwoTools =>
+                MemoRecallOutputFailureCode.MultipleToolCalls,
+            InvalidBlockShape.NullBlock => MemoRecallOutputFailureCode.NullBlock,
+            InvalidBlockShape.NullToolCall => MemoRecallOutputFailureCode.NullToolCall,
+            _ => MemoRecallOutputFailureCode.UnexpectedBlock,
+        }, failure.OutputFailureCode);
     }
 
     [Theory]
@@ -515,7 +529,7 @@ public sealed class MemoPodRecallOutputValidationTests {
         }
     }
 
-    private static async Task AssertInvalidOutputAndUnchanged(
+    private static async Task<MemoRecallException> AssertInvalidOutputAndUnchanged(
         MemoPodRecallFixture fixture,
         FakeMemoRecallCompletionClient client
     ) {
@@ -539,5 +553,6 @@ public sealed class MemoPodRecallOutputValidationTests {
         Assert.Equal(MemoPodPhase.Frozen, fixture.Pod.Phase);
         Assert.Equal(hash, fixture.Pod.FrozenPrompt.Sha256);
         Assert.Same(prompt, fixture.Pod.FrozenPrompt);
+        return failure;
     }
 }

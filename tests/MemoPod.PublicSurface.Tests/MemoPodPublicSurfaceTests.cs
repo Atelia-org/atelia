@@ -22,6 +22,7 @@ public sealed class MemoPodPublicSurfaceTests {
             typeof(MemoPodPhase),
             typeof(MemoRecallException),
             typeof(MemoRecallFailureKind),
+            typeof(MemoRecallOutputFailureCode),
             typeof(MemoRecallOptions),
             typeof(MemoRecallResult),
         ];

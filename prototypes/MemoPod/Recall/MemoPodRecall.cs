@@ -136,14 +136,40 @@ public sealed partial class MemoPod {
                     toolCall = candidate;
                     break;
 
+                case ActionBlock.ToolCall candidate when candidate.Call is null:
+                    throw MemoPodRecallValidation.InvalidOutput(
+                        MemoRecallOutputFailureCode.NullToolCall,
+                        "MemoPod recall output contains a tool-call block without a call."
+                    );
+
+                case ActionBlock.ToolCall:
+                    throw MemoPodRecallValidation.InvalidOutput(
+                        MemoRecallOutputFailureCode.MultipleToolCalls,
+                        "MemoPod recall output contains more than one tool-call block."
+                    );
+
+                case ActionBlock.Text:
+                    throw MemoPodRecallValidation.InvalidOutput(
+                        MemoRecallOutputFailureCode.TextBlock,
+                        "MemoPod recall output contains visible text."
+                    );
+
+                case null:
+                    throw MemoPodRecallValidation.InvalidOutput(
+                        MemoRecallOutputFailureCode.NullBlock,
+                        "MemoPod recall output contains a null block."
+                    );
+
                 default:
                     throw MemoPodRecallValidation.InvalidOutput(
+                        MemoRecallOutputFailureCode.UnexpectedBlock,
                         "MemoPod recall output may contain only one tool-call block and optional reasoning blocks."
                     );
             }
         }
         if (toolCall is null) {
             throw MemoPodRecallValidation.InvalidOutput(
+                MemoRecallOutputFailureCode.MissingToolCall,
                 "MemoPod recall output must contain exactly one tool-call block; reasoning blocks are optional."
             );
         }
@@ -153,6 +179,7 @@ public sealed partial class MemoPod {
                 StringComparison.Ordinal
             )) {
             throw MemoPodRecallValidation.InvalidOutput(
+                MemoRecallOutputFailureCode.WrongToolName,
                 $"MemoPod recall output must call '{MemoPodRecallProtocol.ToolName}'."
             );
         }
@@ -171,6 +198,7 @@ public sealed partial class MemoPod {
         foreach (MemoId id in ids) {
             if (!_working.TryGet(id, out Memo? memo) || memo is null) {
                 throw MemoPodRecallValidation.InvalidOutput(
+                    MemoRecallOutputFailureCode.UnknownMemoId,
                     $"MemoPod recall output selected unknown or inactive MemoId '{id}'."
                 );
             }

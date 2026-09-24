@@ -42,13 +42,15 @@ internal enum GalateaMemoRecallFailureKind {
 internal sealed class GalateaMemoRecallStageException(
     GalateaMemoRecallFailureStage stage,
     GalateaMemoRecallFailureKind failureKind,
-    Exception innerException
+    Exception innerException,
+    int selectorAttempts = 0
 ) : Exception(
     "Memo recall failed during a classified planning stage.",
     innerException
 ) {
     internal GalateaMemoRecallFailureStage Stage { get; } = stage;
     internal GalateaMemoRecallFailureKind FailureKind { get; } = failureKind;
+    internal int SelectorAttempts { get; } = selectorAttempts;
 }
 
 internal sealed record GalateaMemoRecallDiagnostic(
@@ -56,6 +58,9 @@ internal sealed record GalateaMemoRecallDiagnostic(
     GalateaMemoRecallNotScheduledReason? NotScheduledReason = null,
     GalateaMemoRecallFailureStage? FailureStage = null,
     GalateaMemoRecallFailureKind? FailureKind = null,
+    string? OutputFailureCode = null,
+    int? SelectorAttempts = null,
+    string? TurnId = null,
     int? NominatedCount = null,
     int? EvaluatedCount = null,
     int? SelectedCount = null,
@@ -102,17 +107,23 @@ internal sealed record GalateaMemoRecallDiagnostic(
 
     internal static GalateaMemoRecallDiagnostic Failed(
         GalateaMemoRecallFailureStage stage,
-        GalateaMemoRecallFailureKind failureKind
+        GalateaMemoRecallFailureKind failureKind,
+        string? outputFailureCode = null,
+        int? selectorAttempts = null,
+        string? turnId = null
     ) => new(
         GalateaMemoRecallDiagnosticOutcome.Failed,
         FailureStage: stage,
-        FailureKind: failureKind
+        FailureKind: failureKind,
+        OutputFailureCode: outputFailureCode,
+        SelectorAttempts: selectorAttempts,
+        TurnId: turnId
     );
 }
 
 internal static class GalateaMemoRecallDiagnosticRenderer {
     internal const string EventName = "memo-recall-planning";
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     private static readonly JsonNamingPolicy CodePolicy =
         JsonNamingPolicy.KebabCaseLower;
 
@@ -125,6 +136,9 @@ internal static class GalateaMemoRecallDiagnosticRenderer {
             notScheduledReason = Code(diagnostic.NotScheduledReason),
             failureStage = Code(diagnostic.FailureStage),
             failureKind = Code(diagnostic.FailureKind),
+            outputFailureCode = diagnostic.OutputFailureCode,
+            selectorAttempts = diagnostic.SelectorAttempts,
+            turnId = diagnostic.TurnId,
             nominatedCount = diagnostic.NominatedCount,
             evaluatedCount = diagnostic.EvaluatedCount,
             selectedCount = diagnostic.SelectedCount,

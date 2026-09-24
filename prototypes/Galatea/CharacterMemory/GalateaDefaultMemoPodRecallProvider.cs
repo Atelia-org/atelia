@@ -2,6 +2,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.MemoPod;
 using System.Runtime.ExceptionServices;
+using Atelia.Diagnostics;
 
 namespace Atelia.Galatea.Server.CharacterMemory;
 
@@ -91,20 +92,39 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
         }
 
         GalateaSettledMemoRecallResult result;
+        int selectorAttempts = 0;
         try {
-            result = await _reconciler.RecallSettledDefaultPodAsync(
-                    completionClient,
-                    _connection.ModelId,
-                    query,
-                    _options,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
+            while (true) {
+                cancellationToken.ThrowIfCancellationRequested();
+                selectorAttempts++;
+                try {
+                    result = await _reconciler.RecallSettledDefaultPodAsync(
+                            completionClient,
+                            _connection.ModelId,
+                            query,
+                            _options,
+                            cancellationToken
+                        ).ConfigureAwait(false);
+                    break;
+                }
+                catch (MemoRecallException exception) when (
+                    exception.FailureKind is MemoRecallFailureKind.InvalidModelOutput
+                    && selectorAttempts < 2 && !cancellationToken.IsCancellationRequested
+                ) {
+                    DebugUtil.Debug("Galatea.MemoRecall",
+                        $"Selector output rejected; character={request.Character.CharacterId}, turnId={request.TurnId ?? "<none>"}, attempt={selectorAttempts}, code={exception.OutputFailureCode?.ToString() ?? "unknown"}; retrying.");
+                }
+            }
+            if (selectorAttempts > 1) {
+                DebugUtil.Debug("Galatea.MemoRecall",
+                    $"Selector output recovered; character={request.Character.CharacterId}, turnId={request.TurnId ?? "<none>"}, attempts={selectorAttempts}.");
+            }
         }
         catch (Exception exception) when (ShouldClassify(exception)) {
             throw Classified(
                 GalateaMemoRecallFailureStage.SelectorExecution,
-                exception
+                exception,
+                selectorAttempts
             );
         }
 
@@ -130,11 +150,13 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
 
     private static GalateaMemoRecallStageException Classified(
         GalateaMemoRecallFailureStage stage,
-        Exception exception
+        Exception exception,
+        int selectorAttempts = 0
     ) => new(
         stage,
         GalateaMemoRecallFailureClassifier.Classify(exception),
-        exception
+        exception,
+        selectorAttempts
     );
 }
 

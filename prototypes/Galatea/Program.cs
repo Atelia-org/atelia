@@ -738,6 +738,26 @@ characterApi.MapGet(
 );
 
 characterApi.MapPost(
+    "/agent/resume-autonomy",
+    async (HttpContext httpContext, string characterId, GalateaAutomaticTurnCoordinator coordinator) => {
+        _ = await GalateaHttpV1.ReadJsonBodyAsync<ResumeAutonomyRequest>(httpContext);
+        GalateaAutomaticTurnResult result = coordinator.ResumeAutonomy(characterId, httpContext.RequestAborted);
+        return result switch {
+            GalateaAutomaticTurnResult.Status status => Results.Ok(status.Value),
+            GalateaAutomaticTurnResult.Busy busy => Results.Json(
+                new TurnBusyErrorDto("turn-busy", "该角色正在处理其他请求，请稍后重试。", busy.TurnId),
+                statusCode: StatusCodes.Status409Conflict
+            ),
+            GalateaAutomaticTurnResult.Blocked blocked => Results.Json(
+                new ApiErrorDto(blocked.Code, blocked.Message),
+                statusCode: StatusCodes.Status409Conflict
+            ),
+            _ => throw new InvalidOperationException("Autonomy resume must not create a turn.")
+        };
+    }
+).WithMetadata(GalateaHttpV1.JsonBody, GalateaHttpV1.MaintenanceWrite);
+
+characterApi.MapPost(
     "/agent/retry-admission",
     async (HttpContext httpContext, string characterId, GalateaAutomaticTurnCoordinator coordinator) => {
         _ = await GalateaHttpV1.ReadJsonBodyAsync<RetryAdmissionRequest>(httpContext);

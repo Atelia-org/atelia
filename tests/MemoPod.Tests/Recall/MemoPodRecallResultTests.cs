@@ -192,6 +192,8 @@ public sealed class MemoPodRecallResultTests {
                 MemoRecallFailureKind.InvalidModelOutput,
                 failure.FailureKind
             );
+            Assert.Equal(MemoRecallOutputFailureCode.UnknownMemoId,
+                failure.OutputFailureCode);
             Assert.Equal(MemoPodPhase.Frozen, fixture.Pod.Phase);
         }
     }

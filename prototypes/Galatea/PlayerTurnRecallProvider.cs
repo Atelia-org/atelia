@@ -76,7 +76,8 @@ internal sealed record GalateaPlayerTurnRecallRequest {
         PlayerTurnObservation currentObservation,
         GalateaPlayerTurnRecallContext context,
         Func<IReadOnlyList<PlayerTurnRecall>, bool>? fitsRecalls = null,
-        SessionInputContent? currentInput = null
+        SessionInputContent? currentInput = null,
+        string? turnId = null
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(currentObservation);
@@ -114,6 +115,7 @@ internal sealed record GalateaPlayerTurnRecallRequest {
             }
         }
         CurrentInput = currentInput;
+        TurnId = turnId;
     }
 
     internal GalateaCharacterConfig Character { get; }
@@ -122,6 +124,7 @@ internal sealed record GalateaPlayerTurnRecallRequest {
     internal GalateaPlayerTurnRecallContext Context { get; }
     internal Func<IReadOnlyList<PlayerTurnRecall>, bool>? FitsRecalls { get; }
     internal SessionInputContent? CurrentInput { get; }
+    internal string? TurnId { get; }
 }
 
 internal interface IGalateaPlayerTurnRecallProvider {

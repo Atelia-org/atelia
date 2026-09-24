@@ -379,6 +379,38 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
     }
 
     [Fact]
+    public async Task InvalidSelectorOutputReportsCodeAndBoundedAttempts() {
+        var main = new MainCompletionClient();
+        var recall = new RecallCompletionClient();
+        recall.EnqueueSelection("m1:00000001");
+        recall.EnqueueSelection("m1:00000001");
+        await using var host = CreateHost(main, recall);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        var diagnostics = new List<string>();
+        service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        GalateaLiveTurn turn = service.StartTurn(session, "synthetic recall input",
+            new GalateaTurnOptions("test"),
+            sender: GalateaDelegateTestConfiguration.PlayerSender);
+
+        GalateaTurnException failure = await Assert.ThrowsAsync<GalateaTurnException>(
+            () => service.RunTurnAsync(session, turn, CancellationToken.None));
+
+        Assert.Equal("memo-recall-failed", failure.FailureReason);
+        Assert.Equal(2, recall.Requests.Count);
+        Assert.Empty(main.Requests);
+        using JsonDocument diagnostic = JsonDocument.Parse(Assert.Single(diagnostics));
+        JsonElement root = diagnostic.RootElement;
+        Assert.Equal("invalid-model-output", root.GetProperty("failureKind").GetString());
+        Assert.Equal("unknown-memo-id", root.GetProperty("outputFailureCode").GetString());
+        Assert.Equal(2, root.GetProperty("selectorAttempts").GetInt32());
+        Assert.Equal(turn.TurnId, root.GetProperty("turnId").GetString());
+        Assert.Equal(SessionExecutionPhase.Idle,
+            session.Engine.InspectRuntimeRecoveryRequirements().Phase);
+    }
+
+    [Fact]
     public async Task DisabledProviderReportsNotScheduledWithoutRecallDispatch() {
         var main = new MainCompletionClient {
             RequireRecallBeforeDispatch = false,
@@ -551,6 +583,9 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             "notScheduledReason",
             "failureStage",
             "failureKind",
+            "outputFailureCode",
+            "selectorAttempts",
+            "turnId",
             "nominatedCount",
             "evaluatedCount",
             "selectedCount",

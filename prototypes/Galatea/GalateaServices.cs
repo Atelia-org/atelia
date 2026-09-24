@@ -17,6 +17,7 @@ using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
+using Atelia.MemoPod;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Control;
@@ -3096,7 +3097,8 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
                     recallContext,
                     cancellationToken,
                     candidates => FitsStructuredObservation(fresh, observationTimestamp, characterSnapshot, notices, candidates, liveTurn.Options.ConnectionState),
-                    prompted
+                    prompted,
+                    liveTurn.TurnId
                 ).ConfigureAwait(false);
             if (recalls.Count > 0) {
                 prompted = GalateaObservationContent.Create(fresh,
@@ -3166,7 +3168,8 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         GalateaPlayerTurnRecallContext context,
         CancellationToken cancellationToken,
         Func<IReadOnlyList<PlayerTurnRecall>, bool>? fitsRecalls = null,
-        SessionInputContent? currentInput = null
+        SessionInputContent? currentInput = null,
+        string? turnId = null
     ) {
         GalateaPlayerTurnRecallRequest request = new(
             host.Character,
@@ -3174,7 +3177,8 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             currentObservation,
             context,
             fitsRecalls,
-            currentInput
+            currentInput,
+            turnId
         );
         IReadOnlyList<PlayerTurnRecall> selected;
         GalateaMemoRecallPlanningResult? planning = null;
@@ -3205,7 +3209,12 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         catch (GalateaMemoRecallStageException exception) {
             WriteMemoRecallDiagnostic(GalateaMemoRecallDiagnostic.Failed(
                 exception.Stage,
-                exception.FailureKind
+                exception.FailureKind,
+                outputFailureCode: exception.InnerException is MemoRecallException {
+                    OutputFailureCode: { } code
+                } ? JsonNamingPolicy.KebabCaseLower.ConvertName(code.ToString()) : null,
+                selectorAttempts: exception.SelectorAttempts == 0 ? null : exception.SelectorAttempts,
+                turnId: turnId
             ));
             throw new GalateaTurnException(
                 "Memo recall failed before main completion.",
@@ -3217,7 +3226,8 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             && GalateaExceptionClassifier.IsNonFatal(exception)) {
             WriteMemoRecallDiagnostic(GalateaMemoRecallDiagnostic.Failed(
                 GalateaMemoRecallFailureStage.SelectorExecution,
-                GalateaMemoRecallFailureClassifier.Classify(exception)
+                GalateaMemoRecallFailureClassifier.Classify(exception),
+                turnId: turnId
             ));
             throw new GalateaTurnException(
                 "Memo recall failed before main completion.",

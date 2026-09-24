@@ -179,7 +179,70 @@ public sealed class GalateaAgentStatusContractTests {
         finally { session.TurnLock.Release(); }
     }
 
+    [Fact]
+    public async Task ResumeAutonomyRequiresPausedIdleSessionAndRearmsFromNow() {
+        var clock = new ManualTimeProvider();
+        var factory = new RejectProviderFactory();
+        await using var fixture = GalateaTestHost.Create(factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            timeProvider: clock, autonomyCharacterIds: ["alice"]);
+        using HttpClient client = fixture.CreateClient();
+        using HttpResponseMessage anonymous = await client.PostAsync(
+            "/api/v1/characters/alice/agent/resume-autonomy", Json("{}"));
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        GalateaAutonomyCadence cadence = session.AutonomyCadence!;
+        await session.TurnLock.WaitAsync();
+        try {
+            cadence.Arm();
+            clock.Advance(TimeSpan.FromMinutes(10));
+            Assert.Equal(GalateaAutonomyCadencePulseResult.AutonomousActivationDue,
+                cadence.ObservePulse());
+            Assert.True(cadence.TryClaimAutonomousActivationStarted(out var claim));
+            Assert.True(cadence.SettleMainTurn(new GalateaAutonomyCadenceTurnSettlement(),
+                isAutonomousActivation: true, completed: false, autonomousClaim: claim));
+            session.PublishAutonomyStatus();
+        }
+        finally { session.TurnLock.Release(); }
+
+        await session.TurnLock.WaitAsync();
+        try {
+            using HttpResponseMessage busy = await client.PostAsync(
+                "/api/v1/characters/alice/agent/resume-autonomy", Json("{}"));
+            Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
+            Assert.Equal(GalateaAutonomyCadence.PausedState, cadence.ProjectStatus().State);
+        }
+        finally { session.TurnLock.Release(); }
+
+        using HttpResponseMessage resumed = await client.PostAsync(
+            "/api/v1/characters/alice/agent/resume-autonomy", Json("{}"));
+        Assert.Equal(HttpStatusCode.OK, resumed.StatusCode);
+        using JsonDocument response = JsonDocument.Parse(await resumed.Content.ReadAsStringAsync());
+        Assert.Equal("waiting", response.RootElement.GetProperty("state").GetString());
+        Assert.Equal((clock.GetUtcNow() + TimeSpan.FromMinutes(10)).ToUnixTimeMilliseconds(),
+            response.RootElement.GetProperty("nextActivationAtUnixTimeMilliseconds").GetInt64());
+        Assert.Null(session.GetCurrentTurn());
+        Assert.Equal(0, factory.CreateCount);
+        using HttpResponseMessage again = await client.PostAsync(
+            "/api/v1/characters/alice/agent/resume-autonomy", Json("{}"));
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+    }
+
     private static StringContent Json(string body) => new(body, Encoding.UTF8, "application/json");
+
+    private sealed class ManualTimeProvider : TimeProvider {
+        private long _timestamp;
+        private DateTimeOffset _now = new(2030, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public override long GetTimestamp() => _timestamp;
+        internal void Advance(TimeSpan value) {
+            _timestamp += value.Ticks;
+            _now += value;
+        }
+    }
 
     private sealed class RejectProviderFactory : ICompletionClientFactory {
         private int _createCount;

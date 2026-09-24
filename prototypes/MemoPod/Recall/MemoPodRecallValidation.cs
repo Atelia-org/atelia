@@ -47,7 +47,8 @@ internal static class MemoPodRecallValidation {
         int maxResults
     ) {
         if (rawArgumentsJson is null) {
-            throw InvalidOutput("Recall tool arguments must not be null.");
+            throw InvalidOutput(MemoRecallOutputFailureCode.MissingArguments,
+                "Recall tool arguments must not be null.");
         }
 
         int byteCount;
@@ -56,12 +57,14 @@ internal static class MemoPodRecallValidation {
         }
         catch (EncoderFallbackException exception) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidArgumentsEncoding,
                 "Recall tool arguments contain invalid UTF-16.",
                 exception
             );
         }
         if (byteCount > MaximumToolArgumentsUtf8Bytes) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.ArgumentsTooLarge,
                 $"Recall tool arguments exceed {MaximumToolArgumentsUtf8Bytes} UTF-8 bytes."
             );
         }
@@ -77,6 +80,7 @@ internal static class MemoPodRecallValidation {
         }
         catch (EncoderFallbackException exception) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidArgumentsEncoding,
                 "Recall tool arguments contain invalid UTF-16.",
                 exception
             );
@@ -87,6 +91,7 @@ internal static class MemoPodRecallValidation {
         }
         catch (JsonException exception) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidArgumentsJson,
                 "Recall tool arguments are not strict JSON.",
                 exception
             );
@@ -96,6 +101,7 @@ internal static class MemoPodRecallValidation {
     internal static void RequireToolCallId(string? toolCallId) {
         if (string.IsNullOrWhiteSpace(toolCallId)) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidToolCallId,
                 "Recall tool-call ID must not be null or blank."
             );
         }
@@ -106,12 +112,14 @@ internal static class MemoPodRecallValidation {
         }
         catch (EncoderFallbackException exception) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidToolCallId,
                 "Recall tool-call ID contains invalid UTF-16.",
                 exception
             );
         }
         if (byteCount > MaximumToolCallIdUtf8Bytes) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidToolCallId,
                 $"Recall tool-call ID exceeds {MaximumToolCallIdUtf8Bytes} UTF-8 bytes."
             );
         }
@@ -135,12 +143,14 @@ internal static class MemoPodRecallValidation {
     }
 
     internal static MemoRecallException InvalidOutput(
+        MemoRecallOutputFailureCode code,
         string message,
         Exception? innerException = null
     ) => new(
         MemoRecallFailureKind.InvalidModelOutput,
         message,
-        innerException
+        innerException,
+        code
     );
 
     internal static MemoRecallException ProviderFailure(
@@ -171,6 +181,7 @@ internal static class MemoPodRecallValidation {
         RequireToken(ref reader, JsonTokenType.PropertyName, "memoIds");
         if (!reader.ValueTextEquals("memoIds")) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidArgumentsShape,
                 "Recall tool arguments must contain only the exact 'memoIds' property."
             );
         }
@@ -182,25 +193,30 @@ internal static class MemoPodRecallValidation {
             is not JsonTokenType.EndArray) {
             if (reader.TokenType is not JsonTokenType.String) {
                 throw InvalidOutput(
+                    MemoRecallOutputFailureCode.InvalidArgumentsShape,
                     "Every recall memoIds item must be a string."
                 );
             }
             if (builder.Count == maxResults) {
                 throw InvalidOutput(
+                    MemoRecallOutputFailureCode.TooManyIds,
                     $"Recall output exceeds the requested maximum of {maxResults} IDs."
                 );
             }
             string value = reader.GetString()
                 ?? throw InvalidOutput(
+                    MemoRecallOutputFailureCode.InvalidArgumentsShape,
                     "Recall memoIds items must not be null."
                 );
             if (!MemoId.TryParse(value, out MemoId id)) {
                 throw InvalidOutput(
+                    MemoRecallOutputFailureCode.InvalidMemoId,
                     "Recall memoIds must contain only canonical MemoId strings."
                 );
             }
             if (!seen.Add(id)) {
                 throw InvalidOutput(
+                    MemoRecallOutputFailureCode.DuplicateMemoId,
                     $"Recall output contains duplicate MemoId '{id}'."
                 );
             }
@@ -210,6 +226,7 @@ internal static class MemoPodRecallValidation {
         RequireToken(ref reader, JsonTokenType.EndObject, "root end");
         if (reader.Read()) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidArgumentsShape,
                 "Recall tool arguments contain trailing JSON content."
             );
         }
@@ -224,6 +241,7 @@ internal static class MemoPodRecallValidation {
         JsonTokenType actual = ReadNext(ref reader, context);
         if (actual != expected) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidArgumentsShape,
                 $"Recall tool arguments expected {expected} for {context}, but found {actual}."
             );
         }
@@ -235,6 +253,7 @@ internal static class MemoPodRecallValidation {
     ) {
         if (!reader.Read()) {
             throw InvalidOutput(
+                MemoRecallOutputFailureCode.InvalidArgumentsShape,
                 $"Recall tool arguments ended before {context}."
             );
         }

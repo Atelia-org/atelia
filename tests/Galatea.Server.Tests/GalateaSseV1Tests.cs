@@ -489,6 +489,8 @@ public sealed class GalateaSseV1Tests {
             html,
             StringComparison.Ordinal
         );
+        Assert.Contains("<button id=\"resume-autonomy\" type=\"button\" class=\"hidden\">恢复自主活动</button>",
+            html, StringComparison.Ordinal);
         Assert.Contains(
             "<span id=\"autonomy-countdown\" aria-live=\"off\"></span>",
             html,

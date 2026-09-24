@@ -322,6 +322,10 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
     if (url.endsWith("/retry-admission")) {
       return retryResponse === null ? response(statusValue) : await retryResponse;
     }
+    if (url.endsWith("/resume-autonomy")) {
+      statusValue = waiting;
+      return response(statusValue);
+    }
     if (url.endsWith("/current")) return response(currentValue);
     if (url.endsWith("/pending/stop")) {
       currentValue = idle;
@@ -429,6 +433,24 @@ test("retry button settles unfinished work without submitting a turn or losing a
   assert.equal(button.classList.contains("hidden"), true);
   assert.equal(h.streams.length, 0);
   assert.match(h.node("status-text").textContent, /未完成处理已完成/);
+});
+
+test("paused autonomy can be rearmed without sending a turn", async () => {
+  const h = domHarness();
+  h.setStatus({ ...waiting, state: "autonomy-paused",
+    nextActivationAtUnixTimeMilliseconds: null, code: "AUTONOMOUS_TURN_FAILED" });
+  await flush(); await poll(h);
+  const button = h.node("resume-autonomy");
+  assert.equal(button.classList.contains("hidden"), false);
+  h.node("message-input").value = "keep my draft";
+  await button.dispatch("click");
+  const posts = h.requests.filter((x) => x.options.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, "/api/v1/characters/gpt/agent/resume-autonomy");
+  assert.equal(posts[0].options.body, "{}");
+  assert.equal(h.node("message-input").value, "keep my draft");
+  assert.equal(button.classList.contains("hidden"), true);
+  assert.equal(h.streams.length, 0);
 });
 
 test("failed retry preserves error and remains retryable, while maintenance and running disable it", async () => {
