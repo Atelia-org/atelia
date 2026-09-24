@@ -40,13 +40,17 @@ public sealed class GalateaConnectionStateRuntimeTests {
         Assert.Equal("dress", switched.EffectiveConnectionId);
         Assert.Equal("test", switched.LastChange!.PreviousConnectionId);
         Assert.Equal("dress", switched.LastChange.ConnectionId);
+        Assert.Equal("工作状态", switched.LastChange.PreviousName);
         Assert.Equal("生活状态", switched.LastChange.Name);
         Assert.Equal("穿着裙装", switched.LastChange.Evidence);
         Assert.False(string.IsNullOrWhiteSpace(switched.LastChange.SourceActionAddress));
+        Assert.Equal("生活状态", switched.EffectiveName);
+        Assert.Equal("生活状态", switched.TurnName);
+        string sourceActionAddress = switched.LastChange.SourceActionAddress;
 
         await SendAndFinishAsync(http, service, session, "第二回合");
         GalateaConnectionStateSnapshot repeated = service.CaptureConnectionState("alice", "dress");
-        Assert.Equal(switched.LastChange, repeated.LastChange);
+        Assert.Null(repeated.LastChange);
 
         await SendAndFinishAsync(http, service, session, "第三回合");
         Assert.Equal("dress", service.CaptureConnectionState("alice", "dress").EffectiveConnectionId);
@@ -64,8 +68,58 @@ public sealed class GalateaConnectionStateRuntimeTests {
         JsonElement nextSnapshot = turns[1].ObservationContent.JsonValue.GetProperty("connectionState");
         Assert.Equal("dress", nextSnapshot.GetProperty("effectiveConnectionId").GetString());
         Assert.Equal("dress", nextSnapshot.GetProperty("turnConnectionId").GetString());
-        Assert.Equal(switched.LastChange.SourceActionAddress,
+        Assert.Equal(sourceActionAddress,
             nextSnapshot.GetProperty("lastChange").GetProperty("sourceActionAddress").GetString());
+        Assert.Equal(JsonValueKind.Null, turns[2].ObservationContent.JsonValue
+            .GetProperty("connectionState").GetProperty("lastChange").ValueKind);
+        Assert.Equal(JsonValueKind.Null, turns[3].ObservationContent.JsonValue
+            .GetProperty("connectionState").GetProperty("lastChange").ValueKind);
+    }
+
+    [Fact]
+    public async Task DeliveringOldChangeDoesNotConsumeNewChangeProducedBySameTurn() {
+        var completion = new ScriptedCompletion();
+        completion.MainActions.Enqueue(DressAction);
+        completion.MainActions.Enqueue(WorkAction);
+        completion.MainActions.Enqueue(WorkAction);
+        completion.MainActions.Enqueue(WorkAction);
+        completion.ExtractionReplies.Enqueue(new("dress", "穿着裙装"));
+        completion.ExtractionReplies.Enqueue(new("test", "穿着裤装"));
+        completion.ExtractionReplies.Enqueue(new("test", "穿着裤装"));
+        completion.ExtractionReplies.Enqueue(new("test", "穿着裤装"));
+        await using var fixture = CreateFixture(completion);
+        GalateaHostService service = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        using HttpClient http = fixture.CreateClient();
+        await LoginAsync(http);
+
+        await SendAndFinishAsync(http, service, session, "建立生活状态");
+        GalateaConnectionStateChange first = Assert.IsType<GalateaConnectionStateChange>(
+            service.CaptureConnectionState("alice", "dress").LastChange);
+        await SendAndFinishAsync(http, service, session, "恢复工作状态");
+        GalateaConnectionStateChange second = Assert.IsType<GalateaConnectionStateChange>(
+            service.CaptureConnectionState("alice", "test").LastChange);
+        Assert.NotSame(first, second);
+        Assert.Equal("dress", second.PreviousConnectionId);
+        Assert.Equal("生活状态", second.PreviousName);
+        Assert.Equal("test", second.ConnectionId);
+        Assert.Equal("工作状态", second.Name);
+
+        await SendAndFinishAsync(http, service, session, "投递第二次切换");
+        Assert.Null(service.CaptureConnectionState("alice", "test").LastChange);
+        await SendAndFinishAsync(http, service, session, "后续回合");
+
+        SessionCompletedTurnProjection[] turns = session.Engine.ReadRecentCompletedTurns(4)
+            .RequireSnapshot().Turns.Reverse().ToArray();
+        Assert.Equal(first.SourceActionAddress, turns[1].ObservationContent.JsonValue
+            .GetProperty("connectionState").GetProperty("lastChange")
+            .GetProperty("sourceActionAddress").GetString());
+        Assert.Equal(second.SourceActionAddress, turns[2].ObservationContent.JsonValue
+            .GetProperty("connectionState").GetProperty("lastChange")
+            .GetProperty("sourceActionAddress").GetString());
+        Assert.Equal(JsonValueKind.Null, turns[3].ObservationContent.JsonValue
+            .GetProperty("connectionState").GetProperty("lastChange").ValueKind);
+        Assert.Equal(["test", "dress", "test", "test"], completion.MainConnectionIds.ToArray());
     }
 
     [Fact]
@@ -90,6 +144,9 @@ public sealed class GalateaConnectionStateRuntimeTests {
         Assert.Equal("dress", snapshot.GetProperty("runtimeOverrideConnectionId").GetString());
         Assert.Equal("dress", snapshot.GetProperty("effectiveConnectionId").GetString());
         Assert.Equal("test", snapshot.GetProperty("turnConnectionId").GetString());
+        Assert.Equal("生活状态", snapshot.GetProperty("effectiveName").GetString());
+        Assert.Equal("工作状态", snapshot.GetProperty("turnName").GetString());
+        Assert.Equal("工作状态", snapshot.GetProperty("lastChange").GetProperty("previousName").GetString());
         Assert.Equal("dress", service.CaptureConnectionState("alice", "dress").EffectiveConnectionId);
     }
 
@@ -109,6 +166,8 @@ public sealed class GalateaConnectionStateRuntimeTests {
                 new GalateaTurnOptions("test"), GalateaDelegateTestConfiguration.PlayerSender);
             Assert.Equal("test", accepted.Options.ConnectionState!.EffectiveConnectionId);
             Assert.Equal("test", accepted.Options.ConnectionState.TurnConnectionId);
+            Assert.Equal("工作状态", accepted.Options.ConnectionState.EffectiveName);
+            Assert.Equal("工作状态", accepted.Options.ConnectionState.TurnName);
 
             service.SetRuntimeConnectionOverride("alice", "dress");
             Assert.Equal("dress", service.CaptureConnectionState("alice", "dress").EffectiveConnectionId);
@@ -119,6 +178,8 @@ public sealed class GalateaConnectionStateRuntimeTests {
                 .Turns.Single().ObservationContent.JsonValue.GetProperty("connectionState");
             Assert.Equal("test", first.GetProperty("effectiveConnectionId").GetString());
             Assert.Equal("test", first.GetProperty("turnConnectionId").GetString());
+            Assert.Equal("工作状态", first.GetProperty("effectiveName").GetString());
+            Assert.Equal("工作状态", first.GetProperty("turnName").GetString());
 
             GalateaLiveTurn inbound = service.StartInboundMailTurn(session,
                 MailboxMessage.CreateInbound(session.Character.CharacterName,
@@ -126,6 +187,8 @@ public sealed class GalateaConnectionStateRuntimeTests {
                 new GalateaTurnOptions("dress"),
                 injectedBy: GalateaDelegateTestConfiguration.PlayerSender);
             Assert.Equal("dress", inbound.Options.ConnectionState!.EffectiveConnectionId);
+            Assert.Equal("生活状态", inbound.Options.ConnectionState.EffectiveName);
+            Assert.Equal("生活状态", inbound.Options.ConnectionState.TurnName);
             await service.RunTurnAsync(session, inbound, CancellationToken.None).WaitAsync(Deadline);
             service.FinishTurn(session, inbound);
             Assert.Equal("completed", inbound.Status);
@@ -134,11 +197,72 @@ public sealed class GalateaConnectionStateRuntimeTests {
             Assert.Equal("inbound-mail", mail.GetProperty("kind").GetString());
             Assert.Equal("dress", mail.GetProperty("connectionState")
                 .GetProperty("turnConnectionId").GetString());
+            Assert.Equal("生活状态", mail.GetProperty("connectionState")
+                .GetProperty("effectiveName").GetString());
+            Assert.Equal("生活状态", mail.GetProperty("connectionState")
+                .GetProperty("turnName").GetString());
             Assert.Equal("dress", service.CaptureConnectionState("alice", "dress").EffectiveConnectionId);
         }
         finally { session.TurnLock.Release(); }
         Assert.Equal(["test", "dress"], completion.MainConnectionIds.ToArray());
         Assert.Equal(2, completion.ExtractionCalls);
+    }
+
+    [Fact]
+    public async Task FailedObservationAppendKeepsPendingChange() {
+        var completion = new ScriptedCompletion();
+        completion.MainActions.Enqueue(DressAction);
+        completion.ExtractionReplies.Enqueue(new("dress", "穿着裙装"));
+        await using var fixture = CreateFixture(completion);
+        GalateaHostService service = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        using HttpClient http = fixture.CreateClient();
+        await LoginAsync(http);
+        await SendAndFinishAsync(http, service, session, "建立切换");
+        GalateaConnectionStateChange pending = Assert.IsType<GalateaConnectionStateChange>(
+            service.CaptureConnectionState("alice", "dress").LastChange);
+
+        // A canceled fresh send cannot reach ObservationAccepted. The accepted
+        // snapshot still carries the pending event for a later fresh input.
+        await session.TurnLock.WaitAsync();
+        try {
+            GalateaLiveTurn turn = service.StartTurn(session, "落盘前取消",
+                new GalateaTurnOptions("dress"), GalateaDelegateTestConfiguration.PlayerSender);
+            Assert.Same(pending, turn.Options.ConnectionState!.LastChange);
+            using var canceled = new CancellationTokenSource();
+            canceled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => service.RunTurnAsync(session, turn, canceled.Token));
+            Assert.Same(pending, service.CaptureConnectionState("alice", "dress").LastChange);
+        }
+        finally { session.TurnLock.Release(); }
+    }
+
+    [Fact]
+    public async Task GenerationFailureAfterObservationAppendConsumesPendingChange() {
+        var completion = new ScriptedCompletion();
+        completion.MainActions.Enqueue(DressAction);
+        completion.ExtractionReplies.Enqueue(new("dress", "穿着裙装"));
+        await using var fixture = CreateFixture(completion);
+        GalateaHostService service = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        using HttpClient http = fixture.CreateClient();
+        await LoginAsync(http);
+        await SendAndFinishAsync(http, service, session, "建立切换");
+        GalateaConnectionStateChange pending = Assert.IsType<GalateaConnectionStateChange>(
+            service.CaptureConnectionState("alice", "dress").LastChange);
+
+        completion.FailNextMainGeneration = true;
+        await session.TurnLock.WaitAsync();
+        try {
+            GalateaLiveTurn turn = service.StartTurn(session, "投递后生成失败",
+                new GalateaTurnOptions("dress"), GalateaDelegateTestConfiguration.PlayerSender);
+            Assert.Same(pending, turn.Options.ConnectionState!.LastChange);
+            await Assert.ThrowsAnyAsync<Exception>(
+                () => service.RunTurnAsync(session, turn, CancellationToken.None));
+            Assert.Null(service.CaptureConnectionState("alice", "dress").LastChange);
+        }
+        finally { session.TurnLock.Release(); }
     }
 
     [Fact]
@@ -259,6 +383,7 @@ public sealed class GalateaConnectionStateRuntimeTests {
         internal ConcurrentQueue<string> MainConnectionIds { get; } = new();
         internal int ExtractionCalls;
         internal bool BlockExtraction;
+        internal bool FailNextMainGeneration;
 
         public ICompletionClient Create(CompletionConnectionConfig connection) => new Client(this, connection.Id);
 
@@ -290,6 +415,10 @@ public sealed class GalateaConnectionStateRuntimeTests {
                 }
                 else {
                     owner.MainConnectionIds.Enqueue(connectionId);
+                    if (owner.FailNextMainGeneration) {
+                        owner.FailNextMainGeneration = false;
+                        throw new InvalidDataException("synthetic generation failure");
+                    }
                     Assert.True(owner.MainActions.TryDequeue(out string? action));
                     string visibleAction = Assert.IsType<string>(action);
                     observer?.OnTextDelta(visibleAction);

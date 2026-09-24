@@ -22,7 +22,7 @@ public sealed class GalateaConnectionStateObservationTests {
     [InlineData("heartbeat-activation")]
     [InlineData("delegate-reply")]
     [InlineData("inbound-mail")]
-    public void V3SnapshotSurvivesStructuredStorageAndRequestProjection(string kind) {
+    public void V4SnapshotSurvivesStructuredStorageAndRequestProjection(string kind) {
         string address = EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None));
         var change = new GalateaConnectionStateChange(address, "old", "new", "戴眼镜", Evidence);
         var snapshot = new GalateaConnectionStateSnapshot("new", "new", "diagnostic", change);
@@ -36,10 +36,10 @@ public sealed class GalateaConnectionStateObservationTests {
         };
         SessionInputContent content = GalateaObservationContent.Create(input, Timestamp, Character, connectionState: snapshot);
 
-        Assert.Equal(GalateaObservationContent.V3SchemaId, content.SchemaId);
+        Assert.Equal(GalateaObservationContent.V4SchemaId, content.SchemaId);
         Assert.Equal(snapshot, GalateaObservationContent.ReadConnectionState(content));
         string projected = GalateaObservationInputProjector.Instance.Project(content);
-        Assert.True(JsonElement.DeepEquals(content.JsonValue, MdJsonSerializer.Read(projected)));
+        Assert.Equal(JsonValueKind.String, MdJsonSerializer.Read(projected).GetProperty("connectionState").ValueKind);
         Assert.Contains(Evidence, projected, StringComparison.Ordinal);
         Assert.Contains("/connectionState/lastChange/evidence",
             GalateaObservationContent.ExternalStringPaths(content.SchemaId, content.JsonValue));
@@ -60,7 +60,7 @@ public sealed class GalateaConnectionStateObservationTests {
     [Theory]
     [InlineData("")]
     [InlineData("第一行\n第二行")]
-    public void V3AcceptsConfiguredOptionNamesIncludingEmptyAndMultiline(string name) {
+    public void V4AcceptsConfiguredOptionNamesIncludingEmptyAndMultiline(string name) {
         string address = EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None));
         var snapshot = new GalateaConnectionStateSnapshot("new", "new", "new",
             new GalateaConnectionStateChange(address, "old", "new", name, Evidence));
@@ -70,7 +70,7 @@ public sealed class GalateaConnectionStateObservationTests {
     }
 
     [Fact]
-    public void V3AcceptsExactConfigurationBounds() {
+    public void V4AcceptsExactConfigurationBounds() {
         string address = EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None));
         string id = new string('x', 128);
         var snapshot = new GalateaConnectionStateSnapshot(id, id, id,
@@ -99,7 +99,7 @@ public sealed class GalateaConnectionStateObservationTests {
     [InlineData("oversize-name")]
     [InlineData("oversize-evidence")]
     [InlineData("unknown-field")]
-    public void V3RejectsMalformedSnapshot(string defect) {
+    public void V4RejectsMalformedSnapshot(string defect) {
         SessionInputContent source = GalateaObservationContent.Create(
             new GalateaFreshInput.PlayerAction("继续", Player), Timestamp, Character,
             connectionState: new GalateaConnectionStateSnapshot(null, "default", "default"));
@@ -115,11 +115,12 @@ public sealed class GalateaConnectionStateObservationTests {
                 ["sourceActionAddress"] = defect == "bad-address" ? "bad" :
                     EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None)),
                 ["previousConnectionId"] = "old", ["connectionId"] = "new",
+                ["previousName"] = "previous",
                 ["name"] = defect == "oversize-name" ? new string('x', 4097) : "name",
                 ["evidence"] = defect == "oversize-evidence" ? new string('x', 2049) : Evidence
             };
         }
         Assert.ThrowsAny<Exception>(() => GalateaObservationInputProjector.Instance.Project(
-            SessionInputContent.Structured(GalateaObservationContent.V3SchemaId, JsonSerializer.SerializeToElement(value))));
+            SessionInputContent.Structured(GalateaObservationContent.V4SchemaId, JsonSerializer.SerializeToElement(value))));
     }
 }

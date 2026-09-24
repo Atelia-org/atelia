@@ -273,8 +273,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         string wrapped = Assert.IsType<string>(
             requestedObservation.Content
         );
-        SessionInputContent projectedInput = SessionInputContent.Structured(
-            GalateaObservationContent.V3SchemaId, MdJsonSerializer.Read(wrapped));
+        SessionInputContent projectedInput = GalateaRequestedObservation.BusinessContent(wrapped);
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         Assert.Equal("normalized input", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);
@@ -282,8 +281,8 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         var persisted = session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot();
         Assert.Equal(
-            projectedInput,
-            Assert.Single(persisted.Turns).ObservationContent
+            wrapped,
+            GalateaInputProjector.Instance.Project(Assert.Single(persisted.Turns).ObservationContent)
         );
 
         RecentTurnsResponseDto recent = await GetRecentTurnsAsync(client);
@@ -397,8 +396,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             requestedObservation.Content
         );
         Assert.Contains("memo-gist", wrapped, StringComparison.Ordinal);
-        SessionInputContent projectedInput = SessionInputContent.Structured(
-            GalateaObservationContent.V3SchemaId, MdJsonSerializer.Read(wrapped));
+        SessionInputContent projectedInput = GalateaRequestedObservation.BusinessContent(wrapped);
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(projectedInput);
         PlayerTurnRecall parsedRecall = Assert.Single(observation.Recalls);
         Assert.Equal(RecallType.MemoGist,
@@ -411,8 +409,8 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         var persisted = session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot();
         Assert.Equal(
-            projectedInput,
-            Assert.Single(persisted.Turns).ObservationContent
+            wrapped,
+            GalateaInputProjector.Instance.Project(Assert.Single(persisted.Turns).ObservationContent)
         );
 
         RecentTurnsResponseDto recent = await GetRecentTurnsAsync(client);

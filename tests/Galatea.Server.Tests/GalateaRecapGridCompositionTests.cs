@@ -527,9 +527,9 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(
             "same next clue",
             cliTail.Content);
-        JsonElement value = Atelia.MdJson.MdJsonSerializer.Read(Assert.IsType<string>(galateaTail.Content));
+        string rendered = Assert.IsType<string>(galateaTail.Content);
         PlayerTurnObservation playerTurnObservation = GalateaObservationContent.ReadPlayerTurn(
-            SessionInputContent.Structured(GalateaObservationContent.V3SchemaId, value));
+            GalateaRequestedObservation.BusinessContent(rendered));
         Assert.Equal("same next clue", playerTurnObservation.PlayerText);
         Assert.NotNull(playerTurnObservation.ExternalLocalTimestamp);
     }

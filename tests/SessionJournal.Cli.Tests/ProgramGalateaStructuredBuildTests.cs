@@ -17,6 +17,7 @@ public sealed partial class ProgramRecapGridCommandTests {
             StructuredBuildPlayer(),
             StructuredBuildHeartbeat(),
             StructuredBuildConnectionState(),
+            StructuredBuildConnectionStateV4(),
             // Leave a complete recent turn after the input under examination,
             // so cadence can retain its required recent reserve.
             SessionInputContent.Text("recent reserve after structured history")
@@ -40,7 +41,8 @@ public sealed partial class ProgramRecapGridCommandTests {
         JsonElement[] projected = sent.Where(message => message.Content?.Contains("externalLocalTimestamp", StringComparison.Ordinal) == true)
             .Select(message => MdJsonSerializer.Read(message.Content!)).ToArray();
         foreach (SessionInputContent expected in inputs.Where(input => input.IsStructured)) {
-            Assert.Contains(projected, actual => SessionInputContent.Structured(expected.SchemaId!, actual) == expected);
+            JsonElement visible = MdJsonSerializer.Read(Atelia.Galatea.Input.GalateaObservationInputProjector.Instance.Project(expected));
+            Assert.Contains(projected, actual => JsonElement.DeepEquals(visible, actual));
         }
         JsonElement player = projected.First(value => value.GetProperty("kind").GetString() == "player-action");
         Assert.Equal("player-main", player.GetProperty("sender").GetProperty("id").GetString());
@@ -181,6 +183,13 @@ public sealed partial class ProgramRecapGridCommandTests {
             ["lastChange"] = null
         };
         return SessionInputContent.Structured("galatea.observation.v3", JsonSerializer.SerializeToElement(value));
+    }
+
+    private static SessionInputContent StructuredBuildConnectionStateV4() {
+        JsonObject value = JsonNode.Parse(StructuredBuildConnectionState().JsonValue.GetRawText())!.AsObject();
+        value["connectionState"]!["effectiveName"] = "日常生活";
+        value["connectionState"]!["turnName"] = "深入推演";
+        return SessionInputContent.Structured("galatea.observation.v4", JsonSerializer.SerializeToElement(value));
     }
 
     private static SessionInputContent StructuredBuildPlayer() => SessionInputContent.Structured("galatea.observation.v1",

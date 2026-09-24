@@ -3122,11 +3122,18 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
                 host.CharacterMemoryReconciler!, host.Engine,
                 receiptDelivery, ready.GoverningSetup.Head, prompted);
         }
-        TurnResult result = await host.Engine.SendAsync(
-            ready.GoverningSetup.Head,
-            prompted,
-            observer,
-            cancellationToken).ConfigureAwait(false);
+        TurnResult result;
+        try {
+            result = await host.Engine.SendAsync(
+                ready.GoverningSetup.Head,
+                prompted,
+                observer,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally {
+            ConfirmConnectionChangeDelivery(host, liveTurn.Options.ConnectionState?.LastChange,
+                ready.GoverningSetup.Head, prompted);
+        }
         return new GalateaCompletedOperation(
             result.Message,
             result.Invocation,

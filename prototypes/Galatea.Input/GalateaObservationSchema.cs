@@ -12,20 +12,23 @@ internal static class GalateaObservationSchema {
     internal const string V1SchemaId = "galatea.observation.v1";
     internal const string V2SchemaId = "galatea.observation.v2";
     internal const string V3SchemaId = "galatea.observation.v3";
+    internal const string V4SchemaId = "galatea.observation.v4";
     internal const int MaximumContentUtf8Bytes = GalateaObservationLimits.MaximumContentUtf8Bytes;
-    internal static bool IsSupportedSchemaId(string? schemaId) => schemaId is V1SchemaId or V2SchemaId or V3SchemaId;
+    internal static bool IsSupportedSchemaId(string? schemaId) => schemaId is V1SchemaId or V2SchemaId or V3SchemaId or V4SchemaId;
 
     internal static void Validate(string? schemaId, JsonElement value) {
         bool isV2 = schemaId switch {
             V1SchemaId => false,
             V2SchemaId => true,
             V3SchemaId => false,
+            V4SchemaId => false,
             _ => throw new InvalidDataException("Unsupported Galatea Observation schema: " + schemaId)
         };
         bool isV3 = schemaId == V3SchemaId;
-        if (isV3) {
+        bool isV4 = schemaId == V4SchemaId;
+        if (isV3 || isV4) {
             GalateaInputValidation.RequireObject(value, "v", "kind", "sender", "externalLocalTimestamp", "action", "notices", "recalls", "connectionState");
-            ValidateConnectionState(value.GetProperty("connectionState"));
+            ValidateConnectionState(value.GetProperty("connectionState"), isV4);
         }
         else { GalateaInputValidation.RequireObject(value, "v", "kind", "sender", "externalLocalTimestamp", "action", "notices", "recalls"); }
         GalateaInputValidation.RequireVersion(value);
@@ -53,7 +56,7 @@ internal static class GalateaObservationSchema {
                 GalateaInputValidation.RequireObject(action, "character", "externalIntervalMinutes");
                 RequireSenderKind(GalateaInputValidation.ReadSender(action.GetProperty("character")), "character");
                 if (!action.GetProperty("externalIntervalMinutes").TryGetInt32(out int minutes)
-                    || (isV2 || isV3
+                    || (isV2 || isV3 || isV4
                         ? minutes is < 1 or > GalateaObservationLimits.MaximumExternalIntervalMinutes
                         : minutes != GalateaObservationLimits.ExternalIntervalMinutes)) {
                     throw new InvalidDataException("Unsupported heartbeat activation interval.");
@@ -126,26 +129,43 @@ internal static class GalateaObservationSchema {
             else { paths.Add($"/recalls/{i}/text"); }
             i++;
         }
-        if (schemaId == V3SchemaId && value.GetProperty("connectionState").GetProperty("lastChange") is JsonElement change
-            && change.ValueKind == JsonValueKind.Object) {
-            paths.Add("/connectionState/lastChange/evidence");
+        if (schemaId is V3SchemaId or V4SchemaId) {
+            JsonElement state = value.GetProperty("connectionState");
+            if (schemaId == V4SchemaId) {
+                paths.Add("/connectionState/effectiveName");
+                paths.Add("/connectionState/turnName");
+            }
+            if (state.GetProperty("lastChange") is JsonElement change && change.ValueKind == JsonValueKind.Object) {
+                if (schemaId == V4SchemaId) {
+                    paths.Add("/connectionState/lastChange/previousName");
+                    paths.Add("/connectionState/lastChange/name");
+                }
+                paths.Add("/connectionState/lastChange/evidence");
+            }
         }
         return paths;
     }
 
-    private static void ValidateConnectionState(JsonElement state) {
-        GalateaInputValidation.RequireObject(state, "runtimeOverrideConnectionId", "effectiveConnectionId", "turnConnectionId", "lastChange");
+    private static void ValidateConnectionState(JsonElement state, bool isV4) {
+        if (isV4) { GalateaInputValidation.RequireObject(state, "runtimeOverrideConnectionId", "effectiveConnectionId", "turnConnectionId", "effectiveName", "turnName", "lastChange"); }
+        else { GalateaInputValidation.RequireObject(state, "runtimeOverrideConnectionId", "effectiveConnectionId", "turnConnectionId", "lastChange"); }
         string? runtime = state.GetProperty("runtimeOverrideConnectionId").ValueKind == JsonValueKind.Null
             ? null : ConnectionId(state, "runtimeOverrideConnectionId");
         string effective = ConnectionId(state, "effectiveConnectionId");
         _ = ConnectionId(state, "turnConnectionId");
+        if (isV4) {
+            _ = BoundedString(state, "effectiveName", 4096);
+            _ = BoundedString(state, "turnName", 4096);
+        }
         if (runtime is not null && runtime != effective) { throw new InvalidDataException("Runtime override differs from effective connection."); }
         JsonElement change = state.GetProperty("lastChange");
         if (change.ValueKind == JsonValueKind.Null) { return; }
-        GalateaInputValidation.RequireObject(change, "sourceActionAddress", "previousConnectionId", "connectionId", "name", "evidence");
+        if (isV4) { GalateaInputValidation.RequireObject(change, "sourceActionAddress", "previousConnectionId", "connectionId", "previousName", "name", "evidence"); }
+        else { GalateaInputValidation.RequireObject(change, "sourceActionAddress", "previousConnectionId", "connectionId", "name", "evidence"); }
         _ = EventAddressTextCodec.Parse(Text(change, "sourceActionAddress", 256));
         foreach (string field in new[] { "previousConnectionId", "connectionId" }) { _ = ConnectionId(change, field); }
         _ = BoundedString(change, "name", 4096);
+        if (isV4) { _ = BoundedString(change, "previousName", 4096); }
         _ = Text(change, "evidence", 2048);
         if (change.GetProperty("previousConnectionId").GetString() == change.GetProperty("connectionId").GetString()
             || change.GetProperty("connectionId").GetString() != effective) {

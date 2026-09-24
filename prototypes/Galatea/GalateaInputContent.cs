@@ -49,9 +49,11 @@ internal sealed class GalateaInputProjector : ISessionInputProjector {
             case GalateaObservationContent.V1SchemaId:
             case GalateaObservationContent.V2SchemaId:
             case GalateaObservationContent.V3SchemaId:
+            case GalateaObservationContent.V4SchemaId:
                 return GalateaObservationInputProjector.Instance.Project(input);
             case GalateaSystemInstructionContent.SchemaId:
             case GalateaSystemInstructionContent.V2SchemaId:
+            case GalateaSystemInstructionContent.V3SchemaId:
                 return GalateaSystemInstructionContent.Project(input);
             case GalateaDelegateTaskContent.SchemaId:
                 return GalateaDelegateTaskContent.Project(input.JsonValue);

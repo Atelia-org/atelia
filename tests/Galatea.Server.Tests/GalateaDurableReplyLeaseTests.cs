@@ -175,6 +175,12 @@ public sealed class GalateaDurableReplyLeaseTests {
         Assert.Single(lease.ReadNotices());
         Assert.True(GalateaObservationContent.FitsEveryValidPlayerText([
             .. lease.ReadNotices(), receipt]));
+        Assert.False(GalateaObservationContent.FitsEveryValidPlayerText([
+            .. lease.ReadNotices(), receipt], reserveConnectionState: true));
+        var compact = new PlayerTurnNotice.NoteSaveReceipt(new CharacterNoteReceiptSelection(
+            receipt.Selection!.SourceActionAddress, receipt.Selection.MemoIds, []));
+        Assert.True(GalateaObservationContent.FitsEveryValidPlayerText([
+            .. lease.ReadNotices(), compact], reserveConnectionState: true));
         lease.RollbackBeforeEffect();
     }
 

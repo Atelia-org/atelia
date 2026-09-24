@@ -15,11 +15,11 @@ public sealed class GalateaConnectionStatePromptTests {
     ];
 
     [Fact]
-    public void EnabledStateAddsBoundOptionsAndEmbeddedAppendixWithoutReplacingDataTokens() {
+    public void EnabledStateAddsNameFirstOptionsAndEmbeddedAppendixWithoutReplacingDataTokens() {
         SessionInputContent content = Create(true);
-        Assert.Equal(GalateaSystemInstructionContent.V2SchemaId, content.SchemaId);
+        Assert.Equal(GalateaSystemInstructionContent.V3SchemaId, content.SchemaId);
         JsonElement stored = content.JsonValue;
-        Assert.Equal(2, stored.GetProperty("v").GetInt32());
+        Assert.Equal(3, stored.GetProperty("v").GetInt32());
         JsonElement bindings = stored.GetProperty("bindings");
         Assert.True(bindings.GetProperty("capabilities").GetProperty("characterConnectionState").GetBoolean());
         Assert.Equal(Options.Length, bindings.GetProperty("connectionOptions").GetArrayLength());
@@ -28,13 +28,22 @@ public sealed class GalateaConnectionStatePromptTests {
         Assert.Equal("character-connection-state", instructions[instructions.GetArrayLength() - 2].GetProperty("kind").GetString());
         Assert.Equal(GalateaSystemPromptComposer.CharacterConnectionStateAppendixSource,
             instructions[instructions.GetArrayLength() - 2].GetProperty("source").GetString());
-        Assert.Contains("lastChange", instructions[instructions.GetArrayLength() - 1].GetProperty("source").GetString(), StringComparison.Ordinal);
+        string inputMeaning = instructions[instructions.GetArrayLength() - 1].GetProperty("source").GetString()!;
+        Assert.Contains("接纳时冻结的运行配置说明", inputMeaning, StringComparison.Ordinal);
+        Assert.DoesNotContain("lastChange", inputMeaning, StringComparison.Ordinal);
+        Assert.DoesNotContain("runtimeOverrideConnectionId", inputMeaning, StringComparison.Ordinal);
 
         string before = stored.GetRawText();
         JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(content));
-        Assert.True(JsonElement.DeepEquals(bindings, projected.GetProperty("bindings")));
+        JsonElement projectedBindings = projected.GetProperty("bindings");
+        Assert.True(JsonElement.DeepEquals(bindings.GetProperty("character"), projectedBindings.GetProperty("character")));
+        JsonElement firstOption = projectedBindings.GetProperty("connectionOptions")[0];
+        Assert.Equal("name", firstOption.EnumerateObject().First().Name);
+        Assert.Equal("connectionId", firstOption.EnumerateObject().Last().Name);
+        Assert.Equal("dress-model", firstOption.GetProperty("connectionId").GetString());
+        Assert.Equal("裙装 `${characterName}`", firstOption.GetProperty("name").GetString());
         Assert.Equal("穿着裙装 `${characterName}`",
-            projected.GetProperty("bindings").GetProperty("connectionOptions")[0].GetProperty("trigger").GetString());
+            firstOption.GetProperty("trigger").GetString());
         Assert.Contains("Alice", projected.GetProperty("instructions")[instructions.GetArrayLength() - 2]
             .GetProperty("source").GetString(), StringComparison.Ordinal);
         Assert.Equal(before, stored.GetRawText());
@@ -57,7 +66,7 @@ public sealed class GalateaConnectionStatePromptTests {
     }
 
     [Fact]
-    public void V2ValidationRejectsMissingCapabilityMismatchedSourcesAndInvalidOptions() {
+    public void V3ValidationRejectsMissingCapabilityMismatchedSourcesAndInvalidOptions() {
         SessionInputContent content = Create(true);
         AssertInvalid(content, root => root["bindings"]!["capabilities"]!.AsObject().Remove("characterConnectionState"));
         AssertInvalid(content, root => root["bindings"]!["capabilities"]!["characterConnectionState"] = false);
@@ -71,7 +80,7 @@ public sealed class GalateaConnectionStatePromptTests {
         Assert.Throws<InvalidDataException>(() => GalateaSystemInstructionContent.Project(
             SessionInputContent.Structured(GalateaSystemInstructionContent.SchemaId, content.JsonValue)));
         AssertInvalid(content, root => root["v"] = "2");
-        AssertInvalid(content, root => root["v"] = 3);
+        AssertInvalid(content, root => root["v"] = 2);
         AssertInvalid(content, root => root.AsObject().Remove("v"));
 
         SessionInputContent legacy = Create(false);
@@ -80,7 +89,7 @@ public sealed class GalateaConnectionStatePromptTests {
     }
 
     [Fact]
-    public void ProjectedV2ContentEnforcesPostSubstitutionByteLimit() {
+    public void ProjectedV3ContentEnforcesPostSubstitutionByteLimit() {
         var longName = new string('N', 1024);
         SessionInputContent content = GalateaSystemPromptComposer.CreateContent(
             new GalateaSenderSnapshot("character", "alice", longName),
@@ -88,6 +97,33 @@ public sealed class GalateaConnectionStatePromptTests {
             false, false, "/test-home", characterConnectionStateEnabled: true,
             connectionOptions: Options);
         Assert.Throws<InvalidDataException>(() => GalateaInputProjector.Instance.Project(content));
+    }
+
+    [Fact]
+    public void V3UsesUnnamedDisplayWithoutChangingFrozenRawOptions() {
+        GalateaCharacterConnectionOption[] options = [new("default-model", " \t", "状态明确")];
+        SessionInputContent content = Create(true, options);
+        Assert.Equal(" \t", content.JsonValue.GetProperty("bindings").GetProperty("connectionOptions")[0].GetProperty("name").GetString());
+        JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(content));
+        JsonElement option = projected.GetProperty("bindings").GetProperty("connectionOptions")[0];
+        Assert.Equal("未命名配置", option.GetProperty("name").GetString());
+        Assert.Equal("状态明确", option.GetProperty("trigger").GetString());
+        Assert.Equal("default-model", option.GetProperty("connectionId").GetString());
+    }
+
+    [Fact]
+    public void HistoricalV2KeepsExactOptionProjection() {
+        SessionInputContent current = Create(true);
+        JsonObject historical = JsonNode.Parse(current.JsonValue.GetRawText())!.AsObject();
+        historical["v"] = 2;
+        SessionInputContent content = SessionInputContent.Structured(
+            GalateaSystemInstructionContent.V2SchemaId, JsonSerializer.SerializeToElement(historical));
+
+        GalateaSystemInstructionContent.Validate(content);
+        JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(content));
+        Assert.True(JsonElement.DeepEquals(content.JsonValue.GetProperty("bindings"), projected.GetProperty("bindings")));
+        Assert.Equal("connectionId", projected.GetProperty("bindings").GetProperty("connectionOptions")[0]
+            .EnumerateObject().First().Name);
     }
 
     private static SessionInputContent Create(bool enabled, IReadOnlyList<GalateaCharacterConnectionOption>? options = null)
@@ -98,6 +134,7 @@ public sealed class GalateaConnectionStatePromptTests {
         JsonObject copy = JsonNode.Parse(source.JsonValue.GetRawText())!.AsObject();
         edit(copy);
         JsonElement changed = JsonSerializer.SerializeToElement(copy);
-        Assert.ThrowsAny<Exception>(() => GalateaSystemInstructionContent.Validate(changed));
+        Assert.ThrowsAny<Exception>(() => GalateaSystemInstructionContent.Validate(
+            SessionInputContent.Structured(source.SchemaId!, changed)));
     }
 }

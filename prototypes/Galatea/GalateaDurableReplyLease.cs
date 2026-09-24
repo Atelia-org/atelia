@@ -1,4 +1,5 @@
 using Atelia.EventJournal;
+using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
@@ -287,7 +288,14 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
             }
             if (!GalateaObservationContent
                     .FitsEveryValidPlayerText(proposed, reserveConnectionState: true)) {
-                break;
+                // Keep all saved identities while allowing the earliest reply to
+                // make progress when connection metadata leaves no room for note text.
+                if (selected.Count != 0 || reservedReceipt?.Selection is not { } receipt
+                    || receipt.ExactTexts.Count == 0) { break; }
+                reservedReceipt = new PlayerTurnNotice.NoteSaveReceipt(
+                    new CharacterNoteReceiptSelection(receipt.SourceActionAddress, receipt.MemoIds, []));
+                proposed = [ProjectReadyNotice(notice), reservedReceipt];
+                if (!GalateaObservationContent.FitsEveryValidPlayerText(proposed, reserveConnectionState: true)) { break; }
             }
             selected.Add(notice);
         }
