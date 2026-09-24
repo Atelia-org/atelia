@@ -89,10 +89,6 @@ internal static class GalateaHtml {
             connections,
             GalateaJson.Options
         );
-        string defaultConnectionJson = JsonSerializer.Serialize(
-            character.DefaultConnectionId,
-            GalateaJson.Options
-        );
         string maintenanceBanner = maintenanceMode
             ? "<p class=\"maintenance-banner\" role=\"status\">维护模式：会话只读，发送、恢复、撤销与停止已禁用。</p>"
             : string.Empty;
@@ -148,6 +144,7 @@ internal static class GalateaHtml {
         <div id="autonomy-status" class="autonomy-status">
           <span id="autonomy-state" role="status" aria-live="polite">服务端 Agent：正在读取…</span>
           <span id="autonomy-connection"></span>
+          <span id="current-turn-connection"></span>
           <span id="autonomy-countdown" aria-live="off"></span>
           <span id="autonomy-last-activation" aria-live="off">上次自主激活：尚无</span>
           <button id="retry-admission" type="button" class="hidden">重试未完成处理</button>
@@ -190,12 +187,10 @@ internal static class GalateaHtml {
 
   <script>
     window.galateaBootstrap = {
-      playerId: {{JsonSerializer.Serialize(player.PlayerId, GalateaJson.Options)}},
       characterId: {{JsonSerializer.Serialize(character.CharacterId, GalateaJson.Options)}},
       characterName: {{JsonSerializer.Serialize(character.CharacterName.Value, GalateaJson.Options)}},
       apiBase: {{JsonSerializer.Serialize("/api/v1/characters/" + Uri.EscapeDataString(character.CharacterId), GalateaJson.Options)}},
       connections: {{connectionsJson}},
-      defaultConnectionId: {{defaultConnectionJson}},
       maintenanceMode: {{JsonSerializer.Serialize(maintenanceMode, GalateaJson.Options)}},
       streamLimits: {
         maximumConnectionBytes: {{maximumStreamConnectionBytes}},

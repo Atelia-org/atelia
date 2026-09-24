@@ -40,11 +40,13 @@ public sealed class GalateaAgentStatusContractTests {
             using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             JsonElement root = document.RootElement;
             Assert.Equal(
-                new[] { "admissionFailure", "code", "connectionId", "lastActivationAtUnixTimeMilliseconds", "nextActivationAtUnixTimeMilliseconds", "state" },
+                new[] { "admissionFailure", "code", "defaultConnectionId", "effectiveConnectionId", "lastActivationAtUnixTimeMilliseconds", "nextActivationAtUnixTimeMilliseconds", "runtimeConnectionOverrideId", "state" },
                 root.EnumerateObject().Select(static property => property.Name).Order(StringComparer.Ordinal)
             );
             Assert.Equal(expectedState, root.GetProperty("state").GetString());
-            Assert.Equal(expectedConnection, root.GetProperty("connectionId").GetString());
+            Assert.Equal(expectedConnection, root.GetProperty("defaultConnectionId").GetString());
+            Assert.Equal(expectedConnection, root.GetProperty("effectiveConnectionId").GetString());
+            Assert.Equal(JsonValueKind.Null, root.GetProperty("runtimeConnectionOverrideId").ValueKind);
             Assert.Equal(JsonValueKind.Null, root.GetProperty("code").ValueKind);
             Assert.Equal(JsonValueKind.Null, root.GetProperty("nextActivationAtUnixTimeMilliseconds").ValueKind);
             Assert.Equal(JsonValueKind.Null, root.GetProperty("lastActivationAtUnixTimeMilliseconds").ValueKind);
@@ -53,6 +55,64 @@ public sealed class GalateaAgentStatusContractTests {
         Assert.False(Directory.Exists(fixture.DelegationStateDirectory));
         Assert.False(Directory.Exists(fixture.CharacterMemoryStateDirectory));
         Assert.Equal(0, factory.CreateCount);
+    }
+
+    [Fact]
+    public async Task FreshConnectionPriorityIsCharacterScopedValidatedAndVisibleWithoutSessionAttach() {
+        var factory = new RejectProviderFactory();
+        CompletionConnectionConfig defaultConnection = new(
+            "test", "openai-chat", "model-a", "openai-chat/strict",
+            "http://localhost:8000/", ApiKey: "test-key");
+        CompletionConnectionConfig runtimeConnection = defaultConnection with {
+            Id = "runtime"
+        };
+        CompletionConnectionConfig diagnosticConnection = defaultConnection with {
+            Id = "diagnostic"
+        };
+        await using var fixture = GalateaTestHost.Create(
+            factory, DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [defaultConnection, runtimeConnection, diagnosticConnection],
+            selectableConnectionIds: ["test", "runtime", "diagnostic"]
+        );
+        using HttpClient client = fixture.CreateClient();
+        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        Assert.True(host.TryGetCharacter("alice", out GalateaCharacterConfig? character));
+        Assert.True(host.TryGetFreshConnection(character!, null, out var selected));
+        Assert.Equal("test", selected.Id);
+
+        host.SetRuntimeConnectionOverride("alice", "runtime");
+        Assert.True(host.TryGetFreshConnection(character!, null, out selected));
+        Assert.Equal("runtime", selected.Id);
+        Assert.True(host.TryGetFreshConnection(character!, "diagnostic", out selected));
+        Assert.Equal("diagnostic", selected.Id);
+        Assert.False(host.TryGetFreshConnection(character!, "missing", out _));
+        Assert.Throws<ArgumentException>(() => host.SetRuntimeConnectionOverride("alice", "missing"));
+        Assert.Throws<ArgumentException>(() => host.SetRuntimeConnectionOverride("missing", "runtime"));
+        Assert.Equal("runtime", host.ReadRuntimeConnectionOverride("alice"));
+
+        using (HttpResponseMessage legacy = await client.PostAsync(
+            "/api/v1/characters/alice/chat/turns",
+            Json("{\"message\":\"legacy\",\"connectionId\":\"diagnostic\"}"))) {
+            Assert.Equal(HttpStatusCode.BadRequest, legacy.StatusCode);
+        }
+
+        using (HttpResponseMessage response = await client.GetAsync(
+            "/api/v1/characters/alice/agent/status")) {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            JsonElement status = document.RootElement;
+            Assert.Equal("test", status.GetProperty("defaultConnectionId").GetString());
+            Assert.Equal("runtime", status.GetProperty("runtimeConnectionOverrideId").GetString());
+            Assert.Equal("runtime", status.GetProperty("effectiveConnectionId").GetString());
+        }
+        Assert.Null(host.ReadAttachedSession("alice"));
+        Assert.Equal(0, factory.CreateCount);
+
+        host.SetRuntimeConnectionOverride("alice", null);
+        Assert.Null(host.ReadRuntimeConnectionOverride("alice"));
+        Assert.True(host.TryGetFreshConnection(character!, null, out selected));
+        Assert.Equal("test", selected.Id);
     }
 
     [Fact]

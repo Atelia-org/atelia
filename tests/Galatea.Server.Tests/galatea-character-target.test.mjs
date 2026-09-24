@@ -9,23 +9,6 @@ const production = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`,
 );
 
-test("connection preference separates Player and Character, including ambiguous delimiters", () => {
-  const pairs = [["same", "same"], ["same", "other"], ["other", "same"],
-    ["a:b", "c"], ["a", "b:c"], ["a\"", "b"], ["a", "\"b"]];
-  const storage = new Map();
-  for (const [index, pair] of pairs.entries()) {
-    storage.set(production.connectionPreferenceKey(...pair), `model-${index}`);
-  }
-  assert.equal(storage.size, pairs.length);
-  for (const [index, pair] of pairs.entries()) {
-    assert.equal(storage.get(production.connectionPreferenceKey(...pair)), `model-${index}`);
-    assert.equal(production.connectionPreferenceKey(...pair),
-      `galatea:connection:${JSON.stringify(pair)}`);
-  }
-  assert.throws(() => production.connectionPreferenceKey(undefined, "target"));
-  assert.throws(() => production.connectionPreferenceKey("visitor", ""));
-});
-
 test("mailbox fetch requires an explicit target and keeps the same Player out of routing", async () => {
   const requests = [];
   const fetch = async (url) => {

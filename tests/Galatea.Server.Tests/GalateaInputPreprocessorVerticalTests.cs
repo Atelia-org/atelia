@@ -70,7 +70,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Equal([main.Id], service.Connections.Select(
             static value => value.Id
         ));
-        Assert.False(service.TryGetConnection(
+        Assert.False(service.TryGetRecoveryConnection(
             session.Character,
             helper.Id,
             out _
@@ -211,7 +211,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "must fail before normalization",
-                ConnectionId: "test"
+                DiagnosticConnectionId: "test"
             )
         );
 
@@ -628,7 +628,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "blocked input",
-                ConnectionId: "test"
+                DiagnosticConnectionId: "test"
             ),
             cancellation.Token
         );
@@ -695,7 +695,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns",
-            new ChatStreamRequest(message, ConnectionId: "test")
+            new ChatStreamRequest(message, DiagnosticConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         StartTurnResponseDto? started = await response.Content

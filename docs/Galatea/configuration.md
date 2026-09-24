@@ -88,7 +88,7 @@ bootstrap 示例 ID，不是硬编码角色或权限。`players: []` 没有可�
 
 这不会读取 route、创建 Completion client 或调用 provider；空 Timeline 的首轮上下文仍是 raw-only。它也绝不补写已有空目录、残缺 repository 或既有 RecapGrid 派生产物。maintenance mode 不会创建 session。
 
-每个 Character 必须提供 `autonomyIntervalMinutes` integer：`0` 关闭没有 Ready reply 时的周期 `HeartbeatActivation`，`1..525_600` 是该角色的分钟 interval。没有第二个关闭值，负数、浮点、指数和旧 `heartbeatEnabled` 都拒绝。`0` 不控制独立的角色信 relay，也不阻止人工交互或已 durable 的 Codex reply 自动续接；自动轮次始终使用该 Character 的 `defaultConnectionId`，浏览器当前连接仅影响人工请求。旧根字段 `serverAgentUserIds` 已删除。
+每个 Character 必须提供 `autonomyIntervalMinutes` integer：`0` 关闭没有 Ready reply 时的周期 `HeartbeatActivation`，`1..525_600` 是该角色的分钟 interval。没有第二个关闭值，负数、浮点、指数和旧 `heartbeatEnabled` 都拒绝。`0` 不控制独立的角色信 relay，也不阻止人工交互或已 durable 的 Codex reply 自动续接；新自动轮次优先使用该 Character 的进程内 runtime connection override，为空才使用 `defaultConnectionId`。网页诊断选择只影响下一次人工发送。旧根字段 `serverAgentUserIds` 已删除。
 
 ### 角色上下文
 

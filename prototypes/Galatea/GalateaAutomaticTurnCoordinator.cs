@@ -26,15 +26,15 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         string? state = host.IsStopping ? "stopping"
             : host.MaintenanceMode ? "maintenance"
             : !configured ? "disabled" : null;
-        if (state is not null) { return new(state, connection, null, null, null); }
+        if (state is not null) { return host.WithConnectionSelection(characterId, new(state, connection, null, null, null)); }
         if (_attachFailures.TryGetValue(characterId, out string? code)) {
-            return new("blocked", connection, null, null, code);
+            return host.WithConnectionSelection(characterId, new("blocked", connection, null, null, code));
         }
         GalateaAdmissionStatusDto? admission = host.ReadAttachedSession(characterId)?.ReadAdmissionStatus();
         if (admission?.OperationId is not null) {
-            return new("running", connection, null, null, admission.State == "stopping" ? "ADMISSION_STOPPING" : "ADMISSION_RUNNING");
+            return host.WithConnectionSelection(characterId, new("running", connection, null, null, admission.State == "stopping" ? "ADMISSION_STOPPING" : "ADMISSION_RUNNING"));
         }
-        return host.ReadAttachedSession(characterId)?.ReadAgentStatus()
+        GalateaAgentStatusDto status = host.ReadAttachedSession(characterId)?.ReadAgentStatus()
             ?? new(
                 character.AutonomyIntervalMinutes == 0 ? "waiting" : "starting",
                 connection,
@@ -42,6 +42,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                 null,
                 null
             );
+        return host.WithConnectionSelection(characterId, status);
     }
 
     internal void BlockAfterFailure(string characterId) {
@@ -88,7 +89,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                     await host.ReconcileDurableAdmissionAsync(session, ct)
                         .ConfigureAwait(false);
                 }
-                return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+                return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
             }
             await host.ReconcileDurableAdmissionAsync(session, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
@@ -105,10 +106,10 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             session.AutomaticAdmissionFailed = false;
             session.AutomaticAdmissionFailure = null;
             session.PublishAutonomyStatus();
-            return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+            return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
         }
         catch (GalateaTurnException exception) when (exception.FailureReason == "admission-stopped") {
-            return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+            return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
         }
         catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)
             && !ct.IsCancellationRequested && !host.IsStopping) {
@@ -228,8 +229,8 @@ internal sealed class GalateaAutomaticTurnCoordinator(
                     empty ? "会话仓库尚未完成初始化。" : "当前会话存在待恢复的持久化轮次；自动轮次未启动。"
                 );
             }
-            if (!host.TryGetConnection(session.Character, null, out CompletionConnectionConfig connection)) {
-                throw new InvalidOperationException("The configured per-character default connection is unavailable.");
+            if (!host.TryGetFreshConnection(session.Character, null, out CompletionConnectionConfig connection)) {
+                throw new InvalidOperationException("The selected per-character connection is unavailable.");
             }
             await host.PrepareFreshTurnAdmissionAsync(session, recovery, ct).ConfigureAwait(false);
             BeforeReadyReplyCutoffForTest?.Invoke(characterId);
@@ -242,14 +243,12 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             else if (reply is GalateaReadyReplyTurnStartResult.Empty) {
                 if (replyOnly) {
                     session.PublishAutonomyStatus();
-                    return new GalateaAutomaticTurnResult.Status(
-                        session.ReadAgentStatus()
-                    );
+                    return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
                 }
                 if (session.AutonomyCadence?.ObservePulse()
                     != GalateaAutonomyCadencePulseResult.AutonomousActivationDue) {
                     session.PublishAutonomyStatus();
-                    return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+                    return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
                 }
                 liveTurn = host.StartHeartbeatActivationTurn(session, new(connection.Id));
                 origin = "heartbeat-activation";
@@ -260,7 +259,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             return new GalateaAutomaticTurnResult.Started(liveTurn, origin);
         }
         catch (GalateaTurnException exception) when (!transferred && exception.FailureReason == "admission-stopped") {
-            return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+            return new GalateaAutomaticTurnResult.Status(ReadStatus(characterId));
         }
         catch (Exception original) when (!transferred) {
             if (GalateaExceptionClassifier.IsNonFatal(original)

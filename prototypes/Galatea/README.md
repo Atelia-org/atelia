@@ -57,7 +57,7 @@ route manifest 仍保留，不能误解为全仓删除；它也不再是 Galatea
 - 服务端每个 Character 每 10 秒检查一次。已有 session 的待处理生成优先恢复，包括 interval 为 `0`；缺失且没有其他 wake 的 `0` 角色不会因此 provision。
 - 有 durable Ready reply 或 active reply lease 时，任意 interval 都可按既有 recovery/lease 规则续接 `DelegateReply`；它不是空闲自主激活。
 - 正 interval 角色在没有 Ready reply 时，完整空闲该分钟数后可启动一次自主轮次。成功完成主线轮次会重新计时；重启重新 arm，不补跑停机期间的轮次。
-- 新自动轮次使用该角色的 `defaultConnectionId`；恢复已有 Prepared 使用其绑定连接与原计划。网页模型选择只影响允许选择连接的人工请求。
+- 新自动轮次优先使用该角色的进程内 `runtimeConnectionOverrideId`，为空才用 `defaultConnectionId`；恢复已有 Prepared 使用其绑定连接与原计划。网页诊断模型只影响下一次人工发送。
 - 关闭或休眠网页不会停止后台 Agent。重启重新计时，不补跑停机期间的轮次。
 
 自主轮次会正常调用模型；启用的 recall、邮件和笔记处理也会照常执行。当前服务需要由你启动和管理，尚未提供开机启动或进程崩溃后的自动重启部署。
@@ -68,7 +68,7 @@ route manifest 仍保留，不能误解为全仓删除；它也不再是 Galatea
 
 | 操作 | 行为 |
 |:--|:--|
-| 选择模型并发送 | 为本次人工请求选择连接，提交输入框内容 |
+| 选择诊断模型并发送 | 只为本次人工请求选择连接；发送后自动回到角色当前连接 |
 | 停止 | 请求停止当前轮次，等待收尾；它不是关闭后台 Agent 的总开关 |
 | 撤销上一轮 | 回退最近完成的一轮，并把输入放回编辑区；可以继续撤销 |
 | 恢复待处理轮次 | 显式重试 blocked 的原任务；纯生成无需人工确认“结果不确定” |
@@ -109,7 +109,7 @@ Stop 接受不等于已停止；完整工具批次结算后才能持久化结束
 
 登录并选择角色后，也可在同一浏览器打开以下 JSON 地址；将 `{characterId}` 换成经 URL segment 编码的目标 ID：
 
-- `/api/v1/characters/{characterId}/agent/status`：后台 Agent 状态、默认连接、激活时间和原因码。
+- `/api/v1/characters/{characterId}/agent/status`：后台 Agent 状态、配置默认连接、进程内 override、下一新回合有效连接、激活时间和原因码。
 - `/api/v1/characters/{characterId}/mailbox/status`：邮件链状态、排队数、Ready notice 数和重试时间。
 - `/api/v1/characters/{characterId}/chat/turns/current`：当前轮次及是否需要恢复。
 

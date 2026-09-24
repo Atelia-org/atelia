@@ -1573,8 +1573,8 @@ public sealed class GalateaConfigValidationTests {
                 maintenanceMode: false,
                 assetVersion: "test"
             );
-            Assert.Contains("defaultConnectionId: \"first\"", aliceHtml);
-            Assert.Contains("defaultConnectionId: \"second\"", bobHtml);
+            Assert.DoesNotContain("defaultConnectionId:", aliceHtml);
+            Assert.DoesNotContain("defaultConnectionId:", bobHtml);
         }
         finally {
             Directory.Delete(root, recursive: true);

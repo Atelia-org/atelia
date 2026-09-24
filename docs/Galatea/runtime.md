@@ -165,6 +165,8 @@ Delivered 只证明 Observation append，不证明 provider 收到或理解；Te
 
 没有 pending 时，Ready reply 优先，Empty 才按正 interval 的 process-local monotonic cadence 决定 `HeartbeatActivation`。busy 跳过、不补 tick；首次启动重新 arm，不恢复停机期间的 deadline。完成或合法业务结束后重新计时；临时纯生成故障在同一个 runner 内退避，不变成失败 heartbeat 的永久暂停。环境/协议 blocked 和旧 Failed 保留原任务并阻止普通 pulse 重试，不能借新 heartbeat 覆盖；损坏、quarantine 或未知工具副作用仍 fail closed。原 cadence 设计背景见[自主 interval 设计](per-character-autonomy-interval-design.md)，自动恢复增量以[实施记录](completion-auto-retry-implementation.md)为准。
 
+所有从 Idle 接纳的新主线回合在接纳时按 `diagnosticConnectionId ?? runtimeConnectionOverrideId ?? defaultConnectionId` 选一次连接，包含人工输入/注入邮件、Ready reply、心跳和角色间信。`runtimeConnectionOverrideId` 由 `GalateaHostService` 按 Character 保存在进程内，设置和清除均精确校验可选连接；目前只有内部方法，没有角色意图解析或外部写入 API。网页诊断选择只随下一次人工发送传入，发送即清除，不沿用旧的 localStorage 值。辅助 LLM 与 RecapGrid maintenance 仍走各自 binding/route。已接纳的恢复回合继续使用 governing setup 或 Prepared target，不读取该新回合 override。
+
 admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细节。显式`POST /api/v1/characters/{characterId}/agent/retry-admission`在同一`TurnLock`内复用`ReconcileDurableAdmissionAsync`，只处理旧lease、extraction gap与保存恢复；它不`StartTurn`，不跳过真实provider/结构错误。处理成功且runtime为Idle后才清除admission失败，独立reply失败与runtime recovery仍保留各自约束。忙碌或失败返回409，具体HTTP合同见[Server API](server-api.md)。
 
 `GET /api/v1/characters/{characterId}/agent/status` 和 mailbox status 都是纯读投影：不 attach、reconcile、领取 lease、调用 provider 或等待长回合。mailbox status 只从 supervisor 已有 store 的单个 SQLite read transaction 聚合 state/count/attempt/code/next retry，不返回正文、recipient、subject、dispatch/thread/turn/operation identity 或 hash；Maintenance 时固定为 `unavailable/MAINTENANCE_READ_ONLY`。browser 只轮询状态/recent 并消费 SSE；它不裁决 cadence，也不因打开页面而恢复自动运行。API 的精确 JSON grammar 由 [server-api.md](server-api.md) 维护。

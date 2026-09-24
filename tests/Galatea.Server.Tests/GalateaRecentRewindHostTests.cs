@@ -208,7 +208,7 @@ public sealed class GalateaRecentRewindHostTests {
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns",
-            new ChatStreamRequest("will fail", ConnectionId: "test")
+            new ChatStreamRequest("will fail", DiagnosticConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         StartTurnResponseDto? started = await response.Content
@@ -918,7 +918,7 @@ public sealed class GalateaRecentRewindHostTests {
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns",
-            new ChatStreamRequest(message, ConnectionId: "test")
+            new ChatStreamRequest(message, DiagnosticConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         StartTurnResponseDto? started = await response.Content

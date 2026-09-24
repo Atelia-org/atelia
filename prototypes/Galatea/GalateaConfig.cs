@@ -809,25 +809,29 @@ public sealed record AssistantMessageDto(
 
 internal sealed record ChatStreamRequest(
     [property: JsonPropertyName("message")] string Message,
-    [property: JsonPropertyName("connectionId")] string? ConnectionId = null
+    [property: JsonPropertyName("diagnosticConnectionId")]
+    string? DiagnosticConnectionId = null
 );
 
 internal sealed record InboundMailboxRequest(
     [property: JsonPropertyName("from")] string From,
     [property: JsonPropertyName("body")] string Body,
     [property: JsonPropertyName("subject")] string? Subject = null,
-    [property: JsonPropertyName("connectionId")] string? ConnectionId = null
+    [property: JsonPropertyName("diagnosticConnectionId")]
+    string? DiagnosticConnectionId = null
 );
 
 internal sealed record ReadyReplyTurnRequest;
 
 internal sealed record GalateaAgentStatusDto(
     string State,
-    string? ConnectionId,
+    string? EffectiveConnectionId,
     long? NextActivationAtUnixTimeMilliseconds,
     long? LastActivationAtUnixTimeMilliseconds,
     string? Code,
-    ApiErrorDto? AdmissionFailure = null
+    ApiErrorDto? AdmissionFailure = null,
+    string? DefaultConnectionId = null,
+    string? RuntimeConnectionOverrideId = null
 );
 
 internal sealed record GalateaMailboxStatusDto(
@@ -917,8 +921,8 @@ internal sealed record CurrentTurnDto(
 internal sealed record ResumeTurnRequest(
     [property: JsonPropertyName("expectedHead")]
     string ExpectedHead,
-    [property: JsonPropertyName("connectionId")]
-    string? ConnectionId = null
+    [property: JsonPropertyName("diagnosticConnectionId")]
+    string? DiagnosticConnectionId = null
 );
 
 internal sealed record StopPendingTurnRequest(string ExpectedHead);

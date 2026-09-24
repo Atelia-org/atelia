@@ -463,7 +463,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         var service = host.Factory.Services.GetRequiredService<GalateaHostService>();
         var session = await service.GetSessionAsync("alice", CancellationToken.None);
         using var accepted = await client.PostAsJsonAsync("/api/v1/characters/alice/chat/turns",
-            new { message = "继续", connectionId = "test" });
+            new { message = "继续", diagnosticConnectionId = "test" });
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         using var receipt = JsonDocument.Parse(await accepted.Content.ReadAsStringAsync());
         string turnId = receipt.RootElement.GetProperty("turnId").GetString()!;

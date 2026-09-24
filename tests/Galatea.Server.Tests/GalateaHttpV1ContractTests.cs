@@ -387,7 +387,7 @@ public sealed class GalateaHttpV1ContractTests {
                    new InboundMailboxRequest(
                        "outside",
                        "hello from outside",
-                       ConnectionId: "test"
+                       DiagnosticConnectionId: "test"
                    ))) {
             Assert.Equal(HttpStatusCode.Accepted, inbound.StatusCode);
             using JsonDocument body = JsonDocument.Parse(
@@ -620,7 +620,7 @@ public sealed class GalateaHttpV1ContractTests {
     }
 
     [Fact]
-    public async Task ConnectionId_RequiresNonblankOwnerBoundedText() {
+    public async Task DiagnosticConnectionId_RequiresNonblankOwnerBoundedText() {
         await using var host = CreateHost();
         using HttpClient client = host.CreateClient();
         _ = await GalateaTestHost.LoginAsync(client);
@@ -636,7 +636,7 @@ public sealed class GalateaHttpV1ContractTests {
                 client,
                 JsonSerializer.Serialize(new {
                     message = "hello",
-                    connectionId,
+                    diagnosticConnectionId = connectionId,
                 }),
                 "application/json"
             );

@@ -56,29 +56,28 @@ matched V1 endpoint 的 failure 只有 `turn-busy` 使用 `{code,error,turnId}`�
 登录后的 `/` 是角色目录，`/characters/{characterId}` 是该角色页面；切换角色使用整页导航。
 
 `turnId`、rewind token 和恢复 head 必须属于同一目标角色。管理员权限允许对其他角色操作，但不能把甲角色
-的 turnId 放进乙角色的 stop/events 路径，或把甲的 token/head 当成乙的证据。网页按 `(PlayerId,CharacterId)`
-保存连接选择；切换角色不会迁移草稿。
+的 turnId 放进乙角色的 stop/events 路径，或把甲的 token/head 当成乙的证据。网页的诊断连接只作用于下一次人工发送，不写入浏览器存储；切换角色不会迁移草稿。
 
 ## Turn mutation 请求
 
 Fresh player turn：
 
 ```json
-{"message":"向北走。","connectionId":"optional-connection-id"}
+{"message":"向北走。","diagnosticConnectionId":null}
 ```
 
-`message` required；`connectionId` optional，省略时使用目标 Character 的 default connection。original 与 normalized message 各最多 64 KiB UTF-8，connection id 最多 128 UTF-8 bytes。202 只表示已接纳；随后订阅返回的 `turnId` 对应 SSE 才能观察 terminal。response-loss 后只能查询 current/recent reconciliation，不得自动重发 mutation。
+`message` required；`diagnosticConnectionId` optional，省略或 null 时使用目标 Character 的进程内 `runtimeConnectionOverrideId`，若没有则使用 `defaultConnectionId`。显式诊断 ID 必须精确命中 `selectableConnectionIds`，只影响本次新回合；original 与 normalized message 各最多 64 KiB UTF-8，连接 ID 最多 128 UTF-8 bytes。202 只表示已接纳；随后订阅返回的 `turnId` 对应 SSE 才能观察 terminal。response-loss 后只能查询 current/recent reconciliation，不得自动重发 mutation。
 
 Resume：
 
 ```json
 {
   "expectedHead":"canonical-event-address-from-current",
-  "connectionId":"optional-connection-id"
+  "diagnosticConnectionId":null
 }
 ```
 
-`expectedHead` required，必须逐字使用 current response 的 `recoveryHead`。`connectionId` optional；它只在 current recovery 类型允许选择 current connection 时生效。冻结生成使用 Prepared 的原连接；没有人工 uncertain-restart 开关。重复计算可能重复计费，但不会重放已提交 Action 的工具。
+`expectedHead` required，必须逐字使用 current response 的 `recoveryHead`。`diagnosticConnectionId` optional；它只在 `NewRequestRequired` 的既有 model/surface 约束内选择连接。`FrozenCompletionRequired` 使用 Prepared 的原连接，显式诊断 ID 会返回 `diagnostic-connection-not-applicable`。恢复不读取新回合的进程内 override；没有人工 uncertain-restart 开关。重复计算可能重复计费，但不会重放已提交 Action 的工具。
 
 Inbound mail：
 
@@ -87,11 +86,11 @@ Inbound mail：
   "from":"Codex",
   "body":"邮件正文",
   "subject":"可选主题",
-  "connectionId":"optional-connection-id"
+  "diagnosticConnectionId":null
 }
 ```
 
-`from`、`body` required；`subject`、`connectionId` optional。caller 不能提交 `to`，server 固定 `To=session.Character.CharacterName` 并生成 canonical 32-lowerhex `messageId`。body 最多 64 KiB UTF-8，from 最多 1 KiB，subject 最多 4 KiB；from/subject 拒绝 CR、LF、NEL、Unicode line separator 等换行。来信内容是故事数据，不取得指令权限。Runtime 记录已认证 Player 的 sender/injectedBy；`from` 只是信内自称署名，即使为 `Codex` 也不冒充经过核实的 Codex 来源。
+`from`、`body` required；`subject`、`diagnosticConnectionId` optional。连接优先级与 Fresh player turn 相同。caller 不能提交 `to`，server 固定 `To=session.Character.CharacterName` 并生成 canonical 32-lowerhex `messageId`。body 最多 64 KiB UTF-8，from 最多 1 KiB，subject 最多 4 KiB；from/subject 拒绝 CR、LF、NEL、Unicode line separator 等换行。来信内容是故事数据，不取得指令权限。Runtime 记录已认证 Player 的 sender/injectedBy；`from` 只是信内自称署名，即使为 `Codex` 也不冒充经过核实的 Codex 来源。
 
 Ready-turn 是任意 configured Character 的 Dev one-shot：
 
@@ -105,7 +104,7 @@ const result = await fetch(`${apiBase}/mailbox/ready-turn`, {
 console.log(result);
 ```
 
-body 必须是 strict `{}`，不能带 `connectionId`、player text 或其他字段。它不强制越过 cadence：启动时返回 202 `{turnId,origin}`，其中 `origin` 为 `delegate-reply|heartbeat-activation`；等待或暂停返回 200 `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`；busy、recovery 或失败阻断返回 409。正 interval 角色可在 Empty 后继续检查 cadence；`autonomyIntervalMinutes:0` 角色只在 durable Ready notice/active reply lease 的纯读 wake evidence 存在时 attach，并且即使 cutoff 变 Empty 也只能返回状态，绝不创建 `heartbeat-activation`。它与后台 loop 复用同一 coordinator，不是后台 loop 的启动条件。
+body 必须是 strict `{}`，不能带 `diagnosticConnectionId`、player text 或其他字段。它不强制越过 cadence：启动时返回 202 `{turnId,origin}`，其中 `origin` 为 `delegate-reply|heartbeat-activation`；等待或暂停返回 200 `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`；busy、recovery 或失败阻断返回 409。正 interval 角色可在 Empty 后继续检查 cadence；`autonomyIntervalMinutes:0` 角色只在 durable Ready notice/active reply lease 的纯读 wake evidence 存在时 attach，并且即使 cutoff 变 Empty 也只能返回状态，绝不创建 `heartbeat-activation`。它与后台 loop 复用同一 coordinator，不是后台 loop 的启动条件。
 
 Undo/pop-latest body 为：
 
@@ -149,10 +148,10 @@ session attach 本身不执行 provider 整理调用，关机信号同时取消�
 `GET /api/v1/characters/{characterId}/agent/status` 返回 exact object：
 
 ```text
-{state,connectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code,admissionFailure}
+{state,defaultConnectionId,runtimeConnectionOverrideId,effectiveConnectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code,admissionFailure}
 ```
 
-它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`；`connectionId` 显示 Character 的 default connection，时间字段只作诊断。`waiting` 且 `nextActivationAtUnixTimeMilliseconds=null` 表示该 Character 的 interval 为 `0`：没有自主 deadline、仍监视 durable reply；正 interval 的 waiting 才有 deadline。`disabled` 是保留内部投影，正常 API 的未知 Character 会先返回 404。blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
+它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`。`effectiveConnectionId` 是下一次**新**回合不带诊断 ID 时的选择：进程内 `runtimeConnectionOverrideId ?? defaultConnectionId`；角色的运行时值由内部服务方法设置/清除，本轮没有对外设置 API，进程重启即清空。它不表示当前运行或待恢复回合的连接；已发布的运行回合以 `/chat/turns/current.connectionId` 为准。时间字段只作诊断。`waiting` 且 `nextActivationAtUnixTimeMilliseconds=null` 表示该 Character 的 interval 为 `0`：没有自主 deadline、仍监视 durable reply；正 interval 的 waiting 才有 deadline。`disabled` 是保留内部投影，正常 API 的未知 Character 会先返回 404。blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
 
 `POST /api/v1/characters/{characterId}/agent/retry-admission`接受strict `{}`，遵守同一认证、JSON与Maintenance写操作guard；维护模式返回503。它尝试立即取得目标角色`TurnLock`，只重试旧的未完成admission处理，不创建角色轮次、不领取新轮次的cutoff。旧Action尚未capture时，此操作可能调用extractor provider；已capture内容沿原有恢复流程处理。
 

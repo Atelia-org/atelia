@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +12,90 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaServerAgentRuntimeTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
+
+    [Fact]
+    public async Task FreshPlayerAndInboundTurnsUseRuntimeChoiceUnlessOneCallDiagnosticIsPresent() {
+        var completion = new ModelAwareCompletionFactory();
+        await using var fixture = GalateaTestHost.Create(
+            completion, new Normalizer(),
+            connections: [
+                Connection("test"),
+                Connection("other") with { ModelId = "model-b" },
+                Connection("diagnostic") with { ModelId = "model-c" }
+            ],
+            selectableConnectionIds: ["test", "other", "diagnostic"]
+        );
+        using HttpClient client = fixture.CreateClient();
+        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        host.SetRuntimeConnectionOverride("alice", "other");
+
+        async Task AssertAcceptedConnectionAsync(string endpoint, object body, string expected) {
+            using HttpResponseMessage response = await client.PostAsJsonAsync(endpoint, body);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            StartTurnResponseDto accepted = Assert.IsType<StartTurnResponseDto>(
+                await response.Content.ReadFromJsonAsync<StartTurnResponseDto>());
+            GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(
+                host.FindTurn(session, accepted.TurnId));
+            Assert.Equal(expected, turn.Options.ConnectionId);
+            await turn.RunTask!.WaitAsync(Deadline);
+        }
+
+        await AssertAcceptedConnectionAsync(
+            "/api/v1/characters/alice/chat/turns",
+            new ChatStreamRequest("first"), "other");
+        await AssertAcceptedConnectionAsync(
+            "/api/v1/characters/alice/chat/turns",
+            new ChatStreamRequest("second", "diagnostic"), "diagnostic");
+        await AssertAcceptedConnectionAsync(
+            "/api/v1/characters/alice/mailbox/inbound",
+            new InboundMailboxRequest("Outside", "third"), "other");
+        host.SetRuntimeConnectionOverride("alice", null);
+        await AssertAcceptedConnectionAsync(
+            "/api/v1/characters/alice/chat/turns",
+            new ChatStreamRequest("fourth"), "test");
+    }
+
+    [Fact]
+    public async Task ChangingRuntimeChoiceDoesNotRetargetAnAcceptedTurn() {
+        var completion = new CompletionClient(block: true);
+        await using var fixture = GalateaTestHost.Create(
+            completion, new Normalizer(),
+            connections: [Connection("test"), Connection("other")],
+            selectableConnectionIds: ["test", "other"]
+        );
+        using HttpClient client = fixture.CreateClient();
+        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        host.SetRuntimeConnectionOverride("alice", "other");
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/characters/alice/chat/turns", new ChatStreamRequest("first"));
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto accepted = Assert.IsType<StartTurnResponseDto>(
+            await response.Content.ReadFromJsonAsync<StartTurnResponseDto>());
+        GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(
+            host.FindTurn(session, accepted.TurnId));
+        await completion.Entered.Task.WaitAsync(Deadline);
+        try {
+            host.SetRuntimeConnectionOverride("alice", null);
+            Assert.Equal("other", turn.Options.ConnectionId);
+            using (HttpResponseMessage current = await client.GetAsync(
+                "/api/v1/characters/alice/chat/turns/current")) {
+                using JsonDocument document = JsonDocument.Parse(await current.Content.ReadAsStringAsync());
+                Assert.Equal("other", document.RootElement.GetProperty("connectionId").GetString());
+            }
+            Assert.Equal("test", fixture.Factory.Services
+                .GetRequiredService<GalateaAutomaticTurnCoordinator>()
+                .ReadStatus("alice").EffectiveConnectionId);
+        }
+        finally {
+            completion.Release.TrySetResult();
+        }
+        await turn.RunTask!.WaitAsync(Deadline);
+    }
 
     [Fact]
     public async Task HostedLoop_WithZeroPlayersAndNoBrowser_UsesDefaultAndDoesNotCatchUp() {
@@ -55,6 +142,8 @@ public sealed class GalateaServerAgentRuntimeTests {
         Assert.Null(host.ReadAttachedSession("bob"));
         Assert.Equal(0, completion.Calls);
         Assert.NotNull(due);
+        host.SetRuntimeConnectionOverride("alice", "other");
+        Assert.Equal("other", coordinator.ReadStatus("alice").EffectiveConnectionId);
 
         var pulsed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         loop.PulseCompletedForTest = id => { if (id == "alice") { pulsed.TrySetResult(); } };
@@ -75,13 +164,17 @@ public sealed class GalateaServerAgentRuntimeTests {
         await UntilAsync(() => completion.Calls >= 1);
         await UntilAsync(() => coordinator.ReadStatus("alice").State == "waiting");
         Assert.Equal("waiting", coordinator.ReadStatus("alice").State);
-        Assert.Equal("test", completion.LastConnectionId);
-        Assert.Equal("test", coordinator.ReadStatus("alice").ConnectionId);
+        Assert.Equal("other", completion.LastConnectionId);
+        Assert.Equal("other", coordinator.ReadStatus("alice").EffectiveConnectionId);
+
+        host.SetRuntimeConnectionOverride("alice", null);
+        Assert.Equal("test", coordinator.ReadStatus("alice").EffectiveConnectionId);
 
         clock.Advance(TimeSpan.FromHours(3));
         await UntilAsync(() => completion.Calls >= 2);
         await UntilAsync(() => coordinator.ReadStatus("alice").State == "waiting");
         Assert.Equal("waiting", coordinator.ReadStatus("alice").State);
+        Assert.Equal("test", completion.LastConnectionId);
         pulsed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         loop.PulseCompletedForTest = id => { if (id == "alice") { pulsed.TrySetResult(); } };
         clock.Advance(TimeSpan.FromSeconds(10));
@@ -205,6 +298,23 @@ public sealed class GalateaServerAgentRuntimeTests {
     private sealed class Normalizer : IGalateaUserMessageNormalizer {
         public bool ShouldNormalize(string userMessage) => false;
         public ValueTask<string> NormalizeAsync(string userMessage, CancellationToken ct) => ValueTask.FromResult(userMessage);
+    }
+
+    private sealed class ModelAwareCompletionFactory : ICompletionClientFactory {
+        public ICompletionClient Create(CompletionConnectionConfig connection) =>
+            new ModelAwareClient(connection.ModelId);
+
+        private sealed class ModelAwareClient(string modelId) : ICompletionClient {
+            public string Name => "connection-override-test";
+            public string ApiSpecId => "openai-chat-v1";
+            public Task<CompletionResult> StreamCompletionAsync(
+                CompletionRequest request,
+                CompletionStreamObserver? observer,
+                CancellationToken cancellationToken = default
+            ) => Task.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("继续。")]),
+                new CompletionDescriptor(Name, ApiSpecId, modelId)));
+        }
     }
 
     private sealed class CompletionClient(bool block = false) : ICompletionClientFactory, ICompletionClient {

@@ -110,7 +110,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead),
-                ConnectionId: null));
+                DiagnosticConnectionId: null));
         GalateaLiveTurn recovered = await WaitForTurnAsync(accepted, service, session);
 
         Assert.Equal("completed", recovered.Status);
@@ -161,7 +161,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(EventAddressTextCodec.Format(startedHead),
-                ConnectionId: null));
+                DiagnosticConnectionId: null));
         GalateaLiveTurn recovered = await WaitForTurnAsync(accepted, service, session);
 
         Assert.Equal("completed", recovered.Status);

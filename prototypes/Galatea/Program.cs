@@ -416,7 +416,7 @@ characterApi.MapPost(
             );
         }
         string? connectionError = GalateaHttpV1.ValidateConnectionId(
-            request.ConnectionId
+            request.DiagnosticConnectionId
         );
         if (connectionError is not null) {
             return Results.BadRequest(new ApiErrorDto(
@@ -473,14 +473,14 @@ characterApi.MapPost(
                     "当前会话存在待恢复的持久化轮次；新消息未被接收。"
                 );
             }
-            if (!hostService.TryGetConnection(
+            if (!hostService.TryGetFreshConnection(
                     session.Character,
-                    request.ConnectionId,
+                    request.DiagnosticConnectionId,
                     out CompletionConnectionConfig connection
                 )) {
                 return Results.BadRequest(new ApiErrorDto(
                     "unknown-connection",
-                    $"Unknown completion connection '{request.ConnectionId}'."
+                    $"Unknown completion connection '{request.DiagnosticConnectionId}'."
                 ));
             }
             string effectiveMessage = await hostService
@@ -575,7 +575,7 @@ characterApi.MapPost(
             ));
         }
         string? connectionError = GalateaHttpV1.ValidateConnectionId(
-            request.ConnectionId
+            request.DiagnosticConnectionId
         );
         if (connectionError is not null) {
             return Results.BadRequest(new ApiErrorDto(
@@ -630,14 +630,14 @@ characterApi.MapPost(
             string connectionId;
             if (recovery is SessionRuntimeRecoveryRequirements
                     .NewRequestRequired) {
-                if (!hostService.TryGetConnection(
+                if (!hostService.TryGetRecoveryConnection(
                         session.Character,
-                        request.ConnectionId,
+                        request.DiagnosticConnectionId,
                         out CompletionConnectionConfig connection
                     )) {
                     return Results.BadRequest(new ApiErrorDto(
                         "unknown-connection",
-                        $"Unknown completion connection '{request.ConnectionId}'."
+                        $"Unknown completion connection '{request.DiagnosticConnectionId}'."
                     ));
                 }
                 connectionId = connection.Id;
@@ -648,11 +648,17 @@ characterApi.MapPost(
                 // composition must validate the frozen tool identity first,
                 // then apply Galatea's current-selection allowlist without
                 // constructing a client, and only later open Online/client.
-                connectionId = request.ConnectionId
+                connectionId = request.DiagnosticConnectionId
                     ?? session.Character.DefaultConnectionId;
             }
             else if (recovery is SessionRuntimeRecoveryRequirements
                          .FrozenCompletionRequired frozen) {
+                if (request.DiagnosticConnectionId is not null) {
+                    return Results.BadRequest(new ApiErrorDto(
+                        "diagnostic-connection-not-applicable",
+                        "已冻结的生成只能使用其原连接；请清除单次诊断连接后重试。"
+                    ));
+                }
                 connectionId = frozen.CompletionTarget.ConnectionId;
             }
             else {
@@ -794,7 +800,7 @@ characterApi.MapPost(
                 "body",
                 GalateaMailboxBounds.MaximumBodyUtf8Bytes
             )
-            ?? GalateaHttpV1.ValidateConnectionId(request.ConnectionId);
+            ?? GalateaHttpV1.ValidateConnectionId(request.DiagnosticConnectionId);
         if (invalid is not null) {
             return Results.BadRequest(new ApiErrorDto(
                 "invalid-mailbox-message",
@@ -841,13 +847,13 @@ characterApi.MapPost(
                         : "当前会话存在待恢复的持久化轮次；新邮件未被接收。"
                 );
             }
-            if (!hostService.TryGetConnection(
+            if (!hostService.TryGetFreshConnection(
                     session.Character,
-                    request.ConnectionId,
+                    request.DiagnosticConnectionId,
                     out CompletionConnectionConfig connection)) {
                 return Results.BadRequest(new ApiErrorDto(
                     "unknown-connection",
-                    $"Unknown completion connection '{request.ConnectionId}'."
+                    $"Unknown completion connection '{request.DiagnosticConnectionId}'."
                 ));
             }
             MailboxMessage message = MailboxMessage.CreateInbound(

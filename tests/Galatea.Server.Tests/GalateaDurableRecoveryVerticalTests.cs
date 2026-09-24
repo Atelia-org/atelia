@@ -271,7 +271,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "must not be accepted",
-                ConnectionId: "test"
+                DiagnosticConnectionId: "test"
             )
         );
 
@@ -346,7 +346,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "continue after failure",
-                ConnectionId: "test"
+                DiagnosticConnectionId: "test"
             )
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -642,7 +642,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(failedHead),
-                ConnectionId: null
+                DiagnosticConnectionId: null
             )
         );
 
@@ -933,7 +933,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             .WaitAsync(CompletionDeadline);
 
         Assert.Equal("completed", liveTurn.Status);
-        Assert.False(service.TryGetConnection(
+        Assert.False(service.TryGetRecoveryConnection(
             session.Character,
             historical.Id,
             out _
@@ -969,7 +969,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 "ej1:00000000000000010000000100000000",
-                ConnectionId: null
+                DiagnosticConnectionId: null
             )
         );
 
@@ -1031,11 +1031,23 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
+        using (HttpResponseMessage rejected = await client.PostAsJsonAsync(
+            "/api/v1/characters/alice/chat/turns/resume",
+            new ResumeTurnRequest(
+                EventAddressTextCodec.Format(startedHead),
+                DiagnosticConnectionId: connection.Id))) {
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            using JsonDocument body = await ReadJsonAsync(rejected);
+            Assert.Equal("diagnostic-connection-not-applicable",
+                body.RootElement.GetProperty("code").GetString());
+            Assert.Equal(0, completionFactory.CreateCallCount);
+        }
+
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(startedHead),
-                ConnectionId: null
+                DiagnosticConnectionId: null
             )
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -1364,7 +1376,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns",
-            new ChatStreamRequest(message, ConnectionId: "test")
+            new ChatStreamRequest(message, DiagnosticConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         StartTurnResponseDto? started = await response.Content

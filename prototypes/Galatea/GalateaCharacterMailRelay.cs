@@ -189,10 +189,10 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
                     .NoRuntimeRequired { Phase: SessionExecutionPhase.Idle }) {
                 return;
             }
-            if (!_host.TryGetConnection(session.Character, null,
+            if (!_host.TryGetFreshConnection(session.Character, null,
                     out CompletionConnectionConfig connection)) {
                 throw new InvalidDataException(
-                    "Character-mail target default connection is unavailable.");
+                    "Character-mail target connection is unavailable.");
             }
             await _host.PrepareFreshTurnAdmissionAsync(
                 session, recovery, cancellationToken).ConfigureAwait(false);

@@ -679,7 +679,7 @@ public sealed class GalateaMailboxTests {
     ) {
         HttpResponseMessage response = await http.PostAsJsonAsync(
             "/api/v1/characters/alice/chat/turns",
-            new { message = "please continue", connectionId = "test" }
+            new { message = "please continue" }
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<

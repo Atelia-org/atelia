@@ -489,7 +489,7 @@ public sealed class GalateaEndpointLockTopologyTests {
                     "/api/v1/characters/alice/chat/turns",
                     new ChatStreamRequest(
                         "must remain busy",
-                        ConnectionId: "test"
+                        DiagnosticConnectionId: "test"
                     )
                 )
                 .WaitAsync(EndpointDeadline);
@@ -795,7 +795,7 @@ public sealed class GalateaEndpointLockTopologyTests {
                 "/api/v1/characters/alice/chat/turns",
                 new ChatStreamRequest(
                     "invalid connection probe",
-                    ConnectionId: "missing"
+                    DiagnosticConnectionId: "missing"
                 )
             );
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -829,7 +829,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             "/api/v1/characters/alice/chat/turns",
             new ChatStreamRequest(
                 "hidden connection probe",
-                ConnectionId: hidden.Id
+                DiagnosticConnectionId: hidden.Id
             )
         );
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);

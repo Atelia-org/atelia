@@ -132,14 +132,6 @@ export function characterApiBase(characterId) {
   return `/api/v1/characters/${segment}`;
 }
 
-export function connectionPreferenceKey(playerId, characterId) {
-  if (typeof playerId !== "string" || playerId.length === 0) {
-    throw new Error("player ID is required");
-  }
-  characterApiBase(characterId);
-  return `galatea:connection:${JSON.stringify([playerId, characterId])}`;
-}
-
 function requireCharacterApiBase(apiBase) {
   if (typeof apiBase !== "string" || !/^\/api\/v1\/characters\/[^/]+$/.test(apiBase)) {
     throw new Error("explicit character API base is required");
@@ -270,7 +262,8 @@ export function formatMailboxStatus(
 
 export function requireAgentStatus(value) {
   const status = requireExactKeys(value, [
-    "state", "connectionId", "nextActivationAtUnixTimeMilliseconds",
+    "state", "defaultConnectionId", "runtimeConnectionOverrideId",
+    "effectiveConnectionId", "nextActivationAtUnixTimeMilliseconds",
     "lastActivationAtUnixTimeMilliseconds", "code", "admissionFailure",
   ], "agent status");
   if (!["disabled", "starting", "waiting", "autonomy-paused", "blocked",
@@ -281,8 +274,13 @@ export function requireAgentStatus(value) {
     "lastActivationAtUnixTimeMilliseconds"]) {
     requireNullableNonnegativeInteger(status[field], `agent status.${field}`);
   }
-  if (status.connectionId !== null) {
-    requireNonblankString(status.connectionId, "agent status.connectionId");
+  for (const field of ["defaultConnectionId", "runtimeConnectionOverrideId",
+    "effectiveConnectionId"]) {
+    if (status[field] !== null) requireNonblankString(status[field], `agent status.${field}`);
+  }
+  if (status.effectiveConnectionId !== (status.runtimeConnectionOverrideId
+    ?? status.defaultConnectionId)) {
+    throw new Error("agent status effective connection is inconsistent");
   }
   if (status.code !== null) {
     requireNonblankString(status.code, "agent status.code");
@@ -314,8 +312,8 @@ export function requireAgentStatus(value) {
   } else if (status.code !== null && !["ADMISSION_RUNNING", "ADMISSION_STOPPING"].includes(status.code)) {
     throw new Error("running agent status must not carry an error code");
   }
-  if (status.state === "disabled" && status.connectionId !== null) {
-    throw new Error("disabled agent must not carry a connection");
+  if (status.state === "disabled" && status.defaultConnectionId !== null) {
+    throw new Error("disabled agent must not carry a default connection");
   }
   return status;
 }
@@ -1372,7 +1370,6 @@ function startGalateaApp() {
   const connections = Array.isArray(bootstrapConfig.connections) ? bootstrapConfig.connections : [];
   const apiBase = characterApiBase(bootstrapConfig.characterId);
   if (bootstrapConfig.apiBase !== apiBase) throw new Error("character API base mismatch");
-  const preferenceKey = connectionPreferenceKey(bootstrapConfig.playerId, bootstrapConfig.characterId);
   const maintenanceMode = bootstrapConfig.maintenanceMode === true;
   const streamLimits = requireStreamLimits(bootstrapConfig.streamLimits);
 
@@ -1398,28 +1395,11 @@ function startGalateaApp() {
     autonomyCountdownProjection: null,
     autonomyCountdownTimerId: null,
     mailboxStatus: null,
-    selectedConnectionId: null,
+    diagnosticConnectionId: null,
     contextHeader: { observation: "", action: "" },
     recapGridReadiness: null,
     recapCadenceProgress: null,
   };
-
-  function resolveConnectionId(candidate) {
-    if (candidate && connections.some((c) => c.id === candidate)) {
-      return candidate;
-    }
-    if (
-      bootstrapConfig.defaultConnectionId
-      && connections.some((c) => c.id === bootstrapConfig.defaultConnectionId)
-    ) {
-      return bootstrapConfig.defaultConnectionId;
-    }
-    return connections.length > 0 ? connections[0].id : null;
-  }
-
-  function connectionStorageKey() {
-    return preferenceKey;
-  }
 
   const turnList = document.getElementById("turn-list");
   const form = document.getElementById("chat-form");
@@ -1430,6 +1410,7 @@ function startGalateaApp() {
   const resumeTurnButton = document.getElementById("resume-turn-button");
   const pendingStopButton = document.getElementById("pending-stop-button");
   const autonomyConnection = document.getElementById("autonomy-connection");
+  const currentTurnConnection = document.getElementById("current-turn-connection");
   const mailboxStatus = document.getElementById("mailbox-status");
   const autonomyStatus = document.getElementById("autonomy-status");
   const autonomyState = document.getElementById("autonomy-state");
@@ -1580,8 +1561,9 @@ function startGalateaApp() {
     state.agentStatus = status;
     refreshInteractionControls();
     if (autonomyConnection) {
-      autonomyConnection.textContent = status.connectionId === null
-        ? "后台连接：无" : `后台连接：${status.connectionId}`;
+      autonomyConnection.textContent = status.effectiveConnectionId === null
+        ? "角色连接：无"
+        : `下次新回合：${status.effectiveConnectionId}（配置默认：${status.defaultConnectionId}；运行时覆盖：${status.runtimeConnectionOverrideId ?? "无"}）`;
     }
     state.autonomyCountdownProjection = createAutonomyCountdownProjection(
       status, Date.now(), window.performance.now(),
@@ -1597,6 +1579,11 @@ function startGalateaApp() {
   function publishObservedCurrent(current) {
     state.recoveryTurn = current.status === "recovery-required" ? current : null;
     refreshInteractionControls();
+    if (currentTurnConnection) {
+      currentTurnConnection.textContent = current.status === "running"
+        ? `当前回合实际连接：${current.connectionId ?? "接纳中"}`
+        : "当前无运行回合";
+    }
     let message = null;
     if (current.status === "recovery-required") {
       message = "存在待处理轮次；可恢复原任务或结束待处理轮次。";
@@ -1683,8 +1670,8 @@ function startGalateaApp() {
       pendingStopButton.disabled = maintenanceMode || admissionBusy || state.recoveryTurn === null;
     }
     if (connectionPicker) {
-      connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-        radio.disabled = maintenanceMode || admissionBusy;
+      connectionPicker.querySelectorAll('input[name="diagnostic-connection"]').forEach((radio) => {
+        radio.disabled = maintenanceMode || admissionBusy || state.recoveryTurn !== null;
       });
     }
   }
@@ -1781,46 +1768,42 @@ function startGalateaApp() {
     }
 
     connectionPicker.classList.remove("hidden");
-    const legend = "<legend>\u6a21\u578b\u8fde\u63a5</legend>";
+    const legend = "<legend>仅下一次发送使用诊断连接</legend>";
+    const automatic = `<label class="connection-option">
+      <input type="radio" name="diagnostic-connection" value=""${state.diagnosticConnectionId === null ? " checked" : ""}>
+      <span class="connection-name">按角色当前连接</span>
+    </label>`;
     const options = connections
       .map((connection) => {
-        const checked = connection.id === state.selectedConnectionId ? " checked" : "";
+        const checked = connection.id === state.diagnosticConnectionId ? " checked" : "";
         return `
           <label class="connection-option">
-            <input type="radio" name="connection" value="${escapeAttr(connection.id)}"${checked}>
+            <input type="radio" name="diagnostic-connection" value="${escapeAttr(connection.id)}"${checked}>
             <span class="connection-name">${escapeHtml(connection.id)}</span>
             <span class="connection-model">${escapeHtml(connection.modelId ?? "")}</span>
           </label>
         `;
       })
       .join("");
-    connectionPicker.innerHTML = legend + options;
+    connectionPicker.innerHTML = legend + automatic + options;
 
-    connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-      radio.disabled = maintenanceMode || state.initializing || state.streaming;
+    connectionPicker.querySelectorAll('input[name="diagnostic-connection"]').forEach((radio) => {
+      radio.disabled = maintenanceMode || state.initializing || state.streaming
+        || state.retryingAdmission || state.recoveryTurn !== null;
       radio.addEventListener("change", () => {
         if (radio.checked) {
-          selectConnection(radio.value, { persist: true });
+          selectDiagnosticConnection(radio.value);
         }
       });
     });
   }
 
-  function selectConnection(connectionId, options = {}) {
-    const { persist = false, updateRadio = false } = options;
-    const resolved = resolveConnectionId(connectionId);
-    state.selectedConnectionId = resolved;
-
-    if (persist && resolved) {
-      window.localStorage.setItem(connectionStorageKey(), resolved);
+  function selectDiagnosticConnection(connectionId) {
+    if (connectionId && !connections.some((connection) => connection.id === connectionId)) {
+      throw new Error("unknown diagnostic connection");
     }
-
-    if (updateRadio && connectionPicker) {
-      connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-        radio.checked = radio.value === resolved;
-      });
-    }
-
+    state.diagnosticConnectionId = connectionId || null;
+    renderConnectionPicker();
   }
 
   async function loadRecentTurns() {
@@ -2488,6 +2471,8 @@ function startGalateaApp() {
     state.stopRequested = false;
     setStreaming(true, replacingPoppedTurn ? "正在重新生成…" : "正在发送…");
 
+    const diagnosticConnectionId = state.diagnosticConnectionId;
+    selectDiagnosticConnection(null);
     const response = await fetch(`${apiBase}/chat/turns`, {
       method: "POST",
       credentials: "same-origin",
@@ -2496,7 +2481,7 @@ function startGalateaApp() {
       },
       body: JSON.stringify({
         message,
-        connectionId: state.selectedConnectionId,
+        diagnosticConnectionId,
       }),
     });
 
@@ -2568,8 +2553,6 @@ function startGalateaApp() {
   async function initializeApp() {
     refreshInteractionControls();
     refreshComposerMode();
-    const storedConnectionId = window.localStorage.getItem(connectionStorageKey());
-    selectConnection(storedConnectionId ?? bootstrapConfig.defaultConnectionId, { persist: false });
     renderConnectionPicker();
 
     let currentTurn = await loadInitialSessionState(
@@ -2607,7 +2590,6 @@ function startGalateaApp() {
         },
         body: JSON.stringify({
           expectedHead: currentTurn.recoveryHead,
-          connectionId: state.selectedConnectionId,
         }),
       });
       if (response.ok) {

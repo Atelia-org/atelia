@@ -14,7 +14,8 @@ const turnId = "0123456789abcdef0123456789abcdef";
 const idle = { status: "idle", turnId: null, connectionId: null,
   recoveryHead: null };
 const running = { ...idle, status: "running", turnId, connectionId: "codex" };
-const waiting = { state: "waiting", connectionId: "codex",
+const waiting = { state: "waiting", defaultConnectionId: "codex",
+  runtimeConnectionOverrideId: null, effectiveConnectionId: "codex",
   nextActivationAtUnixTimeMilliseconds: Date.now() + 600000,
   lastActivationAtUnixTimeMilliseconds: null, code: null, admissionFailure: null };
 const recent = (text) => ({ turns: [{ userText: "world",
@@ -58,7 +59,8 @@ test("agent decoder enforces exact fields and state matrix", () => {
   for (const state of ["disabled", "starting", "maintenance", "stopping",
     "blocked", "running"]) {
     const status = { ...waiting, state,
-      connectionId: state === "disabled" ? null : "codex",
+      defaultConnectionId: state === "disabled" ? null : "codex",
+      effectiveConnectionId: state === "disabled" ? null : "codex",
       nextActivationAtUnixTimeMilliseconds: null,
       code: state === "blocked" ? "RECOVERY_REQUIRED" : null };
     assert.equal(production.requireAgentStatus(status), status);
@@ -68,7 +70,8 @@ test("agent decoder enforces exact fields and state matrix", () => {
     { ...waiting, nextActivationAtUnixTimeMilliseconds: null },
     { ...waiting, nextActivationAtUnixTimeMilliseconds: 1.5 },
     { ...waiting, lastActivationAtUnixTimeMilliseconds: -1 },
-    { ...waiting, code: "ERR" }, { ...waiting, connectionId: "" },
+    { ...waiting, code: "ERR" }, { ...waiting, effectiveConnectionId: "" },
+    { ...waiting, runtimeConnectionOverrideId: "manual" },
     { ...paused, code: null }, { ...paused, code: "OTHER" },
     { ...paused, state: "running" },
     { ...waiting, state: "disabled" },
@@ -261,6 +264,8 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
     if (nodes.has(id)) return nodes.get(id);
     const handlers = new Map();
     const classes = new Set();
+    let radiosHtml = null;
+    let radios = [];
     const value = {
       textContent: "", innerHTML: "", value: "", disabled: false,
       classList: {
@@ -269,7 +274,20 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
         contains: (name) => classes.has(name),
       },
       addEventListener: (type, callback) => handlers.set(type, callback),
-      querySelectorAll: () => [],
+      querySelectorAll: (selector) => {
+        if (id !== "connection-picker" || selector !== 'input[name="diagnostic-connection"]') return [];
+        if (radiosHtml !== value.innerHTML) {
+          radiosHtml = value.innerHTML;
+          radios = [...radiosHtml.matchAll(/<input type="radio" name="diagnostic-connection" value="([^"]*)"([^>]*)>/g)]
+            .map((match) => {
+              const events = new Map();
+              return { value: match[1], checked: match[2].includes("checked"), disabled: false,
+                addEventListener: (type, callback) => events.set(type, callback),
+                dispatch: (type) => events.get(type)?.() };
+            });
+        }
+        return radios;
+      },
       dispatch: async (type) => handlers.get(type)?.({ preventDefault() {} }),
       focus() {}, setSelectionRange() {}, scrollIntoView() {},
     };
@@ -331,13 +349,14 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
   };
   const window = {
     galateaBootstrap: {
-      playerId: "visitor", characterId: "gpt", apiBase: "/api/v1/characters/gpt", maintenanceMode, defaultConnectionId: "codex",
+      characterId: "gpt", apiBase: "/api/v1/characters/gpt", maintenanceMode,
       connections: [{ id: "codex", modelId: "gpt" }, { id: "manual", modelId: "other" }],
       streamLimits: { maximumConnectionBytes: 1000000, maximumFrameBytes: 100000 },
     },
     fetch: fetchImpl, setTimeout: clock.set, clearTimeout: clock.clear,
     performance: { now: () => 0 },
-    localStorage: { getItem: () => "manual", setItem() {} },
+    localStorage: { getItem: () => { throw new Error("legacy connection preference read"); },
+      setItem() { throw new Error("legacy connection preference write"); } },
     confirm: () => { confirms += 1; return true; },
     addEventListener: (type, callback) => listeners.set(type, callback),
   };
@@ -437,7 +456,7 @@ test("failed retry preserves error and remains retryable, while maintenance and 
   await maintenance.node("retry-admission").dispatch("click");
   assert.equal(maintenance.requests.some((x) => x.options.method === "POST"), false);
 });
-test("actual DOM app follows automatic SSE, preserves draft and manual connection, and refreshes completed work", async () => {
+test("actual DOM app follows automatic SSE and consumes a diagnostic connection once", async () => {
   const h = domHarness();
   await flush(); await poll(h);
   h.node("message-input").value = "my unsent draft";
@@ -446,6 +465,7 @@ test("actual DOM app follows automatic SSE, preserves draft and manual connectio
   assert.equal(h.streams.length, 1);
   assert.equal(h.node("message-input").value, "my unsent draft");
   assert.match(h.node("autonomy-connection").textContent, /codex/);
+  assert.match(h.node("current-turn-connection").textContent, /当前回合实际连接：codex/);
   h.listeners.get("visibilitychange")(); await poll(h);
   assert.equal(h.requests.filter((x) => x.url.endsWith("/events")).length, 1);
   h.finish("automatic result"); await flush();
@@ -455,13 +475,23 @@ test("actual DOM app follows automatic SSE, preserves draft and manual connectio
   h.setRecent(recent("completed between polls"));
   h.listeners.get("visibilitychange")(); await poll(h);
   assert.match(h.node("turn-list").innerHTML, /completed between polls/);
+  const diagnostic = h.node("connection-picker")
+    .querySelectorAll('input[name="diagnostic-connection"]')
+    .find((radio) => radio.value === "manual");
+  diagnostic.checked = true;
+  diagnostic.dispatch("change");
   const submitted = h.node("chat-form").dispatch("submit");
   await flush();
   const send = h.requests.find((x) => x.url === "/api/v1/characters/gpt/chat/turns");
-  assert.equal(JSON.parse(send.options.body).connectionId, "manual",
-    "observing backend connection must not change the manual choice");
+  assert.equal(JSON.parse(send.options.body).diagnosticConnectionId, "manual");
   h.finish("manual result"); await submitted;
   assert.equal(h.node("message-input").value, "");
+  h.node("message-input").value = "next turn";
+  const nextSubmitted = h.node("chat-form").dispatch("submit");
+  await flush();
+  const sends = h.requests.filter((x) => x.url === "/api/v1/characters/gpt/chat/turns");
+  assert.equal(JSON.parse(sends[1].options.body).diagnosticConnectionId, null);
+  h.finish("next result"); await nextSubmitted;
   h.listeners.get("pagehide")();
 });
 test("actual DOM old recent GET cannot overwrite a manual result", async () => {

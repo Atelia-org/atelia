@@ -55,7 +55,7 @@ public sealed class GalateaPlayerCharacterApiTests {
         Assert.Contains("href=\"/characters/beta\"", selection);
         Assert.DoesNotContain("galateaBootstrap", selection);
         string page = await client.GetStringAsync("/characters/beta");
-        Assert.Contains("playerId: \"alice\"", page);
+        Assert.DoesNotContain("playerId:", page);
         Assert.Contains("characterId: \"beta\"", page);
         Assert.Contains("apiBase: \"/api/v1/characters/beta\"", page);
         Assert.Contains("href=\"/\"", page);
@@ -109,7 +109,7 @@ public sealed class GalateaPlayerCharacterApiTests {
             using HttpResponseMessage wrongEvents = await client.GetAsync(Second + "/chat/turns/" + pending.TurnId + "/events");
             Assert.Equal(HttpStatusCode.NotFound, wrongEvents.StatusCode);
             using HttpResponseMessage accepted = await client.PostAsJsonAsync(Second + "/chat/turns", new {
-                message = "给乙的动作", connectionId = "test"
+                message = "给乙的动作", diagnosticConnectionId = "test"
             });
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             Assert.Equal("beta", Assert.Single(accepted.Headers.GetValues("Galatea-Character-Id")));

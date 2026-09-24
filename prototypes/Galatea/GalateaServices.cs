@@ -95,6 +95,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly IReadOnlyDictionary<string, GalateaPlayerConfig> _players;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
         _connectionCatalog;
+    private readonly ConcurrentDictionary<string, string>
+        _runtimeConnectionOverrides = new(StringComparer.Ordinal);
     private readonly IReadOnlyList<GalateaConnectionInfoDto>
         _selectableConnections;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
@@ -683,7 +685,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             _delegationSupervisor.ReadMailboxStatus(characterId)
         );
 
-    public bool TryGetConnection(
+    internal bool TryGetRecoveryConnection(
         GalateaCharacterConfig character,
         string? requestedConnectionId,
         out CompletionConnectionConfig connection
@@ -693,6 +695,58 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ? character.DefaultConnectionId
             : requestedConnectionId;
         return _connectionCatalog.TryGetValue(id, out connection!);
+    }
+
+    // Only fresh turns consult this process-local Character choice. Recovery
+    // retains the governing setup or the Prepared target from SessionJournal.
+    internal bool TryGetFreshConnection(
+        GalateaCharacterConfig character,
+        string? diagnosticConnectionId,
+        out CompletionConnectionConfig connection
+    ) {
+        ArgumentNullException.ThrowIfNull(character);
+        string id = diagnosticConnectionId
+            ?? ReadRuntimeConnectionOverride(character.CharacterId)
+            ?? character.DefaultConnectionId;
+        return _connectionCatalog.TryGetValue(id, out connection!);
+    }
+
+    internal string? ReadRuntimeConnectionOverride(string characterId) =>
+        _runtimeConnectionOverrides.GetValueOrDefault(characterId);
+
+    internal void SetRuntimeConnectionOverride(
+        string characterId,
+        string? connectionId
+    ) {
+        if (!_characters.ContainsKey(characterId)) {
+            throw new ArgumentException("Unknown character.", nameof(characterId));
+        }
+        if (connectionId is null) {
+            _runtimeConnectionOverrides.TryRemove(characterId, out _);
+            return;
+        }
+        if (GalateaHttpV1.ValidateConnectionId(connectionId) is not null
+            || !_connectionCatalog.ContainsKey(connectionId)) {
+            throw new ArgumentException(
+                "Runtime connection override must exactly match a selectable connection.",
+                nameof(connectionId));
+        }
+        _runtimeConnectionOverrides[characterId] = connectionId;
+    }
+
+    internal GalateaAgentStatusDto WithConnectionSelection(
+        string characterId,
+        GalateaAgentStatusDto status
+    ) {
+        if (!_characters.TryGetValue(characterId, out GalateaCharacterConfig? character)) {
+            return status;
+        }
+        string? runtimeOverride = ReadRuntimeConnectionOverride(characterId);
+        return status with {
+            DefaultConnectionId = character.DefaultConnectionId,
+            RuntimeConnectionOverrideId = runtimeOverride,
+            EffectiveConnectionId = runtimeOverride ?? character.DefaultConnectionId
+        };
     }
 
     public bool ValidatePassword(GalateaPlayerConfig player, string password) {
