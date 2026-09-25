@@ -54,12 +54,14 @@ internal sealed class TextExtractionException : Exception {
         CompletionTermination? termination = null,
         string? toolName = null,
         string? toolCallId = null,
-        Exception? innerException = null
+        Exception? innerException = null,
+        string? diagnosticReasonCode = null
     ) : base(message, innerException) {
         Kind = kind;
         Termination = termination;
         ToolName = toolName;
         ToolCallId = toolCallId;
+        DiagnosticReasonCode = diagnosticReasonCode;
     }
 
     internal TextExtractionFailureKind Kind { get; }
@@ -69,6 +71,7 @@ internal sealed class TextExtractionException : Exception {
     internal string? ToolName { get; }
 
     internal string? ToolCallId { get; }
+    internal string? DiagnosticReasonCode { get; }
 }
 
 internal interface ITextExtractionArtifact {
@@ -258,6 +261,8 @@ internal sealed class TextExtractor {
     private readonly TextExtractorToolSet _toolSet;
     private readonly CompletionOutputContract _outputContract;
 
+    internal Action<string>? DiagnosticSinkForTest { get; set; }
+
     internal TextExtractor(
         string systemPrompt,
         TextExtractorToolSet toolSet,
@@ -300,7 +305,8 @@ internal sealed class TextExtractor {
     internal async ValueTask<TextExtractionResult> ExtractAsync(
         string targetText,
         string userPrompt,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        TextExtractionTrace? trace = null
     ) {
         targetText = RequireBoundedText(
             targetText,
@@ -315,6 +321,20 @@ internal sealed class TextExtractor {
             allowEmpty: false
         );
         cancellationToken.ThrowIfCancellationRequested();
+
+        trace ??= TextExtractionTrace.Create(
+            "text-extractor", null, null, null, targetText,
+            DiagnosticSinkForTest
+        );
+        trace.Emit("text-extraction-started", new {
+            modelId = _connection.ModelId,
+            connectionId = _connection.Id,
+            toolNames = _toolSet.Definitions.Select(static tool => tool.Name)
+                .ToArray(),
+        });
+        string stage = "completion";
+        int? currentOrdinal = null;
+        try {
 
         var collector = new TextExtractorCollector();
         ToolSession session = _toolSet.CreateSession(collector);
@@ -351,6 +371,19 @@ internal sealed class TextExtractor {
             );
         }
 
+        stage = "completion-validation";
+        trace.Emit("text-extraction-completion-observed", new {
+            completionOrdinal = 0,
+            termination = result.Termination.Kind.ToString(),
+            errorCount = result.Errors?.Count ?? 0,
+            rawToolCallCount = result.Message.Blocks
+                .OfType<ActionBlock.ToolCall>().Count(),
+            textBlockCount = result.Message.Blocks
+                .OfType<ActionBlock.Text>().Count(),
+            reasoningBlockCount = result.Message.Blocks
+                .OfType<ActionBlock.ReasoningBlock>().Count(),
+        });
+
         CompletionDescriptor expectedInvocation =
             CompletionDescriptor.From(client, request);
         if (result.Invocation != expectedInvocation) {
@@ -373,6 +406,7 @@ internal sealed class TextExtractor {
             );
         }
 
+        stage = "response-parse";
         var diagnosticBuilder = new StringBuilder();
         var calls = new List<RawToolCall>();
         foreach (ActionBlock? block in result.Message.Blocks) {
@@ -394,6 +428,20 @@ internal sealed class TextExtractor {
             }
         }
         string diagnosticText = diagnosticBuilder.ToString();
+        trace.Emit("text-extraction-completion", new {
+            completionOrdinal = 0,
+            termination = result.Termination.Kind.ToString(),
+            errorCount = result.Errors?.Count ?? 0,
+            rawToolCallCount = calls.Count,
+            textBlockCount = result.Message.Blocks.OfType<ActionBlock.Text>()
+                .Count(),
+            reasoningBlockCount = result.Message.Blocks
+                .OfType<ActionBlock.ReasoningBlock>().Count(),
+            diagnosticTextUtf8Bytes = Encoding.UTF8.GetByteCount(
+                diagnosticText),
+            diagnosticTextPreview = TextExtractionTrace.Preview(
+                diagnosticText),
+        });
         _ = RequireBoundedText(
             diagnosticText,
             TextExtractorBounds.MaximumDiagnosticTextUtf8Bytes,
@@ -401,9 +449,29 @@ internal sealed class TextExtractor {
             allowEmpty: true,
             failureKind: TextExtractionFailureKind.CompletionOutputInvalid
         );
+        stage = "preflight";
+        for (int ordinal = 0; ordinal < calls.Count; ordinal++) {
+            RawToolCall call = calls[ordinal];
+            trace.Emit("text-extraction-candidate", new {
+                completionOrdinal = 0,
+                candidateOrdinal = ordinal,
+                toolName = call.ToolName,
+                toolCallId = call.ToolCallId,
+                rawArgumentsUtf8Bytes = Encoding.UTF8.GetByteCount(
+                    call.RawArgumentsJson ?? string.Empty),
+                rawArgumentsSha256 = TextExtractionTrace.Sha256(
+                    call.RawArgumentsJson),
+            });
+        }
         PreflightCalls(_toolSet, calls);
+        trace.Emit("text-extraction-preflight", new {
+            outcome = "accepted", candidateCount = calls.Count,
+        });
 
-        foreach (RawToolCall call in calls) {
+        stage = "tool-execution";
+        for (int ordinal = 0; ordinal < calls.Count; ordinal++) {
+            RawToolCall call = calls[ordinal];
+            currentOrdinal = ordinal;
             cancellationToken.ThrowIfCancellationRequested();
             int before = collector.Count;
             ToolCallExecutionResult execution = await session.ExecuteAsync(
@@ -414,6 +482,17 @@ internal sealed class TextExtractor {
             cancellationToken.ThrowIfCancellationRequested();
             if (execution.ExecuteResult.Status
                     is not ToolExecutionStatus.Success) {
+                trace.Emit("text-extraction-tool-execution", new {
+                    completionOrdinal = 0,
+                    candidateOrdinal = ordinal,
+                    outcome = "rejected",
+                    reasonCode = "tool-execution-failed",
+                    status = execution.ExecuteResult.Status.ToString(),
+                    toolResultPreview = TextExtractionTrace.Preview(
+                        execution.ExecuteResult.GetFlattenedText()),
+                    rawArgumentsPreview = TextExtractionTrace.Preview(
+                        call.RawArgumentsJson),
+                });
                 throw Failure(
                     TextExtractionFailureKind.ToolExecutionFailed,
                     "Artifact tool execution failed.",
@@ -422,6 +501,17 @@ internal sealed class TextExtractor {
                 );
             }
             if (collector.Count != before + 1) {
+                trace.Emit("text-extraction-tool-execution", new {
+                    completionOrdinal = 0,
+                    candidateOrdinal = ordinal,
+                    outcome = "rejected",
+                    reasonCode = "artifact-capture-mismatch",
+                    status = execution.ExecuteResult.Status.ToString(),
+                    toolResultPreview = TextExtractionTrace.Preview(
+                        execution.ExecuteResult.GetFlattenedText()),
+                    rawArgumentsPreview = TextExtractionTrace.Preview(
+                        call.RawArgumentsJson),
+                });
                 throw Failure(
                     TextExtractionFailureKind.ArtifactCaptureMismatch,
                     "Successful artifact tool execution did not capture exactly one artifact.",
@@ -429,12 +519,58 @@ internal sealed class TextExtractor {
                     toolCallId: call.ToolCallId
                 );
             }
+            trace.Emit("text-extraction-tool-execution", new {
+                completionOrdinal = 0,
+                candidateOrdinal = ordinal,
+                outcome = "accepted",
+                reasonCode = (string?)null,
+                status = execution.ExecuteResult.Status.ToString(),
+                toolResultPreview = (string?)null,
+                rawArgumentsPreview = (string?)null,
+            });
         }
 
+        trace.Emit("text-extraction-finished", new {
+            outcome = "accepted",
+            stage = "tool-execution",
+            rawToolCallCount = calls.Count,
+            artifactCount = collector.Count,
+            reasonCode = (string?)null,
+        });
         return new TextExtractionResult(
             collector.Snapshot(),
             string.IsNullOrEmpty(diagnosticText) ? null : diagnosticText
         );
+        }
+        catch (TextExtractionException exception) {
+            trace.Emit("text-extraction-finished", new {
+                outcome = "failed",
+                stage,
+                currentOrdinal,
+                reasonCode = exception.DiagnosticReasonCode
+                    ?? exception.Kind.ToString(),
+                exceptionType = exception.GetType().FullName,
+                toolName = exception.ToolName,
+                toolCallId = exception.ToolCallId,
+            });
+            throw;
+        }
+        catch (OperationCanceledException) {
+            trace.Emit("text-extraction-finished", new {
+                outcome = "cancelled", stage, currentOrdinal,
+                reasonCode = "cancelled",
+            });
+            throw;
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            trace.Emit("text-extraction-finished", new {
+                outcome = "failed", stage, currentOrdinal,
+                reasonCode = "exception",
+                exceptionType = exception.GetType().FullName,
+            });
+            throw;
+        }
     }
 
     private static void PreflightCalls(

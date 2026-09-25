@@ -605,7 +605,8 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
             string visibleActionText,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>([
@@ -634,7 +635,8 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         public async ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
             string visibleActionText,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             CallCount++;

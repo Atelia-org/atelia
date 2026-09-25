@@ -197,7 +197,8 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         internal int Calls { get; private set; }
         public string ContractId => "receipt-delivery-proof-test-v1";
         public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
-            string visibleActionText, CancellationToken cancellationToken
+            string visibleActionText, CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             Calls++;

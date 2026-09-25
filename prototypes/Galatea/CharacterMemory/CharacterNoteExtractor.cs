@@ -31,7 +31,8 @@ internal interface ICharacterNoteExtractor {
 
     ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
         string visibleActionText,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        TextExtractionSource? source = null
     );
 }
 
@@ -48,7 +49,8 @@ internal sealed class DisabledCharacterNoteExtractor
 
     public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
         string visibleActionText,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        TextExtractionSource? source = null
     ) {
         ArgumentNullException.ThrowIfNull(visibleActionText);
         cancellationToken.ThrowIfCancellationRequested();
@@ -107,6 +109,9 @@ Identify ${characterName}'s explicit current save requests and all Notes they co
 
     private readonly TextExtractor _inner;
     private readonly string _userPrompt;
+    private readonly string _characterName;
+
+    internal Action<string>? DiagnosticSinkForTest { get; set; }
 
     internal CharacterNoteExtractor(
         GalateaCharacterName characterName,
@@ -114,6 +119,7 @@ Identify ${characterName}'s explicit current save requests and all Notes they co
         Func<ICompletionClient> getClient
     ) {
         ArgumentNullException.ThrowIfNull(characterName);
+        _characterName = characterName.Value;
         string systemPrompt = GalateaPromptTemplate.Render(
             SystemPromptTemplate,
             characterName,
@@ -140,17 +146,30 @@ Identify ${characterName}'s explicit current save requests and all Notes they co
 
     public async ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
         string visibleActionText,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        TextExtractionSource? source = null
     ) {
+        var trace = TextExtractionTrace.Create(
+            "character-note", ContractId, _characterName, source,
+            visibleActionText, DiagnosticSinkForTest
+        );
         TextExtractionResult result = await _inner.ExtractAsync(
                 visibleActionText,
                 _userPrompt,
-                cancellationToken
+                cancellationToken,
+                trace
             )
             .ConfigureAwait(false);
         if (result.Artifacts.Count > CharacterNoteBounds.MaximumIntentCount) {
+            trace.Emit("text-extraction-business-finished", new {
+                outcome = "rejected",
+                rawArtifactCount = result.Artifacts.Count,
+                acceptedCount = 0,
+                reasonCode = "note-too-many-intents",
+            });
             throw Invalid(
-                "Character note extraction emitted too many intents."
+                "Character note extraction emitted too many intents.",
+                "note-too-many-intents"
             );
         }
 
@@ -158,32 +177,69 @@ Identify ${characterName}'s explicit current save requests and all Notes they co
             result.Artifacts.Count
         );
         int totalTextUtf8Bytes = 0;
-        foreach (ITextExtractionArtifact artifact in result.Artifacts) {
-            if (artifact is not TextExtractionArtifact<
-                    CharacterNoteIntent> typed) {
-                throw new TextExtractionException(
-                    TextExtractionFailureKind.ArtifactCaptureMismatch,
-                    "Character note extractor captured an unexpected artifact type."
+        for (int ordinal = 0; ordinal < result.Artifacts.Count; ordinal++) {
+            ITextExtractionArtifact artifact = result.Artifacts[ordinal];
+            try {
+                if (artifact is not TextExtractionArtifact<
+                        CharacterNoteIntent> typed) {
+                    throw new TextExtractionException(
+                        TextExtractionFailureKind.ArtifactCaptureMismatch,
+                        "Character note extractor captured an unexpected artifact type.",
+                        diagnosticReasonCode: "note-artifact-type-mismatch"
+                    );
+                }
+                CharacterNoteIntent intent = typed.Value;
+                int textUtf8Bytes = RequireText(
+                    intent.Text,
+                    CharacterNoteBounds.MaximumExactTextUtf8Bytes,
+                    "text"
                 );
-            }
-            CharacterNoteIntent intent = typed.Value;
-            int textUtf8Bytes = RequireText(
-                intent.Text,
-                CharacterNoteBounds.MaximumExactTextUtf8Bytes,
-                "text"
-            );
-            totalTextUtf8Bytes = checked(
-                totalTextUtf8Bytes + textUtf8Bytes
-            );
-            if (totalTextUtf8Bytes
-                    > CharacterNoteBounds
-                        .MaximumTotalExactTextUtf8Bytes) {
-                throw Invalid(
-                    "Character note text values exceed their total UTF-8 byte limit."
+                totalTextUtf8Bytes = checked(
+                    totalTextUtf8Bytes + textUtf8Bytes
                 );
+                if (totalTextUtf8Bytes
+                        > CharacterNoteBounds
+                            .MaximumTotalExactTextUtf8Bytes) {
+                    throw Invalid(
+                        "Character note text values exceed their total UTF-8 byte limit.",
+                        "note-total-text-too-long"
+                    );
+                }
+                intents.Add(intent);
+                trace.Emit("text-extraction-business-candidate", new {
+                    artifactOrdinal = ordinal,
+                    outcome = "accepted",
+                    reasonCode = (string?)null,
+                    textUtf8Bytes,
+                });
             }
-            intents.Add(intent);
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                string reasonCode = exception is TextExtractionException extraction
+                    ? extraction.DiagnosticReasonCode
+                        ?? extraction.Kind.ToString()
+                    : "exception";
+                trace.Emit("text-extraction-business-candidate", new {
+                    artifactOrdinal = ordinal,
+                    outcome = "rejected",
+                    reasonCode,
+                    exceptionType = exception.GetType().FullName,
+                });
+                trace.Emit("text-extraction-business-finished", new {
+                    outcome = "rejected",
+                    rawArtifactCount = result.Artifacts.Count,
+                    acceptedCount = intents.Count,
+                    rejectedOrdinal = ordinal,
+                    reasonCode,
+                });
+                throw;
+            }
         }
+        trace.Emit("text-extraction-business-finished", new {
+            outcome = "accepted",
+            rawArtifactCount = result.Artifacts.Count,
+            acceptedCount = intents.Count,
+        });
         return Array.AsReadOnly(intents.ToArray());
     }
 
@@ -224,13 +280,15 @@ Identify ${characterName}'s explicit current save requests and all Notes they co
         try {
             if (string.IsNullOrWhiteSpace(value)) {
                 throw Invalid(
-                    $"Character note {field} must not be blank."
+                    $"Character note {field} must not be blank.",
+                    $"note-{field}-blank"
                 );
             }
             int byteCount = TextExtractorUtf8.GetByteCount(value);
             if (byteCount > maximumBytes) {
                 throw Invalid(
-                    $"Character note {field} exceeds its UTF-8 byte limit."
+                    $"Character note {field} exceeds its UTF-8 byte limit.",
+                    $"note-{field}-too-long"
                 );
             }
             return byteCount;
@@ -239,13 +297,18 @@ Identify ${characterName}'s explicit current save requests and all Notes they co
             throw new TextExtractionException(
                 TextExtractionFailureKind.ToolExecutionFailed,
                 $"Character note {field} is not strict UTF-8 text.",
-                innerException: exception
+                innerException: exception,
+                diagnosticReasonCode: $"note-{field}-invalid-utf8"
             );
         }
     }
 
-    private static TextExtractionException Invalid(string message) => new(
+    private static TextExtractionException Invalid(
+        string message,
+        string reasonCode
+    ) => new(
         TextExtractionFailureKind.ToolExecutionFailed,
-        message
+        message,
+        diagnosticReasonCode: reasonCode
     );
 }

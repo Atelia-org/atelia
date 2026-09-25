@@ -19,6 +19,8 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
         _derivedInfoPendingCursor;
     private bool _disposed;
 
+    internal Action<string>? ExtractionDiagnosticSinkForTest { get; set; }
+
     private CharacterNoteDefaultPodReconciler(
         CharacterMemorySqliteStore store,
         ICharacterNoteExtractor extractor,
@@ -286,18 +288,33 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
             _podMutationGate.Release();
         }
 
+        var extractionSource = TextExtractionSource.Create(
+            _store.OwnerCharacterId, sourceAction
+        );
+        var captureTrace = TextExtractionTrace.Create(
+            "character-note", _extractor.ContractId, null,
+            extractionSource, target.VisibleText,
+            ExtractionDiagnosticSinkForTest
+        );
         preCaptureCancellationToken.ThrowIfCancellationRequested();
         IReadOnlyList<CharacterNoteIntent> intents =
             string.IsNullOrWhiteSpace(target.VisibleText)
                 ? Array.Empty<CharacterNoteIntent>()
                 : await _extractor.ExtractAsync(
                         target.VisibleText,
-                        preCaptureCancellationToken
+                        preCaptureCancellationToken,
+                        extractionSource
                     )
                     .ConfigureAwait(false)
                     ?? throw new InvalidDataException(
                         "Character Note extractor returned a null batch."
                     );
+        if (string.IsNullOrWhiteSpace(target.VisibleText)) {
+            captureTrace.Emit("text-extraction-skipped", new {
+                reasonCode = "empty-visible-action",
+                artifactCount = 0,
+            });
+        }
         preCaptureCancellationToken.ThrowIfCancellationRequested();
         await _podMutationGate.WaitAsync(preCaptureCancellationToken)
             .ConfigureAwait(false);
@@ -310,11 +327,25 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
                         status
                     )
                     .ConfigureAwait(false);
-            if (derivedInfo is not null) { return derivedInfo; }
+            if (derivedInfo is not null) {
+                captureTrace.Emit("text-extraction-capture", new {
+                    outcome = "skipped",
+                    reasonCode = "derived-info-recovery",
+                    extractedCount = intents.Count,
+                    capturedCount = (int?)null,
+                });
+                return derivedInfo;
+            }
             status = _store.ReadStatusSnapshot();
             CharacterMemoryCaptureSnapshot? existing =
                 _store.ReadCaptureExact(sourceAction);
             if (existing is not null) {
+                captureTrace.Emit("text-extraction-capture", new {
+                    outcome = "already-captured",
+                    reasonCode = "concurrent-capture",
+                    extractedCount = intents.Count,
+                    capturedCount = existing.ArtifactCount,
+                });
                 CharacterNoteDefaultPodReconcileResult? health =
                     CheckCurrentTip(
                         status,
@@ -326,6 +357,12 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
 
             EventAddress? observedHead = engine.ReadCurrentHead();
             if (observedHead != target.SourceAction) {
+                captureTrace.Emit("text-extraction-capture", new {
+                    outcome = "skipped",
+                    reasonCode = "selected-head-changed",
+                    extractedCount = intents.Count,
+                    capturedCount = (int?)null,
+                });
                 return new CharacterNoteDefaultPodReconcileResult
                     .SelectedHeadChanged(target.SourceAction, observedHead);
             }
@@ -335,15 +372,49 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
                     target.SourceAction,
                     captureExists: false
                 );
-            if (current is not null) { return current; }
+            if (current is not null) {
+                captureTrace.Emit("text-extraction-capture", new {
+                    outcome = "skipped",
+                    reasonCode = "current-tip-unavailable",
+                    extractedCount = intents.Count,
+                    capturedCount = (int?)null,
+                });
+                return current;
+            }
 
-            CharacterMemoryCaptureResult captured = _store.CaptureNew(new(
-                sourceAction,
-                target.VisibleTextSha256,
-                target.VisibleTextUtf8Bytes,
-                _extractor.ContractId,
-                intents.Select(static intent => intent.Text).ToArray()
-            ));
+            CharacterMemoryCaptureResult captured;
+            try {
+                captured = _store.CaptureNew(new(
+                    sourceAction,
+                    target.VisibleTextSha256,
+                    target.VisibleTextUtf8Bytes,
+                    _extractor.ContractId,
+                    intents.Select(static intent => intent.Text).ToArray()
+                ));
+            }
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                captureTrace.Emit("text-extraction-capture", new {
+                    outcome = "failed",
+                    reasonCode = "capture-exception",
+                    exceptionType = exception.GetType().FullName,
+                    extractedCount = intents.Count,
+                    capturedCount = (int?)null,
+                });
+                throw;
+            }
+            captureTrace.Emit("text-extraction-capture", new {
+                outcome = captured.Disposition.ToString(),
+                reasonCode = (string?)null,
+                extractedCount = intents.Count,
+                capturedCount = captured.Disposition switch {
+                    CharacterMemoryCaptureDisposition.ZeroCaptured => 0,
+                    CharacterMemoryCaptureDisposition.Captured
+                        or CharacterMemoryCaptureDisposition.AlreadyCaptured =>
+                        captured.Capture?.ArtifactCount,
+                    _ => null,
+                },
+            });
             return captured.Disposition switch {
                 CharacterMemoryCaptureDisposition.BaselineCovered =>
                     new CharacterNoteDefaultPodReconcileResult.BaselineCovered(

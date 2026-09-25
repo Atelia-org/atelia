@@ -306,6 +306,59 @@ public sealed class GalateaMailboxTests {
             .AsTask());
     }
 
+#if DEBUG
+    [Fact]
+    public async Task MailDiagnostics_KeepSecondCandidateRejectionDistinctFromOneMailCapture() {
+        var diagnostics = new List<string>();
+        var client = new QueueClient(_ => Message(
+            Tool("first", "Codex", null, "first body", null,
+                "sent first"),
+            Tool("second", "姬澄\nBcc", null, "second body", null,
+                "sent second")
+        ));
+        var extractor = new OutboundMailExtractor(
+            new GalateaCharacterName("Galatea"),
+            Connection("extractor"),
+            () => client
+        ) { DiagnosticSinkForTest = diagnostics.Add };
+        var source = new TextExtractionSource(
+            "cyber", "ej1:mail-diagnostic-test", "mail-attempt-test"
+        );
+
+        TextExtractionException failure = await Assert.ThrowsAsync<
+            TextExtractionException>(() => extractor.ExtractAsync(
+                "two mails", CancellationToken.None, source
+            ).AsTask());
+
+        Assert.Equal("mail-recipient-line-break",
+            failure.DiagnosticReasonCode);
+        JsonElement[] records = diagnostics.Select(static json =>
+            JsonDocument.Parse(json).RootElement.Clone()).ToArray();
+        Assert.All(records, record => Assert.Equal("mail-attempt-test",
+            record.GetProperty("attemptId").GetString()));
+        JsonElement completion = Assert.Single(records, record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-completion-observed");
+        Assert.Equal(2, completion.GetProperty("details")
+            .GetProperty("rawToolCallCount").GetInt32());
+        JsonElement[] candidates = records.Where(record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-business-candidate").ToArray();
+        Assert.Equal(["accepted", "rejected"], candidates.Select(record =>
+            record.GetProperty("details").GetProperty("outcome")
+                .GetString()));
+        JsonElement finished = Assert.Single(records, record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-business-finished");
+        Assert.Equal("rejected", finished.GetProperty("details")
+            .GetProperty("outcome").GetString());
+        Assert.Equal(1, finished.GetProperty("details")
+            .GetProperty("acceptedCount").GetInt32());
+        Assert.Equal("mail-recipient-line-break", finished
+            .GetProperty("details").GetProperty("reasonCode").GetString());
+    }
+#endif
+
     [Fact]
     public async Task TypedSemanticOutput_IsNotMechanicallyGroundedAgainstRawAction() {
         const string ReplyId = "0123456789abcdef0123456789abcdef";

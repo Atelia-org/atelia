@@ -718,7 +718,8 @@ public sealed class CharacterNoteDefaultPodRecallTests {
 
         public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
             string visibleActionText,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>(
@@ -732,7 +733,8 @@ public sealed class CharacterNoteDefaultPodRecallTests {
 
         public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
             string visibleActionText,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>([

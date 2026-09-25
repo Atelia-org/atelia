@@ -13,6 +13,51 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class CharacterNoteExtractorTests {
+#if DEBUG
+    [Fact]
+    public async Task NoteDiagnostics_ReportSecondBusinessCandidateFailure() {
+        var diagnostics = new List<string>();
+        var client = new QueueClient(_ => Message(
+            Tool("first", "first note"),
+            Tool("second", new string('x',
+                CharacterNoteBounds.MaximumExactTextUtf8Bytes + 1))
+        ));
+        var extractor = new CharacterNoteExtractor(
+            new GalateaCharacterName("Galatea"),
+            Connection(),
+            () => client
+        ) { DiagnosticSinkForTest = diagnostics.Add };
+        var source = new TextExtractionSource(
+            "cyber", "ej1:note-diagnostic-test", "note-attempt-test"
+        );
+
+        TextExtractionException failure = await Assert.ThrowsAsync<
+            TextExtractionException>(() => extractor.ExtractAsync(
+                "two notes", CancellationToken.None, source
+            ).AsTask());
+
+        Assert.Equal("note-text-too-long", failure.DiagnosticReasonCode);
+        JsonElement[] records = diagnostics.Select(static json =>
+            JsonDocument.Parse(json).RootElement.Clone()).ToArray();
+        Assert.All(records, record => Assert.Equal("note-attempt-test",
+            record.GetProperty("attemptId").GetString()));
+        JsonElement completion = Assert.Single(records, record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-completion-observed");
+        Assert.Equal(2, completion.GetProperty("details")
+            .GetProperty("rawToolCallCount").GetInt32());
+        JsonElement finished = Assert.Single(records, record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-business-finished");
+        Assert.Equal("rejected", finished.GetProperty("details")
+            .GetProperty("outcome").GetString());
+        Assert.Equal(1, finished.GetProperty("details")
+            .GetProperty("acceptedCount").GetInt32());
+        Assert.Equal("note-text-too-long", finished
+            .GetProperty("details").GetProperty("reasonCode").GetString());
+    }
+#endif
+
     [Fact]
     public async Task CompositionFactoryUsesDisabledSingletonOrLazyPerCharacterExtractors() {
         IReadOnlyDictionary<string, GalateaCharacterConfig> users = new[] {

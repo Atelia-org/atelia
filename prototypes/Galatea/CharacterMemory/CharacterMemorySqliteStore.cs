@@ -45,6 +45,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private readonly string _storeDirectory;
     private readonly string _databasePath;
     private readonly CharacterMemoryStoreOwner _owner;
+
+    internal string OwnerCharacterId => _owner.CharacterId;
     private readonly CharacterMemoryStoreBaseline _baseline;
     private readonly CharacterMemoryStoreTestHooks _hooks;
     private readonly FileStream _lifetimeLock;

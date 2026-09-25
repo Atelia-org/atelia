@@ -208,7 +208,8 @@ internal interface IOutboundMailExtractor {
 
     ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
         string visibleActionText,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        TextExtractionSource? source = null
     );
 }
 
@@ -225,7 +226,8 @@ internal sealed class DisabledOutboundMailExtractor
 
     public ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
         string visibleActionText,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        TextExtractionSource? source = null
     ) {
         ArgumentNullException.ThrowIfNull(visibleActionText);
         cancellationToken.ThrowIfCancellationRequested();
@@ -272,6 +274,9 @@ Extract zero or more mails that ${characterName} actually sent in this Action. P
 
     private readonly TextExtractor _inner;
     private readonly string _userPrompt;
+    private readonly string _characterName;
+
+    internal Action<string>? DiagnosticSinkForTest { get; set; }
 
     internal OutboundMailExtractor(
         GalateaCharacterName characterName,
@@ -279,6 +284,7 @@ Extract zero or more mails that ${characterName} actually sent in this Action. P
         Func<ICompletionClient> getClient
     ) {
         ArgumentNullException.ThrowIfNull(characterName);
+        _characterName = characterName.Value;
         string systemPrompt = GalateaPromptTemplate.Render(
             SystemPromptTemplate,
             characterName,
@@ -303,25 +309,67 @@ Extract zero or more mails that ${characterName} actually sent in this Action. P
 
     public async ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
         string visibleActionText,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        TextExtractionSource? source = null
     ) {
+        var trace = TextExtractionTrace.Create(
+            "outbound-mail", ContractId, _characterName, source,
+            visibleActionText, DiagnosticSinkForTest
+        );
         TextExtractionResult result = await _inner.ExtractAsync(
                 visibleActionText,
                 _userPrompt,
-                cancellationToken
+                cancellationToken,
+                trace
             )
             .ConfigureAwait(false);
         var intents = new List<SendMailIntent>(result.Artifacts.Count);
-        foreach (ITextExtractionArtifact artifact in result.Artifacts) {
-            if (artifact is not TextExtractionArtifact<SendMailIntent> typed) {
-                throw new TextExtractionException(
-                    TextExtractionFailureKind.ArtifactCaptureMismatch,
-                    "Outbound mail extractor captured an unexpected artifact type."
-                );
+        for (int ordinal = 0; ordinal < result.Artifacts.Count; ordinal++) {
+            ITextExtractionArtifact artifact = result.Artifacts[ordinal];
+            try {
+                if (artifact is not TextExtractionArtifact<SendMailIntent> typed) {
+                    throw new TextExtractionException(
+                        TextExtractionFailureKind.ArtifactCaptureMismatch,
+                        "Outbound mail extractor captured an unexpected artifact type.",
+                        diagnosticReasonCode: "mail-artifact-type-mismatch"
+                    );
+                }
+                Validate(typed.Value);
+                intents.Add(typed.Value);
+                trace.Emit("text-extraction-business-candidate", new {
+                    artifactOrdinal = ordinal,
+                    outcome = "accepted",
+                    reasonCode = (string?)null,
+                    recipient = typed.Value.Recipient,
+                });
             }
-            Validate(typed.Value);
-            intents.Add(typed.Value);
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                string reasonCode = exception is TextExtractionException extraction
+                    ? extraction.DiagnosticReasonCode
+                        ?? extraction.Kind.ToString()
+                    : "exception";
+                trace.Emit("text-extraction-business-candidate", new {
+                    artifactOrdinal = ordinal,
+                    outcome = "rejected",
+                    reasonCode,
+                    exceptionType = exception.GetType().FullName,
+                });
+                trace.Emit("text-extraction-business-finished", new {
+                    outcome = "rejected",
+                    rawArtifactCount = result.Artifacts.Count,
+                    acceptedCount = intents.Count,
+                    rejectedOrdinal = ordinal,
+                    reasonCode,
+                });
+                throw;
+            }
         }
+        trace.Emit("text-extraction-business-finished", new {
+            outcome = "accepted",
+            rawArtifactCount = result.Artifacts.Count,
+            acceptedCount = intents.Count,
+        });
         return Array.AsReadOnly(intents.ToArray());
     }
 
@@ -377,7 +425,7 @@ Extract zero or more mails that ${characterName} actually sent in this Action. P
             && !GalateaHttpV1.IsCanonicalTurnId(
                 intent.InReplyToMessageId
             )) {
-            throw Invalid("inReplyToMessageId");
+            throw Invalid("inReplyToMessageId", "invalid-id");
         }
         RequireText(
             intent.EvidenceQuote,
@@ -404,26 +452,33 @@ Extract zero or more mails that ${characterName} actually sent in this Action. P
         bool allowLineBreaks
     ) {
         try {
-            if (string.IsNullOrWhiteSpace(value)
-                || TextExtractorUtf8.GetByteCount(value) > maximumBytes) {
-                throw Invalid(field);
+            if (string.IsNullOrWhiteSpace(value)) {
+                throw Invalid(field, "blank");
+            }
+            if (TextExtractorUtf8.GetByteCount(value) > maximumBytes) {
+                throw Invalid(field, "too-long");
             }
             if (!allowLineBreaks
                 && GalateaMailboxText.ContainsHeaderLineBreak(value)) {
-                throw Invalid(field);
+                throw Invalid(field, "line-break");
             }
         }
         catch (EncoderFallbackException exception) {
             throw new TextExtractionException(
                 TextExtractionFailureKind.ToolExecutionFailed,
                 $"Outbound mail {field} is not strict bounded UTF-8 text.",
-                innerException: exception
+                innerException: exception,
+                diagnosticReasonCode: $"mail-{field}-invalid-utf8"
             );
         }
     }
 
-    private static TextExtractionException Invalid(string field) => new(
+    private static TextExtractionException Invalid(
+        string field,
+        string reason
+    ) => new(
         TextExtractionFailureKind.ToolExecutionFailed,
-        $"Outbound mail {field} is blank or exceeds its UTF-8 byte limit."
+        $"Outbound mail {field} is invalid ({reason}).",
+        diagnosticReasonCode: $"mail-{field}-{reason}"
     );
 }

@@ -100,6 +100,7 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
         _resolveInternalTarget;
 
     internal Action<string>? CapturedMailDiagnosticSinkForTest { get; set; }
+    internal Action<string>? ExtractionDiagnosticSinkForTest { get; set; }
 
     internal GalateaOutboundMailExtractionReconciler(
         GalateaDelegationSqliteStore store,
@@ -203,14 +204,27 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
                 );
         }
 
+        var extractionSource = TextExtractionSource.Create(
+            _sender.Id, sourceAction
+        );
+        var captureTrace = TextExtractionTrace.Create(
+            "outbound-mail", _extractor.ContractId, _sender.Name,
+            extractionSource, target.VisibleText,
+            ExtractionDiagnosticSinkForTest
+        );
         IReadOnlyList<SendMailIntent> intents;
         if (string.IsNullOrWhiteSpace(target.VisibleText)) {
             intents = Array.Empty<SendMailIntent>();
+            captureTrace.Emit("text-extraction-skipped", new {
+                reasonCode = "empty-visible-action",
+                artifactCount = 0,
+            });
         }
         else {
             intents = await _extractor.ExtractAsync(
                     target.VisibleText,
-                    cancellationToken
+                    cancellationToken,
+                    extractionSource
                 )
                 .ConfigureAwait(false)
                 ?? throw new InvalidDataException(
@@ -220,6 +234,12 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
         cancellationToken.ThrowIfCancellationRequested();
         EventAddress? observedHead = engine.ReadCurrentHead();
         if (observedHead != selectedHead) {
+            captureTrace.Emit("text-extraction-capture", new {
+                outcome = "skipped",
+                reasonCode = "selected-head-changed",
+                extractedCount = intents.Count,
+                capturedCount = (int?)null,
+            });
             return new GalateaOutboundMailExtractionReconcileResult
                 .SelectedHeadChanged(selectedHead, observedHead);
         }
@@ -236,10 +256,31 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
                     intents.Select(intent => _resolveInternalTarget(intent))
                 )
         );
-        GalateaDelegationCaptureResult capture =
-            _store.CaptureActionBatch(request);
+        GalateaDelegationCaptureResult capture;
+        try {
+            capture = _store.CaptureActionBatch(request);
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            captureTrace.Emit("text-extraction-capture", new {
+                outcome = "failed",
+                reasonCode = "capture-exception",
+                exceptionType = exception.GetType().FullName,
+                extractedCount = intents.Count,
+                capturedCount = (int?)null,
+            });
+            throw;
+        }
         if (capture.Disposition
                 == GalateaDelegationCaptureDisposition.Captured) {
+            captureTrace.Emit("text-extraction-capture", new {
+                outcome = "captured",
+                reasonCode = (string?)null,
+                extractedCount = intents.Count,
+                capturedCount = intents.Count,
+                captureSequence = capture.StoreRevision,
+                dispatchIds = capture.DispatchIds,
+            });
             for (int ordinal = 0; ordinal < capture.DispatchIds.Count;
                  ordinal++) {
                 LogCapturedMail(request, capture, ordinal);
@@ -256,6 +297,13 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
             sourceAction,
             target
         );
+        captureTrace.Emit("text-extraction-capture", new {
+            outcome = "already-captured",
+            reasonCode = (string?)null,
+            extractedCount = intents.Count,
+            capturedCount = settled.ArtifactCount,
+            captureSequence = capture.StoreRevision,
+        });
         return new GalateaOutboundMailExtractionReconcileResult.AlreadyCaptured(
             selectedHead,
             settled.ArtifactCount,

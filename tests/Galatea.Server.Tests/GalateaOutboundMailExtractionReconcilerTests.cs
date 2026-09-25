@@ -115,6 +115,7 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         };
         var extractor = new RecordingExtractor(_ => intents);
         var diagnostics = new List<string>();
+        var extractionDiagnostics = new List<string>();
         var reconciler = new GalateaOutboundMailExtractionReconciler(
             store,
             extractor,
@@ -123,7 +124,10 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
                 ? new GalateaInternalMailTarget(
                     "peer-id", "peer-repository", "Galatea")
                 : null
-        ) { CapturedMailDiagnosticSinkForTest = diagnostics.Add };
+        ) {
+            CapturedMailDiagnosticSinkForTest = diagnostics.Add,
+            ExtractionDiagnosticSinkForTest = extractionDiagnostics.Add,
+        };
 
         var captured = Assert.IsType<
             GalateaOutboundMailExtractionReconcileResult.Captured
@@ -134,6 +138,27 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
         Assert.Equal(2, snapshot.Mails.Count);
         string sourceAction = EventAddressTextCodec.Format(action);
+#if DEBUG
+        using (JsonDocument extraction = JsonDocument.Parse(
+            Assert.Single(extractionDiagnostics))) {
+            JsonElement record = extraction.RootElement;
+            Assert.Equal("text-extraction-capture",
+                record.GetProperty("event").GetString());
+            Assert.Equal(sourceAction,
+                record.GetProperty("sourceAction").GetString());
+            TextExtractionSource attempt = Assert.IsType<
+                TextExtractionSource>(Assert.Single(extractor.Sources));
+            Assert.Equal(sourceAction, attempt.SourceAction);
+            Assert.Equal(attempt.AttemptId,
+                record.GetProperty("attemptId").GetString());
+            Assert.Equal("captured", record.GetProperty("details")
+                .GetProperty("outcome").GetString());
+            Assert.Equal(2, record.GetProperty("details")
+                .GetProperty("extractedCount").GetInt32());
+            Assert.Equal(2, record.GetProperty("details")
+                .GetProperty("capturedCount").GetInt32());
+        }
+#endif
         Assert.Equal(2, captured.DispatchIds.Distinct().Count());
         for (int ordinal = 0; ordinal < intents.Length; ordinal++) {
             GalateaOutboundMailSnapshot mail = Assert.Single(
@@ -915,15 +940,19 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             "atelia.galatea.outbound-mail-extractor.fixture.v1";
 
         private readonly List<string> _targets = [];
+        private readonly List<TextExtractionSource?> _sources = [];
 
         internal int CallCount => _targets.Count;
+        internal IReadOnlyList<TextExtractionSource?> Sources => _sources;
 
         public ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
             string visibleActionText,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             _targets.Add(visibleActionText);
+            _sources.Add(source);
             return ValueTask.FromResult(handler(visibleActionText));
         }
     }

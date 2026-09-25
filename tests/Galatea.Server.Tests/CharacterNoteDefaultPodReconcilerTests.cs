@@ -1018,7 +1018,8 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
 
         public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
             string visibleActionText,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             CallCount++;

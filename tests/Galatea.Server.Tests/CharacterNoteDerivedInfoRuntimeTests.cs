@@ -641,7 +641,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
 
         public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
             string visibleActionText,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            TextExtractionSource? source = null
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>([

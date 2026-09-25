@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Net;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
@@ -10,6 +11,97 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class TextExtractorTests {
+#if DEBUG
+    [Fact]
+    public async Task Diagnostics_DistinguishTwoRawCallsFromRejectedSecondCandidate() {
+        var diagnostics = new List<string>();
+        var client = CallsClient(
+            new RawToolCall("artifact_person", "first", """{"name":"Ada"}"""),
+            new RawToolCall("artifact_person", "second", """{"name":"X"}""")
+        );
+        TextExtractor extractor = CreateExtractor(client);
+        var source = new TextExtractionSource(
+            "cyber", "ej1:diagnostic-test", "attempt-diagnostic-test"
+        );
+        var trace = TextExtractionTrace.Create(
+            "outbound-mail", "contract-test", "Galatea", source,
+            "two candidates", diagnostics.Add
+        );
+
+        TextExtractionException failure = await Assert.ThrowsAsync<
+            TextExtractionException>(() => extractor.ExtractAsync(
+                "two candidates", "extract", CancellationToken.None,
+                trace
+            ).AsTask());
+
+        Assert.Equal(TextExtractionFailureKind.ToolExecutionFailed,
+            failure.Kind);
+        JsonElement[] records = diagnostics.Select(static json =>
+            JsonDocument.Parse(json).RootElement.Clone()).ToArray();
+        Assert.All(records, record => {
+            Assert.Equal("attempt-diagnostic-test", record
+                .GetProperty("attemptId").GetString());
+            Assert.Equal("ej1:diagnostic-test", record
+                .GetProperty("sourceAction").GetString());
+        });
+        JsonElement observed = Assert.Single(records, record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-completion-observed");
+        Assert.Equal(2, observed.GetProperty("details")
+            .GetProperty("rawToolCallCount").GetInt32());
+        Assert.Equal(2, records.Count(record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-candidate"));
+        JsonElement[] executed = records.Where(record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-tool-execution").ToArray();
+        Assert.Equal(["accepted", "rejected"], executed.Select(record =>
+            record.GetProperty("details").GetProperty("outcome")
+                .GetString()));
+        JsonElement finished = Assert.Single(records, record => record
+            .GetProperty("event").GetString()
+                == "text-extraction-finished");
+        Assert.Equal("failed", finished.GetProperty("details")
+            .GetProperty("outcome").GetString());
+        Assert.Equal("ToolExecutionFailed", finished.GetProperty("details")
+            .GetProperty("reasonCode").GetString());
+    }
+
+    [Fact]
+    public async Task Diagnostics_ZeroIsSuccessAndSinkFailureDoesNotChangeIt() {
+        var diagnostics = new List<string>();
+        var client = CallsClient();
+        TextExtractor extractor = CreateExtractor(client);
+        var trace = TextExtractionTrace.Create(
+            "character-note", "contract-test", "Galatea", null,
+            "no note", diagnostics.Add
+        );
+
+        TextExtractionResult result = await extractor.ExtractAsync(
+            "no note", "extract", CancellationToken.None, trace
+        );
+
+        Assert.Empty(result.Artifacts);
+        JsonElement finished = Assert.Single(diagnostics
+            .Select(static json => JsonDocument.Parse(json).RootElement.Clone()),
+            record => record.GetProperty("event").GetString()
+                == "text-extraction-finished");
+        Assert.Equal("accepted", finished.GetProperty("details")
+            .GetProperty("outcome").GetString());
+        Assert.Equal(0, finished.GetProperty("details")
+            .GetProperty("rawToolCallCount").GetInt32());
+
+        var failingTrace = TextExtractionTrace.Create(
+            "character-note", "contract-test", "Galatea", null,
+            "no note", _ => throw new IOException("diagnostic sink failed")
+        );
+        Assert.Empty((await extractor.ExtractAsync(
+            "no note", "extract", CancellationToken.None,
+            failingTrace
+        )).Artifacts);
+    }
+#endif
+
     [Fact]
     public async Task CompletedWithoutCalls_IsLazyAndReturnsEmptyWithStablePrefixContract() {
         var client = new ScriptedClient(static (self, request, _) =>
