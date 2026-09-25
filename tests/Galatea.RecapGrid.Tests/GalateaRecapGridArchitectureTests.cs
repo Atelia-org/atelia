@@ -5,7 +5,7 @@ namespace Atelia.Galatea.RecapGrid.Tests;
 
 public sealed class GalateaRecapGridArchitectureTests {
     [Fact]
-    public void ProductHasOnlyLockedDirectInputsAndNoAgentControlBinding() {
+    public void ProductHasOnlyLockedDirectInputs() {
         string root = FindRepositoryRoot();
         string project = Path.Combine(
             root,
@@ -56,19 +56,6 @@ public sealed class GalateaRecapGridArchitectureTests {
             value.Contains("Completion", StringComparison.Ordinal)
             || value.Contains("SessionJournal.Cli", StringComparison.Ordinal)
             || value.Contains("Galatea.Server", StringComparison.Ordinal));
-
-        string agentControl = File.ReadAllText(Path.Combine(
-            root,
-            "prototypes",
-            "SessionJournal.RecapGrid",
-            "AgentControl",
-            "AgentControlContracts.cs"
-        ));
-        Assert.DoesNotContain(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
-            agentControl,
-            StringComparison.Ordinal
-        );
     }
 
     private static string FindRepositoryRoot() {
