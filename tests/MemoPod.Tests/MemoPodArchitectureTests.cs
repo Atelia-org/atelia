@@ -26,6 +26,7 @@ public sealed class MemoPodArchitectureTests {
                 typeof(MemoPodPhase).FullName!,
                 typeof(MemoRecallException).FullName!,
                 typeof(MemoRecallFailureKind).FullName!,
+                typeof(MemoRecallOutputFailureCode).FullName!,
                 typeof(MemoRecallOptions).FullName!,
                 typeof(MemoRecallResult).FullName!
             }.Order(StringComparer.Ordinal),
