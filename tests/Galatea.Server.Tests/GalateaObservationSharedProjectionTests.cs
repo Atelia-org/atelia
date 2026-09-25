@@ -103,7 +103,6 @@ public sealed class GalateaObservationSharedProjectionTests {
         Assert.True(JsonElement.DeepEquals(content.JsonValue, MdJsonSerializer.Read(projection)));
         Assert.Single(GalateaObservationContent.ReadPlayerTurn(content).Notices);
         Assert.Contains(Body, projection, StringComparison.Ordinal);
-        Assert.Equal(GalateaObservationSchema.ExternalStringPaths(content.SchemaId, content.JsonValue), GalateaObservationContent.ExternalStringPaths(content.SchemaId, content.JsonValue));
     }
 
     [Theory]

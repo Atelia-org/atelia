@@ -63,9 +63,10 @@ session attach 是 provider-free：只做本地打开、durable delivery proof �
 
 ## Observation 与回合入口
 
-新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v3` 的机读 JSON；旧 `galatea.observation.v1/v2` 继续精确读取。外层由 SessionJournal
-`SessionInputContent.Structured` 明确标记。`GalateaInputProjector` 在请求时用 md-json 投影；正文的空白、换行、
-Unicode 和 Markdown 不被当成 runtime 元数据解析。存储、查询、Undo、exact append proof 不读取生成的 fence。
+新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v4` 的机读 JSON；旧 `galatea.observation.v1/v2/v3` 继续精确读取。外层由 SessionJournal
+`SessionInputContent.Structured` 明确标记。`GalateaInputProjector` 在请求时用 md-json 投影；领域代码提供候选字符串路径，
+md-json 只将需要 JSON 转义的候选值移到 fence，其余值留在 JSON 骨架。正文的空白、换行、Unicode 和 Markdown
+不被当成 runtime 元数据解析。存储、查询、Undo、exact append proof 不读取生成的 fence。
 
 | kind | 持久事实与入口语义 |
 |:--|:--|
@@ -79,7 +80,7 @@ notices 与 recalls 各自保留来源；不能把整个 composite 当成 Player
 时采样，不能因重渲染变成当前时间。具体字段、数量、UTF-8 边界和闭合 schema 由
 [`GalateaObservationContent`](../../prototypes/Galatea/GalateaObservationContent.cs) 验证。
 
-v3 输入在接纳时冻结 `connectionState`：`runtimeOverrideConnectionId` 是当时的进程内选择，`effectiveConnectionId` 是常规新回合选择，`turnConnectionId` 是该回合实际使用的连接，`lastChange` 是最近一次有效切换的可空历史记录。它覆盖全部新回合来源，包括 inbound-mail。快照随 Observation 正常落盘，仅是当时输入证据；恢复已有输入不从当前内存重算，也不从历史快照恢复 override。旧 v1/v2 没有此字段，按原 schema 投影。具体语义见[状态驱动的连接选择](character-connection-state-design.md)。
+v4 输入在接纳时冻结 `connectionState`：`runtimeOverrideConnectionId` 是当时的进程内选择，`effectiveConnectionId` 是常规新回合选择，`turnConnectionId` 是该回合实际使用的连接，`effectiveName` 与 `turnName` 是对应的显示名，`lastChange` 是最近一次有效切换的可空历史记录。它覆盖全部新回合来源，包括 inbound-mail。快照随 Observation 正常落盘，仅是当时输入证据；恢复已有输入不从当前内存重算，也不从历史快照恢复 override。旧 v1/v2 没有此字段；v3 保留旧的机读状态投影，按原 schema 读取。具体语义见[状态驱动的连接选择](character-connection-state-design.md)。
 
 ### Canonical grammar 与兼容读取
 

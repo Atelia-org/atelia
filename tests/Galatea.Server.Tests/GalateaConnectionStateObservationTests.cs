@@ -42,19 +42,19 @@ public sealed class GalateaConnectionStateObservationTests {
         Assert.Equal(JsonValueKind.String, MdJsonSerializer.Read(projected).GetProperty("connectionState").ValueKind);
         Assert.Contains(Evidence, projected, StringComparison.Ordinal);
         Assert.Contains("/connectionState/lastChange/evidence",
-            GalateaObservationContent.ExternalStringPaths(content.SchemaId, content.JsonValue));
+            GalateaObservationSchema.CandidateStringPaths(content.SchemaId, content.JsonValue));
         if (kind == "inbound-mail") { Assert.Equal("邮件正文", GalateaObservationContent.ReadMailboxContent(content).Body); }
         else { _ = GalateaObservationContent.ReadPlayerTurn(content); }
     }
 
     [Fact]
-    public void NullChangeAndNullOverrideRoundTripWithoutExternalEvidencePath() {
+    public void NullChangeAndNullOverrideRoundTripWithoutEvidenceCandidatePath() {
         var snapshot = new GalateaConnectionStateSnapshot(null, "default", "default");
         SessionInputContent content = GalateaObservationContent.Create(
             new GalateaFreshInput.PlayerAction("继续", Player), Timestamp, Character, connectionState: snapshot);
         Assert.Equal(snapshot, GalateaObservationContent.ReadConnectionState(content));
         Assert.DoesNotContain("/connectionState/lastChange/evidence",
-            GalateaObservationContent.ExternalStringPaths(content.SchemaId, content.JsonValue));
+            GalateaObservationSchema.CandidateStringPaths(content.SchemaId, content.JsonValue));
     }
 
     [Theory]

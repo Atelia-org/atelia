@@ -16,16 +16,16 @@ public sealed class GalateaObservationInputProjector : ISessionInputProjector {
         if (!GalateaObservationSchema.IsSupportedSchemaId(input.SchemaId)) {
             throw new NotSupportedException("Unsupported Galatea Observation schema: " + input.SchemaId);
         }
-        IReadOnlyList<string> externalPaths = GalateaObservationSchema.ExternalStringPaths(input.SchemaId, input.JsonValue);
+        IReadOnlyList<string> candidatePaths = GalateaObservationSchema.CandidateStringPaths(input.SchemaId, input.JsonValue);
         if (input.SchemaId != GalateaObservationSchema.V4SchemaId) {
-            return MdJsonSerializer.Write(input.JsonValue, externalPaths);
+            return MdJsonSerializer.Write(input.JsonValue, candidatePaths);
         }
 
         JsonObject visible = JsonNode.Parse(input.JsonValue.GetRawText())!.AsObject();
         visible["connectionState"] = RenderConnectionState(input.JsonValue.GetProperty("connectionState"));
-        string[] visiblePaths = externalPaths.Where(path => !path.StartsWith("/connectionState/", StringComparison.Ordinal))
+        string[] visibleCandidatePaths = candidatePaths.Where(path => !path.StartsWith("/connectionState/", StringComparison.Ordinal))
             .Append("/connectionState").ToArray();
-        return MdJsonSerializer.Write(JsonSerializer.SerializeToElement(visible), visiblePaths);
+        return MdJsonSerializer.Write(JsonSerializer.SerializeToElement(visible), visibleCandidatePaths);
     }
 
     private static string RenderConnectionState(JsonElement state) {

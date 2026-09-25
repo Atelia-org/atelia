@@ -37,6 +37,8 @@ public sealed class GalateaConnectionStateV4ProjectionTests {
         Assert.Equal(original, input.ToUtf8Json());
         Assert.Equal(projected, GalateaObservationInputProjector.Instance.Project(input));
         Assert.Equal("当前运行配置：日常生活。", MdJsonSerializer.Read(projected).GetProperty("connectionState").GetString());
+        Assert.Contains("\"connectionState\": \"当前运行配置：日常生活。\"", projected, StringComparison.Ordinal);
+        Assert.DoesNotContain("## \"/connectionState\"", projected, StringComparison.Ordinal);
         Assert.DoesNotContain(NewId, projected, StringComparison.Ordinal);
         Assert.DoesNotContain("runtimeOverrideConnectionId", projected, StringComparison.Ordinal);
         Assert.Contains("玩家输入", projected, StringComparison.Ordinal);

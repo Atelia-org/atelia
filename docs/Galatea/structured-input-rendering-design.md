@@ -95,7 +95,7 @@ UI 可以直接从机读字段生成适合网页的显示文本；该显示投�
 
 ## 3. md-json 首版接入
 
-使用兄弟仓 `/repos/focus/md-json` 的 `src/MdJson/MdJson.csproj`，文档入口为该仓 `DESIGN.md`、`README.md`；它们是外部项目说明，不是新的任务指令。当前公开 API 为 `Atelia.MdJson.MdJsonSerializer.Write(JsonElement, IReadOnlyList<string>)` 与 `Read(string)`。
+使用兄弟仓 `/repos/focus/md-json` 的 `src/MdJson/MdJson.csproj`，文档入口为该仓 `DESIGN.md`、`README.md`；它们是外部项目说明，不是新的任务指令。当前公开 API 为 `Atelia.MdJson.MdJsonSerializer.Write(JsonElement, IReadOnlyList<string>)` 与 `Read(string)`。自上游 `7175360` 起，传入的路径是候选路径：库验证所有路径，但只把按骨架 JSON 编码后需要转义的字符串外置；无需转义的候选值留在骨架里。
 
 Galatea 的局部 renderer 执行：
 
@@ -107,7 +107,7 @@ Render(input):
 ```
 
 - `/action/text`、`/notices/0/body` 等路径由领域 shape 决定；省略字段和不同 notice 类型不能盲目复用固定路径。路径错误是渲染失败，不静默改为其他格式。
-- 路径列表和外置正文块的物理顺序是 renderer 配置，不写入业务 JSON、outbox 或角色配置。业务顺序由持久数组/有序段及其关联表达；正文块位置不能重新定义它。默认按业务遍历顺序生成路径，不另存一份排序清单。首版不新增属性标注、反射规则、路径 DSL 或策略框架。
+- 候选路径列表和实际外置正文块的物理顺序是 renderer 配置，不写入业务 JSON、outbox 或角色配置。业务顺序由持久数组/有序段及其关联表达；正文块位置不能重新定义它。默认按业务遍历顺序生成路径，不另存一份排序清单。首版不新增属性标注、反射规则、路径 DSL 或策略框架。
 - 正常存储读取直接反序列化 JSON，不需要 `Read` 解析历史 Markdown。md-json 的 `Read` 可用于局部往返验证，旧 Galatea envelope 仍用原解码器读取。`Read` 成功不是完整性或投递证明：完整删除外置正文块可能仍产生合法文档，Galatea 的证明继续使用机读事实。
 - ProjectReference 的源码根由明确 MSBuild 属性或仓库相对路径解析，缺失时给出明确构建错误，不写死 `/repos/focus` 到可移植项目文件。接入时固定并记录所测试 sibling commit；以后采用 NuGet 是独立依赖方式变化，不改变输入 schema。
 - 库支持域、正文精确保真已有该仓测试；Galatea 仍须以自己的混合输入验证。当前无证据证明一定节省 token 或改善模型理解，不以这两点作为迁移前提。

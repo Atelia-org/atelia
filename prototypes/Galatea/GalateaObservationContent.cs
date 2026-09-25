@@ -259,8 +259,6 @@ internal static class GalateaObservationContent {
             content.SchemaId == V4SchemaId ? state.GetProperty("turnName").GetString()! : "");
     }
 
-    internal static IReadOnlyList<string> ExternalStringPaths(string? schemaId, JsonElement value) => GalateaObservationSchema.ExternalStringPaths(schemaId, value);
-
     internal static string DisplayText(SessionInputContent content) {
         Validate(content);
         JsonElement value = content.JsonValue;

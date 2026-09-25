@@ -106,7 +106,7 @@ internal static class GalateaObservationSchema {
         }
     }
 
-    internal static IReadOnlyList<string> ExternalStringPaths(string? schemaId, JsonElement value) {
+    internal static IReadOnlyList<string> CandidateStringPaths(string? schemaId, JsonElement value) {
         Validate(schemaId, value);
         var paths = new List<string>();
         string? kind = value.GetProperty("kind").GetString();

@@ -79,6 +79,24 @@ public sealed class GalateaStructuredInputTests {
     }
 
     [Fact]
+    public void PlayerAction_CandidatePathKeepsPlainTextInlineAndExternalizesEscapedText() {
+        const string plainText = "继续前进";
+        const string escapedText = "继续\n前进";
+        var sender = new GalateaSenderSnapshot("player", "player-main", "访客");
+        SessionInputContent plain = GalateaObservationContent.CreatePlayerAction(sender, plainText, Time);
+        SessionInputContent escaped = GalateaObservationContent.CreatePlayerAction(sender, escapedText, Time);
+
+        string plainProjection = GalateaInputProjector.Instance.Project(plain);
+        string escapedProjection = GalateaInputProjector.Instance.Project(escaped);
+
+        Assert.Contains("\"text\": \"继续前进\"", plainProjection, StringComparison.Ordinal);
+        Assert.DoesNotContain("## \"/action/text\"", plainProjection, StringComparison.Ordinal);
+        Assert.Contains("## \"/action/text\"", escapedProjection, StringComparison.Ordinal);
+        Assert.Equal(plainText, MdJsonSerializer.Read(plainProjection).GetProperty("action").GetProperty("text").GetString());
+        Assert.Equal(escapedText, MdJsonSerializer.Read(escapedProjection).GetProperty("action").GetProperty("text").GetString());
+    }
+
+    [Fact]
     public void PlayerAction_RejectsCharacterIdentity() {
         Assert.Throws<ArgumentException>(() => GalateaObservationContent.CreatePlayerAction(
             new GalateaSenderSnapshot("character", "g-01", "Galatea"), "hello", Time));
