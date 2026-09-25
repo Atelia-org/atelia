@@ -1,5 +1,22 @@
 # SessionJournal.Cli
 
+## 导出终结 Action 原文
+
+按 EventJournal 地址从现有 SessionJournal repository 只读提取一个已完成回合的终结
+Action，将其 `ActionBlock.Text` 按原顺序直接拼接，写成无 BOM 的 UTF-8 文件。不添加标题、
+分隔符或结尾换行，也不执行 Galatea 的可见文本过滤；独立的 reasoning/tool-call block
+不写入文本文件。命令只接受终结 Action 地址；输出文件必须在 repository 外且不存在。
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- export-action-text \
+  --input <session-journal-repo-dir> \
+  --address <ej1:...> \
+  --output <new-text-file>
+```
+
+`--branch` 可选，默认为 `main`。成功时 stdout 仅报告地址、路径、UTF-8 字节数与
+SHA-256，不输出正文。
+
 ## 离线 branch 回退
 
 `rewind-branch` 是低层 raw lineage repair，不是 Galatea 的 completed-turn Undo。
