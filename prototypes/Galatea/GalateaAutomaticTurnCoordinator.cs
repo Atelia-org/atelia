@@ -167,10 +167,12 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             "character-memory-extraction-timeout" => "Note 提取超时，尚未完成保存。",
             "character-memory-extraction-aborted" => "Note 提取被中止，尚未完成保存。",
             "character-memory-extraction-unavailable" => "Note 提取未成功完成。",
+            "character-memory-unrepresentable-layout" => "Note 正文无法表示为连续整行范围，需要维护原 Action 的处理状态；重复提取不能修复正文布局。",
             "character-memory-pod-unavailable" => "Note 存储暂时不可用。",
             "character-memory-settlement-deferred" => "Note 保存处理暂未完成。",
             "character-memory-quarantined" or "character-memory-state-invalid" => "Note 存储状态需要检查。",
             "delegation-extraction-unavailable" => "发信请求提取未成功完成。",
+            "delegation-unrepresentable-layout" => "邮件正文无法表示为连续整行范围，需要维护原 Action 的处理状态；重复提取不能修复正文布局。",
             _ => "轮次开始前的未完成处理失败，请重试或检查服务端诊断。",
         };
         // Only expose known diagnostic categories, never provider response text

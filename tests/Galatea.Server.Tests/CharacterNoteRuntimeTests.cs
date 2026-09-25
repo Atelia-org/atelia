@@ -25,8 +25,10 @@ public sealed class CharacterNoteRuntimeTests {
         "model-a"
     );
     private const string Action = """
-        [Galatea] I sent mail body to Alice and completed sending.
-        [Galatea] I submitted a long-term Note save request with exact text: remember blue, and completed the submission.
+        [Galatea] I sent this letter to Alice and completed sending.
+        mail body
+        [Galatea] I completed submitting this long-term Note save request.
+        remember blue
         """;
     private const string NoteText = "remember blue";
 
@@ -80,10 +82,8 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Equal("completed", turn.Status);
             Assert.Equal(2, helperClient.Requests.Count);
             Assert.All(helperClient.Requests, request => Assert.Contains(
-                Action,
-                Assert.IsType<ObservationMessage>(
-                    Assert.Single(request.TailMessages)
-                ).Content,
+                TextExtractionInput.Numbered(Action).RenderedText,
+                ReadExtractionTarget(request),
                 StringComparison.Ordinal
             ));
             GalateaDelegationStateSnapshot durable = session
@@ -465,6 +465,63 @@ public sealed class CharacterNoteRuntimeTests {
             });
         }
         finally {
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task AcceptedNoteThenContinuationFailureDoesNotSaveAndRetrySkipsCapturedMail() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var mailClient = new QueueClient(Message(MailTool()));
+        var noteClient = new NoteContinuationFailureClient();
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(StringComparer.Ordinal) {
+                [main.Id] = new QueueClient(Message(new ActionBlock.Text(Action))),
+                [mail.Id] = mailClient,
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            connectionOptionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, CharacterSessionHost session) = await GetRuntimeAsync(host);
+        await session.TurnLock.WaitAsync();
+        try {
+            GalateaLiveTurn turn = service.StartTurn(session, "loop atomicity",
+                new GalateaTurnOptions(main.Id), sender: GalateaDelegateTestConfiguration.PlayerSender);
+            Task run = service.RunTurnAsync(session, turn, CancellationToken.None);
+            await noteClient.ContinuationEntered.Task.WaitAsync(Deadline);
+            await WaitUntilAsync(() => session.DelegationHandle!.Store.ReadSnapshot().Captures.Count == 1);
+            Assert.Null(session.CharacterMemoryReconciler!.ReadStatusSnapshot().ActiveCapture);
+            Assert.Null(session.CharacterMemoryReconciler.ReadPendingReceiptDelivery());
+            Assert.Empty(global::Atelia.MemoPod.MemoPod.Open(
+                session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List());
+
+            noteClient.ReleaseFailure();
+            await run.WaitAsync(Deadline);
+            service.FinishTurn(session, turn);
+            Assert.Equal("completed", turn.Status);
+            Assert.Single(session.DelegationHandle!.Store.ReadSnapshot().Mails);
+            Assert.Null(session.CharacterMemoryReconciler.ReadPendingReceiptDelivery());
+            Assert.Empty(global::Atelia.MemoPod.MemoPod.Open(
+                session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List());
+
+            await service.ReconcileDurableAdmissionAsync(session, CancellationToken.None);
+            Assert.Equal(1, mailClient.DispatchCount);
+            Assert.Equal(2, noteClient.BatchCount);
+            Assert.Equal(4, noteClient.CompletionCount);
+            Assert.Single(session.DelegationHandle.Store.ReadSnapshot().Captures);
+            Assert.Single(session.DelegationHandle.Store.ReadSnapshot().Mails);
+            Assert.Equal(NoteText, Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
+                session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()).ExactText);
+            Assert.NotNull(session.CharacterMemoryReconciler.ReadPendingReceiptDelivery());
+        }
+        finally {
+            noteClient.ReleaseFailure();
             session.TurnLock.Release();
         }
     }
@@ -1742,6 +1799,11 @@ public sealed class CharacterNoteRuntimeTests {
         );
     }
 
+    private static string ReadExtractionTarget(CompletionRequest request) =>
+        System.Xml.Linq.XDocument.Parse(Assert.IsType<string>(
+            Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages)).Content))
+            .Root!.Element("target-text")!.Value;
+
     private static CompletionConnectionConfig Connection(string id) => new(
         id,
         "openai-chat",
@@ -1758,15 +1820,23 @@ public sealed class CharacterNoteRuntimeTests {
             string.Equals(definition.Name, name, StringComparison.Ordinal)
         );
 
+    // Script counters track independent extraction batches, excluding loop termination.
+    private static bool IsExtractorContinuation(CompletionRequest request) =>
+        request.TailMessages.Length > 1
+        && (HasTool(request, OutboundMailExtractor.ToolName)
+            || HasTool(request, CharacterNoteExtractor.ToolName));
+
     private static ActionBlock.ToolCall MailTool() => new(new RawToolCall(
         OutboundMailExtractor.ToolName,
         "mail-call",
         JsonSerializer.Serialize(new {
             recipient = "Alice",
             subject = (string?)null,
-            body = "mail body",
+            bodyStartLine = 2,
+            bodyEndLine = 2,
             inReplyToMessageId = (string?)null,
-            evidenceQuote = "completed sending",
+            evidenceStartLine = 1,
+            evidenceEndLine = 1,
         }, new JsonSerializerOptions {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         })
@@ -1777,7 +1847,10 @@ public sealed class CharacterNoteRuntimeTests {
     ) => new(new RawToolCall(
         CharacterNoteExtractor.ToolName,
         "note-call",
-        JsonSerializer.Serialize(new { text })
+        JsonSerializer.Serialize(new {
+            textStartLine = string.IsNullOrWhiteSpace(text) ? 0 : text == NoteText ? 4 : 3,
+            textEndLine = 4,
+        })
     ));
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>
@@ -1853,6 +1926,40 @@ public sealed class CharacterNoteRuntimeTests {
         }
     }
 
+    private sealed class NoteContinuationFailureClient : ICompletionClient {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _batches;
+        private int _completions;
+        public string Name => "note-continuation-failure";
+        public string ApiSpecId => "test-v1";
+        internal int BatchCount => Volatile.Read(ref _batches);
+        internal int CompletionCount => Volatile.Read(ref _completions);
+        internal TaskCompletionSource ContinuationEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void ReleaseFailure() => _release.TrySetResult();
+
+        public async Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request, CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!HasTool(request, CharacterNoteExtractor.ToolName)) {
+                return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
+            }
+            Interlocked.Increment(ref _completions);
+            if (!IsExtractorContinuation(request)) {
+                Interlocked.Increment(ref _batches);
+                return new CompletionResult(Message(NoteTool()), CompletionDescriptor.From(this, request));
+            }
+            if (BatchCount == 1) {
+                ContinuationEntered.TrySetResult();
+                await _release.Task.WaitAsync(cancellationToken);
+                throw new TextExtractionException(TextExtractionFailureKind.ClientUnavailable,
+                    "note continuation unavailable");
+            }
+            return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
+        }
+    }
+
     private sealed class OverlapExtractorClient : ICompletionClient {
         private readonly ConcurrentQueue<CompletionRequest> _requests = new();
         private readonly TaskCompletionSource _release = new(
@@ -1878,9 +1985,11 @@ public sealed class CharacterNoteRuntimeTests {
             CancellationToken cancellationToken = default
         ) {
             _ = observer;
-            if (!Assert.IsType<string>(Assert.IsType<ObservationMessage>(
-                    Assert.Single(request.TailMessages)).Content)
-                .Contains(Action, StringComparison.Ordinal)) {
+            if (IsExtractorContinuation(request)) {
+                return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
+            }
+            if (!ReadExtractionTarget(request)
+                .Contains(TextExtractionInput.Numbered(Action).RenderedText, StringComparison.Ordinal)) {
                 return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
             }
             _requests.Enqueue(request);
@@ -2117,6 +2226,9 @@ public sealed class CharacterNoteRuntimeTests {
             CancellationToken cancellationToken = default
         ) {
             _ = observer;
+            if (IsExtractorContinuation(request)) {
+                return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
+            }
             Entered.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
             return new CompletionResult(
@@ -2146,6 +2258,9 @@ public sealed class CharacterNoteRuntimeTests {
             CancellationToken cancellationToken = default
         ) {
             _ = observer;
+            if (IsExtractorContinuation(request)) {
+                return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
+            }
             Entered.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
             return new CompletionResult(
@@ -2172,6 +2287,9 @@ public sealed class CharacterNoteRuntimeTests {
             CancellationToken cancellationToken = default
         ) {
             cancellationToken.ThrowIfCancellationRequested();
+            if (IsExtractorContinuation(request)) {
+                return Task.FromResult(new CompletionResult(Message(), CompletionDescriptor.From(this, request)));
+            }
             ActionMessage message;
             lock (_gate) {
                 message = _messages.Dequeue();

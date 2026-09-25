@@ -28,6 +28,7 @@
 | Player / Character 身份分离 | [重构方案](player-character-separation-design.md)：零 Player、超级管理员与可信来源；[结构化输入专题](structured-input-rendering-design.md)定义稳定存储、md-json 瞬态渲染及恢复边界；实施状态与验证见[工作单](player-character-implementation-work-order.md) |
 | prompt 的代码与 operator 分工 | [prompt 资源说明](prompt/README.md) |
 | TextExtractor 与 Observation 通讯 | [Observation Bridge](text-extractor-observation-bridge.md) |
+| Mail / Note 行号提取与 Tool-Loop | [设计与实施验收](mail-note-line-range-design.md)：已落地；GM 连续正文、原文切片、有界循环、完整批次捕获及真实样本重放 |
 | 角色具象状态与模型选择 | [设计与实施记录](character-connection-state-design.md)：状态识别、进程内 override、连接快照与机制提示 |
 | Character Note、Default MemoPod | [忠实代写](character-note-transcription.md)、[保存合同](character-note-default-memopod-v1.md)、[自动记忆工作单](automatic-memory-work-order.md) |
 | durable Codex delegation | [状态机设计](codex-delegation-durability-design.md)、[V3 resilience 实施记录](codex-delegation-local-resilience-work-order.md) |

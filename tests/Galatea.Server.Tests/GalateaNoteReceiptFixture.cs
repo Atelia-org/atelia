@@ -18,8 +18,8 @@ namespace Atelia.Galatea.Server.Tests;
 internal static class GalateaNoteReceiptFixture {
     internal static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
     internal const string NoteText = "The blue door opens toward the quiet garden.";
-    internal const string NoteAction = "I submitted a long-term Note save request with exact text: "
-        + NoteText + " I completed the submission.";
+    internal const string NoteAction = "I submitted a long-term Note save request with exact text:\n"
+        + NoteText + "\nI completed the submission.";
     internal const string DerivedTitle = "Blue garden door";
     internal const string ContinueAction = "I continue exploring the garden.";
     internal static CompletionConnectionConfig MainConnection { get; } = Connection("test", "model-a");
@@ -112,13 +112,16 @@ internal static class GalateaNoteReceiptFixture {
         private int Epoch { get; } = epoch;
         private int _mainCalls;
         private int _extractorCalls;
+        private int _extractorRounds;
         private int _derivedCalls;
         private int _saveIntents;
         internal int MainCalls => Volatile.Read(ref _mainCalls);
+        // One extraction batch may span an artifact round and a zero-tool round.
         internal int ExtractorCalls => Volatile.Read(ref _extractorCalls);
+        internal int ExtractorRounds => Volatile.Read(ref _extractorRounds);
         internal int DerivedCalls => Volatile.Read(ref _derivedCalls);
         internal int SaveIntents => Volatile.Read(ref _saveIntents);
-        internal int TotalCalls => MainCalls + ExtractorCalls + DerivedCalls;
+        internal int TotalCalls => MainCalls + ExtractorRounds + DerivedCalls;
         internal string? CurrentObservation { get; private set; }
         internal TaskCompletionSource MainEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseMain { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -145,12 +148,21 @@ internal static class GalateaNoteReceiptFixture {
                     result = new([new ActionBlock.Text(text)]);
                 }
                 else if (HasTool(request, CharacterNoteExtractor.ToolName)) {
-                    Assert.Equal(1, Interlocked.Increment(ref factory._extractorCalls));
-                    string target = Assert.IsType<string>(Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages)).Content);
-                    if (target.Contains(NoteAction, StringComparison.Ordinal)) {
+                    Interlocked.Increment(ref factory._extractorRounds);
+                    bool continuation = request.TailMessages.OfType<ActionMessage>().Any();
+                    if (!continuation) {
+                        Assert.Equal(1, Interlocked.Increment(ref factory._extractorCalls));
+                    }
+                    string target = Assert.IsType<string>(Assert.IsType<ObservationMessage>(request.TailMessages[0]).Content);
+                    if (continuation) {
+                        Assert.Equal(1, factory.Epoch);
+                        Assert.Equal(2, factory.ExtractorRounds);
+                        result = new([]);
+                    }
+                    else if (target.Contains(NoteText, StringComparison.Ordinal)) {
                         Assert.Equal(1, factory.Epoch);
                         Interlocked.Increment(ref factory._saveIntents);
-                        result = Tool(CharacterNoteExtractor.ToolName, new { text = NoteText });
+                        result = Tool(CharacterNoteExtractor.ToolName, new { textStartLine = 2, textEndLine = 2 });
                     }
                     else {
                         Assert.True(factory.Epoch > 1);

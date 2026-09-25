@@ -1459,6 +1459,10 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
                 "character-memory-extraction-timeout",
             OperationCanceledException when mailAborted =>
                 "character-memory-extraction-aborted",
+            TextExtractionException { Kind: TextExtractionFailureKind.UnrepresentableLayout } =>
+                "character-memory-unrepresentable-layout",
+            TextExtractionException { Kind: TextExtractionFailureKind.DeadlineExceeded } =>
+                "character-memory-extraction-timeout",
             TextExtractionException =>
                 "character-memory-extraction-unavailable",
             CharacterNoteDefaultPodAccessException =>
@@ -1473,8 +1477,8 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     }
 
     private CancellationTokenSource CreateCharacterNoteTestDeadline() {
-        // Production generation attempts own their deadlines in the retry
-        // decorator. Do not deadline the complete logical extraction/retry.
+        // The extractor owns the production whole-batch deadline; this separate
+        // hook lets host tests drive cancellation and drain deterministically.
         if (CharacterNoteExtractionDeadlineSignalForTest is { } signal) {
             if (CharacterNoteExtractionDeadlineForTest is not null) {
                 throw new InvalidOperationException(
@@ -2391,6 +2395,14 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
                 exception
             );
         }
+        catch (TextExtractionException exception) when (
+            exception.Kind == TextExtractionFailureKind.UnrepresentableLayout) {
+            throw new GalateaTurnException(
+                "The source Action contains a mail body that cannot be represented by a clean line range. Maintenance is required.",
+                "delegation-unrepresentable-layout",
+                exception
+            );
+        }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
             string reason = exception is
@@ -2682,6 +2694,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         bool mailAborted
     ) => exception switch {
         OperationCanceledException when deadlineExpired || mailAborted => true,
+        TextExtractionException { Kind: TextExtractionFailureKind.UnrepresentableLayout } => false,
         TextExtractionException => true,
         CharacterNoteDefaultPodAccessException access when access.Kind is
             CharacterNoteDefaultPodFailureKind.NotFound
@@ -2714,8 +2727,12 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     private static GalateaTurnException CreateCharacterNoteFailClosed(
         Exception failure
     ) => new(
-            "Character Memory reconciliation violated its durable boundary.",
-            "character-memory-state-invalid",
+            failure is TextExtractionException { Kind: TextExtractionFailureKind.UnrepresentableLayout }
+                ? "The source Action contains a Note body that cannot be represented by a clean line range. Maintenance is required."
+                : "Character Memory reconciliation violated its durable boundary.",
+            failure is TextExtractionException { Kind: TextExtractionFailureKind.UnrepresentableLayout }
+                ? "character-memory-unrepresentable-layout"
+                : "character-memory-state-invalid",
             failure
         );
 

@@ -26,7 +26,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         using var automaticCompletionStarted = new ManualResetEventSlim();
         using var releaseAutomaticCompletion = new ManualResetEventSlim();
         var mainClient = new QueueClient(
-            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "[Galatea] sent this letter to Codex.\nautomatic task"),
             request => {
                 AssertReplyRecallVisible(request);
                 automaticCompletionStarted.Set();
@@ -655,7 +655,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
-            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "[Galatea] sent this letter to Codex.\nreply after pause"),
             _ => Failed(main, "simulated autonomous completion failure"),
             _ => Completed(main, "received reply after autonomy pause")
         );
@@ -767,7 +767,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
-            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "[Galatea] sent this letter to Codex.\nreply after stop"),
             _ => Completed(main, "received reply after manual activity")
         );
         var extractorClient = new QueueClient(
@@ -931,7 +931,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         const string ReplyOne = "first reply ```nested```";
         const string ReplyTwo = "second reply <tag>值</tag>";
         var mainClient = new QueueClient(
-            _ => Completed(main, "[Galatea] sent two letters."),
+            _ => Completed(main, "[Galatea] sent these two letters to Codex.\nfirst task\nsecond task"),
             request => {
                 AssertReplyRecallVisible(request);
                 return Completed(main, "received both replies");
@@ -1062,7 +1062,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
-            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "[Galatea] sent this letter to Codex.\nautomatic task"),
             _ => Completed(main, "manual marker accepted"),
             _ => Completed(main, "typed reply accepted")
         );
@@ -1190,7 +1190,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
-            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "[Galatea] sent this letter to Codex.\nrestart task"),
             _ => Completed(main, "received restart reply")
         );
         var extractorClient = new QueueClient(
@@ -1291,7 +1291,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
-            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "[Galatea] sent this letter to Codex.\ninterrupted task"),
             _ => Completed(main, "received interruption notice")
         );
         var extractorClient = new QueueClient(
@@ -1601,9 +1601,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             JsonSerializer.Serialize(new {
                 recipient = "Codex",
                 subject = (string?)null,
-                body,
+                bodyStartLine = body == "second task" ? 3 : 2,
+                bodyEndLine = body == "second task" ? 3 : 2,
                 inReplyToMessageId = (string?)null,
-                evidenceQuote = "sent",
+                evidenceStartLine = 1,
+                evidenceEndLine = 1,
             }, new JsonSerializerOptions {
                 DefaultIgnoreCondition = System.Text.Json.Serialization
                     .JsonIgnoreCondition.WhenWritingNull
@@ -1635,6 +1637,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             CancellationToken cancellationToken = default
         ) {
             cancellationToken.ThrowIfCancellationRequested();
+            // The script queue and CallCount track batches; loop termination consumes neither.
+            if (request.TailMessages.Length > 1
+                && request.PromptPrefix.OutputContract.Tools.Any(
+                    tool => tool.Name == OutboundMailExtractor.ToolName)) {
+                return Task.FromResult(new CompletionResult(
+                    new ActionMessage([]), CompletionDescriptor.From(this, request)));
+            }
             Interlocked.Increment(ref _callCount);
             CompletionResult result = _scripts.Dequeue()(request);
             foreach (ActionBlock.Text text in result.Message.Blocks

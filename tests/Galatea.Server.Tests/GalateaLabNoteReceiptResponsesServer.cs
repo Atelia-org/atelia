@@ -151,8 +151,9 @@ internal sealed class GalateaLabNoteReceiptResponsesServer : IAsyncDisposable {
                     && MainCalls == 2 && Volatile.Read(ref _authorized) == 1,
                 "An unplanned helper call was attempted.");
             JsonElement[] tools = request.GetProperty("tools").EnumerateArray().ToArray();
-            Require(tools.Length == 1
-                    && tools[0].GetProperty("name").GetString() == CharacterNoteExtractor.ToolName
+            Require(tools.Length == 2
+                    && tools.Any(tool => tool.GetProperty("name").GetString() == CharacterNoteExtractor.ToolName)
+                    && tools.Any(tool => tool.GetProperty("name").GetString() == "report_extraction_problem")
                     && UserInputContains(request, Answer),
                 "Only extraction from the completed synthetic acknowledgment is permitted.");
             await WriteCompletedAsync(context, "No qualifying Note request.");

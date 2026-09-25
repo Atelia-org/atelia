@@ -13,6 +13,44 @@ public sealed class GalateaAdmissionRetryTests {
     private const string Endpoint = "/api/v1/characters/alice/agent/retry-admission";
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
+    [Fact]
+    public async Task UnrepresentableLayoutBlocksAdmissionWithoutCaptureOrGenerationRetry() {
+        var completion = new Factory { FailExtraction = false, ReportLayoutProblem = true };
+        await using var fixture = GalateaTestHost.Create(completion,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [Connection("test"), Connection("note")],
+            connectionOptionIds: ["test"], characterNoteExtractorConnectionId: "note");
+        var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
+        CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = host.StartTurn(session, "save a note", new("test"), GalateaDelegateTestConfiguration.PlayerSender);
+        try {
+            GalateaTurnException failure = await Assert.ThrowsAsync<GalateaTurnException>(
+                () => host.RunTurnAsync(session, turn, CancellationToken.None).WaitAsync(Deadline));
+            Assert.Equal("character-memory-unrepresentable-layout", failure.FailureReason);
+            var extraction = Assert.IsType<TextExtractionException>(failure.InnerException);
+            Assert.NotNull(extraction.ExtractionSource);
+            Assert.Equal("alice", extraction.ExtractionSource.CharacterId);
+            Assert.Equal(Atelia.SessionJournal.EventAddressTextCodec.Format(session.Engine.ReadCurrentHead()!.Value),
+                extraction.ExtractionSource.SourceAction);
+        }
+        finally {
+            host.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+        Assert.Equal(1, completion.ExtractionCalls);
+        var head = session.Engine.ReadCurrentHead();
+        using HttpClient client = fixture.CreateClient();
+        using var login = await GalateaTestHost.LoginAsync(client);
+        using var response = await client.PostAsync(Endpoint, Json("{}"));
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("character-memory-unrepresentable-layout", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(2, completion.ExtractionCalls); // One batch per explicit attempt, no generation retry.
+        Assert.Equal(1, completion.MainCalls);
+        Assert.Equal(head, session.Engine.ReadCurrentHead());
+        Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -217,6 +255,7 @@ public sealed class GalateaAdmissionRetryTests {
         internal int MainCalls;
         internal int ExtractionCalls;
         internal bool FailExtraction = true;
+        internal bool ReportLayoutProblem;
         internal bool GateExtraction;
         internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -229,7 +268,9 @@ public sealed class GalateaAdmissionRetryTests {
                 ActionMessage message;
                 if (main) {
                     Interlocked.Increment(ref factory.MainCalls);
-                    message = new([new ActionBlock.Text("[Galatea] Please save this long-term Note: Remember the blue door.")]);
+                    message = new([new ActionBlock.Text(factory.ReportLayoutProblem
+                        ? "[Galatea] Please save this long-term Note: Remember the blue door. I close my notebook."
+                        : "[Galatea]\nPlease save this long-term Note:\nRemember the blue door.")]);
                 }
                 else if (request.PromptPrefix.OutputContract.Tools.Any(tool => tool.Name == CharacterNoteExtractor.ToolName)) {
                     Interlocked.Increment(ref factory.ExtractionCalls);
@@ -240,8 +281,13 @@ public sealed class GalateaAdmissionRetryTests {
                     if (factory.FailExtraction) {
                         throw new TextExtractionException(TextExtractionFailureKind.CompletionOutputInvalid, "private provider detail");
                     }
-                    message = new([new ActionBlock.ToolCall(new RawToolCall(CharacterNoteExtractor.ToolName,
-                        "note", JsonSerializer.Serialize(new { text = "Remember the blue door." })))]);
+                    message = factory.ReportLayoutProblem
+                        ? new([new ActionBlock.ToolCall(new RawToolCall("report_extraction_problem", "layout",
+                            "{\"reason\":\"unrepresentable_layout\"}"))])
+                        : request.TailMessages.OfType<ToolResultsMessage>().Any()
+                        ? new([])
+                        : new([new ActionBlock.ToolCall(new RawToolCall(CharacterNoteExtractor.ToolName,
+                            "note", JsonSerializer.Serialize(new { textStartLine = 3, textEndLine = 3 })))]);
                 }
                 else { message = new([]); }
                 return new(message, CompletionDescriptor.From(this, request));

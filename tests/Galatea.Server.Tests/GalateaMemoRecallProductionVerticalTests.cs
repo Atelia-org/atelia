@@ -100,7 +100,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         const string exactText = "旧城区的蓝门后藏着一把钥匙。";
         const string title = "旧城区的蓝门";
         var main = new MainCompletionClient([
-            "[Galatea] 我把“旧城区的蓝门后藏着一把钥匙。”作为长期Note提交给runtime保存。",
+            "[Galatea] 我把以下内容作为长期Note提交给runtime保存。\n旧城区的蓝门后藏着一把钥匙。",
             "origin already visible",
             "main reply after recall",
             "recall already visible",
@@ -764,7 +764,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                             CharacterNoteExtractor.ToolName,
                             "call-note",
                             JsonSerializer.Serialize(new {
-                                text = "旧城区的蓝门后藏着一把钥匙。",
+                                textStartLine = 2,
+                                textEndLine = 2,
                             })
                         )
                     )])

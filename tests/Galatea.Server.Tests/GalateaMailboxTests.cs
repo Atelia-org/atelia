@@ -109,12 +109,12 @@ public sealed class GalateaMailboxTests {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
-            _ => Message(new ActionBlock.Text("Alice sent a letter to Bob.")),
+            _ => Message(new ActionBlock.Text("Alice sent a letter to Bob.\nhello Bob")),
             _ => Message(new ActionBlock.Text("Bob received Alice's letter."))
         );
         var extractorClient = new QueueClient(
-            _ => Message(Tool("mail-alice-bob", "Bob", "greeting", "hello Bob",
-                null, "sent")),
+            _ => Message(Tool("mail-alice-bob", "Bob", "greeting", 2, 2, null, 1, 1)),
+            _ => Message(),
             _ => Message()
         );
         var factory = new RoutingFactory(new Dictionary<string, ICompletionClient>(
@@ -249,61 +249,56 @@ public sealed class GalateaMailboxTests {
 
     [Fact]
     public async Task Extractor_ReturnsZeroAndOrderedTypedMailsAndRejectsInvalidHeaders() {
-        CompletionConnectionConfig connection = Connection("extractor");
         var client = new QueueClient(
             _ => Message(),
-            _ => Message(
-                Tool("c1", "Alice", "S1", "first body", null,
-                    "sent first body"),
-                Tool("c2", "Bob", null, "second body",
-                    "0123456789abcdef0123456789abcdef",
-                    "sent second body")
-            ),
-            _ => Message(
-                Tool("c3", "Alice\nBcc", null, "body", null,
-                    "sent body")
-            ),
-            _ => Message(
-                Tool("c4", "Alice", "subject\u2028Injected", "body",
-                    null, "sent body")
-            )
-        );
-        var extractor = new OutboundMailExtractor(
-            new GalateaCharacterName("Galatea"),
-            connection,
-            () => client
-        );
-
-        Assert.Empty(await extractor.ExtractAsync(
-            "[Galatea] I only drafted a note.",
-            CancellationToken.None
-        ));
+            _ => Message(Tool("later", "Bob", null, 4, 4, null, 5, 5)),
+            _ => Message(Tool("earlier", "Alice", "S1", 2, 2, null, 3, 3)),
+            _ => Message(Tool("repeat", "Alice", "S1", 2, 2, null, 3, 3)),
+            _ => Message(),
+            _ => Message(Tool("bad-recipient", "Alice\nBcc", null, 1, 1, null, 1, 1)),
+            _ => Message(Tool("bad-subject", "Alice", "subject\u2028Injected", 1, 1, null, 1, 1)));
+        var extractor = new OutboundMailExtractor(new GalateaCharacterName("Galatea"), Connection("extractor"), () => client);
+        Assert.Empty(await extractor.ExtractAsync("[Galatea] only drafted mail.", CancellationToken.None));
         string contract = client.Requests[0].PromptPrefix.SystemPrompt;
-        Assert.Contains("composite GM carrier", contract,
-            StringComparison.Ordinal);
-        Assert.Contains("Plans, wishes, suggestions, drafts", contract,
-            StringComparison.Ordinal);
-        Assert.Contains("Never attribute another character's acts", contract,
-            StringComparison.Ordinal);
-        IReadOnlyList<SendMailIntent> mails = await extractor.ExtractAsync(
-            "[Galatea] sent first body to Alice with S1; then sent second body to Bob replying to 0123456789abcdef0123456789abcdef.",
-            CancellationToken.None
-        );
-        Assert.Equal(["Alice", "Bob"], mails.Select(static x => x.Recipient));
-        Assert.Equal(["first body", "second body"], mails.Select(static x => x.Body));
+        Assert.Contains("composite GM carrier", contract, StringComparison.Ordinal);
+        Assert.Contains("Plans, wishes, suggestions, drafts", contract, StringComparison.Ordinal);
+        Assert.Contains("Never attribute another character's acts", contract, StringComparison.Ordinal);
+        var mails = await extractor.ExtractAsync("[Galatea]\nfirst body\nsent first\nsecond body\nsent second", CancellationToken.None);
+        Assert.Equal(["Alice", "Bob"], mails.Select(mail => mail.Recipient));
+        Assert.Equal(["first body", "second body"], mails.Select(mail => mail.Body));
+        Assert.Equal(5, client.Requests.Count);
+        await Assert.ThrowsAsync<TextExtractionException>(() => extractor.ExtractAsync("body", CancellationToken.None).AsTask());
+        await Assert.ThrowsAsync<TextExtractionException>(() => extractor.ExtractAsync("body", CancellationToken.None).AsTask());
+    }
 
-        await Assert.ThrowsAsync<TextExtractionException>(() => extractor
-            .ExtractAsync(
-                "[Galatea] sent body to Alice\nBcc and sent body.",
-                CancellationToken.None
-            )
-            .AsTask());
-        await Assert.ThrowsAsync<TextExtractionException>(() => extractor
-            .ExtractAsync(
-                "[Galatea] sent body to Alice with subject\u2028Injected; sent body.",
-                CancellationToken.None
-            )
-            .AsTask());
+    [Fact]
+    public async Task SameBodyDifferentOccurrenceOrRecipientIsRetainedButMetadataConflictFails() {
+        var client = new QueueClient(_ => Message(
+            Tool("a", "Alice", null, 1, 1, null, 3, 3),
+            Tool("b", "Alice", null, 2, 2, null, 3, 3),
+            Tool("c", "Bob", null, 1, 1, null, 3, 3)), _ => Message());
+        var extractor = new OutboundMailExtractor(new GalateaCharacterName("Galatea"), Connection("extractor"), () => client);
+        var mails = await extractor.ExtractAsync("same body\nsame body\nsent all", CancellationToken.None);
+        Assert.Equal(["Alice", "Bob", "Alice"], mails.Select(mail => mail.Recipient));
+        var conflictClient = new QueueClient(_ => Message(Tool("first", "Alice", null, 1, 1, null, 2, 2)),
+            _ => Message(Tool("conflict", "Alice", "changed", 1, 1, null, 2, 2)));
+        var conflict = new OutboundMailExtractor(new GalateaCharacterName("Galatea"), Connection("extractor"), () => conflictClient);
+        await Assert.ThrowsAsync<TextExtractionException>(() => conflict.ExtractAsync("body\nsent", CancellationToken.None).AsTask());
+    }
+
+    [Fact]
+    public async Task MailCumulativeMaterializedBudgetCountsEvidenceAndAllowsDuplicateAtBoundary() {
+        string body = new('x', GalateaMailboxBounds.MaximumBodyUtf8Bytes - 1);
+        string source = body + "\ne";
+        var first = Enumerable.Range(0, 16).Select(i => Tool($"m-{i}", $"recipient-{i}", null, 1, 1, null, 2, 2)).ToArray();
+        var client = new QueueClient(_ => Message(first),
+            _ => Message(Tool("duplicate", "recipient-0", null, 1, 1, null, 2, 2)), _ => Message());
+        var extractor = new OutboundMailExtractor(new GalateaCharacterName("Galatea"), Connection("extractor"), () => client);
+        Assert.Equal(16, (await extractor.ExtractAsync(source, CancellationToken.None)).Count);
+        var overClient = new QueueClient(_ => Message(first),
+            _ => Message(Tool("extra", "recipient-16", null, 1, 1, null, 2, 2)));
+        var over = new OutboundMailExtractor(new GalateaCharacterName("Galatea"), Connection("extractor"), () => overClient);
+        await Assert.ThrowsAsync<TextExtractionException>(() => over.ExtractAsync(source, CancellationToken.None).AsTask());
     }
 
 #if DEBUG
@@ -311,10 +306,8 @@ public sealed class GalateaMailboxTests {
     public async Task MailDiagnostics_KeepSecondCandidateRejectionDistinctFromOneMailCapture() {
         var diagnostics = new List<string>();
         var client = new QueueClient(_ => Message(
-            Tool("first", "Codex", null, "first body", null,
-                "sent first"),
-            Tool("second", "姬澄\nBcc", null, "second body", null,
-                "sent second")
+            Tool("first", "Codex", null, 1, 1, null, 2, 2),
+            Tool("second", "姬澄\nBcc", null, 1, 1, null, 2, 2)
         ));
         var extractor = new OutboundMailExtractor(
             new GalateaCharacterName("Galatea"),
@@ -327,7 +320,7 @@ public sealed class GalateaMailboxTests {
 
         TextExtractionException failure = await Assert.ThrowsAsync<
             TextExtractionException>(() => extractor.ExtractAsync(
-                "two mails", CancellationToken.None, source
+                "body\nsent", CancellationToken.None, source
             ).AsTask());
 
         Assert.Equal("mail-recipient-line-break",
@@ -343,14 +336,14 @@ public sealed class GalateaMailboxTests {
             .GetProperty("rawToolCallCount").GetInt32());
         JsonElement[] candidates = records.Where(record => record
             .GetProperty("event").GetString()
-                == "text-extraction-business-candidate").ToArray();
+                == "text-extraction-tool-execution").ToArray();
         Assert.Equal(["accepted", "rejected"], candidates.Select(record =>
             record.GetProperty("details").GetProperty("outcome")
                 .GetString()));
         JsonElement finished = Assert.Single(records, record => record
             .GetProperty("event").GetString()
-                == "text-extraction-business-finished");
-        Assert.Equal("rejected", finished.GetProperty("details")
+                == "text-extraction-finished");
+        Assert.Equal("failed", finished.GetProperty("details")
             .GetProperty("outcome").GetString());
         Assert.Equal(1, finished.GetProperty("details")
             .GetProperty("acceptedCount").GetInt32());
@@ -360,34 +353,18 @@ public sealed class GalateaMailboxTests {
 #endif
 
     [Fact]
-    public async Task TypedSemanticOutput_IsNotMechanicallyGroundedAgainstRawAction() {
+    public async Task MaterializesExactOriginalBytesAndRejectsLegacyBodyOutput() {
         const string ReplyId = "0123456789abcdef0123456789abcdef";
-        var client = new QueueClient(_ => Message(Tool(
-                "semantic-output",
-                "Codex",
-                "Status",
-                "Semantically extracted body.",
-                ReplyId,
-                "The model judged that Galatea completed the send."
-            )));
-        var extractor = new OutboundMailExtractor(
-            new GalateaCharacterName("Galatea"),
-            Connection("extractor"),
-            () => client
-        );
-
-        SendMailIntent intent = Assert.Single(await extractor.ExtractAsync(
-            "[Galatea] completed a visually formatted dispatch.",
-            CancellationToken.None
-        ));
-        Assert.Equal("Codex", intent.Recipient);
-        Assert.Equal("Status", intent.Subject);
-        Assert.Equal("Semantically extracted body.", intent.Body);
+        var client = new QueueClient(_ => Message(Tool("range", "Codex", "Status", 2, 3, ReplyId, 4, 4)), _ => Message());
+        var extractor = new OutboundMailExtractor(new GalateaCharacterName("Galatea"), Connection("extractor"), () => client);
+        var intent = Assert.Single(await extractor.ExtractAsync("[Galatea]\r\n> **body**\r\n\t&quote;😀\r\nsent.", CancellationToken.None));
+        Assert.Equal("> **body**\r\n\t&quote;😀", intent.Body);
+        Assert.Equal("sent.", intent.EvidenceQuote);
         Assert.Equal(ReplyId, intent.InReplyToMessageId);
-        Assert.Equal(
-            "The model judged that Galatea completed the send.",
-            intent.EvidenceQuote
-        );
+        var oldClient = new QueueClient(_ => Message(new ActionBlock.ToolCall(new RawToolCall(
+            OutboundMailExtractor.ToolName, "old", "{\"recipient\":\"Codex\",\"body\":\"invented\",\"evidenceQuote\":\"sent\"}"))));
+        var old = new OutboundMailExtractor(new GalateaCharacterName("Galatea"), Connection("extractor"), () => oldClient);
+        await Assert.ThrowsAsync<TextExtractionException>(() => old.ExtractAsync("body", CancellationToken.None).AsTask());
     }
 
     [Fact]
@@ -450,14 +427,13 @@ public sealed class GalateaMailboxTests {
     public async Task InboundEndpoint_BypassesNormalizerPersistsTrustedMailAndCapturesCandidate() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractorConnection = Connection("mail-helper");
-        const string Action = "[Galatea] 我把邮件发送给 Alice。主题 S1，完整正文是：hello Alice。发送完成。";
+        const string Action = "[Galatea] 收件人 Alice；主题 S1。\nhello Alice\n发送完成。";
         var mainClient = new QueueClient(_ => Message(
             new ActionBlock.Text(Action)
         ));
         var extractorClient = new QueueClient(_ => Message(
-            Tool("mail-1", "Alice", "S1", "hello Alice", null,
-                "发送完成")
-        ));
+            Tool("mail-1", "Alice", "S1", 2, 2, null, 3, 3)
+        ), _ => Message());
         var factory = new RoutingFactory(new Dictionary<string, ICompletionClient>(StringComparer.Ordinal) {
             [main.Id] = mainClient,
             [extractorConnection.Id] = extractorClient,
@@ -529,7 +505,7 @@ public sealed class GalateaMailboxTests {
     public async Task ExtractorGap_RetriesBeforeAdmissionAndUndoKeepsCapture() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractorConnection = Connection("mail-helper");
-        const string Action = "[Galatea] sent body text to Alice and completed sending.";
+        const string Action = "[Galatea] sent to Alice.\nbody text\ncompleted sending";
         var mainClient = new QueueClient(
             _ => Message(new ActionBlock.Text(Action)),
             _ => Message(new ActionBlock.Text(Action))
@@ -537,9 +513,9 @@ public sealed class GalateaMailboxTests {
         var extractorClient = new QueueClient(
             _ => throw new IOException("extractor unavailable"),
             _ => Message(Tool(
-                "mail-2", "Alice", null, "body text", null,
-                "completed sending"
+                "mail-2", "Alice", null, 2, 2, null, 3, 3
             )),
+            _ => Message(),
             _ => Message()
         );
         var factory = new RoutingFactory(new Dictionary<string, ICompletionClient>(StringComparer.Ordinal) {
@@ -589,12 +565,12 @@ public sealed class GalateaMailboxTests {
     }
 
     [Fact]
-    public async Task ExtractionHasNoElapsedDeadlineAndWaitsForProviderCompletion() {
+    public async Task ExtractionWaitsForProviderWithinBatchDeadlineAndThenCompletesLoop() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractorConnection =
             Connection("mail-helper");
         const string Action =
-            "[Galatea] sent body text to Alice and completed sending.";
+            "[Galatea] sent to Alice.\nbody text\ncompleted sending";
         var mainClient = new QueueClient(
             _ => Message(new ActionBlock.Text(Action))
         );
@@ -602,9 +578,9 @@ public sealed class GalateaMailboxTests {
             "mail-gated",
             "Alice",
             null,
-            "body text",
+            2, 2,
             null,
-            "completed sending"
+            3, 3
         )));
         var factory = new RoutingFactory(new Dictionary<
             string,
@@ -644,7 +620,7 @@ public sealed class GalateaMailboxTests {
         Assert.Single(
             session.DelegationHandle!.Store.ReadSnapshot().Mails
         );
-        Assert.Equal(1, extractorClient.DispatchCount);
+        Assert.Equal(2, extractorClient.DispatchCount);
         Assert.Equal(0, extractorClient.CancellationCount);
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
@@ -792,9 +768,11 @@ public sealed class GalateaMailboxTests {
         string callId,
         string recipient,
         string? subject,
-        string body,
+        int bodyStartLine,
+        int bodyEndLine,
         string? replyId,
-        string evidence
+        int evidenceStartLine,
+        int evidenceEndLine
     ) => new(new RawToolCall(
         OutboundMailExtractor.ToolName,
         callId,
@@ -802,9 +780,11 @@ public sealed class GalateaMailboxTests {
             new {
                 recipient,
                 subject,
-                body,
+                bodyStartLine,
+                bodyEndLine,
                 inReplyToMessageId = replyId,
-                evidenceQuote = evidence,
+                evidenceStartLine,
+                evidenceEndLine,
             },
             new JsonSerializerOptions {
                 DefaultIgnoreCondition =
@@ -896,7 +876,7 @@ public sealed class GalateaMailboxTests {
             CancellationToken cancellationToken = default
         ) {
             _ = observer;
-            _ = Interlocked.Increment(ref _dispatchCount);
+            int ordinal = Interlocked.Increment(ref _dispatchCount);
             using CancellationTokenRegistration registration =
                 cancellationToken.Register(
                 () => _ = Interlocked.Increment(
@@ -906,7 +886,7 @@ public sealed class GalateaMailboxTests {
             Entered.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
             return new CompletionResult(
-                message,
+                ordinal == 1 ? message : Message(),
                 CompletionDescriptor.From(this, request)
             );
         }

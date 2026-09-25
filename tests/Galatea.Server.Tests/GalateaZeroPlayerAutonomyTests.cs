@@ -13,7 +13,7 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaZeroPlayerAutonomyTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
-    private const string MailAction = "[Galatea] I sent Bob this message: hello Bob. I sent Codex this task: inspect the garden.";
+    private const string MailAction = "[Galatea] I sent Bob this message:\nhello Bob\n[Galatea] I sent Codex this task:\ninspect the garden";
     private const string CodexFinal = "Codex finished inspecting the garden.";
 
     [Fact]
@@ -125,6 +125,11 @@ public sealed class GalateaZeroPlayerAutonomyTests {
             input.GetProperty("sender").GetProperty("kind").GetString()));
     }
 
+    private static string ReadExtractionTarget(CompletionRequest request) =>
+        System.Xml.Linq.XDocument.Parse(Assert.IsType<string>(
+            Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages)).Content))
+            .Root!.Element("target-text")!.Value;
+
     private static CompletionConnectionConfig Connection(string id) => new(
         id, "openai-chat", "model-a", "openai-chat/strict", "http://localhost:8000/", ApiKey: "test-key");
 
@@ -149,11 +154,14 @@ public sealed class GalateaZeroPlayerAutonomyTests {
             cancellationToken.ThrowIfCancellationRequested();
             ActionMessage response;
             if (request.PromptPrefix.OutputContract.Tools.Any(tool => tool.Name == OutboundMailExtractor.ToolName)) {
+                if (request.TailMessages.Length > 1) {
+                    return Task.FromResult(new CompletionResult(new ActionMessage([]), CompletionDescriptor.From(this, request)));
+                }
                 Interlocked.Increment(ref _helperCalls);
-                string input = Assert.IsType<string>(Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages)).Content);
-                response = input.Contains(MailAction, StringComparison.Ordinal)
-                    ? new ActionMessage([Mail("internal", "Bob", "hello Bob", "I sent Bob this message: hello Bob."),
-                        Mail("external", "Codex", "inspect the garden", "I sent Codex this task: inspect the garden.")])
+                string input = ReadExtractionTarget(request);
+                response = input.Contains(TextExtractionInput.Numbered(MailAction).RenderedText, StringComparison.Ordinal)
+                    ? new ActionMessage([Mail("internal", "Bob", 2, 1),
+                        Mail("external", "Codex", 4, 3)])
                     : new ActionMessage([]);
             }
             else {
@@ -176,11 +184,12 @@ public sealed class GalateaZeroPlayerAutonomyTests {
             return text;
         }
 
-        private static ActionBlock.ToolCall Mail(string callId, string recipient, string body, string evidenceQuote) =>
+        private static ActionBlock.ToolCall Mail(string callId, string recipient, int bodyLine, int evidenceLine) =>
             new(new RawToolCall(OutboundMailExtractor.ToolName, callId, JsonSerializer.Serialize(new {
                 // The generated tool contract makes these string fields
                 // optional; absence represents an unspecified subject/reply.
-                recipient, body, evidenceQuote
+                recipient, bodyStartLine = bodyLine, bodyEndLine = bodyLine,
+                evidenceStartLine = evidenceLine, evidenceEndLine = evidenceLine
             })));
     }
 

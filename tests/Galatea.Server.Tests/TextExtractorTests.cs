@@ -30,7 +30,7 @@ public sealed class TextExtractorTests {
 
         TextExtractionException failure = await Assert.ThrowsAsync<
             TextExtractionException>(() => extractor.ExtractAsync(
-                "two candidates", "extract", CancellationToken.None,
+                TextExtractionInput.Plain("two candidates"), "extract", CancellationToken.None,
                 trace
             ).AsTask());
 
@@ -78,7 +78,7 @@ public sealed class TextExtractorTests {
         );
 
         TextExtractionResult result = await extractor.ExtractAsync(
-            "no note", "extract", CancellationToken.None, trace
+            TextExtractionInput.Plain("no note"), "extract", CancellationToken.None, trace
         );
 
         Assert.Empty(result.Artifacts);
@@ -96,7 +96,7 @@ public sealed class TextExtractorTests {
             "no note", _ => throw new IOException("diagnostic sink failed")
         );
         Assert.Empty((await extractor.ExtractAsync(
-            "no note", "extract", CancellationToken.None,
+            TextExtractionInput.Plain("no note"), "extract", CancellationToken.None,
             failingTrace
         )).Artifacts);
     }
@@ -121,7 +121,7 @@ public sealed class TextExtractorTests {
 
         Assert.Equal(0, accessorCalls);
         TextExtractionResult result = await extractor.ExtractAsync(
-            "A < B & C",
+            TextExtractionInput.Plain("A < B & C"),
             "Find \"names\".",
             CancellationToken.None
         );
@@ -197,11 +197,12 @@ public sealed class TextExtractorTests {
             "system fixture",
             tools,
             Connection(),
-            () => client
+            () => client,
+            TextExtractionExecutionPolicy.SingleCompletion
         );
 
         TextExtractionResult result = await extractor.ExtractAsync(
-            "target",
+            TextExtractionInput.Plain("target"),
             "extract",
             CancellationToken.None
         );
@@ -278,12 +279,13 @@ public sealed class TextExtractorTests {
                 "system fixture",
                 tools,
                 Connection(),
-                () => client
+                () => client,
+                TextExtractionExecutionPolicy.SingleCompletion
             );
 
             TextExtractionException failure = await Assert.ThrowsAsync<
                 TextExtractionException>(() => extractor.ExtractAsync(
-                    "target",
+                    TextExtractionInput.Plain("target"),
                     "extract",
                     CancellationToken.None
                 ).AsTask());
@@ -400,11 +402,12 @@ public sealed class TextExtractorTests {
                 "system fixture",
                 tools,
                 Connection(),
-                () => client
+                () => client,
+                TextExtractionExecutionPolicy.SingleCompletion
             );
             TextExtractionException failure = await Assert.ThrowsAsync<
                 TextExtractionException>(() => extractor.ExtractAsync(
-                    "target",
+                    TextExtractionInput.Plain("target"),
                     "extract",
                     CancellationToken.None
                 ).AsTask());
@@ -434,12 +437,13 @@ public sealed class TextExtractorTests {
             "system fixture",
             tools,
             Connection(),
-            () => client
+            () => client,
+            TextExtractionExecutionPolicy.SingleCompletion
         );
 
         TextExtractionException failure = await Assert.ThrowsAsync<
             TextExtractionException>(() => extractor.ExtractAsync(
-                "target",
+                TextExtractionInput.Plain("target"),
                 "extract",
                 CancellationToken.None
             ).AsTask());
@@ -494,11 +498,12 @@ public sealed class TextExtractorTests {
                 "system fixture",
                 tools,
                 Connection(),
-                () => client
+                () => client,
+                TextExtractionExecutionPolicy.SingleCompletion
             );
             TextExtractionException failure = await Assert.ThrowsAsync<
                 TextExtractionException>(() => extractor.ExtractAsync(
-                    "target",
+                    TextExtractionInput.Plain("target"),
                     "extract",
                     CancellationToken.None
                 ).AsTask());
@@ -509,9 +514,10 @@ public sealed class TextExtractorTests {
                 "system fixture",
                 tools,
                 Connection(),
-                () => null!
+                () => null!,
+                TextExtractionExecutionPolicy.SingleCompletion
             ).ExtractAsync(
-                "target",
+                TextExtractionInput.Plain("target"),
                 "extract",
                 CancellationToken.None
             ).AsTask());
@@ -531,7 +537,7 @@ public sealed class TextExtractorTests {
         HttpRequestException propagated = await Assert.ThrowsAsync<
             HttpRequestException>(() => CreateExtractor(transport)
                 .ExtractAsync(
-                    "target",
+                    TextExtractionInput.Plain("target"),
                     "extract",
                     CancellationToken.None
                 ).AsTask());
@@ -552,7 +558,7 @@ public sealed class TextExtractorTests {
         var extractor = CreateExtractor(client);
 
         var observed = await Assert.ThrowsAsync<CompletionFailureException>(() =>
-            extractor.ExtractAsync("target", "extract", CancellationToken.None).AsTask());
+            extractor.ExtractAsync(TextExtractionInput.Plain("target"), "extract", CancellationToken.None).AsTask());
 
         Assert.Same(failure, observed);
         Assert.Equal(1, client.CallCount);
@@ -570,10 +576,10 @@ public sealed class TextExtractorTests {
                 ]))));
         var extractor = CreateExtractor(client);
         Assert.Same(failure, await Assert.ThrowsAsync<CompletionFailureException>(() =>
-            extractor.ExtractAsync("target", "extract", CancellationToken.None).AsTask()));
+            extractor.ExtractAsync(TextExtractionInput.Plain("target"), "extract", CancellationToken.None).AsTask()));
         Assert.Equal(1, client.CallCount);
 
-        var result = await extractor.ExtractAsync("target", "extract", CancellationToken.None);
+        var result = await extractor.ExtractAsync(TextExtractionInput.Plain("target"), "extract", CancellationToken.None);
 
         var artifact = Assert.IsType<TextExtractionArtifact<PersonArtifact>>(Assert.Single(result.Artifacts));
         Assert.Equal("Ada", artifact.Value.Name);
@@ -592,10 +598,10 @@ public sealed class TextExtractorTests {
         var client = CallsClient(
             new RawToolCall("artifact_person", "first", """{"name":"Ada"}"""),
             new RawToolCall("artifact_person", "second", """{"name":"Grace"}"""));
-        var extractor = new TextExtractor("system fixture", tools, Connection(), () => client);
+        var extractor = new TextExtractor("system fixture", tools, Connection(), () => client, TextExtractionExecutionPolicy.SingleCompletion);
 
         var error = await Assert.ThrowsAsync<TextExtractionException>(() =>
-            extractor.ExtractAsync("target", "extract", CancellationToken.None).AsTask());
+            extractor.ExtractAsync(TextExtractionInput.Plain("target"), "extract", CancellationToken.None).AsTask());
 
         Assert.Equal(TextExtractionFailureKind.ToolExecutionFailed, error.Kind);
         Assert.Equal("second", error.ToolCallId);
@@ -610,16 +616,17 @@ public sealed class TextExtractorTests {
             "system fixture",
             PersonTools(),
             Connection(),
-            () => client
+            () => client,
+            TextExtractionExecutionPolicy.SingleCompletion
         );
 
         Task<TextExtractionResult> first = extractor.ExtractAsync(
-            "alpha",
+            TextExtractionInput.Plain("alpha"),
             "extract",
             CancellationToken.None
         ).AsTask();
         Task<TextExtractionResult> second = extractor.ExtractAsync(
-            "beta",
+            TextExtractionInput.Plain("beta"),
             "extract",
             CancellationToken.None
         ).AsTask();
@@ -654,14 +661,15 @@ public sealed class TextExtractorTests {
             () => {
                 accessorCalls++;
                 return client;
-            }
+            },
+            TextExtractionExecutionPolicy.SingleCompletion
         );
         using var alreadyCancelled = new CancellationTokenSource();
         alreadyCancelled.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             extractor.ExtractAsync(
-                "target",
+                TextExtractionInput.Plain("target"),
                 "extract",
                 alreadyCancelled.Token
             ).AsTask()
@@ -670,7 +678,7 @@ public sealed class TextExtractorTests {
 
         using var duringCall = new CancellationTokenSource();
         Task<TextExtractionResult> pending = extractor.ExtractAsync(
-            "target",
+            TextExtractionInput.Plain("target"),
             "extract",
             duringCall.Token
         ).AsTask();
@@ -731,7 +739,8 @@ public sealed class TextExtractorTests {
             ),
             TextExtractorToolSet.Create(person),
             Connection(),
-            () => throw new InvalidOperationException("must stay lazy")
+            () => throw new InvalidOperationException("must stay lazy"),
+            TextExtractionExecutionPolicy.SingleCompletion
         ));
         TextExtractorToolSet dottedTool = TextExtractorToolSet.Create(
             TextExtractorArtifactTool.Create<PersonArtifact>(
@@ -742,13 +751,15 @@ public sealed class TextExtractorTests {
             "system fixture",
             dottedTool,
             Connection(kind: "openai-codex-responses"),
-            () => throw new InvalidOperationException("must stay lazy")
+            () => throw new InvalidOperationException("must stay lazy"),
+            TextExtractionExecutionPolicy.SingleCompletion
         ));
         _ = new TextExtractor(
             "system fixture",
             TextExtractorToolSet.Create(person),
             Connection(kind: "openai-codex-responses"),
-            () => throw new InvalidOperationException("must stay lazy")
+            () => throw new InvalidOperationException("must stay lazy"),
+            TextExtractionExecutionPolicy.SingleCompletion
         );
         int accessorCalls = 0;
         var client = new ScriptedClient(static (self, request, _) =>
@@ -764,28 +775,29 @@ public sealed class TextExtractorTests {
             () => {
                 accessorCalls++;
                 return client;
-            }
+            },
+            TextExtractionExecutionPolicy.SingleCompletion
         );
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             extractor.ExtractAsync(
-                new string(
+                TextExtractionInput.Plain(new string(
                     't',
                     TextExtractorBounds.MaximumTargetTextUtf8Bytes + 1
-                ),
+                )),
                 "extract",
                 CancellationToken.None
             ).AsTask()
         );
         await Assert.ThrowsAsync<ArgumentException>(() =>
             extractor.ExtractAsync(
-                "target",
+                TextExtractionInput.Plain("target"),
                 " ",
                 CancellationToken.None
             ).AsTask()
         );
         await Assert.ThrowsAsync<ArgumentException>(() =>
             extractor.ExtractAsync(
-                "\ud800",
+                TextExtractionInput.Plain("\ud800"),
                 "extract",
                 CancellationToken.None
             ).AsTask()
@@ -800,7 +812,8 @@ public sealed class TextExtractorTests {
         "system fixture",
         PersonTools(),
         Connection(),
-        getClient ?? (() => client)
+        getClient ?? (() => client),
+        TextExtractionExecutionPolicy.SingleCompletion
     );
 
     private static TextExtractorToolSet PersonTools() =>

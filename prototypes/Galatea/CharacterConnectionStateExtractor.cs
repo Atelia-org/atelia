@@ -136,7 +136,8 @@ Identify ${characterName}'s actual final state in this Action. Call emit_charact
                 TextExtractorArtifactTool.Create<CharacterConnectionStateUnknown>(UnknownToolName)
             ),
             connection,
-            getClient
+            getClient,
+            TextExtractionExecutionPolicy.SingleCompletion
         );
     }
 
@@ -145,7 +146,7 @@ Identify ${characterName}'s actual final state in this Action. Call emit_charact
         CancellationToken cancellationToken
     ) {
         TextExtractionResult result = await _inner.ExtractAsync(
-            visibleActionText,
+            TextExtractionInput.Plain(visibleActionText),
             _userPrompt,
             cancellationToken
         ).ConfigureAwait(false);

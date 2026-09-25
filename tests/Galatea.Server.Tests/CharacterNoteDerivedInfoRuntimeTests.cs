@@ -23,7 +23,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         "model-a"
     );
     private const string VisibleAction =
-        "[Galatea] I write a note: remember blue.";
+        "[Galatea] I submitted this long-term Note save request:\nremember blue";
     private const string ExactText = "remember blue";
 
     [Fact]
@@ -416,7 +416,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         CharacterNoteExtractor.ToolName,
         "note-call",
         JsonSerializer.Serialize(new {
-            text = ExactText,
+            textStartLine = 2,
+            textEndLine = 2,
         })
     ));
 
@@ -490,6 +491,9 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 )
             );
             ActionMessage message;
+            if (!derivedInfo && request.TailMessages.Length > 1) {
+                return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
+            }
             if (!derivedInfo) {
                 int noteCall = Interlocked.Increment(
                     ref _noteDispatchCount

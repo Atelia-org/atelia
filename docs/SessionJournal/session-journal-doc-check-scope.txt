@@ -49,6 +49,7 @@ docs/Galatea/recap-prior-input-simplification-plan.md
 docs/Galatea/recap-store-simplification-plan.md
 docs/Galatea/timeline-row-identity-simplification-plan.md
 docs/Galatea/character-note-transcription.md
+docs/Galatea/mail-note-line-range-design.md
 docs/Galatea/character-mail-design.md
 docs/Galatea/player-character-separation-design.md
 docs/Galatea/structured-input-rendering-design.md

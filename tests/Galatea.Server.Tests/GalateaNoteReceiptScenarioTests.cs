@@ -105,6 +105,9 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.Equal(1, firstFactory.ExtractorCalls);
         Assert.Equal(1, secondFactory.ExtractorCalls);
         Assert.Equal(1, thirdFactory.ExtractorCalls);
+        Assert.Equal(2, firstFactory.ExtractorRounds);
+        Assert.Equal(1, secondFactory.ExtractorRounds);
+        Assert.Equal(1, thirdFactory.ExtractorRounds);
         Assert.Equal(0, thirdFactory.SaveIntents);
         Assert.Equal(0, thirdFactory.DerivedCalls);
         await lab.CompleteAsync();

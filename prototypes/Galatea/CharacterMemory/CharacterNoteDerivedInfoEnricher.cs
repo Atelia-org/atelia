@@ -308,7 +308,8 @@ Generate title, one-sentence gist, and main-idea summary for every ${characterNa
             systemPrompt,
             TextExtractorToolSet.Create(tool),
             connection,
-            getClient
+            getClient,
+            TextExtractionExecutionPolicy.SingleCompletion
         );
     }
 
@@ -324,7 +325,7 @@ Generate title, one-sentence gist, and main-idea summary for every ${characterNa
             request
         );
         TextExtractionResult extraction = await _inner.ExtractAsync(
-                targetText,
+                TextExtractionInput.Plain(targetText),
                 _userPrompt,
                 cancellationToken
             )

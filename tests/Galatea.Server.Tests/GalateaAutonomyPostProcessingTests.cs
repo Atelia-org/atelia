@@ -18,8 +18,10 @@ public sealed class GalateaAutonomyPostProcessingTests {
     private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(10);
     private const string NoteText = "remember autonomous blue";
     private const string TerminalAction = """
-        [Galatea] I sent mail body to Alice and completed sending.
-        [Galatea] I submitted a long-term Note save request with exact text: remember autonomous blue, and completed the submission.
+        [Galatea] I sent this letter to Alice and completed sending.
+        autonomous mail body
+        [Galatea] I completed submitting this long-term Note save request.
+        remember autonomous blue
         """;
 
     [Fact]
@@ -196,6 +198,11 @@ public sealed class GalateaAutonomyPostProcessingTests {
         }
     }
 
+    private static string ReadExtractionTarget(CompletionRequest request) =>
+        System.Xml.Linq.XDocument.Parse(Assert.IsType<string>(
+            Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages)).Content))
+            .Root!.Element("target-text")!.Value;
+
     private static CompletionConnectionConfig Connection(string id) => new(
         id,
         "openai-chat",
@@ -219,9 +226,11 @@ public sealed class GalateaAutonomyPostProcessingTests {
         JsonSerializer.Serialize(new {
             recipient = "Alice",
             subject = (string?)null,
-            body = "autonomous mail body",
+            bodyStartLine = 2,
+            bodyEndLine = 2,
             inReplyToMessageId = (string?)null,
-            evidenceQuote = "completed sending",
+            evidenceStartLine = 1,
+            evidenceEndLine = 1,
         }, new JsonSerializerOptions {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         })
@@ -231,7 +240,8 @@ public sealed class GalateaAutonomyPostProcessingTests {
         CharacterNoteExtractor.ToolName,
         "note-call",
         JsonSerializer.Serialize(new {
-            text = NoteText,
+            textStartLine = 4,
+            textEndLine = 4,
         })
     ));
 
@@ -288,11 +298,15 @@ public sealed class GalateaAutonomyPostProcessingTests {
         ) {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
+            if (request.TailMessages.Length > 1
+                && (HasTool(request, OutboundMailExtractor.ToolName)
+                    || HasTool(request, CharacterNoteExtractor.ToolName))) {
+                return Task.FromResult(new CompletionResult(Message(), CompletionDescriptor.From(this, request)));
+            }
             if ((HasTool(request, OutboundMailExtractor.ToolName)
                     || HasTool(request, CharacterNoteExtractor.ToolName))
-                && !Assert.IsType<string>(Assert.IsType<ObservationMessage>(
-                        Assert.Single(request.TailMessages)).Content)
-                    .Contains(TerminalAction, StringComparison.Ordinal)) {
+                && !ReadExtractionTarget(request)
+                    .Contains(TextExtractionInput.Numbered(TerminalAction).RenderedText, StringComparison.Ordinal)) {
                 return Task.FromResult(new CompletionResult(Message(), CompletionDescriptor.From(this, request)));
             }
             ActionMessage message;
@@ -320,10 +334,8 @@ public sealed class GalateaAutonomyPostProcessingTests {
         private static void AssertTargetsTerminalAction(
             CompletionRequest request
         ) => Assert.Contains(
-            TerminalAction,
-            Assert.IsType<ObservationMessage>(
-                Assert.Single(request.TailMessages)
-            ).Content,
+            TextExtractionInput.Numbered(TerminalAction).RenderedText,
+            ReadExtractionTarget(request),
             StringComparison.Ordinal
         );
     }

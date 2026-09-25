@@ -66,6 +66,12 @@ public sealed class GalateaTrackedPromptTemplateTests {
                 projected.GetProperty("instructions")[index].GetProperty("source").GetString());
         }
         Assert.Equal(before, content.JsonValue.GetRawText());
+        string renderedInstructions = string.Join("\n", projected.GetProperty("instructions")
+            .EnumerateArray().Select(static instruction => instruction.GetProperty("source").GetString()));
+        Assert.Equal(outbound, renderedInstructions.Contains("[邮件正文开始]", StringComparison.Ordinal));
+        Assert.Equal(outbound, renderedInstructions.Contains("[邮件正文结束]", StringComparison.Ordinal));
+        Assert.Equal(note, renderedInstructions.Contains("[Note正文开始]", StringComparison.Ordinal));
+        Assert.Equal(note, renderedInstructions.Contains("[Note正文结束]", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -181,12 +187,38 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
         Assert.Contains("最多16条", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("无固定格式", noteAppendix,
+        Assert.DoesNotContain("无固定格式", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("runtime会忠实整理", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("仅声称已经保存", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("不承诺分类、metadata补全或召回", noteAppendix,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArtifactLayoutKeepsWholeLineBodiesAndNaturalIntentInGatedAppendices() {
+        string prefix = GalateaSystemPromptComposer.ProtocolPrefixSource;
+        string outgoing = GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource;
+        string notes = GalateaSystemPromptComposer.CharacterNoteSaveAppendixSource;
+
+        Assert.Contains("连续的整行", prefix, StringComparison.Ordinal);
+        Assert.DoesNotContain("[邮件正文", prefix, StringComparison.Ordinal);
+        Assert.DoesNotContain("[Note正文", prefix, StringComparison.Ordinal);
+        foreach (string appendix in new[] { outgoing, notes }) {
+            Assert.Contains("分别独占一行", appendix, StringComparison.Ordinal);
+            Assert.Contains("连续整行", appendix, StringComparison.Ordinal);
+            Assert.Contains("不要生成提取用行号", appendix, StringComparison.Ordinal);
+            Assert.Contains("runtime只摘录正文原文", appendix, StringComparison.Ordinal);
+            Assert.Contains("起止标记只是正文布局", appendix, StringComparison.Ordinal);
+        }
+        Assert.Contains("收件人、主题以及实际寄出动作都放在正文块外", outgoing, StringComparison.Ordinal);
+        Assert.Contains("同文的两次独立发送也分别写出两个正文块", outgoing, StringComparison.Ordinal);
+        Assert.Contains("保存请求放在正文块外", notes, StringComparison.Ordinal);
+        Assert.Contains("一次请求可以明确覆盖多个独立正文块", notes, StringComparison.Ordinal);
+        Assert.Contains("这些排除条件只用于判断请求", notes, StringComparison.Ordinal);
+        Assert.DoesNotContain("无需固定格式", outgoing, StringComparison.Ordinal);
     }
 
     [Fact]

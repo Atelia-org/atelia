@@ -14,7 +14,7 @@ namespace Atelia.Galatea.Server.Tests;
 public sealed class GalateaFeatureRetrySettlementTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
     private const string NoteText = "Remember the blue door.";
-    private const string VisibleAction = "[Galatea] I submitted a Note save request: Remember the blue door. I sent Codex the letter: inspect the blue door. Sending is complete.";
+    private const string VisibleAction = "[Galatea] I submitted a Note save request:\nRemember the blue door.\nI sent Codex the letter:\ninspect the blue door\nSending is complete.";
 
     [Theory]
     [InlineData(true)]
@@ -61,8 +61,8 @@ public sealed class GalateaFeatureRetrySettlementTests {
         Assert.Equal("completed", turn.Status);
         Assert.Equal(action, session.Engine.ReadCurrentHead());
         Assert.Equal(1, provider.MainCalls);
-        Assert.Equal(2, provider.FeatureCalls);
-        Assert.Same(provider.FirstFeatureRequest, provider.LastFeatureRequest);
+        Assert.Equal(3, provider.FeatureCalls);
+        Assert.Same(provider.FirstFeatureRequest, provider.RetriedFeatureRequest);
 
         string? receiptSource = null;
         long? receiptRevision = null;
@@ -87,7 +87,7 @@ public sealed class GalateaFeatureRetrySettlementTests {
         }
 
         await ReconcileAsync(service, session);
-        Assert.Equal(2, provider.FeatureCalls);
+        Assert.Equal(3, provider.FeatureCalls);
         await first.DisposeAsync();
         AssertMainJournal(first.SessionDirectory);
 
@@ -157,7 +157,7 @@ public sealed class GalateaFeatureRetrySettlementTests {
         internal int MainCalls => Volatile.Read(ref _mainCalls);
         internal int FeatureCalls => Volatile.Read(ref _featureCalls);
         internal CompletionRequest? FirstFeatureRequest { get; private set; }
-        internal CompletionRequest? LastFeatureRequest { get; private set; }
+        internal CompletionRequest? RetriedFeatureRequest { get; private set; }
         public ICompletionClient Create(CompletionConnectionConfig connection) => this;
 
         public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer,
@@ -169,14 +169,21 @@ public sealed class GalateaFeatureRetrySettlementTests {
                 Assert.False(forbidMainAndFeature, "Cold reconciliation must not re-extract a captured Action.");
                 int attempt = Interlocked.Increment(ref _featureCalls);
                 FirstFeatureRequest ??= request;
-                LastFeatureRequest = request;
                 if (attempt == 1) {
                     throw new CompletionFailureException(new(CompletionFailureKind.Http, 503), "temporary synthetic failure");
                 }
-                Assert.Equal(2, attempt);
-                string arguments = note ? JsonSerializer.Serialize(new { text = NoteText })
-                    : JsonSerializer.Serialize(new { recipient = "Codex", body = "inspect the blue door", evidenceQuote = "Sending is complete." });
-                message = new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(toolName, "artifact", arguments))]);
+                if (attempt == 2) {
+                    RetriedFeatureRequest = request;
+                    string arguments = note ? JsonSerializer.Serialize(new { textStartLine = 2, textEndLine = 2 })
+                        : JsonSerializer.Serialize(new { recipient = "Codex", bodyStartLine = 4, bodyEndLine = 4,
+                            evidenceStartLine = 5, evidenceEndLine = 5 });
+                    message = new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(toolName, "artifact", arguments))]);
+                }
+                else {
+                    Assert.Equal(3, attempt);
+                    Assert.Contains(request.TailMessages, item => item is ActionMessage);
+                    message = new ActionMessage([]);
+                }
             }
             else if (request.ModelId == "model-a") {
                 Assert.False(forbidMainAndFeature, "Cold reconciliation must not regenerate the main Action.");

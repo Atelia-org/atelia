@@ -18,9 +18,8 @@ public sealed class CharacterNoteExtractorTests {
     public async Task NoteDiagnostics_ReportSecondBusinessCandidateFailure() {
         var diagnostics = new List<string>();
         var client = new QueueClient(_ => Message(
-            Tool("first", "first note"),
-            Tool("second", new string('x',
-                CharacterNoteBounds.MaximumExactTextUtf8Bytes + 1))
+            Tool("first", 1, 1),
+            Tool("second", 2, 2)
         ));
         var extractor = new CharacterNoteExtractor(
             new GalateaCharacterName("Galatea"),
@@ -33,7 +32,7 @@ public sealed class CharacterNoteExtractorTests {
 
         TextExtractionException failure = await Assert.ThrowsAsync<
             TextExtractionException>(() => extractor.ExtractAsync(
-                "two notes", CancellationToken.None, source
+                "first note\n" + new string('x', CharacterNoteBounds.MaximumExactTextUtf8Bytes + 1), CancellationToken.None, source
             ).AsTask());
 
         Assert.Equal("note-text-too-long", failure.DiagnosticReasonCode);
@@ -48,8 +47,8 @@ public sealed class CharacterNoteExtractorTests {
             .GetProperty("rawToolCallCount").GetInt32());
         JsonElement finished = Assert.Single(records, record => record
             .GetProperty("event").GetString()
-                == "text-extraction-business-finished");
-        Assert.Equal("rejected", finished.GetProperty("details")
+                == "text-extraction-finished");
+        Assert.Equal("failed", finished.GetProperty("details")
             .GetProperty("outcome").GetString());
         Assert.Equal(1, finished.GetProperty("details")
             .GetProperty("acceptedCount").GetInt32());
@@ -247,7 +246,7 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "Emit at most 16 tool calls",
+            "Emit at most 16 distinct Notes",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
@@ -297,7 +296,9 @@ public sealed class CharacterNoteExtractorTests {
         string schema = ToolSchemaTextRenderer.RenderDefinitions(
             aliceRequest.PromptPrefix.OutputContract.Tools
         );
-        Assert.Contains("text", schema, StringComparison.Ordinal);
+        Assert.Contains("textStartLine", schema, StringComparison.Ordinal);
+        Assert.Contains("textEndLine", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"text\":", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("exactText", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("evidenceQuote", schema, StringComparison.Ordinal);
         Assert.Contains("64 KiB", schema, StringComparison.Ordinal);
@@ -332,68 +333,49 @@ public sealed class CharacterNoteExtractorTests {
     }
 
     [Fact]
-    public async Task ReturnsZeroAndPreservesOrderedTranscribedIntents() {
-        const string Target = """
-[Galatea] I submitted two long-term Notes:
-> **First** note, on two
-> lines.
-> Literal `&gt;`, path `/notes/中文` and condition `n > 3` stay unchanged.
-""";
-        string[] texts = [
-            "First note, on two lines.",
-            "Literal `&gt;`, path `/notes/中文` and condition `n > 3` stay unchanged.",
-        ];
+    public async Task ReturnsZeroAndPreservesSourceOrderAndOriginalBytesAcrossRounds() {
+        const string Target = "[Galatea] save two Notes.\r\n> **First**\r\n\tline two.\r\nLiteral `&gt;` and n > 3.";
         var client = new QueueClient(
             _ => Message(),
-            _ => Message(Tool("note-1", texts[0]), Tool("note-2", texts[1]))
-        );
+            _ => Message(Tool("later", 4, 4)),
+            _ => Message(Tool("earlier", 2, 3)),
+            _ => Message(Tool("duplicate", 4, 4)),
+            _ => Message());
         var extractor = CreateExtractor(client);
-
-        Assert.Empty(await extractor.ExtractAsync(
-            "[Galatea] I only thought about tomorrow.",
-            CancellationToken.None
-        ));
-        IReadOnlyList<CharacterNoteIntent> intents =
-            await extractor.ExtractAsync(Target, CancellationToken.None);
-
-        Assert.Equal(texts, intents.Select(static intent => intent.Text));
-        Assert.DoesNotContain(texts[0], Target, StringComparison.Ordinal);
-        string envelope = Assert.IsType<string>(Assert.IsType<ObservationMessage>(
-            Assert.Single(client.Requests[1].TailMessages)).Content);
-        Assert.Contains("&amp;gt;", envelope, StringComparison.Ordinal);
-        Assert.Contains("n &gt; 3", envelope, StringComparison.Ordinal);
+        Assert.Empty(await extractor.ExtractAsync("only thoughts", CancellationToken.None));
+        var notes = await extractor.ExtractAsync(Target, CancellationToken.None);
+        Assert.Equal(["> **First**\r\n\tline two.", "Literal `&gt;` and n > 3."],
+            notes.Select(note => note.Text));
+        Assert.Equal(5, client.Requests.Count);
     }
 
     [Theory]
-    [InlineData(InvalidIntentShape.BlankText)]
-    [InlineData(InvalidIntentShape.MissingText)]
-    [InlineData(InvalidIntentShape.NonStringText)]
-    [InlineData(InvalidIntentShape.OversizedText)]
-    [InlineData(InvalidIntentShape.InvalidUtf16Arguments)]
-    public async Task RejectsInvalidArtifacts(InvalidIntentShape shape) {
-        ActionBlock.ToolCall call = shape switch {
-            InvalidIntentShape.BlankText => Tool("invalid", " "),
-            InvalidIntentShape.MissingText => RawTool("{}"),
-            InvalidIntentShape.NonStringText => RawTool("{\"text\":42}"),
-            InvalidIntentShape.OversizedText => Tool(
-                "invalid",
-                new string('x', CharacterNoteBounds.MaximumExactTextUtf8Bytes + 1)
-            ),
-            InvalidIntentShape.InvalidUtf16Arguments =>
-                RawTool("{\"text\":\"" + "\ud800" + "\"}"),
-            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
-        };
-        var extractor = CreateExtractor(new QueueClient(_ => Message(call)));
+    [InlineData("{}")]
+    [InlineData("{\"textStartLine\":\"1\",\"textEndLine\":1}")]
+    [InlineData("{\"textStartLine\":0,\"textEndLine\":1}")]
+    [InlineData("{\"textStartLine\":1,\"textEndLine\":2}")]
+    [InlineData("{\"textStartLine\":1,\"textEndLine\":1,\"text\":\"fabricated\"}")]
+    public async Task RejectsInvalidRangesOrLegacyText(string arguments) {
+        var extractor = CreateExtractor(new QueueClient(_ => Message(RawTool(arguments))));
+        await Assert.ThrowsAsync<TextExtractionException>(() =>
+            extractor.ExtractAsync("one line", CancellationToken.None).AsTask());
+    }
 
-        _ = await Assert.ThrowsAsync<TextExtractionException>(() =>
-            extractor.ExtractAsync("[Galatea] I submitted a Note.", CancellationToken.None).AsTask()
-        );
+    [Fact]
+    public async Task RejectsBlankRangeAndUnrepresentableLayoutWithoutPartialResult() {
+        var extractor = CreateExtractor(new QueueClient(_ => Message(Tool("blank", 1, 1))));
+        await Assert.ThrowsAsync<TextExtractionException>(() =>
+            extractor.ExtractAsync(" ", CancellationToken.None).AsTask());
+        var client = new QueueClient(_ => Message(Tool("accepted", 1, 1)),
+            _ => Message(new ActionBlock.ToolCall(new RawToolCall(
+                "report_extraction_problem", "layout", "{\"reason\":\"unrepresentable_layout\"}"))));
+        await Assert.ThrowsAsync<TextExtractionException>(() =>
+            CreateExtractor(client).ExtractAsync("valid body", CancellationToken.None).AsTask());
     }
 
     [Fact]
     public async Task TwoTranscribedNotesPersistWithReceiptFactsAndColdReopenSkipsExtraction() {
-        // Anonymized shape of the two-Note incident. The response faithfully
-        // joins paragraphs; it is deliberately not an ordinal source substring.
+        // Original source slices survive persistence and cold reopen unchanged.
         const string Action = """
 [Galatea] 请把下面两条存为长期 Note：
 > **截至2026年9月13日03:12，我选择试用“小澄”这个名字。**
@@ -403,12 +385,11 @@ public sealed class CharacterNoteExtractorTests {
 > 没有回执不自动等于保存失败；不得把尚未完成的工作写成完成。
 """;
         string[] texts = [
-            "截至2026年9月13日03:12，我选择试用“小澄”这个名字。这不是永久更名，也不证明 runtime 配置已修改；试用后再确认。",
-            "故事内书写、向 runtime 提交请求、收到保存成功回执，必须区分。没有回执不自动等于保存失败；不得把尚未完成的工作写成完成。",
+            "> **截至2026年9月13日03:12，我选择试用“小澄”这个名字。**\n> 这不是永久更名，也不证明 runtime 配置已修改；试用后再确认。",
+            "> **故事内书写、向 runtime 提交请求、收到保存成功回执，必须区分。**\n> 没有回执不自动等于保存失败；不得把尚未完成的工作写成完成。",
         ];
-        Assert.All(texts, text => Assert.DoesNotContain(text, Action, StringComparison.Ordinal));
         var client = new QueueClient(_ => Message(
-            Tool("note-1", texts[0]), Tool("note-2", texts[1])));
+            Tool("note-1", 2, 3), Tool("note-2", 5, 6)), _ => Message());
         var extractor = CreateExtractor(client);
         string root = Path.Combine(Path.GetTempPath(), "atelia-note-transcription-" + Guid.NewGuid().ToString("N"));
         string sessionPath = Path.Combine(root, "session");
@@ -464,7 +445,7 @@ public sealed class CharacterNoteExtractorTests {
             var pod = global::Atelia.MemoPod.MemoPod.Open(memoryPath, CharacterNoteDefaultPodV1.PodId);
             Assert.Equal(texts, pod.List().Select(static memo => memo.ExactText));
             Assert.Equal(memoIds, pod.List().Select(static memo => memo.Id.Value));
-            Assert.Single(client.Requests);
+            Assert.Equal(2, client.Requests.Count);
         }
         finally {
             TestDirectorySafety.DeleteOwnedTreeNoFollow(root);
@@ -472,57 +453,45 @@ public sealed class CharacterNoteExtractorTests {
     }
 
     [Fact]
-    public async Task EnforcesBatchBoundsWithoutDeduplicating() {
-        string boundaryText = new(
-            'x',
-            CharacterNoteBounds.MaximumExactTextUtf8Bytes
-        );
-        const string Evidence = "completed submitting the Note request";
+    public async Task EnforcesCumulativeBoundsAndDoesNotChargeDuplicateOccurrence() {
+        string body = new('x', CharacterNoteBounds.MaximumExactTextUtf8Bytes);
+        string source = string.Join("\n", Enumerable.Repeat(body, 5));
         var client = new QueueClient(
-            _ => Message(Enumerable.Range(0, 17)
-                .Select(index => Tool(
-                    $"too-many-{index}",
-                    "same note"
-                ))
-                .ToArray()),
-            _ => Message(Enumerable.Range(0, 5)
-                .Select(index => Tool(
-                    $"too-large-{index}",
-                    boundaryText
-                ))
-                .ToArray()),
-            _ => Message(Enumerable.Range(0, 4)
-                .Select(index => Tool(
-                    $"boundary-{index}",
-                    boundaryText
-                ))
-                .ToArray())
-        );
+            _ => Message(Enumerable.Range(1, 4).Select(i => Tool($"first-{i}", i, i)).ToArray()),
+            _ => Message(Tool("duplicate-at-full-budget", 1, 1)),
+            _ => Message());
         var extractor = CreateExtractor(client);
+        var boundary = await extractor.ExtractAsync(source, CancellationToken.None);
+        Assert.Equal(4, boundary.Count); // Identical text at distinct occurrences is retained.
+        Assert.All(boundary, note => Assert.Equal(body, note.Text));
 
-        _ = await Assert.ThrowsAsync<TextExtractionException>(() =>
-            extractor.ExtractAsync(
-                "same note; " + Evidence,
-                CancellationToken.None
-            ).AsTask()
-        );
-        _ = await Assert.ThrowsAsync<TextExtractionException>(() =>
-            extractor.ExtractAsync(
-                boundaryText + Evidence,
-                CancellationToken.None
-            ).AsTask()
-        );
-        IReadOnlyList<CharacterNoteIntent> boundary =
-            await extractor.ExtractAsync(
-                boundaryText + Evidence,
-                CancellationToken.None
-            );
+        var over = CreateExtractor(new QueueClient(
+            _ => Message(Enumerable.Range(1, 4).Select(i => Tool($"first-{i}", i, i)).ToArray()),
+            _ => Message(Tool("over-budget", 5, 5))));
+        await Assert.ThrowsAsync<TextExtractionException>(() => over.ExtractAsync(source, CancellationToken.None).AsTask());
+    }
 
-        Assert.Equal(4, boundary.Count);
-        Assert.All(boundary, intent => Assert.Equal(
-            boundaryText,
-            intent.Text
-        ));
+    [Fact]
+    public async Task SixteenNotesAcrossRoundsRequireFinalZeroCallAndSeventeenthFails() {
+        string source = string.Join("\n", Enumerable.Repeat("same note", 17));
+        var scripts = Enumerable.Range(1, 16).Select(i =>
+            new Func<CompletionRequest, ActionMessage>(_ => Message(Tool($"note-{i}", i, i)))).ToList();
+        scripts.Add(_ => Message());
+        var client = new QueueClient(scripts.ToArray());
+        Assert.Equal(16, (await CreateExtractor(client).ExtractAsync(source, CancellationToken.None)).Count);
+        Assert.Equal(17, client.Requests.Count);
+        scripts[^1] = _ => Message(Tool("seventeenth", 17, 17));
+        await Assert.ThrowsAsync<TextExtractionException>(() =>
+            CreateExtractor(new QueueClient(scripts.ToArray())).ExtractAsync(source, CancellationToken.None).AsTask());
+    }
+
+    [Fact]
+    public async Task ReusedExtractorHasIsolatedMapsDedupAndBudgets() {
+        var client = new QueueClient(_ => Message(Tool("a", 1, 1)), _ => Message(),
+            _ => Message(Tool("b", 1, 1)), _ => Message());
+        var extractor = CreateExtractor(client);
+        Assert.Equal("first", Assert.Single(await extractor.ExtractAsync("first", CancellationToken.None)).Text);
+        Assert.Equal("second", Assert.Single(await extractor.ExtractAsync("second", CancellationToken.None)).Text);
     }
 
     private static CharacterNoteExtractor CreateExtractor(
@@ -568,11 +537,12 @@ public sealed class CharacterNoteExtractorTests {
 
     private static ActionBlock.ToolCall Tool(
         string callId,
-        string text
+        int textStartLine,
+        int textEndLine
     ) => new(new RawToolCall(
         CharacterNoteExtractor.ToolName,
         callId,
-        JsonSerializer.Serialize(new { text })
+        JsonSerializer.Serialize(new { textStartLine, textEndLine })
     ));
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>
@@ -583,14 +553,6 @@ public sealed class CharacterNoteExtractorTests {
         "invalid",
         arguments
     ));
-
-    public enum InvalidIntentShape {
-        BlankText,
-        MissingText,
-        NonStringText,
-        OversizedText,
-        InvalidUtf16Arguments,
-    }
 
     private sealed class QueueClient(
         params Func<CompletionRequest, ActionMessage>[] scripts

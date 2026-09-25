@@ -22,7 +22,7 @@ public sealed class GalateaStructuredDeliveryRewindGateTests {
         await session.TurnLock.WaitAsync();
         try {
             var timestamp = new DateTimeOffset(2026, 9, 16, 3, 0, 0, TimeSpan.Zero);
-            const string noteAction = "[Galatea] I submitted a Note save request: keep the blue key.";
+            const string noteAction = "[Galatea] I submitted a Note save request:\nkeep the blue key";
             session.Engine.AppendObservation(GalateaObservationContent.CreatePlayerAction(
                 GalateaDelegateTestConfiguration.PlayerSender, "保存蓝钥匙的记录", timestamp));
             EventAddress sourceAction = session.Engine.AppendImportedAgentAction(
@@ -77,7 +77,7 @@ public sealed class GalateaStructuredDeliveryRewindGateTests {
             Assert.Equal(delivered, memory.ReadReceiptDeliveryExact(pending.SourceActionAddress));
             Assert.Equal(appended, session.Engine.ReadCurrentHead());
             Assert.Equal(frontier, session.Engine.ReadView.ReadPhysicalAppendFrontier());
-            Assert.Equal(1, provider.Calls);
+            Assert.Equal(2, provider.Calls);
         }
         finally {
             session.TurnLock.Release();
@@ -97,8 +97,11 @@ public sealed class GalateaStructuredDeliveryRewindGateTests {
             cancellationToken.ThrowIfCancellationRequested();
             Assert.Contains(request.PromptPrefix.OutputContract.Tools, tool => tool.Name == CharacterNoteExtractor.ToolName);
             Calls++;
-            return Task.FromResult(new CompletionResult(new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                CharacterNoteExtractor.ToolName, "save-note", JsonSerializer.Serialize(new { text = "keep the blue key" })))]),
+            ActionMessage message = request.TailMessages.OfType<ActionMessage>().Any()
+                ? new ActionMessage([])
+                : new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
+                    CharacterNoteExtractor.ToolName, "save-note", JsonSerializer.Serialize(new { textStartLine = 2, textEndLine = 2 })))]);
+            return Task.FromResult(new CompletionResult(message,
                 CompletionDescriptor.From(this, request)));
         }
     }
