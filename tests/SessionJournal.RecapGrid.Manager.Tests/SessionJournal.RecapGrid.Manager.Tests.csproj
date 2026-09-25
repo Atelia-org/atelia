@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../TestInfrastructure/CapacityFactAttribute.cs" Link="TestInfrastructure/CapacityFactAttribute.cs" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
     <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Abstractions/Completion.Abstractions.csproj" Condition="'$(UseCompletionSources)' == 'true'" />

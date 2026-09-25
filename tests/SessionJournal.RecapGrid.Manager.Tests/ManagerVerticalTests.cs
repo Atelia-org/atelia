@@ -8,6 +8,7 @@ using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Store;
+using Atelia.Testing;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -816,7 +817,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         }
     }
 
-    [Fact]
+    [CapacityFact]
     public async Task Public65537TimelineBuildsThroughHeadAndColdReopensWithoutProviderCalls() {
         const int rowCount = 65_537;
         var fixtureClock = Stopwatch.StartNew();

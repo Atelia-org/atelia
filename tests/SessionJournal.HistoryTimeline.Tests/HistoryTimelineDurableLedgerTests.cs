@@ -1,6 +1,7 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
+using Atelia.Testing;
 using Microsoft.Data.Sqlite;
 using System.Buffers.Binary;
 using System.Diagnostics;
@@ -1418,7 +1419,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         );
     }
 
-    [Fact]
+    [CapacityFact]
     public void V2MutableSelectedPathCommitsAndVerifies65537Rows() {
         const int firstMilestone = 4_097;
         const int secondMilestone = firstMilestone * 2;
