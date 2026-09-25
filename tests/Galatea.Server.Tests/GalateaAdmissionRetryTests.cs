@@ -18,11 +18,12 @@ public sealed class GalateaAdmissionRetryTests {
     [InlineData(true)]
     public async Task RetrySettlesActualFailedExtractionWithoutNewTurnAndPreservesOtherBlock(bool replyFailed) {
         var completion = new Factory();
+        var clock = new ManualTimeProvider();
         await using var fixture = GalateaTestHost.Create(completion,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [Connection("test"), Connection("note")],
             connectionOptionIds: ["test"], characterNoteExtractorConnectionId: "note",
-            autonomyCharacterIds: ["alice"]);
+            timeProvider: clock, autonomyCharacterIds: ["alice"]);
         var host = fixture.Factory.Services.GetRequiredService<GalateaHostService>();
         var coordinator = fixture.Factory.Services.GetRequiredService<GalateaAutomaticTurnCoordinator>();
         CharacterSessionHost session = await host.GetSessionAsync("alice", CancellationToken.None);
@@ -57,6 +58,7 @@ public sealed class GalateaAdmissionRetryTests {
         finally { session.TurnLock.Release(); }
         completion.FailExtraction = false;
         completion.GateExtraction = true;
+        clock.Advance(TimeSpan.FromSeconds(30));
         Task<HttpResponseMessage> retry = client.PostAsync(Endpoint, Json("{}"));
         await completion.Entered.Task.WaitAsync(Deadline);
         Assert.IsType<GalateaAutomaticTurnResult.Busy>(await coordinator.TryPulseAsync("alice", CancellationToken.None));
@@ -196,6 +198,20 @@ public sealed class GalateaAdmissionRetryTests {
     private static StringContent Json(string text) => new(text, Encoding.UTF8, "application/json");
     private static CompletionConnectionConfig Connection(string id) => new(
         id, "openai-chat", "model-a", "openai-chat/strict", "http://127.0.0.1:1/", ApiKey: "test-key");
+
+    private sealed class ManualTimeProvider : TimeProvider {
+        private long _timestamp;
+        private DateTimeOffset _utcNow = new(2030, 1, 2, 3, 4, 5, TimeSpan.Zero);
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _timestamp;
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        internal void Advance(TimeSpan elapsed) {
+            _timestamp += elapsed.Ticks;
+            _utcNow += elapsed;
+        }
+    }
 
     private sealed class Factory : ICompletionClientFactory {
         internal int MainCalls;
