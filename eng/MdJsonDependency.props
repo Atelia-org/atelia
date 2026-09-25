@@ -1,11 +1,5 @@
 <Project>
   <PropertyGroup>
-    <MdJsonSourceRoot Condition="'$(MdJsonSourceRoot)' == ''">$(MSBuildThisFileDirectory)../../md-json</MdJsonSourceRoot>
-    <!-- Source identity exercised by Galatea's structured input integration. -->
-    <MdJsonTestedSourceCommit>7175360f108d58d8214b11ac245306892412b3d1</MdJsonTestedSourceCommit>
+    <MdJsonPackageVersion Condition="'$(MdJsonPackageVersion)' == ''">0.1.0-preview.1</MdJsonPackageVersion>
   </PropertyGroup>
-  <Target Name="RequireMdJsonSources" BeforeTargets="PrepareForBuild">
-    <Error Condition="!Exists('$(MdJsonSourceRoot)/src/MdJson/MdJson.csproj')"
-           Text="MdJson sources are missing. Set MdJsonSourceRoot to the md-json repository root." />
-  </Target>
 </Project>

@@ -9,7 +9,7 @@
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../MemoPod/MemoPod.csproj" />
     <ProjectReference Include="../Galatea.Prompts/Galatea.Prompts.csproj" />
-    <ProjectReference Include="$(MdJsonSourceRoot)/src/MdJson/MdJson.csproj" />
+    <PackageReference Include="Atelia.MdJson" Version="$(MdJsonPackageVersion)" />
   </ItemGroup>
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">

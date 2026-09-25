@@ -17,7 +17,7 @@
     <ProjectReference Include="$(CompletionSourceRoot)/src/Completion/Completion.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
     <PackageReference Include="Atelia.Completion.Tools" Version="$(CompletionPackageVersion)" Condition="'$(UseCompletionSources)' != 'true'" />
     <ProjectReference Include="$(CompletionSourceRoot)/src/Completion.Tools/Completion.Tools.csproj" Condition="'$(UseCompletionSources)' == 'true'" />
-    <ProjectReference Include="$(MdJsonSourceRoot)/src/MdJson/MdJson.csproj" />
+    <PackageReference Include="Atelia.MdJson" Version="$(MdJsonPackageVersion)" />
     <ProjectReference Include="../Galatea.Prompts/Galatea.Prompts.csproj" />
     <ProjectReference Include="../Galatea.Input/Galatea.Input.csproj" />
     <ProjectReference Include="../Galatea.RecapGrid/Galatea.RecapGrid.csproj" />

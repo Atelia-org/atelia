@@ -5,7 +5,8 @@ SessionJournal CLI Recap builds. The public surface is
 `GalateaObservationInputProjector.Instance : ISessionInputProjector`.
 
 Text input passes through unchanged. Structured Observation input is strictly
-validated and projected with md-json. V1 heartbeat remains exact at
+validated and projected with the `Atelia.MdJson` package pinned in
+`eng/MdJsonDependency.props`. V1 heartbeat remains exact at
 `externalIntervalMinutes: 10`; V2 heartbeat records carry an immutable
 `1..525_600` interval snapshot. V2 accepts only heartbeat activation; V3/V4
 add connection state snapshots. Other schema IDs fail explicitly. The
