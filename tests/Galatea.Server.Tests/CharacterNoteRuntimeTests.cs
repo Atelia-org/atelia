@@ -676,6 +676,7 @@ public sealed class CharacterNoteRuntimeTests {
         var releaseMail = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
+        using var noteDeadline = new CancellationTokenSource();
         var noteClient = new OutcomeNoteClient(NoteOutcome.Timeout);
         var expectedMail = new GalateaTurnException(
             "mail after Note deadline",
@@ -702,8 +703,8 @@ public sealed class CharacterNoteRuntimeTests {
         );
         (GalateaHostService service, CharacterSessionHost session) =
             await GetRuntimeAsync(host);
-        service.CharacterNoteExtractionDeadlineForTest =
-            TimeSpan.FromMilliseconds(100);
+        service.CharacterNoteExtractionDeadlineSignalForTest =
+            noteDeadline.Token;
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
@@ -718,7 +719,9 @@ public sealed class CharacterNoteRuntimeTests {
                 turn,
                 CancellationToken.None
             );
-            await WaitUntilAsync(() => noteClient.CancellationObserved);
+            await noteClient.Entered.Task.WaitAsync(Deadline);
+            noteDeadline.Cancel();
+            await noteClient.CancellationObservedSignal.Task.WaitAsync(Deadline);
             releaseMail.TrySetResult();
 
             GalateaTurnException observed = await Assert.ThrowsAsync<
@@ -1800,6 +1803,9 @@ public sealed class CharacterNoteRuntimeTests {
         internal TaskCompletionSource Entered { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
+        internal TaskCompletionSource CancellationObservedSignal { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
         public async Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -1831,6 +1837,7 @@ public sealed class CharacterNoteRuntimeTests {
                     }
                     catch (OperationCanceledException) {
                         Interlocked.Exchange(ref _cancellationObserved, 1);
+                        CancellationObservedSignal.TrySetResult();
                         throw;
                     }
                     throw new Xunit.Sdk.XunitException(

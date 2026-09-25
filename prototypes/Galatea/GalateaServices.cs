@@ -70,6 +70,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
     internal TimeSpan? CharacterNoteExtractionDeadlineForTest { get; set; }
+    internal CancellationToken? CharacterNoteExtractionDeadlineSignalForTest { get; set; }
     internal Func<CharacterSessionHost, Task>? SessionAttachedForTest { get; set; }
     internal Func<string, SessionJournalEngine>? OpenSessionForTest { get; set; }
     internal Func<double>? ColdRecoveryJitterSampleForTest { get; set; }
@@ -1474,6 +1475,14 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     private CancellationTokenSource CreateCharacterNoteTestDeadline() {
         // Production generation attempts own their deadlines in the retry
         // decorator. Do not deadline the complete logical extraction/retry.
+        if (CharacterNoteExtractionDeadlineSignalForTest is { } signal) {
+            if (CharacterNoteExtractionDeadlineForTest is not null) {
+                throw new InvalidOperationException(
+                    "Character Note test deadline cannot use both a duration and a signal."
+                );
+            }
+            return CancellationTokenSource.CreateLinkedTokenSource(signal);
+        }
         if (CharacterNoteExtractionDeadlineForTest is not { } deadline) {
             return new CancellationTokenSource();
         }
