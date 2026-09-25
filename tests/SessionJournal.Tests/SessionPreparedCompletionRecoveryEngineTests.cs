@@ -740,12 +740,11 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 SessionEventKind.CompletionRequestPrepared
             )
         );
-        Assert.Equal(
-            1,
+        Assert.Single(
             ReadAddressesByKind(
                 path,
                 SessionEventKind.CompletionAttemptStarted
-            ).Length
+            )
         );
         Assert.Empty(
             ReadAddressesByKind(
@@ -792,12 +791,11 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             Assert.Equal(SessionEventKind.CompletionAttemptStarted, reopened.InspectExecutionBoundary().HeadKind);
         }
 
-        Assert.Equal(
-            1,
+        Assert.Single(
             ReadAddressesByKind(
                 path,
                 SessionEventKind.CompletionAttemptStarted
-            ).Length
+            )
         );
         Assert.Empty(
             ReadAddressesByKind(
