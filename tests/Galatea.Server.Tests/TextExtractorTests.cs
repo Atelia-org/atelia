@@ -564,6 +564,42 @@ public sealed class TextExtractorTests {
         Assert.Equal(1, client.CallCount);
     }
 
+#if DEBUG
+    [Theory]
+    [InlineData("server_error", "server_error")]
+    [InlineData("secret from provider", "unrecognized")]
+    public async Task ClassifiedFailureDiagnostic_RecordsSafeFactsAndSource(
+        string providerCode, string expectedCode
+    ) {
+        var diagnostics = new List<string>();
+        var failure = new CompletionFailureException(
+            new(CompletionFailureKind.Http, 503, providerCode),
+            "private provider response body");
+        var client = new ScriptedClient((_, _, _) =>
+            Task.FromException<CompletionResult>(failure));
+        var trace = TextExtractionTrace.Create(
+            "outbound-mail", "contract-test", "Galatea",
+            new TextExtractionSource("cyber", "ej1:diagnostic-test", "attempt-diagnostic-test"),
+            "mail body", diagnostics.Add);
+
+        Assert.Same(failure, await Assert.ThrowsAsync<CompletionFailureException>(() =>
+            CreateExtractor(client).ExtractAsync(TextExtractionInput.Plain("mail body"),
+                "extract", CancellationToken.None, trace).AsTask()));
+
+        JsonElement finished = Assert.Single(diagnostics
+            .Select(static json => JsonDocument.Parse(json).RootElement.Clone()),
+            record => record.GetProperty("event").GetString() == "text-extraction-finished");
+        Assert.Equal("cyber", finished.GetProperty("characterId").GetString());
+        Assert.Equal("attempt-diagnostic-test", finished.GetProperty("attemptId").GetString());
+        JsonElement details = finished.GetProperty("details");
+        Assert.Equal("Http", details.GetProperty("failureKind").GetString());
+        Assert.Equal(503, details.GetProperty("httpStatusCode").GetInt32());
+        Assert.Equal(expectedCode, details.GetProperty("providerCode").GetString());
+        Assert.DoesNotContain("private provider response body", diagnostics);
+        Assert.DoesNotContain("secret from provider", diagnostics);
+    }
+#endif
+
     [Fact]
     public async Task ExplicitNextExtractionAfterFailure_DoesNotInheritArtifactsOrRetryState() {
         var failure = new CompletionFailureException(new(CompletionFailureKind.Transport), "network");

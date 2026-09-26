@@ -595,10 +595,16 @@ internal sealed class TextExtractor {
             throw;
         }
         catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)) {
+            CompletionFailureInfo? completionFailure =
+                (exception as CompletionFailureException)?.Failure;
             trace.Emit("text-extraction-finished", new {
                 outcome = "failed", stage, currentOrdinal, completionCount,
                 acceptedCount = collector.Count, reasonCode = "exception",
                 exceptionType = exception.GetType().FullName,
+                failureKind = completionFailure?.Kind.ToString(),
+                httpStatusCode = completionFailure?.HttpStatusCode,
+                providerCode = GalateaCompletionFailureDiagnostic.SafeProviderCode(
+                    completionFailure?.ProviderCode),
             });
             throw;
         }

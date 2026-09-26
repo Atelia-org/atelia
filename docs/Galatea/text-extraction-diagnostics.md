@@ -18,14 +18,14 @@
 | `text-extraction-candidate` | `completionOrdinal`, `candidateOrdinal`, tool 名称/ID、参数字节数/SHA-256 | 返回中的每个工具调用，尚未证明参数合法。未来 Tool-Loop 可用 `(completionOrdinal, candidateOrdinal)` 标识。 |
 | `text-extraction-preflight` | `outcome`, `candidateCount` | 所有工具调用通过预检；拒绝时由 `text-extraction-finished` 给出固定失败类型和工具 ID。 |
 | `text-extraction-tool-execution` | 候选序号、`outcome`, `reasonCode`, `status` | 工具参数解析/执行及 artifact 收集结果。 |
-| `text-extraction-finished` | `outcome`, `stage`, `rawToolCallCount`/`artifactCount` 或 `reasonCode` | 底层提取成功、失败或取消。零调用成功与失败是不同状态。 |
+| `text-extraction-finished` | `outcome`, `stage`, `rawToolCallCount`/`artifactCount` 或 `reasonCode`；Completion 异常另有 `failureKind`, `httpStatusCode`, `providerCode` | 底层提取成功、失败或取消。零调用成功与失败是不同状态。 |
 | `text-extraction-business-candidate` | `artifactOrdinal`, `outcome`, `reasonCode` | 邮件或 Note 的逐项业务校验。 |
 | `text-extraction-business-finished` | `rawArtifactCount`, `acceptedCount`, `outcome`, `rejectedOrdinal`, `reasonCode` | 业务校验后的批次结果。某项拒绝会抛错，已通过的前项不会作为部分批次返回。 |
 | `text-extraction-capture` | `outcome`, `extractedCount`, `capturedCount`，邮件另有 `dispatchIds` / `captureSequence` | 提交、跳过、竞争或捕获失败。Note 的捕获与后续 MemoPod 应用仍是不同阶段。 |
 
 空白 Action 跳过模型调用时产生 `text-extraction-skipped`，最终零捕获仍由持久层处理。对于已有 capture，reconciler 按现有幂等规则直接返回，不重新提取，也不生成新尝试。Mail 的既有 `outbound-mail-captured` 诊断继续在提交后逐封记录；Character Note 的既有 batch/Memo 诊断继续记录后续应用结果。
 
-`reasonCode` 使用固定值：底层失败使用 `TextExtractionFailureKind` 名称，执行拒绝使用 `tool-execution-failed` / `artifact-capture-mismatch`，邮件校验使用 `mail-<field>-blank|too-long|line-break|invalid-utf8` 等，Note 校验使用 `note-text-blank|too-long|invalid-utf8`、`note-total-text-too-long`、`note-too-many-intents` 等。未知非致命异常只记录 `exception` 与异常类型；正文和异常消息不会写入失败事件。
+`reasonCode` 使用固定值：底层失败使用 `TextExtractionFailureKind` 名称，执行拒绝使用 `tool-execution-failed` / `artifact-capture-mismatch`，邮件校验使用 `mail-<field>-blank|too-long|line-break|invalid-utf8` 等，Note 校验使用 `note-text-blank|too-long|invalid-utf8`、`note-total-text-too-long`、`note-too-many-intents` 等。Completion 抛出结构化异常时，失败事件记录 `Transport|Http|Provider`、可用的 HTTP 状态，以及固定白名单中的 provider code；未知 code 写作 `unrecognized`。未知非致命异常只记录 `exception` 与异常类型；正文和异常消息不会写入失败事件。
 
 ## 内容与可靠性
 
@@ -39,4 +39,4 @@
 
 ## 验证
 
-`TextExtractorTests` 覆盖两次原始调用中第二次执行失败、零候选成功及诊断 sink 失败；`GalateaMailboxTests` 覆盖第二封在业务校验阶段被拒绝；`CharacterNoteExtractorTests` 覆盖第二条 Note 超限；`GalateaOutboundMailExtractionReconcilerTests` 覆盖提交数量与来源 Action 关联。DEBUG 测试检查事件内容，Release 构建确保诊断调用点不参与执行。
+`TextExtractorTests` 覆盖两次原始调用中第二次执行失败、零候选成功、结构化 Completion 失败的安全字段及诊断 sink 失败；`GalateaMailboxTests` 覆盖第二封在业务校验阶段被拒绝；`CharacterNoteExtractorTests` 覆盖第二条 Note 超限；`GalateaOutboundMailExtractionReconcilerTests` 覆盖提交数量与来源 Action 关联。DEBUG 测试检查事件内容，Release 构建确保诊断调用点不参与执行。

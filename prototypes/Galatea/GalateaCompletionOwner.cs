@@ -145,7 +145,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea input normalization is disabled."
             )
-            : GetRepeatableFeatureClient(InputNormalizerConnectionId);
+            : GetRepeatableFeatureClient(InputNormalizerConnectionId, InputNormalizerBindingKey);
 
     internal string? OutboundMailExtractorConnectionId { get; }
 
@@ -159,7 +159,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea outbound mail extraction is disabled."
             )
-            : GetRepeatableFeatureClient(OutboundMailExtractorConnectionId);
+            : GetRepeatableFeatureClient(OutboundMailExtractorConnectionId, OutboundMailExtractorBindingKey);
 
     internal string? CharacterNoteExtractorConnectionId { get; }
 
@@ -173,7 +173,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea character note extraction is disabled."
             )
-            : GetRepeatableFeatureClient(CharacterNoteExtractorConnectionId);
+            : GetRepeatableFeatureClient(CharacterNoteExtractorConnectionId, CharacterNoteExtractorBindingKey);
 
     internal string? MemoRecallConnectionId { get; }
 
@@ -186,7 +186,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
     internal ICompletionClient GetCharacterConnectionStateExtractorClient() =>
         CharacterConnectionStateExtractorConnectionId is null
             ? throw new InvalidOperationException("Character connection state extraction is disabled.")
-            : GetRepeatableFeatureClient(CharacterConnectionStateExtractorConnectionId);
+            : GetRepeatableFeatureClient(CharacterConnectionStateExtractorConnectionId, CharacterConnectionStateExtractorBindingKey);
 
     internal CompletionConnectionConfig? MemoRecallConnection =>
         MemoRecallConnectionId is null
@@ -198,22 +198,22 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             ? throw new InvalidOperationException(
                 "Galatea Memo recall is disabled."
             )
-            : GetRepeatableFeatureClient(MemoRecallConnectionId);
+            : GetRepeatableFeatureClient(MemoRecallConnectionId, MemoRecallBindingKey);
 
     // Only the provider generation is repeated. Each feature retains ownership
     // of its admission, extraction validation and durable settlement afterwards.
     // The borrowed registry client is never disposed by this decorator.
-    private ICompletionClient GetRepeatableFeatureClient(string connectionId) =>
+    private ICompletionClient GetRepeatableFeatureClient(string connectionId, string feature) =>
         new GalateaCompletionRetryClient(_registry.GetClient(connectionId), new() {
             TimeProvider = _timeProvider,
             AttemptTimeout = TimeSpan.FromSeconds(
                 _attemptTimeoutSeconds.TryGetValue(connectionId, out int seconds) ? seconds : 1800),
             RetryWaiting = notice => DebugUtil.Warning(
                 "Galatea.Completion",
-                $"Feature generation retry: connection={connectionId}, attempt={notice.Attempt}, kind={notice.Failure.Kind}, delay={notice.Delay}."),
+                $"Feature generation retry: feature={feature}, connection={connectionId}, attempt={notice.Attempt}, {GalateaCompletionFailureDiagnostic.Format(notice.Failure)}, delay={notice.Delay}."),
             AttemptTimedOut = attempt => DebugUtil.Warning(
                 "Galatea.Completion",
-                $"Feature generation deadline reached; waiting for call cleanup: connection={connectionId}, attempt={attempt}."),
+                $"Feature generation deadline reached; waiting for call cleanup: feature={feature}, connection={connectionId}, attempt={attempt}."),
         });
 
     private CompletionConnectionConfig TryGetConnectionExact(string id) =>

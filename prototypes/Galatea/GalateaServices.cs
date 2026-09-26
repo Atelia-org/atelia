@@ -2043,7 +2043,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             host.AutomaticAdmissionFailed = true;
             host.AutomaticAdmissionFailure = new ApiErrorDto(
                 "character-mail-generation-failed",
-                "角色站内信生成未完成；请先处理会话恢复。"
+                "角色站内信生成未完成；若会话显示待恢复轮次，请先恢复；否则点击“重试未完成处理”。"
             );
         }
         bool settled = host.AutonomyCadence?.SettleMainTurn(

@@ -32,7 +32,7 @@ Codex 有跨模型 live 实验依据；公共 Responses 的相同行为为 opera
 没有 pending completion 的旧历史不需要迁移，合法 v2 native reasoning 可直接被新投影读取。
 纯生成即使远端可能计算过也可重算，可能重复计费；这不授予工具或 Codex delegation 的未知副作用重放权限。
 
-日志排查先看 `Galatea.TurnRunner` 的 exception stack 与 `callLogDir` 中同次调用的 `exceptionType` / `elapsedMs`，
+日志排查先看 `Galatea.TurnRunner` 的 turnId、失败阶段与 Completion 失败元数据（`failureKind`、`httpStatusCode`、白名单化的 `providerCode`）；辅助提取的 `Galatea.TextExtraction` 还可按 `characterId`、`sourceAction`、`attemptId` 关联。`callLogDir` 中的同次调用保留 `exceptionType` / `elapsedMs`，需按时间和连接交叉核对，不能据此单独确认同一调用。
 不要把完整 prompt、reasoning payload 或凭据复制到 issue。`Provider` Debug 日志只记录跨 provider/profile 的省略计数，不记录内容。
 
 ### 纯生成重试与业务结束

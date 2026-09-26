@@ -1,4 +1,5 @@
 using Atelia.Diagnostics;
+using Atelia.Completion.Abstractions;
 using System.Runtime.ExceptionServices;
 
 namespace Atelia.Galatea.Server;
@@ -95,7 +96,10 @@ internal sealed class GalateaAcceptedTurnRunner {
             if (ex.InnerException is not null) {
                 DebugUtil.Debug("Galatea.TurnRunner", $"Turn stage failed: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}; exceptionType={ex.InnerException.GetType().FullName}");
             }
-            DebugUtil.Warning("Galatea.TurnRunner", $"Turn failed with GalateaTurnException: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}");
+            string completionFailure = ex.InnerException is CompletionFailureException failure
+                ? ", " + GalateaCompletionFailureDiagnostic.Format(failure.Failure)
+                : "";
+            DebugUtil.Warning("Galatea.TurnRunner", $"Turn failed with GalateaTurnException: user={session.Character.CharacterId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}{completionFailure}");
             liveTurn.PublishError(GalateaSseErrorClassifier.Classify(ex));
         }
         catch (Exception ex) when (GalateaExceptionClassifier.IsNonFatal(ex)) {
