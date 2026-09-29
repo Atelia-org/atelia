@@ -9,6 +9,12 @@ using Microsoft.Data.Sqlite;
 namespace Atelia.SessionJournal.HistoryTimeline.Tests;
 
 public sealed class HistoryTimelineSchemaUpgradeTests : IDisposable {
+#if STORAGE_STRICT_TAIL_OPEN
+    private const string StorageFixtureSuffix = "StorageV2";
+#else
+    private const string StorageFixtureSuffix = "";
+#endif
+
     private readonly List<string> _paths = [];
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
 
@@ -276,7 +282,7 @@ public sealed class HistoryTimelineSchemaUpgradeTests : IDisposable {
 
     private LegacyFixture Extract() {
         string root = FindRepositoryRoot();
-        string source = Path.Combine(root, "tests", "SessionJournal.HistoryTimeline.Tests", "Fixtures", "RowIdentityV2");
+        string source = Path.Combine(root, "tests", "SessionJournal.HistoryTimeline.Tests", "Fixtures", "RowIdentityV2" + StorageFixtureSuffix);
         string path = Path.Combine(Path.GetTempPath(), "atelia-timeline-upgrade-tests", Guid.NewGuid().ToString("N"));
         _paths.Add(path);
         ZipFile.ExtractToDirectory(Path.Combine(source, "repository.zip"), path);

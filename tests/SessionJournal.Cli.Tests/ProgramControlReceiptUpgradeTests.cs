@@ -9,6 +9,12 @@ using Xunit;
 namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed partial class ProgramRecapGridCommandTests {
+#if STORAGE_STRICT_TAIL_OPEN
+    private const string StorageFixtureSuffix = "StorageV2";
+#else
+    private const string StorageFixtureSuffix = "";
+#endif
+
     [Theory]
     [InlineData("after-control-commit", false)]
     [InlineData("after-tool-result", true)]
@@ -164,7 +170,7 @@ public sealed partial class ProgramRecapGridCommandTests {
 
     private void ExtractControlReceiptFixture(string name, bool upgradeTimeline = true) {
         ZipFile.ExtractToDirectory(
-            Path.Combine(AppContext.BaseDirectory, "Fixtures", "ControlReceiptV2", name + ".zip"), _root);
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "ControlReceiptV2" + StorageFixtureSuffix, name + ".zip"), _root);
         if (!OperatingSystem.IsWindows()) {
             // ZIP extraction does not restore directory modes. Cadence checks its
             // owner-only directory/file contract before opening persisted state.

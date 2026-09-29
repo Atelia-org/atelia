@@ -22,6 +22,8 @@ temp_review.md
 discussion_examples/
 gitignore/
 eng/CompletionDependency.Local.props
+eng/StorageDependency.Local.props
+eng/NuGet.Storage.Local.config
 .codecortex/
 prototypes/CodeOutline.Cli/
 prototypes/MemoFileProto/

@@ -279,14 +279,28 @@ public sealed class GalateaSessionProvisioningTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
-        GalateaSessionUnavailableException failure =
-            await Assert.ThrowsAsync<GalateaSessionUnavailableException>(
-                () => service.GetSessionAsync(
-                    "alice",
-                    CancellationToken.None
-                )
-            );
-        Assert.Equal("session-unprovisioned", failure.Code);
+#if STORAGE_STRICT_TAIL_OPEN
+        if (shape == "incomplete-directory") {
+            // v2 explicitly rejects a present directory without its format gate.
+            // Missing/empty paths still use Galatea's unprovisioned contract.
+            Atelia.RbfSegmentStore.StorageOpenException failure =
+                await Assert.ThrowsAsync<Atelia.RbfSegmentStore.StorageOpenException>(
+                    () => service.GetSessionAsync("alice", CancellationToken.None));
+            Assert.Equal(Atelia.RbfSegmentStore.StorageOpenErrorKind.FormatUnsupported, failure.Kind);
+            Assert.Equal("LegacyOrIncompleteLayout", failure.ReasonCode);
+        }
+        else
+#endif
+        {
+            GalateaSessionUnavailableException failure =
+                await Assert.ThrowsAsync<GalateaSessionUnavailableException>(
+                    () => service.GetSessionAsync(
+                        "alice",
+                        CancellationToken.None
+                    )
+                );
+            Assert.Equal("session-unprovisioned", failure.Code);
+        }
 
         if (shape == "file") {
             Assert.Equal(Sentinel, File.ReadAllText(host.SessionDirectory));

@@ -1,6 +1,9 @@
 <Project>
   <Import Project="$(MSBuildThisFileDirectory)eng/StorageDependency.props" />
   <Import Project="$(MSBuildThisFileDirectory)eng/CompletionDependency.props" />
+  <!-- Last dependency override so a combined local feed config wins over Completion's local config. -->
+  <Import Project="$(MSBuildThisFileDirectory)eng/StorageDependency.Local.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)eng/StorageDependency.Local.props')" />
   <!-- Global analyzer/reference settings -->
   <ItemGroup>
     <!-- Global custom analyzer (exclude the analyzer project itself). Use MSBuildThisFileDirectory to anchor path at repo root -->

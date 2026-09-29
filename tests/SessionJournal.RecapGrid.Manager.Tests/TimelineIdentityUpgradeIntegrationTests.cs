@@ -12,9 +12,15 @@ using Xunit;
 namespace Atelia.SessionJournal.RecapGrid.Manager.Tests;
 
 public sealed partial class ManagerVerticalTests {
+#if STORAGE_STRICT_TAIL_OPEN
+    private const string StorageFixtureSuffix = "StorageV2";
+#else
+    private const string StorageFixtureSuffix = "";
+#endif
+
     [Fact]
     public async Task OldTimelineAndControlUpgradeThenFreshRuntimeBuildsAndColdReopens() {
-        string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "RowIdentityV2");
+        string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "RowIdentityV2" + StorageFixtureSuffix);
         using JsonDocument expected = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(fixtureDirectory, "expected.json")));
         string path = NewPath();
         ZipFile.ExtractToDirectory(Path.Combine(fixtureDirectory, "repository.zip"), path);

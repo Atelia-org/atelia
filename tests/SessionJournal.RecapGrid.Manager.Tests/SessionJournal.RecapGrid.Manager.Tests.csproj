@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants Condition="'$(StorageStrictTailOpen)' == 'true'">$(DefineConstants);STORAGE_STRICT_TAIL_OPEN</DefineConstants>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -28,6 +29,8 @@
   <ItemGroup>
     <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2/repository.zip" Link="Fixtures/RowIdentityV2/repository.zip" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2/expected.json" Link="Fixtures/RowIdentityV2/expected.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2StorageV2/repository.zip" Link="Fixtures/RowIdentityV2StorageV2/repository.zip" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2StorageV2/expected.json" Link="Fixtures/RowIdentityV2StorageV2/expected.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

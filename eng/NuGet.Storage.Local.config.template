@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="storage-local" value="REPLACE_WITH_ABSOLUTE_STORAGE_FEED" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <fallbackPackageFolders><clear /></fallbackPackageFolders>
+  <disabledPackageSources><clear /></disabledPackageSources>
+  <packageSourceMapping>
+    <clear />
+    <packageSource key="storage-local">
+      <package pattern="Atelia.Primitives" />
+      <package pattern="Atelia.Data" />
+      <package pattern="Atelia.Rbf" />
+      <package pattern="Atelia.RbfSegmentStore" />
+      <package pattern="Atelia.EventJournal" />
+    </packageSource>
+    <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+  </packageSourceMapping>
+</configuration>

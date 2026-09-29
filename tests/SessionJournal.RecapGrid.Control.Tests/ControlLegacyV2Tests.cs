@@ -8,8 +8,14 @@ using Xunit;
 namespace Atelia.SessionJournal.RecapGrid.Control.Tests;
 
 public sealed partial class ControlVerticalTests {
+#if STORAGE_STRICT_TAIL_OPEN
+    private const string StorageFixtureSuffix = "StorageV2";
+#else
+    private const string StorageFixtureSuffix = "";
+#endif
+
     private static string LegacyFixtureDirectory => Path.Combine(
-        AppContext.BaseDirectory, "Fixtures", "LegacyV2");
+        AppContext.BaseDirectory, "Fixtures", "LegacyV2" + StorageFixtureSuffix);
 
     private string ExtractLegacyControl() {
         string path = NewPath();

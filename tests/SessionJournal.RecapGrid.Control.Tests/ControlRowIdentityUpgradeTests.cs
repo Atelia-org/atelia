@@ -9,7 +9,7 @@ namespace Atelia.SessionJournal.RecapGrid.Control.Tests;
 
 public sealed partial class ControlVerticalTests {
     private static string RowIdentityFixtureDirectory => Path.Combine(
-        AppContext.BaseDirectory, "Fixtures", "RowIdentityV2");
+        AppContext.BaseDirectory, "Fixtures", "RowIdentityV2" + StorageFixtureSuffix);
 
     private static byte[] LegacyV3ControlBytes() {
         using ZipArchive archive = ZipFile.OpenRead(

@@ -43,3 +43,9 @@
 *.ttf -text
 *.eot -text
 *.otf -text
+
+# Storage facts and metadata are binary, including small synthetic fixtures.
+*.rbf -text
+journal.format -text
+active.segment -text
+catalog.snapshot -text

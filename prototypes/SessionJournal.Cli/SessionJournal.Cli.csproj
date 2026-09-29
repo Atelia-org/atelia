@@ -5,6 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <DefineConstants Condition="'$(StorageStrictTailOpen)' == 'true'">$(DefineConstants);STORAGE_STRICT_TAIL_OPEN</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

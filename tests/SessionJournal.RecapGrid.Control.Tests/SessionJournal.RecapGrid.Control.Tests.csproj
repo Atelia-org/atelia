@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants Condition="'$(StorageStrictTailOpen)' == 'true'">$(DefineConstants);STORAGE_STRICT_TAIL_OPEN</DefineConstants>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -10,6 +11,7 @@
 
   <ItemGroup>
     <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2/**" Link="Fixtures/RowIdentityV2/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2StorageV2/**" Link="Fixtures/RowIdentityV2StorageV2/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

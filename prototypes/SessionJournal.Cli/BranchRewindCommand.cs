@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
 using Atelia.EventJournal;
+#if !STORAGE_STRICT_TAIL_OPEN
 using Atelia.RbfSegmentStore;
+#endif
 using Journal = Atelia.EventJournal.EventJournal;
 
 namespace Atelia.SessionJournal.Cli;
@@ -11,6 +13,10 @@ namespace Atelia.SessionJournal.Cli;
 /// The caller must stop all repository owners; EventJournal is single-driver.
 /// </summary>
 internal static class BranchRewindCommand {
+#if STORAGE_STRICT_TAIL_OPEN
+    // v2 opens strictly validate physical tails and never repair them.
+    private static readonly EventJournalOptions StrictOptions = new();
+#else
     private static readonly EventJournalOptions StrictOptions = new() {
         EventSegmentStoreOptions = new RbfSegmentStoreOptions {
             RecoverActiveTailOnOpen = false
@@ -22,6 +28,7 @@ internal static class BranchRewindCommand {
             RecoverActiveTailOnOpen = false
         }
     };
+#endif
 
     internal static int Run(CliOptions options) {
         options.EnsureOnly(
@@ -78,8 +85,8 @@ internal static class BranchRewindCommand {
                     throw new InvalidOperationException("Stale branch RefId or head; obtain a fresh preview.");
                 }
             }
-            // Preview never opens a writer or repairs a tail. Apply also disables
-            // all open-time tail repair, even when confirmation later fails.
+            // Preview never opens a writer. Both modes reject malformed physical
+            // tails without repair, even when confirmation later fails.
             using Journal journal = apply
                 ? Journal.OpenExisting(path, StrictOptions)
                 : Journal.OpenReadOnlyExisting(path, StrictOptions);

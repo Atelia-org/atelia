@@ -4,5 +4,6 @@
     <StorageSourceRevision>976aa345f923da09e2a5cf1dc25ba592b3818b63</StorageSourceRevision>
     <StorageRepositoryUrl>https://github.com/Atelia-org/atelia-storage.git</StorageRepositoryUrl>
     <UseStorageSources Condition="'$(UseStorageSources)' == ''">false</UseStorageSources>
+    <StorageStrictTailOpen Condition="'$(StorageStrictTailOpen)' == ''">false</StorageStrictTailOpen>
   </PropertyGroup>
 </Project>

@@ -1,0 +1,11 @@
+<Project>
+  <!-- Copy to StorageDependency.Local.props (gitignored). Restore after changing modes. -->
+  <PropertyGroup>
+    <UseStorageSources>false</UseStorageSources>
+    <!-- Set true only for v2 packages/sources with strict open and removed recovery options. -->
+    <StorageStrictTailOpen>true</StorageStrictTailOpen>
+    <StoragePackageVersion>REPLACE_WITH_UNIQUE_DEV_VERSION</StoragePackageVersion>
+    <StorageSourceRevision>REPLACE_WITH_PACK_MANIFEST_SOURCE_REVISION</StorageSourceRevision>
+    <RestoreConfigFile>$(MSBuildThisFileDirectory)NuGet.Storage.Local.config</RestoreConfigFile>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,384 @@
+[
+  {
+    "source": "tests/SessionJournal.Cli.Tests/Fixtures/ControlReceiptV2/prepared-with-old-tool-result.zip",
+    "sourceSha256": "7e14511299a3bd204ffc4268bdf1f034e00a0bf8a3a1f392af5d20c70631449d",
+    "target": "tests/SessionJournal.Cli.Tests/Fixtures/ControlReceiptV2StorageV2/prepared-with-old-tool-result.zip",
+    "targetSha256": "08048193ee606eac917edfd69556475b90c7080ecfb59934c7bae9f130ad43dd",
+    "toolRevision": "5288bd55b4a5181942dadd76516f799002508144",
+    "preservedOriginalFiles": {
+      "connections.json": "e1bc76458ab70625871644071bec4597dd90e0a414f9dedacef59a0e61cb6864",
+      "expected-tool-result.json": "fad9daad3c064dffc19009094964d8b4824921c26a3f1a0664bb7f6953de7ccd",
+      "admission.json": "78a7a755b59c6bb336ff8b14dd4c25d3e1d3d284c451ddafbe4df187acced55d",
+      "expected-request.json": "9478ec45dcca1dedc943bd2eb345673b437af5831b43c7d8777802ec2a92f932",
+      "expected-exact-inputs.json": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "routes.json": "a7786fae13dbc226242bb7e63342f21ecee5d79eba3da4babec6ffbcde0c6c41",
+      "refs/ref-op-log.rbf": "97e2a75e625a1378dade74bb389af29287b1dea89d4b7bdf326e53f35cfe4150",
+      "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.json": "14f39de2aeeba29852ece6ac6fe93e55ecedeeefd15614a75f740f4fe79abe9c",
+      "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/efa502a2c3d68f4e4ff896e8e1428952/control.json": "0167ea195c3ce4a07f83785b84f9188f46616886f78852422717028f9869fe5f",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/efa502a2c3d68f4e4ff896e8e1428952/writer.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/efa502a2c3d68f4e4ff896e8e1428952/lifetime.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "refs/objects/000000000400001f/segments/00000001.rbf": "be913415e78315813bff3565b569e82cf771ce9444c160f096611e60fb6cfa95",
+      "derived/recap-grid/v1/lifetime.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "derived/recap-grid/v1/grid.sqlite": "9b598abaa4b96c7cb98e750a8aefb5d71ed1e5ae0ebd644943b526ddd1821ff1",
+      "derived/history-timeline/v2/locks/000000000400001f.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "derived/history-timeline/v2/refs/000000000400001f/locator.json": "63739b100df1a87590f328a99400b4a2a62d22f7afd7c08f6832f096a3afbe62",
+      "derived/history-timeline/v2/refs/000000000400001f/timelines/efa502a2c3d68f4e4ff896e8e1428952.sqlite": "8e122aff95d3e2322587e5d3c6b3d642a5622f0d5cb56c99121a65d8703ae33d",
+      "events/buckets/000000/00000001.rbf": "d80f898037dc542c0e4a6858f0a6ef34ba72d058fb82649ce82acdb5380aedce"
+    },
+    "manifest": {
+      "schemaVersion": 1,
+      "kind": "EventJournalLegacyUpgrade",
+      "completed": true,
+      "sourceProfile": "legacy-bb7c4fb",
+      "profileBaselineRevision": "bb7c4fb3eb6477783c70ee61bc62b832be195d07",
+      "targetLayoutVersion": 2,
+      "sourceRoot": "<fixture-upgrade-work>/0/storage-input",
+      "sourceDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "sourceFiles": [
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 6804,
+          "sha256": "d80f898037dc542c0e4a6858f0a6ef34ba72d058fb82649ce82acdb5380aedce"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 1740,
+          "sha256": "be913415e78315813bff3565b569e82cf771ce9444c160f096611e60fb6cfa95"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "97e2a75e625a1378dade74bb389af29287b1dea89d4b7bdf326e53f35cfe4150"
+        }
+      ],
+      "outputs": [
+        {
+          "kind": "Locator",
+          "relativePath": "events/active.segment",
+          "length": 20,
+          "sha256": "fc81d42a5627ac65b7a6db219333221e094577bf9a930cd3acdc242742ae7dce"
+        },
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 6804,
+          "sha256": "d80f898037dc542c0e4a6858f0a6ef34ba72d058fb82649ce82acdb5380aedce"
+        },
+        {
+          "kind": "Format",
+          "relativePath": "journal.format",
+          "length": 16,
+          "sha256": "a96b9af01f19f0e075922f9400c012f3ef33050afb2ed9a73891eedd9748dffe"
+        },
+        {
+          "kind": "CatalogSnapshot",
+          "relativePath": "refs/catalog.snapshot",
+          "length": 82,
+          "sha256": "18a86cbc0efd8ec97ea5b7d2ec4e81d08d42b69ad4284cb76b97b9a032957f0a"
+        },
+        {
+          "kind": "Locator",
+          "relativePath": "refs/objects/000000000400001f/active.segment",
+          "length": 20,
+          "sha256": "63e2abb135f09de48d982172f239aa53fae1cf4653666c9d7e034b6c3ee4cd07"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 1740,
+          "sha256": "be913415e78315813bff3565b569e82cf771ce9444c160f096611e60fb6cfa95"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "97e2a75e625a1378dade74bb389af29287b1dea89d4b7bdf326e53f35cfe4150"
+        }
+      ],
+      "targetDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "factsCopiedByteExactly": true,
+      "validation": {
+        "sourceFullScan": "Passed",
+        "targetFullAudit": "Passed",
+        "dailyReadCheck": "Passed",
+        "sourceUnchanged": "Passed"
+      },
+      "warningCount": 0
+    }
+  },
+  {
+    "source": "tests/SessionJournal.Cli.Tests/Fixtures/ControlReceiptV2/after-tool-result.zip",
+    "sourceSha256": "5f42c26489842eba331395991e2487c7f1b712c654dd288e45170044fa73192b",
+    "target": "tests/SessionJournal.Cli.Tests/Fixtures/ControlReceiptV2StorageV2/after-tool-result.zip",
+    "targetSha256": "b581dfde19835622a7009395becb3829033c905467194aaa7b57bbcbc0f7aef8",
+    "toolRevision": "5288bd55b4a5181942dadd76516f799002508144",
+    "preservedOriginalFiles": {
+      "connections.json": "e1bc76458ab70625871644071bec4597dd90e0a414f9dedacef59a0e61cb6864",
+      "expected-tool-result.json": "52fc73eb2a8e73b34b466ab73fdba007ebd0db323f26fb073fdfa4482895db47",
+      "admission.json": "78a7a755b59c6bb336ff8b14dd4c25d3e1d3d284c451ddafbe4df187acced55d",
+      "routes.json": "a7786fae13dbc226242bb7e63342f21ecee5d79eba3da4babec6ffbcde0c6c41",
+      "refs/ref-op-log.rbf": "bfa710abddb22e104eee99664c99d790344c28e2403edc88862ff61a9a9071ef",
+      "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.json": "14f39de2aeeba29852ece6ac6fe93e55ecedeeefd15614a75f740f4fe79abe9c",
+      "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/6488650dc435b994c44bfd0ddd6b8c79/control.json": "f5e4545c7785c6f3e944ac2c799478e4a68b33f4c1065219a8be806d510e195b",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/6488650dc435b994c44bfd0ddd6b8c79/writer.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/6488650dc435b994c44bfd0ddd6b8c79/lifetime.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "refs/objects/000000000400001f/segments/00000001.rbf": "bd6040e1ca71a8f7354ec912306fc9861e127182941141cb3222ed04246f9db8",
+      "derived/recap-grid/v1/lifetime.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "derived/recap-grid/v1/grid.sqlite": "fba513af9b21c93b24f4d01a7f7b661454cbb43e542b2cdd95671eac67cd3652",
+      "derived/history-timeline/v2/locks/000000000400001f.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "derived/history-timeline/v2/refs/000000000400001f/locator.json": "d10fb8e40a1026f41cb2518bc5c1ed820d63811449ce4f06a7cd3726355f481a",
+      "derived/history-timeline/v2/refs/000000000400001f/timelines/6488650dc435b994c44bfd0ddd6b8c79.sqlite": "10e2dd3194f8df54473cf8fbf221efb78df46e94af55f3421b7e2db75c5f5dbe",
+      "events/buckets/000000/00000001.rbf": "2728c09580ddd05a3761c2dbf101d5a83968873acfe965a911bd17dbf06b7bd1"
+    },
+    "manifest": {
+      "schemaVersion": 1,
+      "kind": "EventJournalLegacyUpgrade",
+      "completed": true,
+      "sourceProfile": "legacy-bb7c4fb",
+      "profileBaselineRevision": "bb7c4fb3eb6477783c70ee61bc62b832be195d07",
+      "targetLayoutVersion": 2,
+      "sourceRoot": "<fixture-upgrade-work>/1/storage-input",
+      "sourceDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "sourceFiles": [
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 4380,
+          "sha256": "2728c09580ddd05a3761c2dbf101d5a83968873acfe965a911bd17dbf06b7bd1"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 1244,
+          "sha256": "bd6040e1ca71a8f7354ec912306fc9861e127182941141cb3222ed04246f9db8"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "bfa710abddb22e104eee99664c99d790344c28e2403edc88862ff61a9a9071ef"
+        }
+      ],
+      "outputs": [
+        {
+          "kind": "Locator",
+          "relativePath": "events/active.segment",
+          "length": 20,
+          "sha256": "fc81d42a5627ac65b7a6db219333221e094577bf9a930cd3acdc242742ae7dce"
+        },
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 4380,
+          "sha256": "2728c09580ddd05a3761c2dbf101d5a83968873acfe965a911bd17dbf06b7bd1"
+        },
+        {
+          "kind": "Format",
+          "relativePath": "journal.format",
+          "length": 16,
+          "sha256": "a96b9af01f19f0e075922f9400c012f3ef33050afb2ed9a73891eedd9748dffe"
+        },
+        {
+          "kind": "CatalogSnapshot",
+          "relativePath": "refs/catalog.snapshot",
+          "length": 82,
+          "sha256": "7e96b9520715adcf980466e0083111335f632fca835f2c5e9c552f70ea2e521d"
+        },
+        {
+          "kind": "Locator",
+          "relativePath": "refs/objects/000000000400001f/active.segment",
+          "length": 20,
+          "sha256": "63e2abb135f09de48d982172f239aa53fae1cf4653666c9d7e034b6c3ee4cd07"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 1244,
+          "sha256": "bd6040e1ca71a8f7354ec912306fc9861e127182941141cb3222ed04246f9db8"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "bfa710abddb22e104eee99664c99d790344c28e2403edc88862ff61a9a9071ef"
+        }
+      ],
+      "targetDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "factsCopiedByteExactly": true,
+      "validation": {
+        "sourceFullScan": "Passed",
+        "targetFullAudit": "Passed",
+        "dailyReadCheck": "Passed",
+        "sourceUnchanged": "Passed"
+      },
+      "warningCount": 0
+    }
+  },
+  {
+    "source": "tests/SessionJournal.Cli.Tests/Fixtures/ControlReceiptV2/after-control-commit.zip",
+    "sourceSha256": "75733c8fcb285d3ca9c0e535cf6ef037e4f4c2f70cae42a7de3cd5316b794515",
+    "target": "tests/SessionJournal.Cli.Tests/Fixtures/ControlReceiptV2StorageV2/after-control-commit.zip",
+    "targetSha256": "f3e77ed5ff9767fe49b6a60da5a465b27b6a68b0114958d88836b0d5a63f417d",
+    "toolRevision": "5288bd55b4a5181942dadd76516f799002508144",
+    "preservedOriginalFiles": {
+      "connections.json": "e1bc76458ab70625871644071bec4597dd90e0a414f9dedacef59a0e61cb6864",
+      "admission.json": "78a7a755b59c6bb336ff8b14dd4c25d3e1d3d284c451ddafbe4df187acced55d",
+      "routes.json": "a7786fae13dbc226242bb7e63342f21ecee5d79eba3da4babec6ffbcde0c6c41",
+      "refs/ref-op-log.rbf": "2faa81829e0318a6b874233287d7b58e571bf24817e844868f5419de347ca4ba",
+      "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.json": "14f39de2aeeba29852ece6ac6fe93e55ecedeeefd15614a75f740f4fe79abe9c",
+      "control/recap-grid/v1/refs/000000000400001f/cadence/cadence.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/43b311bf23a764c37c801338c1244cf5/control.json": "6cd6a4464aa37473edd8f02090ba64b740753d3adab40eca455b89bfc7d24a5b",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/43b311bf23a764c37c801338c1244cf5/writer.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/43b311bf23a764c37c801338c1244cf5/lifetime.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "refs/objects/000000000400001f/segments/00000001.rbf": "330bca4f9395756b253b60f44ca8ce38ef6242f289d6aa2c4f117c431709b4f3",
+      "derived/recap-grid/v1/lifetime.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "derived/recap-grid/v1/grid.sqlite": "646720e023f083190843760e06892f4dad4ec30325c1edb5af9605b0ea7f519a",
+      "derived/history-timeline/v2/locks/000000000400001f.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "derived/history-timeline/v2/refs/000000000400001f/locator.json": "17d12fc9a93b4fbe3969f255418e5dc20515a4572d64550b28fc65a27fa60d3d",
+      "derived/history-timeline/v2/refs/000000000400001f/timelines/43b311bf23a764c37c801338c1244cf5.sqlite": "a79d6023ad8d5b48e1f45fe8c0c3bba207d3d35c55e2fae5c9cb467fd176459d",
+      "events/buckets/000000/00000001.rbf": "cea1baaa584ca298def966dcb829c58c734efe015e7bd20247ffc74de65f6f22"
+    },
+    "manifest": {
+      "schemaVersion": 1,
+      "kind": "EventJournalLegacyUpgrade",
+      "completed": true,
+      "sourceProfile": "legacy-bb7c4fb",
+      "profileBaselineRevision": "bb7c4fb3eb6477783c70ee61bc62b832be195d07",
+      "targetLayoutVersion": 2,
+      "sourceRoot": "<fixture-upgrade-work>/2/storage-input",
+      "sourceDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "sourceFiles": [
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 3616,
+          "sha256": "cea1baaa584ca298def966dcb829c58c734efe015e7bd20247ffc74de65f6f22"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 1120,
+          "sha256": "330bca4f9395756b253b60f44ca8ce38ef6242f289d6aa2c4f117c431709b4f3"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "2faa81829e0318a6b874233287d7b58e571bf24817e844868f5419de347ca4ba"
+        }
+      ],
+      "outputs": [
+        {
+          "kind": "Locator",
+          "relativePath": "events/active.segment",
+          "length": 20,
+          "sha256": "fc81d42a5627ac65b7a6db219333221e094577bf9a930cd3acdc242742ae7dce"
+        },
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 3616,
+          "sha256": "cea1baaa584ca298def966dcb829c58c734efe015e7bd20247ffc74de65f6f22"
+        },
+        {
+          "kind": "Format",
+          "relativePath": "journal.format",
+          "length": 16,
+          "sha256": "a96b9af01f19f0e075922f9400c012f3ef33050afb2ed9a73891eedd9748dffe"
+        },
+        {
+          "kind": "CatalogSnapshot",
+          "relativePath": "refs/catalog.snapshot",
+          "length": 82,
+          "sha256": "083d26df987b406995e000d02b9fda5fb185c0253dbfd1749cacab1a86c8b499"
+        },
+        {
+          "kind": "Locator",
+          "relativePath": "refs/objects/000000000400001f/active.segment",
+          "length": 20,
+          "sha256": "63e2abb135f09de48d982172f239aa53fae1cf4653666c9d7e034b6c3ee4cd07"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 1120,
+          "sha256": "330bca4f9395756b253b60f44ca8ce38ef6242f289d6aa2c4f117c431709b4f3"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "2faa81829e0318a6b874233287d7b58e571bf24817e844868f5419de347ca4ba"
+        }
+      ],
+      "targetDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "factsCopiedByteExactly": true,
+      "validation": {
+        "sourceFullScan": "Passed",
+        "targetFullAudit": "Passed",
+        "dailyReadCheck": "Passed",
+        "sourceUnchanged": "Passed"
+      },
+      "warningCount": 0
+    }
+  }
+]

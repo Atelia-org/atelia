@@ -1,0 +1,123 @@
+[
+  {
+    "source": "tests/SessionJournal.RecapGrid.Control.Tests/Fixtures/LegacyV2/repository.zip",
+    "sourceSha256": "15deaa8ac6f7d7eb0e7ce6e6825f89454fa524c13777d95552b1c2901740d8bf",
+    "target": "tests/SessionJournal.RecapGrid.Control.Tests/Fixtures/LegacyV2StorageV2/repository.zip",
+    "targetSha256": "0268bc635057c1e4b83489884b6b76f50a2ad2a87202715f333bc8e1bd1a6d04",
+    "toolRevision": "5288bd55b4a5181942dadd76516f799002508144",
+    "preservedOriginalFiles": {
+      "legacy-backup/manifest.json": "19cffaa4dff3fb2057ef043a264feb5af8f908231f526147e046ff81b5e4aed5",
+      "legacy-backup/control.json": "debb50b8d5089bcd55dd64d127bf24ce14ed42ad2fe09162fb4a318780fbd299",
+      "refs/ref-op-log.rbf": "d98e2e36ad184cbccdcd70c0ac275baeff70901c58906c3fa9f2a709226bba87",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/d2c8eb6be550385da0f3adbfb5db2279/control.json": "debb50b8d5089bcd55dd64d127bf24ce14ed42ad2fe09162fb4a318780fbd299",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/d2c8eb6be550385da0f3adbfb5db2279/writer.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "control/recap-grid/v1/refs/000000000400001f/timelines/d2c8eb6be550385da0f3adbfb5db2279/lifetime.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "refs/objects/000000000400001f/segments/00000001.rbf": "aeb6ca283c200ec86a6d27df0c3c9bb65ed589e0dc00fad57a9363c8f207f1d0",
+      "derived/history-timeline/v2/locks/000000000400001f.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "derived/history-timeline/v2/refs/000000000400001f/locator.json": "b7921ca16aacbe93d94ff856b7eaf3a526e7b36f070d0192e89903a68d67a6f0",
+      "derived/history-timeline/v2/refs/000000000400001f/timelines/d2c8eb6be550385da0f3adbfb5db2279.sqlite": "0dcd0005f4534b918ae4a321e23e483a3055e45b8c008b71a59d2c0d556e5155",
+      "events/buckets/000000/00000001.rbf": "6e529504cce0ae3a4ec52c800258c901a3ad5b33c54911a75cfbff82327a7e15"
+    },
+    "manifest": {
+      "schemaVersion": 1,
+      "kind": "EventJournalLegacyUpgrade",
+      "completed": true,
+      "sourceProfile": "legacy-bb7c4fb",
+      "profileBaselineRevision": "bb7c4fb3eb6477783c70ee61bc62b832be195d07",
+      "targetLayoutVersion": 2,
+      "sourceRoot": "<fixture-upgrade-work>/4/storage-input",
+      "sourceDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "sourceFiles": [
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 496,
+          "sha256": "6e529504cce0ae3a4ec52c800258c901a3ad5b33c54911a75cfbff82327a7e15"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 500,
+          "sha256": "aeb6ca283c200ec86a6d27df0c3c9bb65ed589e0dc00fad57a9363c8f207f1d0"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "d98e2e36ad184cbccdcd70c0ac275baeff70901c58906c3fa9f2a709226bba87"
+        }
+      ],
+      "outputs": [
+        {
+          "kind": "Locator",
+          "relativePath": "events/active.segment",
+          "length": 20,
+          "sha256": "fc81d42a5627ac65b7a6db219333221e094577bf9a930cd3acdc242742ae7dce"
+        },
+        {
+          "kind": "EventSegment",
+          "relativePath": "events/buckets/000000/00000001.rbf",
+          "length": 496,
+          "sha256": "6e529504cce0ae3a4ec52c800258c901a3ad5b33c54911a75cfbff82327a7e15"
+        },
+        {
+          "kind": "Format",
+          "relativePath": "journal.format",
+          "length": 16,
+          "sha256": "a96b9af01f19f0e075922f9400c012f3ef33050afb2ed9a73891eedd9748dffe"
+        },
+        {
+          "kind": "CatalogSnapshot",
+          "relativePath": "refs/catalog.snapshot",
+          "length": 82,
+          "sha256": "7f3cb5d918f9c5bd329405cf2813ce839752577678b9b7fcbfc0a17f7d40858b"
+        },
+        {
+          "kind": "Locator",
+          "relativePath": "refs/objects/000000000400001f/active.segment",
+          "length": 20,
+          "sha256": "63e2abb135f09de48d982172f239aa53fae1cf4653666c9d7e034b6c3ee4cd07"
+        },
+        {
+          "kind": "RefMoveSegment",
+          "relativePath": "refs/objects/000000000400001f/segments/00000001.rbf",
+          "length": 500,
+          "sha256": "aeb6ca283c200ec86a6d27df0c3c9bb65ed589e0dc00fad57a9363c8f207f1d0"
+        },
+        {
+          "kind": "RefOpLog",
+          "relativePath": "refs/ref-op-log.rbf",
+          "length": 260,
+          "sha256": "d98e2e36ad184cbccdcd70c0ac275baeff70901c58906c3fa9f2a709226bba87"
+        }
+      ],
+      "targetDirectories": [
+        ".",
+        "events",
+        "events/buckets",
+        "events/buckets/000000",
+        "refs",
+        "refs/objects",
+        "refs/objects/000000000400001f",
+        "refs/objects/000000000400001f/segments"
+      ],
+      "factsCopiedByteExactly": true,
+      "validation": {
+        "sourceFullScan": "Passed",
+        "targetFullAudit": "Passed",
+        "dailyReadCheck": "Passed",
+        "sourceUnchanged": "Passed"
+      },
+      "warningCount": 0
+    }
+  }
+]
