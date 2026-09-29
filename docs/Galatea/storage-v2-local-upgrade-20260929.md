@@ -48,7 +48,7 @@
 
 本机 `config.json`/`delegates.json` 仍引用 `/repos/focus/atelia`，该目录在当前机器缺失；实际仓位于 `/repos/Atelia-org/atelia`。真实四个delegation/CharacterMemory数据库的session repository identity均匹配旧路径SHA-256，不匹配新路径。不能批量改sessionDir或修改SQLite身份来掩盖问题。此问题独立于EventJournal布局升级。已在private mount namespace中将新仓bind mount到旧路径，用真实配置构造maintenance GalateaHostService：两角色均Idle，各读取6条recent turns，Cadence freshness均exact（cyber below-target，gpt awaiting-recent-reserve）。后者是正常未达recent reserve，不是损坏。验证factory拒绝provider构造，实际创建数为0；真实两个repo与21个外部配置/sidecar文件hash保持不变。
 
-该mount仅存在于验证进程；退出已清除，当前没有全局 `/repos/focus/atelia` 别名。用户尚待选择是否建立本机临时bind mount，或另行处理路径身份迁移。完成此项之前，直接正常启动仍会在旧路径解析阶段失败；不能把本次数据与包升级理解为已消除该独立启动障碍。不要建立软链接，sidecar会拒绝reparse路径。用户若选择临时bind mount，应记录它在重启后需重新建立；本轮不修改fstab。
+初次验证的mount仅存在于验证进程，退出已清除。随后用户明确要求更新路径并优先使用相对配置；现已完成配置迁址和持久身份重绑定，旧路径启动障碍已消除，无需bind mount或symlink。具体97个身份字段的迁移、备份与实际Host验证见[后续迁址记录](path-relocation-20260929.md)。本实例继续按用户要求保持停服。
 
 验证使用本地artifact内的临时probe；仅为访问现有internal config loader使用reflection，读取与续写均调用现有公开Host/SessionJournal APIs，未更改生产API或配置。
 

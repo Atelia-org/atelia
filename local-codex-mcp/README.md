@@ -36,7 +36,8 @@ projector 对 malformed/discontinuous records（包括 duplicate/regressed ordin
 ## 1. 安装、生成 schema 与构建
 
 ```bash
-cd /repos/focus/atelia/local-codex-mcp
+# 从 atelia 仓库根目录进入
+cd local-codex-mcp
 npm ci
 npm run codex:install
 npm run codex:verify
@@ -79,8 +80,8 @@ Bridge 启动和每次进程恢复都会调用 `account/read`。未登录时 too
 环境变量采用严格 JSON array：
 
 ```bash
-export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
-export CODEX_BRIDGE_DEFAULT_CWD='/repos/focus/atelia'
+export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/Atelia-org/atelia"]'
+export CODEX_BRIDGE_DEFAULT_CWD='/repos/Atelia-org/atelia'
 ```
 
 Windows 原生 Node 示例：
@@ -125,7 +126,7 @@ Linux配置必须把该字段精确设为安装后的executable wrapper：
 ```json
 {
   "sidecar": {
-    "codexCommand": "/repos/focus/atelia/local-codex-mcp/.codex-packages/0.156.1/node_modules/@openai/codex/bin/codex.js"
+    "codexCommand": "/repos/Atelia-org/atelia/local-codex-mcp/.codex-packages/0.156.1/node_modules/@openai/codex/bin/codex.js"
   }
 }
 ```
@@ -219,7 +220,7 @@ endpoint 为 `http://127.0.0.1:3000/mcp`，支持 POST、GET/SSE 与 DELETE sess
 
 ```bash
 # terminal A
-export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
+export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/Atelia-org/atelia"]'
 export CODEX_BRIDGE_TRANSPORT=http
 npm start
 
@@ -296,15 +297,15 @@ Bridge 不实现 tunnel protocol，直接使用 OpenAI 官方 `tunnel-client`。
 
 ```bash
 export CONTROL_PLANE_API_KEY='sk-...'
-export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
-export CODEX_BRIDGE_DEFAULT_CWD='/repos/focus/atelia'
+export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/Atelia-org/atelia"]'
+export CODEX_BRIDGE_DEFAULT_CWD='/repos/Atelia-org/atelia'
 # 默认使用 repo-local exact pin；只有受控诊断时才显式覆盖 command。
 
 tunnel-client init \
   --sample sample_mcp_stdio_local \
   --profile local-codex \
   --tunnel-id tunnel_REPLACE_ME \
-  --mcp-command '/ABSOLUTE/PATH/TO/node /repos/focus/atelia/local-codex-mcp/dist/src/index.js'
+  --mcp-command '/ABSOLUTE/PATH/TO/node /repos/Atelia-org/atelia/local-codex-mcp/dist/src/index.js'
 
 tunnel-client doctor --profile local-codex --explain
 tunnel-client run --profile local-codex
@@ -331,7 +332,7 @@ tunnel-client run --profile local-codex
 第一次测试 prompt：
 
 ```text
-请调用 codex_delegate，让本地 Codex 以 research 模式、local_command_network=false、web_search=disabled 调查 /repos/focus/atelia/local-codex-mcp：说明它解决什么问题、列出最多 8 个关键文件。不要自己读取仓库；只整合 Codex 返回的短摘要，并保留 thread_id 供后续继续。
+请调用 codex_delegate，让本地 Codex 以 research 模式、local_command_network=false、web_search=disabled 调查 /repos/Atelia-org/atelia/local-codex-mcp：说明它解决什么问题、列出最多 8 个关键文件。不要自己读取仓库；只整合 Codex 返回的短摘要，并保留 thread_id 供后续继续。
 ```
 
 随后测试 continuation：

@@ -54,7 +54,7 @@ focus 生态中的项目（PipeMux, DocUI, PieceTreeSharp, atelia/prototypes）�
 
 ```bash
 # ~/.bashrc 或 ~/.zshrc
-export ATELIA_HOME="/repos/focus/atelia"
+export ATELIA_HOME="/repos/Atelia-org/atelia"
 export PATH="$ATELIA_HOME/bin:$PATH"
 ```
 
@@ -66,7 +66,7 @@ export PATH="$ATELIA_HOME/bin:$PATH"
 #!/bin/bash
 # atelia/bin/pmux
 
-ATELIA_HOME="${ATELIA_HOME:-/repos/focus/atelia}"
+ATELIA_HOME="${ATELIA_HOME:-/repos/Atelia-org/atelia}"
 BROKER_PID="$ATELIA_HOME/var/pmux/broker.pid"
 CLI="$ATELIA_HOME/lib/PipeMux.CLI.dll"
 BROKER="$ATELIA_HOME/lib/PipeMux.Broker.dll"
@@ -169,7 +169,7 @@ public static class BrokerLauncher
 #!/bin/bash
 # atelia/scripts/publish.sh
 
-ATELIA_LIB="/repos/focus/atelia/lib"
+ATELIA_LIB="/repos/Atelia-org/atelia/lib"
 mkdir -p "$ATELIA_LIB"
 
 dotnet publish /repos/focus/PipeMux/src/PipeMux.CLI -c Release -o "$ATELIA_LIB"
@@ -192,7 +192,7 @@ dotnet publish /repos/focus/DocUI/src/DocUI.Text -c Release -o "$ATELIA_LIB"
 
 # 毕业后
 /repos/PipeMux/              # 独立仓库
-/repos/focus/atelia/lib/     # 仍然包含编译后的 DLL
+/repos/Atelia-org/atelia/lib/     # 仍然包含编译后的 DLL
 ```
 
 ## 实施计划

@@ -13,7 +13,7 @@
   方式 B：本地源码联调（源码模式禁止 consumer pack；切回包模式需重新 restore）
   <PropertyGroup>
     <UseCompletionSources>true</UseCompletionSources>
-    <CompletionSourceRoot>/repos/focus/atelia-completion</CompletionSourceRoot>
+    <CompletionSourceRoot>$(MSBuildThisFileDirectory)../../atelia-completion</CompletionSourceRoot>
   </PropertyGroup>
   -->
 </Project>

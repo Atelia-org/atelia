@@ -2,7 +2,8 @@
 <configuration>
   <packageSources>
     <clear />
-    <add key="storage-local" value="REPLACE_WITH_ABSOLUTE_STORAGE_FEED" />
+    <!-- Relative to this config file; adjust for a different workspace layout. -->
+    <add key="storage-local" value="../../atelia-storage/artifacts/dev-feed" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <fallbackPackageFolders><clear /></fallbackPackageFolders>

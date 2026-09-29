@@ -13,6 +13,16 @@
 `Galatea:ConfigPath` 覆盖：命令行使用 `--Galatea:ConfigPath /绝对或相对路径/config.json`，环境变量使用
 `Galatea__ConfigPath`。相对路径以 content root 解析，而不是以 `config.json` 的父目录猜测。
 
+`config.json` 内的 `sessionDir`、`delegationStateDir`、`characterMemoryStateDir`、
+`characterContextTemplateFile` 和 `runtime.callLogDir` 则相对于 **config.json 所在目录**解析。
+推荐使用 `sessions/gpt`、`delegation-state/gpt`、`character-memory/gpt`、`prompts/gpt.md`
+这样的相对路径。`delegates.json` 的执行程序、Codex Home、allowed roots，以及角色 `homeDir`
+仍要求规范的绝对路径，不能直接改成相对路径。
+
+现有委派和 Character Memory 的仓身份仍由解析后的绝对 session 路径派生。因此整体搬家后，
+相对配置虽然仍能找到文件，也必须显式重绑定数据库身份和角色间邮件目标；不能只改配置后
+自动启动恢复。实际迁址范围与验证见 [2026-09-29 迁址记录](path-relocation-20260929.md)。
+
 可选 ASP.NET 启动键 `Galatea:DataProtectionKeysDirectory`（环境变量
 `Galatea__DataProtectionKeysDirectory`）指定登录 cookie 的 DataProtection key-ring 目录，必须为非空绝对路径。
 未设置时维持 ASP.NET 原有默认行为；它不属于 strict `config.json`，也不改变会话/Completion identity。

@@ -40,7 +40,7 @@ $storageDevVersion = "0.2.0-dev.$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))
 长期使用本地包时，复制以下模板并填写本机值；两个实际文件均已 gitignore：
 
 - `eng/StorageDependency.Local.props.template` → `eng/StorageDependency.Local.props`：填写唯一版本与 Pack manifest 的 sourceRevision。
-- `eng/NuGet.Storage.Local.config.template` → `eng/NuGet.Storage.Local.config`：填写开发 feed 绝对路径。
+- `eng/NuGet.Storage.Local.config.template` → `eng/NuGet.Storage.Local.config`：填写开发 feed 路径（模板使用相对配置文件位置的兄弟仓路径）。
 
 `Directory.Build.props` 在 Completion 依赖之后导入 Storage local override，使组合配置的
 `RestoreConfigFile` 最后生效。无需额外命令行属性即可普通 restore/build/test：

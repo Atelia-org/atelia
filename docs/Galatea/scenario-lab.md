@@ -25,11 +25,11 @@ Anthropic Client 恢复；模拟 Models 404 后使用回退 max_tokens，产生 
 
 ## 一键运行
 
-从任意目录运行（需要仓库现有 .NET SDK、Python 3；首次运行可能 restore 已声明的依赖）：
+从仓库根目录运行（需要仓库现有 .NET SDK、Python 3；首次运行可能 restore 已声明的依赖）：
 
 ```bash
-/repos/focus/atelia/scripts/test_galatea_lab.sh
-/repos/focus/atelia/scripts/test_galatea_lab.sh Debug
+./scripts/test_galatea_lab.sh
+./scripts/test_galatea_lab.sh Debug
 ```
 
 默认只运行 `GalateaLab` 场景和 lab lifecycle 测试，不访问真实 provider；没有匹配/执行测试也不能算成功。
@@ -41,7 +41,7 @@ Anthropic Client 恢复；模拟 Models 404 后使用回退 max_tokens，产生 
 
 ```bash
 ATELIA_CODEX_SUBSCRIPTION_LIVE_AUTH_FILE=/绝对路径/auth.json \
-  /repos/focus/atelia/scripts/test_galatea_lab.sh --live
+  ./scripts/test_galatea_lab.sh --live
 ```
 
 live 先要求离线场景通过，再运行两次 completion invocation 的 canary，并验证 metadata-only `live.jsonl`。
