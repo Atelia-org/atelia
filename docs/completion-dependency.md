@@ -7,10 +7,10 @@ Diagnostics、Completion.Abstractions、Completion、Completion.Tools 的源码�
 
 ## 当前包交付
 
-当前 pin 为 `0.1.0-preview.3`，源码身份
-`bbce08b85aec114463313f6d9b539e8412b740eb`。四包
+当前 pin 为 `0.1.0-preview.6`，源码身份
+`422ede9428dde46598fbc699eeb7717f3326e48e`。四包
 （Atelia.Diagnostics、Atelia.Completion.Abstractions、Atelia.Completion、Atelia.Completion.Tools）
-已公开发布到 nuget.org；上游 tag `v0.1.0-preview.3` 指向同一提交。
+已公开发布到 nuget.org；上游 tag `v0.1.0-preview.6` 指向同一提交。
 
 没有本地 override 的 clone，普通 restore/build 直接使用根 [nuget.config](../nuget.config)，无须本地冻结 feed：
 
@@ -21,12 +21,60 @@ dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -c Release -p
 
 旧本地试运行产物保留为历史证据：[NuGet.Completion.Local.config](../eng/NuGet.Completion.Local.config)
 和 `gitignore/completion-packages/0.1.0-dev.20260916114103/` 只对应当时的唯一 dev 包交付，
-不再用于当前 preview.3 流程；该 feed/cache 是 ignored 本地产物，不随 Git clone 搬运。
+不再用于当前 preview.6 流程；该 feed/cache 是 ignored 本地产物，不随 Git clone 搬运。
 不要用旧本地配置消费新 pin，也不要在相同版本下重新打包覆盖。
 
-对应源码指南可从 tag `v0.1.0-preview.3` 取得：`docs/Completion/quick-start.md`、
+对应源码指南可从 tag `v0.1.0-preview.6` 取得：`docs/Completion/quick-start.md`、
 `src/Completion/README.md`、`src/Completion.Tools/README.md`、`src/Diagnostics/README.md`。
-本轮验收与试运行注意事项见[实施记录](Galatea/completion-auto-retry-implementation.md)。
+自动重试的历史验收与试运行注意事项见[实施记录](Galatea/completion-auto-retry-implementation.md)。
+
+### preview.6 接入边界（2026-10-01）
+
+- 本仓现有 JSON 工具调用 API 可继续使用。上游新增的 `TextToolWrapper` / `RawToolCall.FromText`
+  不代表 SessionJournal 已支持文本工具：当前工具定义、请求 canonical codec 和工具执行事件仍按
+  JSON 参数持久化，不能注册文本工具或把原始文本伪装成 `RawArgumentsJson`。
+- 上游新增 `CompletionReasoningEffort.XHigh`。标准 Chat 的 `Max` 现在投影为 `max`，
+  `XHigh` 投影为 `xhigh`；启用模型规格后可能按模型能力归一化。Responses/Codex 保留各自规则，
+  不把 Chat 的映射套用到其他协议。
+- Chat、Anthropic、Gemini 默认使用上游对应的内建模型规格。`Disabled` 是业务意图；强制思考模型
+  可归一化到最低启用挡位。模型别名需宿主显式配置，不自动推断能力。
+- Anthropic 未命中本地输出限值时查询 Models API；404/405/501 不再自动回退到 32,768。
+  需要兼容这类网关时，应通过 `DefaultCompletionClientFactory(modelSpecsSelector: ...)`
+  明确提供已核对的模型规格。Galatea 当前抽取使用 `Auto`，未使用 Opus 5.5 禁止的 forced tool choice。
+- 本次只升级依赖与验证宿主集成，不修改真实实例数据或重启服务。旧 Prepared 恢复继续遵循本仓
+  既有规则；新包安装不等于运行中的进程已经切换。
+
+模型规格 API 与语义见上游
+[固定版本指南](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.6/docs/Completion/quick-start.md#5-分离业务意图与模型规格)。
+
+### preview.6 本仓验收
+
+2026-10-01，.NET SDK `10.0.201` / Linux / Release，使用公开 Completion 包与本机既有
+Storage `0.2.0-dev.20260929020652`（`StorageStrictTailOpen=true`）组合：
+
+- 四包公开索引、下载来源和 nuspec repository commit 均核对成功，commit 与上方 pin 相同。
+- `dotnet restore Atelia.sln --disable-parallel -m:1 -nr:false` 成功；54 个 solution 项目的 assets
+  均未混入旧 Completion 包或源码引用。
+- `dotnet build Atelia.sln -c Release --no-restore -m:1 -nr:false`：0 warning / 0 error。
+- 以下套件串行执行，均使用 `-c Release --no-build --no-restore -m:1 -nr:false`：
+
+| 测试项目 | 通过 | 跳过 |
+|---|---:|---:|
+| Galatea.Server.Tests（排除 `FullyQualifiedName~LiveTests`） | 1372 | 3（要求 DEBUG 的诊断测试） |
+| SessionJournal.Tests | 557 | 0 |
+| SessionJournal.Offline.Tests | 30 | 0 |
+| SessionJournal.RecapGrid.Runtime.Tests | 97 | 0 |
+| SessionJournal.RecapGrid.Hosting.Tests | 39 | 0 |
+| Galatea.RecapGrid.Tests | 9 | 0 |
+| SessionJournal.Cli.Tests | 178 | 0 |
+
+合计 2282 通过、3 跳过、0 失败。包括旧 Anthropic Prepared v7 恢复、当前格式冷重开、请求与事件
+golden bytes、工具回放和宿主集成；未跑全 solution 测试或真实 provider 调用。
+
+本机旧 `eng/CompletionDependency.Local.props` 已备份到
+`gitignore/completion-upgrade-preview.6/CompletionDependency.Local.props.backup` 后移走，
+使普通命令采用公开 pin；现有 Storage override 保留，其组合 NuGet 配置补齐公开 Completion
+映射。日志与 TRX 保存在同目录 `validation/`。这些均是 ignored 本机状态，不随提交分发。
 
 ## 长期本地模式与切换备忘
 
@@ -63,6 +111,10 @@ dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -c Release -p
 - dev 版本必须唯一，不得在相同版本号下重新打包；包缓存为 `gitignore/completion-local-cache/`
   （由该 config 的 globalPackagesFolder 指定）。
 - 模式文件是本机状态：每台机器各写各的；CI 与新 clone 无此文件时即默认公开 pin。
+- 同时使用 Storage 本地包时，其 override 最后导入，`RestoreConfigFile` 可能由 Storage 选择。
+  [Storage 配置模板](../eng/NuGet.Storage.Local.config.template) 保留 nuget.org 的四个精确映射；
+  添加 Completion 本地源时保留两侧精确映射，支持 Storage 本地包 + Completion 公开包。
+  只有 `*` 的公开源映射会被本地精确映射遮蔽。
 - 长期本地模式下建议在里程碑保留 feed 快照与 manifest SHA256 作为身份锚点
   （沿用 `gitignore/completion-packages/` 的既有惯例）。
 
@@ -73,8 +125,8 @@ dotnet build Atelia.sln -c Debug -p:UseCompletionSources=true -p:CompletionSourc
 dotnet test tests/SessionJournal.RecapGrid.Runtime.Tests/SessionJournal.RecapGrid.Runtime.Tests.csproj -c Debug -p:UseCompletionSources=true -p:CompletionSourceRoot=E:/repos/Atelia-org/atelia-completion
 ```
 
-源码根必须是包含四个项目的绝对路径；包模式联调以 `v0.1.0-preview.3` /
-`bbce08b85aec114463313f6d9b539e8412b740eb` 为基准，其他需求使用明确 revision，不自动探测兄弟目录。
+源码根必须是包含四个项目的绝对路径；包模式联调以 `v0.1.0-preview.6` /
+`422ede9428dde46598fbc699eeb7717f3326e48e` 为基准，其他需求使用明确 revision，不自动探测兄弟目录。
 四库随开关整体切换，避免包和项目中出现相同程序集的两份身份。切回包模式时重新 restore。
 Storage 开关独立；通常只需 Completion 源码 + Storage 包。源码模式禁止 consumer pack。
 如需打包消费者，先将上游变更打成唯一开发版本，再显式选用该包版本。

@@ -60,8 +60,10 @@ dotnet test Atelia.sln -c Release --no-build --no-restore
 并在 Storage 的 NuGet 配置中加入原 Completion feed 的 `packageSources` 项，以及对应
 `packageSourceMapping` 的四个精确 PackageId：`Atelia.Diagnostics`、
 `Atelia.Completion.Abstractions`、`Atelia.Completion`、`Atelia.Completion.Tools`。
-这些 exact mappings 只指向 Completion feed，五个 Storage exact mappings 只指向 Storage feed；
-其余包使用 nuget.org 的 `*`。一个 restore 只使用一个完整 config；不会自动合并另一个
+四个 Completion exact mappings 同时保留在 Completion feed 与 nuget.org，允许切回公开
+Completion pin；模板已包含公开源的四项精确映射。只有 nuget.org 的 `*` 时，它会被本地源的
+精确映射遮蔽。五个 Storage exact mappings 只指向 Storage feed；其余包使用 nuget.org 的 `*`。
+一个 restore 只使用一个完整 config；不会自动合并另一个
 `RestoreConfigFile`，也不能仅靠 `RestoreSources` 覆盖根 source mappings。
 
 源码联调也可在 Storage local props 中设置 `UseStorageSources=true` 与绝对

@@ -17,6 +17,13 @@
       <package pattern="Atelia.RbfSegmentStore" />
       <package pattern="Atelia.EventJournal" />
     </packageSource>
-    <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+    <packageSource key="nuget.org">
+      <!-- Keep public Completion eligible if a local Completion feed is also added. -->
+      <package pattern="Atelia.Diagnostics" />
+      <package pattern="Atelia.Completion.Abstractions" />
+      <package pattern="Atelia.Completion" />
+      <package pattern="Atelia.Completion.Tools" />
+      <package pattern="*" />
+    </packageSource>
   </packageSourceMapping>
 </configuration>
