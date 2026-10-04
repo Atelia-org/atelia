@@ -1,9 +1,9 @@
 <Project>
   <PropertyGroup>
-    <StoragePackageVersion Condition="'$(StoragePackageVersion)' == ''">0.1.1-preview.2</StoragePackageVersion>
-    <StorageSourceRevision>976aa345f923da09e2a5cf1dc25ba592b3818b63</StorageSourceRevision>
+    <StoragePackageVersion Condition="'$(StoragePackageVersion)' == ''">0.2.0-rbf1-preview.1</StoragePackageVersion>
+    <StorageSourceRevision>3e9554e2ea70f769607e80b3fc11a85506050533</StorageSourceRevision>
     <StorageRepositoryUrl>https://github.com/Atelia-org/atelia-storage.git</StorageRepositoryUrl>
     <UseStorageSources Condition="'$(UseStorageSources)' == ''">false</UseStorageSources>
-    <StorageStrictTailOpen Condition="'$(StorageStrictTailOpen)' == ''">false</StorageStrictTailOpen>
+    <StorageStrictTailOpen Condition="'$(StorageStrictTailOpen)' == ''">true</StorageStrictTailOpen>
   </PropertyGroup>
 </Project>

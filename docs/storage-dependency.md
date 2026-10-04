@@ -4,6 +4,8 @@ Primitives、Data、Rbf、RbfSegmentStore 和 EventJournal 在 [atelia-storage](
 [eng/StorageDependency.props](../eng/StorageDependency.props) 是本仓包版本与对应源码 commit 的唯一配置入口。
 日常构建通过 PackageReference 从 nuget.org 自动 restore，不需要先运行 Prepare，也不需要旁边存在存储源码仓。
 
+当前五包统一固定为 **`0.2.0-rbf1-preview.1`**，来自 Storage 的 `RBF1` 维护分支，源码 commit **`3e9554e2ea70f769607e80b3fc11a85506050533`**、release tag `v0.2.0-rbf1-preview.1`。仍使用 RBF1 帧格式与 EventJournal/SegmentStore v2 目录协议；当前已升级为 v2 的 Galatea 数据不需要再次迁移。本仓默认 `StorageStrictTailOpen=true`。升级和验证见[本次切换记录](Galatea/storage-rbf1-public-upgrade-20261004.md)。
+
 在仓根执行：
 
 ```powershell
@@ -16,6 +18,8 @@ dotnet test Atelia.sln -c Release --no-build
 ## 显式源码联调
 
 需要同时修改存储库时显式选择完整新仓的绝对路径，每次切换模式重新 restore：
+
+源码 checkout 必须使用 `RBF1` 分支或上述 release tag；Storage main 已发展为 RBF3，不能作为这个固定包版本的自动替代。可以使用单独的 RBF1 worktree。
 
 ```powershell
 $storage = 'E:/repos/Atelia-org/atelia-storage'
@@ -45,8 +49,8 @@ $storageDevVersion = "0.2.0-dev.$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))
 `Directory.Build.props` 在 Completion 依赖之后导入 Storage local override，使组合配置的
 `RestoreConfigFile` 最后生效。无需额外命令行属性即可普通 restore/build/test：
 
-`StorageStrictTailOpen` 是显式 API 能力标记，必须与 pin/sourceRevision 配套：默认公开旧包为
-`false`，CLI 显式关闭旧包的 open-time recovery；v2 本地包或 v2 源码设为 `true`，CLI 使用
+`StorageStrictTailOpen` 是显式 API 能力标记，必须与 pin/sourceRevision 配套：当前默认公开 RBF1 v2 包为
+`true`；历史 `0.1.1-preview.2` 为 `false`，CLI 显式关闭旧包的 open-time recovery。v2 包或 v2 源码使用 `true`，CLI 使用
 新版严格打开入口（坏物理尾报错、不修复；新版已删除 recovery options）。不能仅升级版本而遗漏
 此标记，也不能在旧包模式设为 `true`。源码联调 v2 同样在 Local.props 显式设置此标记。
 

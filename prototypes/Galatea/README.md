@@ -4,6 +4,8 @@ Galatea.Server 是基于 SessionJournal 的Player 与 Character 分离的 Role-P
 
 本文介绍日常运行；完整配置、API 和内部机制从[文档索引](../../docs/Galatea/README.md)进入。
 
+存储依赖固定使用 nuget.org 的 `Atelia.EventJournal 0.2.0-rbf1-preview.1` 及其同版四包闭包，来自 Storage 的 `RBF1` 维护分支；保持现有 RBF1 帧与 v2 目录协议。版本、来源与本地 override 规则见[存储依赖](../../docs/storage-dependency.md)，不随 Storage main 的 RBF3 改动自动升级。
+
 ## 启动服务
 
 需要 Linux、仓库固定的 .NET 10 SDK，以及已配置的 Completion connection。当前 Completion 包
