@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { CodexAppServerClient } from "../src/codex/client.js";
+import { PINNED_CODEX_VERSION } from "../src/codex/pinned-version.js";
 import { NullLogger, type BridgeLogger, type LogLevel } from "../src/logger.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
@@ -73,7 +74,7 @@ test("initialize rejects a Codex version mismatch and logs only normalized versi
     const mismatch = logger.entries.find((entry) => entry.event === "codex_version_mismatch");
     assert.equal(mismatch?.level, "error");
     assert.deepEqual(mismatch?.fields, {
-      expected_version: "0.156.1",
+      expected_version: PINNED_CODEX_VERSION,
       actual_version: "0.151.0",
     });
     assert.doesNotMatch(JSON.stringify(logger.entries), /fixture secret detail/);
@@ -84,8 +85,8 @@ test("initialize rejects a Codex version mismatch and logs only normalized versi
 
 test("initialize rejects a foreign or ambiguous user-agent product token", async () => {
   for (const userAgent of [
-    "codex_vscode/0.156.1 (fixture)",
-    "atelia_local_codex_mcp/0.156.1/other (fixture)",
+    `codex_vscode/${PINNED_CODEX_VERSION} (fixture)`,
+    `atelia_local_codex_mcp/${PINNED_CODEX_VERSION}/other (fixture)`,
   ]) {
     const value = new CodexAppServerClient({
       command: process.execPath,

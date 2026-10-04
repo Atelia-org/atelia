@@ -77,8 +77,9 @@ async function open(home) {
   backend = new CodexBackend({ client, pathPolicy: await PathPolicy.create([cwd], cwd),
     store: new TaskStore(20_000, 100), logger: new NullLogger(), profile: galateaCodexBackendProfile });
   await client.start();
-  assert.deepEqual(await client.request("account/read", { refreshToken: false }),
-    { account: null, requiresOpenaiAuth: false });
+  const account = await client.request("account/read", { refreshToken: false });
+  assert.equal(account.account, null);
+  assert.equal(account.requiresOpenaiAuth, false);
 }
 async function turn(threadId, dispatchId) {
   const task = "Return the local fixture.";

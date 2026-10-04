@@ -66,7 +66,7 @@ $mcpCommand = 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolic
 ```powershell
 npm run codex:verify
 npm run schemas:verify
-node .codex-packages/0.156.1/node_modules/@openai/codex/bin/codex.js login status
+node .codex-packages/0.159.2/node_modules/@openai/codex/bin/codex.js login status
 ```
 
 Codex升级必须按主README hard-cut更新lock/SRI/content manifest/runtime version并重生成schema；profile无需保存binary路径。

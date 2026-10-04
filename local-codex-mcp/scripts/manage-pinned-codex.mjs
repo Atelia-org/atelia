@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PINNED_CODEX_VERSION = "0.156.1";
+export const PINNED_CODEX_VERSION = "0.159.2";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
@@ -29,31 +29,31 @@ const defaultInstallRoot = join(projectRoot, ".codex-packages");
 const expectedLockEntries = Object.freeze({
   "node_modules/@openai/codex": Object.freeze({
     version: PINNED_CODEX_VERSION,
-    integrity: "sha512-nI1iVl/n2SO2lSvlwEsJx63zdSI4C4Me2gR7AG0OWMJiGSakz2tY2hx43E39Zq5aEoeB5bZjJXzp5Sqhog6vyA==",
+    integrity: "sha512-SE13C3nZCYoVL569BdegoOl6vwjb7o2sXOo7ivwVzaVoY0cswwi0/6pIE0TyO/C0vIkQh3jslExitET7PBTfIg==",
   }),
   "node_modules/@openai/codex-darwin-arm64": Object.freeze({
     version: `${PINNED_CODEX_VERSION}-darwin-arm64`,
-    integrity: "sha512-Jg6wbdV+wmMZczhwE74GSxOYEZlViKXn6KyCw/yfrz3PAKFD14xljuPopmdhWC1+8IKU2WdN5fdmXNPt2q4HPA==",
+    integrity: "sha512-7SPaPFU0tdqapQ5VEgrF+wb+p9dxfWfLMXMKZMRKoWPn/tLMajlMjYBBnu8o6VtaVH2DHQ6kpnp5TMkv5bqvrg==",
   }),
   "node_modules/@openai/codex-darwin-x64": Object.freeze({
     version: `${PINNED_CODEX_VERSION}-darwin-x64`,
-    integrity: "sha512-BVjqNOoltWrnNUrgMRepvDIIBmd4XY+ikAE4pYVHlrwiizNlEWQuCQOTrFMJKp54LFRG8jDTjLZyYQ1QrliuOg==",
+    integrity: "sha512-VPZGYHH2yVn8S3IuxJk38vxhBADJZp68IBL8hr4quJ2R7jM16l43TLCwRemN+1J27V/cs771fbx63aGRf5F8JA==",
   }),
   "node_modules/@openai/codex-linux-arm64": Object.freeze({
     version: `${PINNED_CODEX_VERSION}-linux-arm64`,
-    integrity: "sha512-sTEHk31C12dqzJdjZ2u9KLFCXKL04KyCM+QheSjdQI8uzmVJS7aEF2/qAqFxXwk/jwMzC9u7IihfoIlAGR6YsA==",
+    integrity: "sha512-Pm0W2PnFeTEqPx+AOIwgOVB4dBtY24cuD0tx1hjCor60CbSAT7WBPZVNUINSrTCDrMndvQC67p71ZEz+gmPPkA==",
   }),
   "node_modules/@openai/codex-linux-x64": Object.freeze({
     version: `${PINNED_CODEX_VERSION}-linux-x64`,
-    integrity: "sha512-2ePo0wgOcnONKsuzp8vBjOmNY+IdsKaouaDDIdiKq9HOWNuV/GI22OeXft2A/1GaoL71ictO0/pLAsCEnQ6wew==",
+    integrity: "sha512-RrCZ1X52wpa1lOsXtCtSyhjOFdQPh7LH5Ccv8HsKmd/2UXbUwxXFqWXFK3JzatquUNGtW/TLox5Y7qVOGkV0/Q==",
   }),
   "node_modules/@openai/codex-win32-arm64": Object.freeze({
     version: `${PINNED_CODEX_VERSION}-win32-arm64`,
-    integrity: "sha512-e5DsyOHlKWulTBz/neIczpcYLQDqtaLtBj2lgncOgeQw5mlAQVZHlGvKsoKVcEPUKLb8opIMJBxXi6cz3JJ4hg==",
+    integrity: "sha512-8+xM4Wj2J38ieRse9kzbMRQQc2d+kvck2Zm2+gX2sth5RXPZQ1yqYhFmevHLC8IO73syk2xiIclH0qvoc97pgg==",
   }),
   "node_modules/@openai/codex-win32-x64": Object.freeze({
     version: `${PINNED_CODEX_VERSION}-win32-x64`,
-    integrity: "sha512-MJyLxbBs2zzp5kbaR/99Zwe7SmbrwUkveTcT+ayYlO48V0nYh0eU+h2lalBwvC7VJ/ya/bXnUtISJfJKhGCD/g==",
+    integrity: "sha512-1ZJVTO40/ZaHPUUWc3uCX73jwzJRaDxAjRQEf37dC5Q3h1fp/Z7+1L8oX3bPlXgjhEY6kHW3rm0wz2sdQ5rxNw==",
   }),
 });
 
