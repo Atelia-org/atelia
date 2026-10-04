@@ -34,6 +34,23 @@ export class BridgeError extends Error {
   }
 }
 
+/** Content-free facts for fatal sidecar errors; remote messages are never logged. */
+export function bridgeErrorDiagnostic(error: BridgeError): Record<string, unknown> {
+  const fields: Record<string, unknown> = { error_code: error.code };
+  const method = error.details?.method;
+  if (typeof method === "string" && [
+    "initialize", "account/read", "thread/start", "thread/name/set",
+    "thread/read", "thread/resume", "thread/turns/list", "turn/start",
+  ].includes(method)) fields.rpc_method = method;
+  const rpcCode = error.details?.rpc_code;
+  if (typeof rpcCode === "number" && Number.isInteger(rpcCode)
+    && rpcCode >= -2_147_483_648 && rpcCode <= 2_147_483_647) fields.rpc_code = rpcCode;
+  if (method === "account/read" && error.message === "workspace routing discovery unauthorized (401)") {
+    fields.reason = "workspace-routing-unauthorized";
+  }
+  return fields;
+}
+
 export function asBridgeError(error: unknown): BridgeError {
   if (error instanceof BridgeError) {
     return error;

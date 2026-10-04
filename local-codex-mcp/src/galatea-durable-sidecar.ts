@@ -3,7 +3,7 @@ import type { Readable, Writable } from "node:stream";
 import { CodexBackend } from "./codex/backend.js";
 import { CodexAppServerClient } from "./codex/client.js";
 import { TaskStore } from "./codex/task-store.js";
-import { asBridgeError } from "./errors.js";
+import { asBridgeError, bridgeErrorDiagnostic } from "./errors.js";
 import {
   createGalateaCodexChildEnvironment,
   loadGalateaSidecarConfig,
@@ -193,7 +193,7 @@ if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
         timestamp: new Date().toISOString(),
         level: "error",
         event: "galatea_durable_sidecar_failed",
-        error_code: bridgeError.code,
+        ...bridgeErrorDiagnostic(bridgeError),
       })}\n`,
     );
     process.exitCode = 1;

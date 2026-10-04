@@ -131,6 +131,8 @@ live 身份由同 generation 的 `turn/start` 请求与关联响应建立，不�
 
 本地不明终结不等于远端中止。后续任务可能与旧工作同时访问同一 homeDir；FIFO 在此指本地提交顺序。角色应根据失败回信核查当前文件状态。本阶段没有自动 interrupt、重跑原任务或重建 Codex 全部上下文。
 
+sidecar 的结构化 stderr failure 以 `sidecar-stderr` 写入 `Galatea.DelegateSidecar` 日志，保留 generation、事件名、已识别错误码、RPC 方法/数值错误码、已识别原因及规范版本号。`account/read` 的 workspace routing 401 标记为 `workspace-routing-unauthorized`。只接收白名单字段，原始异常文本、provider 原文、凭据、路径和堆栈不进入日志；单行上限 8 KiB，每个 generation 最多记录 32 条，超限后仍持续排空 stderr。原来的 stderr 字节数摘要继续保留。
+
 ### Capture、reply lease 与 Undo
 
 每个 outbound-mail extraction batch 由 `GalateaDelegationSqliteStore` 在一个 transaction 中 all-or-nothing capture；成功的零 intent extraction 也写 `action_capture` tombstone，失败绝不能伪装为 zero。capture 前重验 terminal Action 是 current selected head；commit 后 Journal Undo 不删除、不撤回、不重新武装该 batch。stable dispatch ID 为 length-prefixed `(CharacterId, "Codex", canonical Action head, artifact ordinal)`（沿用原 ID 字符串值） 的 SHA-256，即 `gd1-<64-lowerhex>`。candidate/outbox/inbox 都有 code-owned count/byte 上限；容量满时拒绝整批，绝不 evict 旧项而引入重复。正常串行 admission 下崩溃 gap 至多一个；下一次 admission/pulse 在允许新 turn 前只结算 latest post-baseline terminal Action，attach 本身不执行 provider 提取。TurnEnded 没有 terminal Action，不生成提取目标。baseline frontier 之前的历史和 rewind orphan 不补做；first durable capture 是重复结算 authority，只验证原 Action bytes/digest，不因 extractor 升级重写历史产物。

@@ -20,6 +20,7 @@ import {
 import { JsonlFrameWriter } from "../src/galatea/jsonl.js";
 import { createGalateaCodexChildEnvironment } from "../src/galatea/sidecar-config.js";
 import { NullLogger } from "../src/logger.js";
+import { PINNED_CODEX_VERSION } from "../src/codex/pinned-version.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
 const sidecarEntry = fileURLToPath(new URL("../src/galatea-durable-sidecar.js", import.meta.url));
@@ -91,9 +92,46 @@ test("durable sidecar fails before ready when configured Codex version drifts", 
     assert.equal(stdout, "");
     assert.match(stderr, /"event":"codex_version_mismatch"/);
     assert.match(stderr, /"error_code":"CODEX_VERSION_MISMATCH"/);
-    assert.match(stderr, /"expected_version":"0\.154\.0-alpha\.3"/);
+    assert.ok(stderr.includes(`"expected_version":"${PINNED_CODEX_VERSION}"`));
     assert.match(stderr, /"actual_version":"0\.151\.0"/);
     assert.doesNotMatch(stderr, /must-not-be-logged/);
+  } finally {
+    await rm(root, { recursive: true });
+  }
+});
+
+test("account routing failure before ready emits content-free RPC diagnostics", { timeout: 5_000 }, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "galatea-account-routing-failure-"));
+  try {
+    const child = spawn(process.execPath, [sidecarEntry], {
+      env: {
+        ...process.env,
+        CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]),
+        CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
+        CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([fixture, "--account-routing-unauthorized"]),
+        CODEX_BRIDGE_RPC_TIMEOUT_MS: "1000",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    t.after(() => { child.kill(); });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(stdout, "");
+    const diagnostic = stderr.trimEnd().split("\n").map((line) => JSON.parse(line))
+      .find((entry) => entry.event === "galatea_durable_sidecar_failed");
+    assert.equal(diagnostic.error_code, "CODEX_PROTOCOL_ERROR");
+    assert.equal(diagnostic.rpc_method, "account/read");
+    assert.equal(diagnostic.rpc_code, -32603);
+    assert.equal(diagnostic.reason, "workspace-routing-unauthorized");
+    assert.doesNotMatch(stderr, /workspace routing discovery|must-not-be-logged/);
   } finally {
     await rm(root, { recursive: true });
   }

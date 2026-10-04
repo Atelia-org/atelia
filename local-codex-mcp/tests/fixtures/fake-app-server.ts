@@ -295,6 +295,13 @@ lines.on("line", async (line) => {
 
   switch (message.method) {
     case "account/read":
+      if (process.argv.includes("--account-routing-unauthorized")) {
+        send({ id: message.id, error: {
+          code: -32603, message: "workspace routing discovery unauthorized (401)",
+          data: "must-not-be-logged",
+        } });
+        break;
+      }
       send({
         id: message.id,
         result: process.argv.includes("--no-openai-auth")

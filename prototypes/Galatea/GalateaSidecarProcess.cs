@@ -706,18 +706,13 @@ internal abstract class GalateaSidecarProcessGeneration {
     }
 
     private async Task DrainStderrAsync() {
-        byte[] buffer = GC.AllocateUninitializedArray<byte>(4096);
         long total = 0;
         try {
-            while (true) {
-                int read = await _process.StandardError.BaseStream
-                    .ReadAsync(buffer)
-                    .ConfigureAwait(false);
-                if (read == 0) {
-                    break;
-                }
-                total = Math.Min(long.MaxValue - read, total) + read;
-            }
+            total = await GalateaSidecarStderrDiagnostic.DrainAsync(
+                _process.StandardError.BaseStream, Id, static (isError, diagnostic) => {
+                    if (isError) { DebugUtil.Error(GalateaSidecarProcessClientBase.LogCategory, diagnostic); }
+                    else { DebugUtil.Warning(GalateaSidecarProcessClientBase.LogCategory, diagnostic); }
+                }).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is IOException
