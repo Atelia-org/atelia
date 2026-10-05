@@ -241,6 +241,78 @@ public sealed class GalateaSmtpOutboundTests {
         Assert.Equal(0L, command.ExecuteScalar());
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task MixedRouteSmtpInsertFailure_RollsBackEveryTable(int failAtInsert) {
+        const string action = "收件人：Bob\nsynthetic peer body\n[Galatea] 已寄出。\n收件人：Codex\nsynthetic Codex body\n[Galatea] 已寄出。\n收件人：a@Example.test\nsynthetic first SMTP body\n[Galatea] 已寄出。\n收件人：b@Example.test\nsynthetic second SMTP body\n[Galatea] 已寄出。";
+        ActionBlock[] calls = [Range("Bob", 2, 2, 3), Range("Codex", 5, 5, 6, 4),
+            Range("a@Example.test", 8, 8, 9, 7), Range("b@Example.test", 11, 11, 12, 10)];
+
+        // A separate synthetic control proves that all four artifacts and routes exist without the fault.
+        using (var control = new Fixture()) {
+            await control.ExtractAndCapture(action, calls);
+            var captured = control.Store.ReadSnapshot();
+            Assert.Equal(4, Assert.Single(captured.Captures).ArtifactCount);
+            Assert.Equal(new[] { GalateaMailRecipientClass.Character, GalateaMailRecipientClass.Codex,
+                GalateaMailRecipientClass.Email, GalateaMailRecipientClass.Email }, captured.Mails.Select(captured.RecipientClass));
+            Assert.Equal("bob", Assert.Single(captured.InternalMailOutboxes).TargetCharacterId);
+            Assert.Equal(GalateaDurableMailState.Queued, captured.Mails.Single(m => m.Recipient == "Codex").State);
+            Assert.Equal(2, captured.SmtpMailOutboxes.Count);
+        }
+
+        int inserts = 0;
+        using var fixture = new Fixture(new(BeforeSmtpOutboxInsert: () => {
+            if (++inserts == failAtInsert) { throw new IOException("injected mixed SMTP insert failure"); }
+        }));
+        string metaBefore;
+        string routeBefore;
+        using (var connection = fixture.OpenSql()) {
+            metaBefore = ReadSingleRow(connection, "delegation_meta");
+            routeBefore = ReadSingleRow(connection, "route_binding");
+        }
+        var failure = await Assert.ThrowsAsync<IOException>(() => fixture.ExtractAndCapture(action, calls));
+        Assert.Equal("injected mixed SMTP insert failure", failure.Message);
+        Assert.Equal(failAtInsert, inserts);
+        // Reopen before querying independently: assertions cover durable rollback, including the earlier
+        // internal outbox / Codex Queued row, and (in case 2) the first SMTP INSERT.
+        fixture.Reopen();
+        using var persisted = fixture.OpenSql();
+        Assert.Equal(0L, CountRows(persisted, "action_capture"));
+        Assert.Equal(0L, CountRows(persisted, "outbound_mail"));
+        using (var queued = persisted.CreateCommand()) {
+            queued.CommandText = "SELECT count(*) FROM outbound_mail WHERE recipient='Codex' AND state='Queued';";
+            Assert.Equal(0L, queued.ExecuteScalar());
+        }
+        Assert.Equal(0L, CountRows(persisted, "internal_mail_outbox"));
+        Assert.Equal(0L, CountRows(persisted, "smtp_mail_outbox"));
+        // Capture increments delegation_meta.revision in the same transaction; preserve every column.
+        Assert.Equal(1L, CountRows(persisted, "delegation_meta"));
+        Assert.Equal(metaBefore, ReadSingleRow(persisted, "delegation_meta"));
+        Assert.Equal(1L, CountRows(persisted, "route_binding"));
+        Assert.Equal(routeBefore, ReadSingleRow(persisted, "route_binding"));
+        Assert.Equal(0L, CountRows(persisted, "reply_notice"));
+        Assert.Equal(0L, CountRows(persisted, "reply_lease"));
+        Assert.Equal(0L, CountRows(persisted, "reply_lease_item"));
+
+        static long CountRows(SqliteConnection connection, string table) {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT count(*) FROM {table};"; // Test-owned, constant table names only.
+            return (long)command.ExecuteScalar()!;
+        }
+
+        static string ReadSingleRow(SqliteConnection connection, string table) {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT * FROM {table};";
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            object[] values = new object[reader.FieldCount];
+            reader.GetValues(values);
+            Assert.False(reader.Read());
+            return JsonSerializer.Serialize(values);
+        }
+    }
+
     [Fact]
     public async Task SenderInvocation_SeesAttemptingCommittedThroughSeparateConnection() {
         using var fixture = new Fixture();
