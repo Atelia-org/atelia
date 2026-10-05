@@ -23,7 +23,7 @@ internal sealed class GalateaRecapGridDefaultPolicy {
     ) {
         ArgumentNullException.ThrowIfNull(characterName);
         if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 new GalateaRecapGridAssetParameters(
                     characterName
                 ),

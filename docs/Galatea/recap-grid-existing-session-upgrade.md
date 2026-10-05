@@ -68,7 +68,7 @@ character_name="$(jq -er --arg user "$user_id" \
   '.characters[] | select(.id == $user) | .name' "$config_dir/config.json")"
 
 scaffold_report="$($cli recap-grid scaffold \
-  --asset galatea-rolling-rewrite-zh-cn-v7 \
+  --asset galatea-rolling-rewrite-zh-cn-v8 \
   --character-name "$character_name" \
   --connection-id "$recap_connection_id" \
   --permission create --permission register-family \
@@ -127,7 +127,7 @@ timeline sync may do a bounded offline selected-lineage audit and can mutate Tim
 ~~~bash
 $cli recap-grid control provision-asset \
   --input "$repo" --branch "$branch" --confirm-ref "$ref_id" \
-  --admission "$admission" --asset galatea-rolling-rewrite-zh-cn-v7 \
+  --admission "$admission" --asset galatea-rolling-rewrite-zh-cn-v8 \
   --character-name "$character_name"
 
 recipe_file="$operator_dir/full-recipe.json"

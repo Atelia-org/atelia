@@ -245,7 +245,7 @@ fresh bootstrap 的前置条件；两个输出路径必须不存在，CLI 以 cr
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- \
   recap-grid scaffold \
-  --asset galatea-rolling-rewrite-zh-cn-v7 \
+  --asset galatea-rolling-rewrite-zh-cn-v8 \
   --character-name '<角色名>' \
   --connection-id '<RecapGrid连接ID>' \
   --permission create \

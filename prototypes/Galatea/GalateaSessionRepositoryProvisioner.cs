@@ -510,7 +510,7 @@ internal static class GalateaSessionRepositoryProvisioner {
         GalateaRecapGridAssetParameters parameters
     ) {
         if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 parameters,
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null

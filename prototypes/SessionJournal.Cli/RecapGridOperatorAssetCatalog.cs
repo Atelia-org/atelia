@@ -31,7 +31,7 @@ internal static class RecapGridOperatorAssetCatalog {
                 }
                 return RecapGridSampleAssets
                     .TryCreateRegistrationBundle(assetId, out bundle);
-            case GalateaRecapGridAssets.RollingRewriteZhCnV7:
+            case GalateaRecapGridAssets.RollingRewriteZhCnV8:
                 if (characterName is null) {
                     throw new ArgumentException(
                         "--character-name is required by this operator asset."

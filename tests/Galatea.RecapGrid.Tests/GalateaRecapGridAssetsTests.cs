@@ -13,9 +13,9 @@ public sealed class GalateaRecapGridAssetsTests {
     );
 
     [Fact]
-    public void RollingRewriteV7_CharacterOwnsCanonicalBundle() {
+    public void RollingRewriteV8_CharacterOwnsCanonicalBundle() {
         Assert.Equal(
-            [GalateaRecapGridAssets.RollingRewriteZhCnV7],
+            [GalateaRecapGridAssets.RollingRewriteZhCnV8],
             GalateaRecapGridAssets.AssetIds
         );
         Assert.False(GalateaRecapGridAssets.TryCreateRegistrationBundle(
@@ -26,7 +26,7 @@ public sealed class GalateaRecapGridAssetsTests {
         Assert.Null(unknown);
         Assert.Throws<ArgumentNullException>(() => GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 null!,
                 out _
             ));
@@ -35,7 +35,7 @@ public sealed class GalateaRecapGridAssetsTests {
                 null!
             ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -78,7 +78,7 @@ public sealed class GalateaRecapGridAssetsTests {
             Assert.Equal(RecapRewriterProtocolV3.RuntimeProtocolId,
                 definition.Capability.RuntimeProtocolId);
             Assert.Null(definition.Capability.SemanticModelId);
-            Assert.Equal(32 * 1024, definition.MaxContentUtf8Bytes);
+            Assert.Equal(64 * 1024, definition.MaxContentUtf8Bytes);
         });
 
         AssertGoldenDigests(bundle);
@@ -87,12 +87,12 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void Materialization_IsDeterministicAndResourcesAreExact() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? first
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? second
         ));
@@ -209,12 +209,12 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void DifferentCharacterNameChangesOnlyCharacterScopedAuthority() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? galatea
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(
                 new GalateaCharacterName("阿特丽娅")
             ),
@@ -268,12 +268,12 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AssetsRequireNoPlayerAndAttributeEachInputSource() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? original
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(new GalateaCharacterName("Galatea")),
             out RecapGridControlRegistrationBundle? changed
         ));
@@ -313,7 +313,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void MemberPrompts_LockSourceAndUncertaintyBoundaries() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -359,7 +359,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AutobiographyPrompt_LocksCharacterScopedCarrierAndTerminalBoundaries() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -419,7 +419,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AutobiographyPrompt_LocksMechanicalFinalScanFixtures() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -494,9 +494,9 @@ public sealed class GalateaRecapGridAssetsTests {
     ) => Assert.Equal(
         [
             "42477a8838928993c2835a8863910b297ba1805136a37b27242054a47a60e090",
-            "f0912f4d0316372d6eaec39a974291373bcd0c668ab476aa108ae110a778ec1a",
-            "74451f0f1cb70503e64d8b1c320bd1fc0350630fd5d2216fea9b7e948d80c1e1",
-            "fe53611e0bcd7cc64f8a7b3248afb84a72891375526d8d9aad81976566e5c49f"
+            "e65706d12d5aacc051d187bf2a377f7d3308c82ccd89b54a2ddaab2f5209576a",
+            "155690a821352f083069167114454c7402e420cc67e45692d2ff6cd9d3fdfa06",
+            "48ced12ac4236d22ac56235792767333e2d548e0f49f7c75b5367b263ae1dd52"
         ],
         [
             bundle.Families[0].Digest.Value,

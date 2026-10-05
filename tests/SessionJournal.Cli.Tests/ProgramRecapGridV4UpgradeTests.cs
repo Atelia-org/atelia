@@ -339,7 +339,7 @@ public sealed partial class ProgramRecapGridCommandTests {
             "--confirm-ref", refId.ToHexString(), "--max-rows", "16"));
 
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7, GalateaParameters,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8, GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle));
         string admission = WriteAdmission(
             ["create", "register-family", "register-definition", "register-recipe", "activate"],
@@ -350,7 +350,7 @@ public sealed partial class ProgramRecapGridCommandTests {
             ["world-understanding", "autobiography"]);
         Assert.Equal(0, Run("control", "provision-asset", "--input", _root,
             "--confirm-ref", refId.ToHexString(), "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"));
         string recipePath = ExternalPath("v4-partial-recipe.json");
         Assert.Equal(0, Run([
@@ -420,7 +420,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         }
 
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             GalateaParameters,
             out RecapGridControlRegistrationBundle? bundle));
         string admission = WriteAdmission(
@@ -440,7 +440,7 @@ public sealed partial class ProgramRecapGridCommandTests {
                 "--branch", branch,
                 "--confirm-ref", refId.ToHexString(),
                 "--admission", admission,
-                "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 "--character-name", "Galatea"));
         }
 

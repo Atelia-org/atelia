@@ -966,7 +966,7 @@ public sealed class GalateaSessionProvisioningTests {
             DisabledGalateaUserMessageNormalizer.Instance
         );
         GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
-        RecapGridControlRegistrationBundle bundle = CreateGalateaV7Bundle();
+        RecapGridControlRegistrationBundle bundle = CreateGalateaV8Bundle();
         int routeLoads = 0;
         RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
             () => {
@@ -1211,7 +1211,7 @@ public sealed class GalateaSessionProvisioningTests {
         RecapGridControlSnapshot controlSnapshot = Assert.IsType<
             RecapGridControlSnapshotResult.Available
         >(control.Reader.ReadSnapshot()).Snapshot;
-        RecapGridControlRegistrationBundle bundle = CreateGalateaV7Bundle();
+        RecapGridControlRegistrationBundle bundle = CreateGalateaV8Bundle();
         GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
             timelineHead.TimelineId,
             bootstrapThroughRowId: null,
@@ -1273,9 +1273,9 @@ public sealed class GalateaSessionProvisioningTests {
         );
     }
 
-    private static RecapGridControlRegistrationBundle CreateGalateaV7Bundle() {
+    private static RecapGridControlRegistrationBundle CreateGalateaV8Bundle() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(
                 new GalateaCharacterName("Galatea")
             ),

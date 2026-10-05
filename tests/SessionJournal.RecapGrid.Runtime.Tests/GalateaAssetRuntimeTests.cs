@@ -12,7 +12,7 @@ public sealed class GalateaAssetRuntimeTests {
     [Fact]
     public async Task SharedFamily_UsesOnePrefixAndIndependentMemberTails() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(
                 new GalateaCharacterName("Galatea")
             ),

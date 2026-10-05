@@ -7,11 +7,11 @@ namespace Atelia.Galatea.RecapGrid;
 
 /// <summary>Code-owned, provider-free Galatea RecapGrid assets.</summary>
 public static class GalateaRecapGridAssets {
-    public const string RollingRewriteZhCnV7 =
-        "galatea-rolling-rewrite-zh-cn-v7";
+    public const string RollingRewriteZhCnV8 =
+        "galatea-rolling-rewrite-zh-cn-v8";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([RollingRewriteZhCnV7]);
+        Array.AsReadOnly([RollingRewriteZhCnV8]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -20,7 +20,7 @@ public static class GalateaRecapGridAssets {
     ) {
         if (!string.Equals(
                 assetId,
-                RollingRewriteZhCnV7,
+                RollingRewriteZhCnV8,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
@@ -75,7 +75,7 @@ public static class GalateaRecapGridAssets {
                     $"维护 {characterName} 当前的世界理解",
                     worldPrompt
                 ),
-                maxContentUtf8Bytes: 32 * 1024
+                maxContentUtf8Bytes: 64 * 1024
             );
         MaintainerDefinitionRevision autobiography =
             MaintainerDefinitionRevision.Create(
@@ -91,7 +91,7 @@ public static class GalateaRecapGridAssets {
                     $"维护 {characterName} 的第一人称自传",
                     autobiographyPrompt
                 ),
-                maxContentUtf8Bytes: 32 * 1024
+                maxContentUtf8Bytes: 64 * 1024
             );
 
         bundle = new RecapGridControlRegistrationBundle(

@@ -96,7 +96,7 @@ independent review已PASS。
 asset ID；operator asset 与模型可见工具 runtime 无关。Control admission 是独立 strict
 canonical 文件，不能从 payload 自授权。
 
-当前 Galatea selector 为 `galatea-rolling-rewrite-zh-cn-v7`。`scaffold` 与
+当前 Galatea selector 为 `galatea-rolling-rewrite-zh-cn-v8`。`scaffold` 与
 `control provision-asset` 只要求一个 `--character-name <name>`；角色名先经
 `GalateaCharacterName` 验证，再绑定成员指令、topic 与 semantic heading。
 `--player-name` 已移除；新资产按输入各块的来源识别参与者，支持没有 Player 的角色。
@@ -104,9 +104,12 @@ canonical 文件，不能从 payload 自授权。
 打开 repo、写 output 或构造 provider 前拒绝。Family、logical columns、carrier 与
 `BlockKey` 不随角色名改变，两个成员 definition 则随其绑定内容改变。
 scaffold 与 provision 必须使用相同角色名。同一 Control instance 中再次用不同角色名
-provision 会复用 V7 operation key 并得到 `operation-conflict`；不将名字或 command digest
-加入 receipt/runtime identity。已有 V6 资产保持原持久事实；采用 V7 需要按现有
-recipe/build/fulfillment/promotion 流程重建变更的列，注册新资产本身不会替换 active target。
+provision 会复用 V8 operation key 并得到 `operation-conflict`；不将名字或 command digest
+加入 receipt/runtime identity。已有旧资产和结果保持原持久事实。
+V8 保留 V7 的提示词和 Family，将两列的 `maxContentUtf8Bytes` 从 32 KiB 扩至 64 KiB。
+Galatea 的新 RowWork 使用新定义；CLI `build --live` 则显式传入新的 `--producer-target`。
+已冻结的 RowWork 继续使用旧定义，不能仅靠升级 binary 放宽旧工作的上限。
+主动重建历史仍走 recipe/build/fulfillment/promotion 流程；注册新资产本身不会替换 active root。
 
 `recap-grid scaffold` 是 provider-free、create-only 的operator bootstrap：对一个
 code-owned operator asset，把operator显式给出的permissions、logical-column prefixes、

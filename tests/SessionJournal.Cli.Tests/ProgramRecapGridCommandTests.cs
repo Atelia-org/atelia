@@ -473,7 +473,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
     public void OperatorProvisionAssetOperationIdentityIsExact() {
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 new ControlInstanceId(
                     "0123456789abcdef0123456789abcdef")
             );
@@ -488,7 +488,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                     "0123456789abcdef0123456789abcdef")
             ));
         Assert.Equal(
-            "6c1f09d7e95fe9910993ad9d368967ea7f3abf55ddf4d189b14ded53332113ad",
+            "a483bf972f8dbc6a465cf647315bfdca1fede61b63e94ea1d828078fec691228",
             operation.OperationKey
         );
         Assert.Equal(1, operation.ExecutionSequence);
@@ -535,7 +535,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 GalateaParameters,
                 out RecapGridControlRegistrationBundle? bundle
             ));
@@ -557,14 +557,14 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8
         ));
         Assert.Equal(1, Run(
             "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "[invalid]"
         ));
         Assert.Equal(1, Run(
@@ -572,7 +572,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea",
             "--player-name", "[invalid]"
         ));
@@ -592,7 +592,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"
         );
         Assert.Equal(2, unauthorizedCode);
@@ -621,7 +621,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"
         );
         Assert.Equal(0, appliedCode);
@@ -656,7 +656,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"
         );
         Assert.Equal(0, replayCode);
@@ -669,7 +669,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "阿特丽娅"
         );
         Assert.Equal(2, renameCode);
@@ -713,7 +713,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"
         );
         Assert.Equal(0, reappliedCode);
@@ -729,7 +729,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"
         );
         Assert.Equal(0, retryCode);
@@ -751,7 +751,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 GalateaParameters,
                 out RecapGridControlRegistrationBundle? bundle
             ));
@@ -782,7 +782,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"
         ));
         string output = _root + "-full-recipe.json";

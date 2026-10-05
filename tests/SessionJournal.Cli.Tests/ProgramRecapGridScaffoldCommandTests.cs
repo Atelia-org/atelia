@@ -73,7 +73,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         string[] arguments = ScaffoldArguments(paths)
             .ReplaceOption(
                 "asset",
-                GalateaRecapGridAssets.RollingRewriteZhCnV7
+                GalateaRecapGridAssets.RollingRewriteZhCnV8
             )
             .ReplaceOption("logical-column-prefix", "world-understanding")
             .AppendOptions(
@@ -87,7 +87,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.Equal("created", report.GetProperty("status").GetString());
         Assert.Equal(0, _factory.CreateCallCount);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(
                 new GalateaCharacterName(CharacterName)
             ),
@@ -186,12 +186,12 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
                      ScaffoldArguments(Paths("galatea-missing-name"))
                          .ReplaceOption(
                              "asset",
-                             GalateaRecapGridAssets.RollingRewriteZhCnV7
+                             GalateaRecapGridAssets.RollingRewriteZhCnV8
                          ),
                      ScaffoldArguments(Paths("galatea-invalid-name"))
                          .ReplaceOption(
                              "asset",
-                             GalateaRecapGridAssets.RollingRewriteZhCnV7
+                             GalateaRecapGridAssets.RollingRewriteZhCnV8
                          )
                          .AppendOptions(
                              "--character-name", "[invalid]"
@@ -199,7 +199,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
                      ScaffoldArguments(Paths("galatea-invalid-player"))
                          .ReplaceOption(
                              "asset",
-                             GalateaRecapGridAssets.RollingRewriteZhCnV7
+                             GalateaRecapGridAssets.RollingRewriteZhCnV8
                          )
                          .AppendOptions(
                              "--character-name", "Galatea",

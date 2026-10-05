@@ -29,8 +29,10 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
         Guid.NewGuid().ToString("N")
     );
 
-    [Fact]
-    public async Task PublicCliChainFeedsStrictConfigAndRealHostReadiness() {
+    [Theory]
+    [InlineData(20)]
+    [InlineData(40 * 1024)]
+    public async Task PublicCliChainFeedsStrictConfigAndRealHostReadiness(int recapBytes) {
         Directory.CreateDirectory(_root);
         string repository = Path.Combine(_root, "session");
         string admission = Path.Combine(_root, "admission.json");
@@ -40,11 +42,11 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             _root,
             "timeline-head.json"
         );
-        var provider = new OperatorChainCompletionFactory();
+        var provider = new OperatorChainCompletionFactory(new string('r', recapBytes));
 
         Assert.Equal(0, Run(provider,
             "scaffold",
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea",
             "--connection-id", RecapConnectionId,
             "--permission", "create",
@@ -95,11 +97,11 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--input", repository,
             "--confirm-ref", refText,
             "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea"
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(
                 new GalateaCharacterName("Galatea")
             ),
@@ -305,8 +307,9 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
         }
     }
 
-    private sealed class OperatorChainCompletionFactory
+    private sealed class OperatorChainCompletionFactory(string recapContent)
         : ICompletionClientFactory {
+        private readonly string _recapContent = recapContent;
         private int _createCallCount;
         private int _dispatchCallCount;
         private int _agentDispatchCount;
@@ -351,7 +354,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                     Interlocked.Increment(ref owner._recapDispatchCount);
                     return Task.FromResult(new CompletionResult(
                         new ActionMessage([
-                            new ActionBlock.Text("operator-chain recap")
+                            new ActionBlock.Text(owner._recapContent)
                         ]),
                         new CompletionDescriptor(
                             Name,

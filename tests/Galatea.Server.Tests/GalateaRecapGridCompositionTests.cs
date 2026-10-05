@@ -933,7 +933,7 @@ public sealed partial class GalateaRecapGridCompositionTests : IDisposable {
         string characterName
     ) {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(
                 new GalateaCharacterName(characterName)
             ),

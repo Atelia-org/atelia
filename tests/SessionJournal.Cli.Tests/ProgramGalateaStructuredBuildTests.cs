@@ -11,7 +11,7 @@ namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed partial class ProgramRecapGridCommandTests {
     [Fact]
-    public void GalateaV7PublicBuildProjectsMixedHistoryAndPreservesMachineInputs() {
+    public void GalateaV8PublicBuildProjectsMixedHistoryAndPreservesMachineInputs() {
         SessionInputContent[] inputs = [
             SessionInputContent.Text("legacy text remains exact\r\n```\nlegacy\n```"),
             StructuredBuildPlayer(),
@@ -64,7 +64,7 @@ public sealed partial class ProgramRecapGridCommandTests {
     }
 
     [Fact]
-    public void GalateaV7PublicBuildRejectsUnknownSchemaBeforeDispatchButReadersRemainAvailable() {
+    public void GalateaV8PublicBuildRejectsUnknownSchemaBeforeDispatchButReadersRemainAvailable() {
         SessionInputContent[] inputs = [
             SessionInputContent.Structured("unknown.observation.v1", JsonSerializer.SerializeToElement(new { body = "unknown source" })),
             SessionInputContent.Text("recent reserve")
@@ -117,7 +117,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         string admission = ExternalPath("structured-admission.json");
         string routes = ExternalPath("structured-routes.json");
         (int scaffoldCode, JsonElement scaffold) = RunCaptured(
-            "scaffold", "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            "scaffold", "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8,
             "--character-name", "Galatea",
             "--connection-id", "test", "--permission", "create",
             "--permission", "register-family", "--permission", "register-definition",
@@ -133,7 +133,7 @@ public sealed partial class ProgramRecapGridCommandTests {
         Assert.True(ReadTimelineAuthority(refId).Head.SelectedPathCount > 0);
         Assert.Equal(0, Run("control", "provision-asset", "--input", _root,
             "--confirm-ref", refId.ToHexString(), "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV7, "--character-name", "Galatea"));
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV8, "--character-name", "Galatea"));
         JsonElement[] definitions = scaffold.GetProperty("detail").GetProperty("definitions").EnumerateArray().ToArray();
         string world = definitions.Single(value => value.GetProperty("logicalColumnId").GetString() == "world-understanding")
             .GetProperty("digest").GetString()!;

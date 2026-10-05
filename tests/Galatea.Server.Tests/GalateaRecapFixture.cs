@@ -79,7 +79,7 @@ internal static class GalateaRecapFixture {
         RecapGridControlRegistrationBundle? inactiveAdditionalBundle = null) {
         string path = engine.Path;
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV7,
+            GalateaRecapGridAssets.RollingRewriteZhCnV8,
             new GalateaRecapGridAssetParameters(
                 new GalateaCharacterName("Galatea")
             ),
@@ -161,7 +161,7 @@ internal static class GalateaRecapFixture {
         >(control.Reader.ReadSnapshot()).Snapshot.Head;
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV7,
+                GalateaRecapGridAssets.RollingRewriteZhCnV8,
                 initial.InstanceId
             );
         ControlHeadRef registered = Assert.IsType<
