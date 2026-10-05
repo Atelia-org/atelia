@@ -276,6 +276,11 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             .OrderBy(static status => status.CharacterId, StringComparer.Ordinal)
             .ToArray();
 
+    // Scheduler observation only: does not initialize stores or attach sessions.
+    internal IReadOnlyList<GalateaDelegationSqliteStore> ReadWritableSmtpStores() =>
+        _slots.Values.Where(slot => slot.ReadStatus().Availability
+            == GalateaDelegationCharacterAvailability.Writable).Select(slot => slot.Store).ToArray();
+
     internal GalateaDelegationCharacterStatus ReadStatus(string userId) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
         return GetSlot(userId).ReadStatus();

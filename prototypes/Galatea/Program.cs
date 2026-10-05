@@ -75,9 +75,13 @@ builder.Services.AddSingleton(static services => new GalateaHostService(
 builder.Services.AddSingleton<GalateaAcceptedTurnRunner>();
 builder.Services.AddSingleton<GalateaAutomaticTurnCoordinator>();
 builder.Services.AddSingleton<GalateaCharacterMailRelay>();
+// Phase 1 has no network sender. The default simulation reports unknown.
+builder.Services.AddSingleton<IGalateaSmtpSender>(_ => new GalateaOfflineSmtpSender());
 builder.Services.AddHostedService<GalateaServerAgentHostedService>();
 builder.Services.AddHostedService(static services =>
     services.GetRequiredService<GalateaCharacterMailRelay>());
+// Register last so normal host shutdown drains this consumer before store owners.
+builder.Services.AddHostedService<GalateaSmtpOutboxBackgroundService>();
 builder.Services.ConfigureHttpJsonOptions(
     options => GalateaHttpV1.ConfigureJson(options.SerializerOptions)
 );

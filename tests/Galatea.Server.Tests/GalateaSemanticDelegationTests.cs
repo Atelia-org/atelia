@@ -493,7 +493,7 @@ public sealed class GalateaSemanticDelegationTests {
             connection.Open();
             using SqliteCommand command = connection.CreateCommand();
             command.CommandText = "SELECT sql FROM sqlite_schema WHERE name='delegation_meta';";
-            string metaSql = ((string)command.ExecuteScalar()!).Replace("schema_version = 6", "schema_version = 4", StringComparison.Ordinal);
+            string metaSql = ((string)command.ExecuteScalar()!).Replace($"schema_version = {GalateaDelegationSqliteStore.SchemaVersion}", "schema_version = 4", StringComparison.Ordinal);
             command.CommandText = "ALTER TABLE delegation_meta RENAME TO prior_meta;" + metaSql + ";" + """
                 INSERT INTO delegation_meta SELECT singleton,4,user_id,session_repository_id,
                     capture_frontier_segment_number,capture_frontier_tail_offset,baseline_selected_head,
@@ -501,6 +501,7 @@ public sealed class GalateaSemanticDelegationTests {
                     maximum_inbox_utf8_bytes,next_completion_sequence,revision FROM prior_meta;
                 DROP TABLE prior_meta;
                 DROP TABLE mail_receipt_delivery;
+                DROP TABLE smtp_mail_outbox;
                 ALTER TABLE outbound_mail DROP COLUMN content_format;
                 ALTER TABLE outbound_mail DROP COLUMN sender_name;
                 ALTER TABLE outbound_mail DROP COLUMN task_sha256;

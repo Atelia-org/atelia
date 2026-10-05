@@ -8,7 +8,7 @@ namespace Atelia.Galatea.Server;
 /// Explicitly constructed durable delegation current-state authority.
 /// </summary>
 internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActionReceiptDeliveryStore {
-    internal const int SchemaVersion = 6;
+    internal const int SchemaVersion = 7;
     internal const int ApplicationId = 0x47444C47; // "GDLG"
     internal const string DatabaseFileName = "delegation-state.sqlite3";
     internal const string LockFileName = "delegation-state.lock";
@@ -180,7 +180,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
             ConfigureOpenedDatabase(connection, readOnly);
             GalateaDelegationStateSnapshot snapshot =
                 ValidateOpenedDatabase(connection, owner, limits);
-            return new GalateaDelegationSqliteStore(
+            var store = new GalateaDelegationSqliteStore(
                 fullPath,
                 owner,
                 snapshot.Baseline,
@@ -189,6 +189,8 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
                 lifetimeLock,
                 readOnly
             );
+            if (!readOnly) { store.RecoverSmtpAttemptsOnOpen(); }
+            return store;
         }
         catch {
             lifetimeLock.Dispose();
@@ -428,6 +430,10 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
             expected.Add("index:ux_mail_receipt_single_bound");
             expected.Add("index:ix_mail_receipt_pending_schedule");
         }
+        if (expectedVersion >= 7) {
+            expected.Add("table:smtp_mail_outbox");
+            expected.Add("index:ix_smtp_mail_state");
+        }
         if (!actual.SetEquals(expected)) {
             throw new InvalidDataException(
                 "Delegation SQLite schema object set is not exact."
@@ -467,6 +473,17 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
                 "expected_session_head", "rendered_observation",
                 "observation_address", "quarantine_code", "revision"
             }.Concat(expectedVersion >= 5 ? ["bound_input"] : Array.Empty<string>()).ToArray());
+        }
+        if (expectedVersion >= 6) {
+            RequireExactColumns(connection, "smtp_mail_outbox", [
+                "dispatch_id", "recipient", "from_character_id", "sender_account_reference",
+                "state", "result_code", "revision"
+            ]);
+            RequireStrictTable(connection, "smtp_mail_outbox");
+            RequireExactIndexColumns(connection, "ix_smtp_mail_state", ["state"], requireUnique: false);
+            RequireExactForeignKeys(connection, "smtp_mail_outbox", [
+                "dispatch_id->outbound_mail.dispatch_id:RESTRICT"
+            ]);
         }
         RequireExactColumns(connection, "route_binding", ColumnsForVersion([
             "singleton", "state", "binding_operation_id", "thread_id",

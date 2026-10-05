@@ -122,6 +122,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
                                 Guid.NewGuid().ToString("N")
                             );
                         }
+                        else if (GalateaMailRecipientClassifier.Classify(request.Intents[ordinal].Recipient, null, request.Sender.Name)
+                            == GalateaMailRecipientClass.Email) {
+                            InsertSmtpMailOutbox(connection, transaction, dispatchIds[ordinal],
+                                request.Intents[ordinal].Recipient, _owner.CharacterId);
+                        }
                     }
                     if (request.Intents.Count != 0) {
                         frozenReceipt = CreateCapturedMailReceiptBatch(request, dispatchIds);
@@ -136,6 +141,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     );
                 },
                 (snapshot, result) => CapturedMailBatchPublished(snapshot, result, request, frozenReceipt, capturedInternalOutboxes)
+                    && SmtpTargetsPublished(snapshot, result, request)
             );
         }
     }

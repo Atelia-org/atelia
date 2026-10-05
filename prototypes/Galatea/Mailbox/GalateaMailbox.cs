@@ -207,13 +207,14 @@ internal sealed record SendMailIntent(
 [Description("One mail actually sent by the configured story character; select complete original body and sending evidence by inclusive source line ranges.")]
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record SendMailRange(
-    [property: Required, Description("Explicit story-world recipient."), JsonPropertyName("recipient")] string Recipient,
+    [property: Required, Description("One explicit recipient: exact Codex, configured character name, or single narrow ASCII email address; copy case unchanged."), JsonPropertyName("recipient")] string Recipient,
     [property: Description("Explicit subject, or null when absent."), JsonPropertyName("subject")] string? Subject,
     [property: Description("Source inbound message id, only if explicitly identified."), JsonPropertyName("inReplyToMessageId")] string? InReplyToMessageId,
     [property: Required, Description("First body line, 1-based inclusive; exclude envelope and markers."), JsonPropertyName("bodyStartLine")] int BodyStartLine,
     [property: Required, Description("Last body line, inclusive; include the complete body."), JsonPropertyName("bodyEndLine")] int BodyEndLine,
     [property: Required, Description("First line proving actual sending."), JsonPropertyName("evidenceStartLine")] int EvidenceStartLine,
-    [property: Required, Description("Last sending-evidence line, inclusive."), JsonPropertyName("evidenceEndLine")] int EvidenceEndLine
+    [property: Required, Description("Last sending-evidence line, inclusive."), JsonPropertyName("evidenceEndLine")] int EvidenceEndLine,
+    [property: Description("For email recipients, required source line containing exactly the email address or a plain recipient header; outside the body. Omit for Codex/characters."), JsonPropertyName("recipientLine")] int? RecipientLine = null
 );
 
 internal interface IOutboundMailExtractor {
@@ -259,9 +260,9 @@ internal sealed class OutboundMailExtractor : IOutboundMailExtractor {
     private const string ContractIdPrefix =
         "atelia.galatea.outbound-mail-extractor.v2.";
     private const string SemanticContractVersion =
-        "atelia.galatea.outbound-mail-extractor.semantic.v3";
+        "atelia.galatea.outbound-mail-extractor.semantic.v4";
     private const string ToolContractVersion =
-        "emit-send-mail-range.v1";
+        "emit-send-mail-range.v2";
     private const string VisibleActionRendererVersion =
         "atelia.galatea.visible-action-text-renderer.v1";
     internal const string ToolName = "emit_send_mail_range";
@@ -277,7 +278,7 @@ The provider Action is a composite GM carrier, not automatically ${characterName
 
 Emit one tool call per mail, in narrative order, only when ${characterName} actually sends it or explicitly completes the send action. Plans, wishes, suggestions, drafts, composing, opening an interface, and unsent outbox content are not sends.
 
-Every emitted mail must state one recipient and its complete body in the Action. Do not invent, rewrite, complete, summarize, or polish either. A subject is optional and must be omitted when absent. inReplyToMessageId is optional and must be omitted unless the Action explicitly identifies the source message id. evidenceStartLine/evidenceEndLine must select the original lines proving actual sending. If recipient, complete body, actor ownership, or completed-send evidence is missing or ambiguous, emit nothing for that candidate.
+Every emitted mail must state one recipient and its complete body in the Action. The recipient must be exactly Codex (case-sensitive), an explicitly written configured character name, or one explicitly written narrow ASCII email address. Never infer an email recipient from body text, quotations or an address substring. Never guess, complete, rewrite, HTML-decode or change the case of an address; an invalid address is not deliverable. For email, set recipientLine to the original whole line stating the recipient, outside the body range. That line must contain only the address, or a plain 收件人： / 收件人: / Recipient: header followed by the address. Do not select an occurrence inside quoted mail to authorize a new send. Do not invent, rewrite, complete, summarize, or polish either. A subject is optional and must be omitted when absent. inReplyToMessageId is optional and must be omitted unless the Action explicitly identifies the source message id. evidenceStartLine/evidenceEndLine must select the original lines proving actual sending. If recipient, complete body, actor ownership, or completed-send evidence is missing or ambiguous, emit nothing for that candidate.
 
 Select one complete, continuous whole-line body range for each mail, excluding recipient/subject headers, [邮件正文开始]/[邮件正文结束] markers and external narration. Markers describe layout, never sending authorization. Unmarked text is equally eligible if it has clean whole-line boundaries. Preserve all body Markdown, indentation, literals and internal blank lines; never rewrite, trim, join discontiguous pieces, or omit part of a body. If a definite valid send has a complete body that cannot be represented as one clean whole-line range, call report_extraction_problem with reason unrepresentable_layout instead of silently omitting it.
 
@@ -366,6 +367,20 @@ Extract zero or more mails that ${characterName} actually sent in this Action. P
         SendMailRange range, TextExtractionSession session
     ) {
         var lines = session.Input.Lines!;
+        if (GalateaExternalMailAddress.TryParse(range.Recipient, out var email)) {
+            if (range.RecipientLine is not int recipientLine
+                || recipientLine >= range.BodyStartLine && recipientLine <= range.BodyEndLine) {
+                return TextExtractionAdmission<SendMailIntent>.Rejected("email-recipient-line-required");
+            }
+            string stated = lines.Slice(recipientLine, recipientLine);
+            foreach (string prefix in new[] { "收件人：", "收件人:", "Recipient:" }) {
+                if (stated.StartsWith(prefix, StringComparison.Ordinal)) { stated = stated[prefix.Length..]; break; }
+            }
+            if (!GalateaExternalMailAddress.TryParse(stated, out var original)
+                || original!.Value != email!.Value) {
+                return TextExtractionAdmission<SendMailIntent>.Rejected("email-recipient-not-exact-source");
+            }
+        }
         var intent = new SendMailIntent(range.Recipient, range.Subject,
             lines.Slice(range.BodyStartLine, range.BodyEndLine),
             range.InReplyToMessageId,

@@ -108,7 +108,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
             notices,
             activeLease
         );
-        ValidateMailReceiptDeliveries(mailReceipts, captures, mails, internalMailOutboxes, storeRevision);
+        var smtpMailOutboxes = expectedVersion >= 7
+            ? ReadSmtpMailOutboxes(connection, transaction)
+            : new List<GalateaSmtpMailOutboxSnapshot>();
+        ValidateSmtpMailOutboxes(smtpMailOutboxes, mails, internalMailOutboxes, owner);
+        ValidateMailReceiptDeliveries(mailReceipts, captures, mails, internalMailOutboxes, smtpMailOutboxes, storeRevision);
         return new GalateaDelegationStateSnapshot(
             owner,
             baseline,
@@ -122,7 +126,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             GalateaDelegationStateSnapshot.Freeze(notices),
             activeLease,
             GalateaDelegationStateSnapshot.Freeze(mailReceipts)
-        );
+        ) { SmtpMailOutboxes = GalateaDelegationStateSnapshot.Freeze(smtpMailOutboxes) };
     }
 
     private static GalateaRouteBindingSnapshot ReadRoute(

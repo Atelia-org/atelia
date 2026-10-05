@@ -332,8 +332,8 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
                 GalateaDelegateConfigReader.CanonicalRecipient,
                 StringComparison.Ordinal
             );
-            string resolvedRecipientKind = isCodex ? "Codex" :
-                internalTarget is not null ? "Character" : "Unrouted";
+            string resolvedRecipientKind = GalateaMailRecipientClassifier.Classify(
+                request.Intents[ordinal].Recipient, internalTarget, _sender.Name).ToString();
             string? recipientId = isCodex
                 ? GalateaDelegateConfigReader.CanonicalRecipient
                 : internalTarget?.TargetCharacterId;

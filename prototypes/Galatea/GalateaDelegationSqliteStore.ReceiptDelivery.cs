@@ -228,7 +228,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         IReadOnlyList<ActionReceiptDeliverySnapshot> rows,
         IReadOnlyList<GalateaActionCaptureSnapshot> captures,
         IReadOnlyList<GalateaOutboundMailSnapshot> mails,
-        IReadOnlyList<GalateaInternalMailOutboxSnapshot> outboxes, long storeRevision
+        IReadOnlyList<GalateaInternalMailOutboxSnapshot> outboxes,
+        IReadOnlyList<GalateaSmtpMailOutboxSnapshot> smtpOutboxes, long storeRevision
     ) {
         if (rows.Count(static row => row.State == ActionReceiptDeliveryState.ObservationBound) > 1) {
             throw Corrupt("Multiple Mail receipt deliveries are bound.");
@@ -263,7 +264,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 for (int ordinal = 0; ordinal < artifacts.Length; ordinal++) {
                     GalateaOutboundMailSnapshot mail = artifacts[ordinal];
                     MailReceiptItem item = batch.Items[ordinal];
-                    string outcome = mail.IsCodexRouted || outboxes.Any(value => value.DispatchId == mail.DispatchId) ? "accepted" : "unrouted";
+                    string outcome = mail.IsCodexRouted || outboxes.Any(value => value.DispatchId == mail.DispatchId)
+                        || smtpOutboxes.Any(value => value.DispatchId == mail.DispatchId) ? "accepted" : "unrouted";
                     if (item.DispatchId != mail.DispatchId || item.Outcome != outcome
                         || item.RecipientPreview != ActionReceiptPreview.Create(mail.Recipient)
                         || mail.Body is { } body && item.Preview != ActionReceiptPreview.Create(body)) {
@@ -290,7 +292,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaDelegationCaptureRequest request, IReadOnlyList<string> dispatchIds
     ) => new(request.SourceActionAddress, request.Intents.Select((intent, ordinal) => new MailReceiptItem(
         dispatchIds[ordinal], string.Equals(intent.Recipient, GalateaDelegateConfigReader.CanonicalRecipient, StringComparison.Ordinal)
-            || request.InternalTargets?[ordinal] is not null ? "accepted" : "unrouted",
+            || request.InternalTargets?[ordinal] is not null
+            || GalateaMailRecipientClassifier.Classify(intent.Recipient, request.InternalTargets?[ordinal], request.Sender.Name)
+                == GalateaMailRecipientClass.Email ? "accepted" : "unrouted",
         ActionReceiptPreview.Create(intent.Recipient), ActionReceiptPreview.Create(intent.Body))).ToArray());
 
     private static void InsertPendingMailReceiptDelivery(

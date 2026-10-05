@@ -94,6 +94,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     private bool _stopping;
     private GalateaAcceptedTurnRunner? _turnRunner;
     private GalateaCharacterMailRelay? _characterMailRelay;
+    private GalateaSmtpOutboxBackgroundService? _smtpOutboxConsumer;
     private Task? _disposeTask;
     private readonly IReadOnlyDictionary<string, GalateaCharacterConfig> _characters;
     private readonly IReadOnlyDictionary<string, GalateaPlayerConfig> _players;
@@ -634,6 +635,18 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         if (stopping) { relay.BeginShutdown(); }
     }
 
+    internal void RegisterSmtpOutboxConsumer(GalateaSmtpOutboxBackgroundService consumer) {
+        bool stopping;
+        lock (_lifecycleGate) {
+            if (_smtpOutboxConsumer is not null && !ReferenceEquals(_smtpOutboxConsumer, consumer)) {
+                throw new InvalidOperationException("Only one SMTP consumer may own a host.");
+            }
+            _smtpOutboxConsumer = consumer;
+            stopping = _stopping;
+        }
+        if (stopping) { consumer.BeginShutdown(); }
+    }
+
     internal IReadOnlyList<GalateaCharacterRecipient> CharacterRecipients =>
         _characterRecipientDirectory?.Recipients
             ?? Array.Empty<GalateaCharacterRecipient>();
@@ -816,6 +829,8 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         }
     }
 
+    // Resolve exact configured peers before the capture store classifies email.
+    // An address-looking peer name keeps its character route; self mail stays unrouted.
     private GalateaInternalMailTarget? ResolveInternalMailTarget(
         GalateaCharacterConfig sender,
         SendMailIntent intent
@@ -2845,6 +2860,10 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
 
     private async Task DisposeCoreAsync() {
         List<Exception>? failures = null;
+        if (_smtpOutboxConsumer is { } smtp) {
+            try { await smtp.DrainAsync().ConfigureAwait(false); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
         if (_characterMailRelay is { } relay) {
             try { await relay.DrainAsync().ConfigureAwait(false); }
             catch (Exception exception) { (failures ??= []).Add(exception); }
@@ -2907,11 +2926,14 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     internal void BeginShutdown() {
         GalateaAcceptedTurnRunner? runner;
         GalateaCharacterMailRelay? characterMailRelay;
+        GalateaSmtpOutboxBackgroundService? smtpOutboxConsumer;
         lock (_lifecycleGate) {
             _stopping = true;
             runner = _turnRunner;
             characterMailRelay = _characterMailRelay;
+            smtpOutboxConsumer = _smtpOutboxConsumer;
         }
+        smtpOutboxConsumer?.BeginShutdown();
         characterMailRelay?.BeginShutdown();
         _admissionStopping.Cancel();
         runner?.BeginShutdown();

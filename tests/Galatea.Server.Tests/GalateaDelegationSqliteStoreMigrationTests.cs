@@ -41,7 +41,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Equal((long)version, Scalar(result.BackupPath, "PRAGMA user_version;"));
         Assert.Equal(fixture.LegacyRows, ReadBusinessRows(result.BackupPath, normalize: false));
         Assert.Equal(fixture.BusinessRows, ReadBusinessRows(fixture.DatabasePath));
-        Assert.Equal(6L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal((long)GalateaDelegationSqliteStore.SchemaVersion, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         using (GalateaDelegationSqliteStore store = fixture.Open()) {
             Assert.Equal(fixture.Snapshot, JsonSerializer.Serialize(store.ReadSnapshot()));
             Assert.Empty(store.ReadSnapshot().MailReceipts);
@@ -81,7 +81,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         GalateaDelegationStoreUpgradeResult result = fixture.Upgrade(apply: true);
 
         Assert.Equal("Upgraded", result.Outcome);
-        Assert.Equal(6L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal((long)GalateaDelegationSqliteStore.SchemaVersion, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(0L, Scalar(fixture.DatabasePath,
             "SELECT COUNT(*) FROM internal_mail_outbox;"));
         using GalateaDelegationSqliteStore store = fixture.Open();
@@ -102,7 +102,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             ? new GalateaDelegationStoreTestHooks(AfterCommitBeforeReturn: fail)
             : new GalateaDelegationStoreTestHooks(BeforeCommit: fail);
         Assert.Throws<IOException>(() => fixture.Upgrade(apply: true, hooks));
-        Assert.Equal(afterCommit ? 6L : version,
+        Assert.Equal(afterCommit ? (long)GalateaDelegationSqliteStore.SchemaVersion : version,
             Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(afterCommit || version is 2 or 3 ? 0L : 1L, Scalar(fixture.DatabasePath,
             "SELECT count(*) FROM pragma_table_info('outbound_mail') WHERE name = 'frozen_route_policy_fingerprint';"));
@@ -445,8 +445,9 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             if (version == 5) {
                 downgrade.CommandText = """
                     DROP TABLE mail_receipt_delivery;
+                    DROP TABLE smtp_mail_outbox;
                     PRAGMA writable_schema = ON;
-                    UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = 6', 'schema_version = 5') WHERE name='delegation_meta';
+                    UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = 7', 'schema_version = 5') WHERE name='delegation_meta';
                     PRAGMA writable_schema = OFF;
                     PRAGMA schema_version = 401;
                     PRAGMA ignore_check_constraints = ON;
@@ -459,6 +460,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             }
             downgrade.CommandText = """
                 DROP TABLE mail_receipt_delivery;
+                DROP TABLE smtp_mail_outbox;
                 ALTER TABLE outbound_mail DROP COLUMN content_format;
                 ALTER TABLE outbound_mail DROP COLUMN sender_name;
                 ALTER TABLE outbound_mail DROP COLUMN task_sha256;

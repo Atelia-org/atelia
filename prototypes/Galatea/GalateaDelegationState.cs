@@ -315,6 +315,14 @@ internal sealed record GalateaDelegationStateSnapshot(
     GalateaReplyLeaseSnapshot? ActiveLease,
     IReadOnlyList<ActionReceiptDeliverySnapshot> MailReceipts
 ) {
+    internal IReadOnlyList<GalateaSmtpMailOutboxSnapshot> SmtpMailOutboxes { get; init; } = Array.Empty<GalateaSmtpMailOutboxSnapshot>();
+
+    internal GalateaMailRecipientClass RecipientClass(GalateaOutboundMailSnapshot mail) =>
+        mail.IsCodexRouted ? GalateaMailRecipientClass.Codex
+        : InternalMailOutboxes.Any(row => row.DispatchId == mail.DispatchId) ? GalateaMailRecipientClass.Character
+        : SmtpMailOutboxes.Any(row => row.DispatchId == mail.DispatchId) ? GalateaMailRecipientClass.Email
+        : GalateaMailRecipientClass.Unrouted;
+
     internal static IReadOnlyList<T> Freeze<T>(IEnumerable<T> values) =>
         new ReadOnlyCollection<T>(values.ToArray());
 }
