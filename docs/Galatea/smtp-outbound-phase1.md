@@ -51,7 +51,7 @@ stateDiagram-v2
     Attempting --> OutcomeUnknown: 可写重开，PROCESS_RESTART
 ```
 
-发送前先 claim；同一 store 的 gate 和独占 lifetime lock 防止重复 claim。claim 的 COMMIT 回报不确定时，即使重新读到 Attempting，也不允许外部调用。结果 COMMIT 回报不确定可通过精确持久后状态确认。结果写入失败则保留 Attempting，消费不重试，下一次可写重开转未知。只读打开不执行恢复；恢复只在可写打开时执行，不在后台 sweep 中执行，避免误伤活跃调用。
+发送前先 claim；同一 store 的 gate 和独占 lifetime lock 防止重复 claim。claim 的 COMMIT 回报不确定时，即使重新读到 Attempting，也不允许外部调用。结果 COMMIT 回报不确定可通过精确持久后状态确认。结果事务未提交时的写入失败会保留 Attempting，消费不重试，下一次可写重开转未知。如果失败发生在 COMMIT 时或之后（包括 COMMIT 后回报出错），终态可能已经持久化，不能断言仍是 Attempting；须按精确持久后状态确认。只读打开不执行恢复；恢复只在可写打开时执行，不在后台 sweep 中执行，避免误伤活跃调用。
 
 Pending 是唯一可消费状态。OutcomeUnknown 无回退边，不能自动重发。重开把所有遗留 Attempting 转为 OutcomeUnknown；不恢复发送。DefiniteFailure 附固定原因码，不存异常正文或堆栈。ProviderAccepted 仅表示发送器报告服务商接收，不表示最终送达；本期 `OFFLINE_ACCEPTED` 更只表示模拟接收。
 
@@ -61,6 +61,7 @@ Pending 是唯一可消费状态。OutcomeUnknown 无回退边，不能自动重
 
 - 真实 SMTP 实现和明确的发送超时、服务商应答分类；继续保守处理未知，不能自动重发。
 - 每角色固定发件账号映射：配置拟采用 `smtp.senderAccounts[characterId].credentialPath`（绝对路径引用）与启用字段。此键仅为设计，尚未进入严格配置 schema。发送模块运行时读取路径指向的凭据；账号不能由角色正文、收件人字段或模型指定。测试不读取凭据。
+- 离线记录切换边界：第一期会产生账号引用为 `offline:<角色ID>` 的 SMTP outbox 行。切换到真实发送器时，除防止旧 `Unrouted` 补建与未知结果重发外，还须明确处理可能残留的离线 `Pending` 及其他非终态行；不得通过重新解释账号引用，把原本只用于离线测试的记录变成真实发送。这是与“未知不重发”不同的入口，须单独设计和测试。候选做法（尚未实施）：按发件主体隔离；切换时显式终结离线行；新账号绑定只适用于切换后的新捕获。具体契约留待第二期确定。
 - 服务商接收与最终送达分开表达；结果回执、UI、保留/容量策略及人工处理未知结果的契约尚未实施。
 - 本期没有真实发送开关、补寄入口或自动重试。部署到现有实例需另行离线升级 V7，本次实施不触碰运行实例。
 

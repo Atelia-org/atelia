@@ -110,7 +110,7 @@ internal sealed class GalateaSmtpOutboxBackgroundService : BackgroundService {
                     if (ct.IsCancellationRequested || _host.IsStopping) { return; }
                     try { await consumer.ConsumeOneAsync(store, ct).ConfigureAwait(false); }
                     catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)) {
-                        // Content-free; the Attempting row remains inert until reopen recovery.
+                        // Record a content-free consumption exception without inferring the persisted row state.
                         DebugUtil.Warning("Galatea.Smtp", "SMTP outbox consumption deferred.");
                     }
                 }
