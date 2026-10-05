@@ -329,7 +329,8 @@ internal sealed record GalateaDelegationStateSnapshot(
 
 internal sealed record GalateaDelegationStoreTestHooks(
     Action<string>? BeforeCommit = null,
-    Action<string>? AfterCommitBeforeReturn = null
+    Action<string>? AfterCommitBeforeReturn = null,
+    Action? BeforeSmtpOutboxInsert = null
 ) {
     internal static GalateaDelegationStoreTestHooks None { get; } = new();
 }

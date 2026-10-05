@@ -21,7 +21,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         CREATE INDEX ix_smtp_mail_state ON smtp_mail_outbox(state);
         """;
 
-    private static void InsertSmtpMailOutbox(SqliteConnection connection, SqliteTransaction transaction,
+    private void InsertSmtpMailOutbox(SqliteConnection connection, SqliteTransaction transaction,
         string dispatchId, string recipient, string characterId) {
         if (!GalateaExternalMailAddress.TryParse(recipient, out var address)) {
             throw new InvalidDataException("SMTP capture requires a single ASCII address.");
@@ -38,6 +38,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.Parameters.AddWithValue("$character", characterId);
         // Host identity, never recipient/body controlled; not a credential path.
         command.Parameters.AddWithValue("$account", "offline:" + characterId);
+        // Fault injection at the outbox write boundary, inside the capture transaction.
+        _hooks.BeforeSmtpOutboxInsert?.Invoke();
         command.ExecuteNonQuery();
     }
 

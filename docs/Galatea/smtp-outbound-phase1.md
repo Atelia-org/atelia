@@ -95,3 +95,37 @@ Pending 是唯一可消费状态。OutcomeUnknown 无回退边，不能自动重
 - 尝试 Galatea.Server 离线全集，在 629.56 秒停止前报告 719 条通过、4 项超时（Recap 2 项、RetryIsolation、NoteReceipt 各 1）。上述六个相关参数例单独复跑全通过；全集的超时原因未归因，全集没有完成，不能声称全集通过。
 - 全集中的五类既有 Recap 夹具硬编码优先使用 `/dev/shm`，不受 `TMPDIR` 控制，确实发生了新工作树之外的临时夹具写入。这偏离本信限定的执行位置；发现后停止全集。后续邮件回归及上述超时复跑不包含这些固定路径夹具。没有改动运行实例的数据、配置或主线工作树。
 - 未运行真实模型 / Codex live canary、真实 SMTP、全仓库测试；没有真实发送、没有连接 SMTP、没有读取实际凭据文件、没有重启运行服务、没有 push 或合并。
+
+## G01-C-017 / C-018：合成来源与持久断点
+
+### 旧库夹具来源与启用边界
+
+C-016 的迁移夹具完全合成，没有复制或读取运行中的 delegation-state.sqlite3 或其他会话数据库。测试先在临时目录用新 store API 写入合成捕获，再关闭 store，去掉 SMTP 表及其索引，将 meta CHECK、schema_version 和 PRAGMA user_version 改为 V5，构成迁移前的完整 V5 schema。正文为固定占位文字 body；来源来自测试新建的 SessionJournal，不来自角色历史。此次增为两个不同来源的旧捕获，均为合成 email、Unrouted。此构造不是对真实数据库降级，也不借用真实业务记录。
+
+`V5Migration_DoesNotBackfillAndExistingCaptureRemainsAlreadyCaptured` 验证 dry-run 不改字节、迁移后 SMTP outbox 为空、原 capture/mail 保持不变；旧来源经协调器和直接捕获入口都返回 AlreadyCaptured，不补建 outbox；只有后续不同来源的新捕获才建一行。代码位置：测试同名方法；store 的 Upgrade 与 Transitions.CaptureActionBatch。
+
+`RepeatedNewCapture_CreatesOnlyOneSmtpRow` 对一个新捕获再次调用协调器及直接捕获入口，检查两者均 AlreadyCaptured，capture、mail、SMTP outbox 各只有一行，原 SMTP 行未变。对应防线是 CaptureActionBatch 的来源主键检查与 SMTP 行 dispatch_id 主键。
+
+### 捕获事务中的 SMTP 写入失败
+
+新增内部默认关闭的 `BeforeSmtpOutboxInsert` 测试 hook，在 SMTP INSERT 执行前、捕获事务内部注入 IOException。`SmtpInsertFailure_RollsBackCaptureAndEveryOutbox` 的两个参数例分别在第一个、第二个 SMTP 写入边界失败；第二例已有一行 SMTP INSERT 在同一未提交事务中完成。测试重开后分别检查 capture/mail/outbox 都为空，并用独立 SQLite 连接核对三表计数为零。它模拟写入边界异常，不声称测试了真实磁盘损坏或断电。
+
+代码位置：GalateaDelegationState.GalateaDelegationStoreTestHooks、GalateaDelegationSqliteStore.Smtp.InsertSmtpMailOutbox、Transitions.CaptureActionBatch / ExecuteWrite，以及同名测试。业务状态机与提交顺序没有修改。
+
+### 尝试开始、结果中断与未知不重发
+
+`SenderInvocation_SeesAttemptingCommittedThroughSeparateConnection` 在替身 SendAsync 内打开另一条 SQLite 连接，按 dispatch_id 读取 Attempting，证明调用时该状态已提交、对独立连接可见。不是只检查宿主的内存对象。代码位置：Smtp.ClaimPendingSmtpMail 与 Mailbox.GalateaSmtpOutboxConsumer.ConsumeOneAsync。
+
+`InterruptedResultCommit_RestartMakesUnknownAndNeitherLoopNorRestartResends` 在替身已返回模拟接收、结果事务 COMMIT 前通过既有 BeforeCommit hook 抛出，未提交的结果更新回滚，持久状态仍为 Attempting。普通消费不再取该行；可写重开恢复为 OutcomeUnknown / PROCESS_RESTART；普通循环仍不取，再次重开后保持 Unknown，替身总调用数为一。这里是异常注入加关闭/重开，不是操作系统强杀或真实外部副作用。代码位置：Transitions.ExecuteWrite、Smtp.CompleteSmtpAttempt / RecoverSmtpAttemptsOnOpen 与同名测试。
+
+`OfflineSender_RecordsResultAndNeverConsumesTerminalRowAgain` 原有四个参数例另验证发送器直接返回未知或抛异常后：普通循环不再消费，重开后状态不回 Pending，也不再消费。它与上述“发送器返回成功但结果未持久化”断点分别覆盖两种路径。
+
+### C-018 的 /dev/shm 清理
+
+以 C-016 server-suite 的执行时间（2026-10-05 02:35–02:46 UTC）、上述五类夹具源码及 GUID-delegation-state 命名核对目录元数据，在 rolling-grid 与 recap-grid 两个测试目录下确认 16 个本次残留子目录。检查 /proc 的 cwd/fd 链接没有活跃引用后删除，再检查均不存在；没有读取残留数据库或会话正文。更早的其他运行残留没有删除。明细在本工作树忽略目录 .artifacts/c017/cleanup.json。
+
+### C-018 实际验证结果
+
+证据级别：实际执行。在 C-016 提交 4d0df1e 基础上，沿用上文 TMPDIR / DOTNET_CLI_HOME 及禁用 live 调用的环境。`dotnet build tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore` 成功，0 警告、0 错误，墙钟 45.05 秒。随后 `dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-build --no-restore --filter 'FullyQualifiedName~GalateaSmtpOutboundTests|FullyQualifiedName~GalateaExternalMailAddressTests'`，64/64 通过（SMTP 26、解析器 38），0 失败、0 跳过，墙钟 224.66 秒。上文列出的迁移、重复捕获、写入失败两个参数例、发送前独立连接查询、结果提交中断以及四种终态参数例均实际通过。
+
+完整命令、耗时和 TRX 在忽略目录 .artifacts/c017/build.json、tests.json、results/smtp-parser.trx。此次没有重跑整个邮件回归或全套；C-016 的既有结果与未完成范围仍按上文报告。本补充没有未执行的要求项。实际断点采用异常注入与关闭/重开，不代表真实断电测试。没有真实发送、SMTP 连接、凭据读取、付费模型调用、运行服务重启、main / 运行配置 / 运行数据库改动、push 或合并。

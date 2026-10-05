@@ -203,9 +203,93 @@ public sealed class GalateaSmtpOutboundTests {
     }
 
     [Fact]
+    public async Task RepeatedNewCapture_CreatesOnlyOneSmtpRow() {
+        using var fixture = new Fixture();
+        await fixture.CaptureEmail();
+        var before = fixture.Store.ReadSnapshot();
+        var reconciler = new GalateaOutboundMailExtractionReconciler(fixture.Store, new NeverExtract(), Fixture.Sender);
+        Assert.IsType<GalateaOutboundMailExtractionReconcileResult.AlreadyCaptured>(await reconciler.ReconcileAsync(fixture.Engine));
+        var capture = Assert.Single(before.Captures);
+        Assert.Equal(GalateaDelegationCaptureDisposition.AlreadyCaptured, fixture.Store.CaptureActionBatch(new(
+            capture.SourceActionAddress, capture.VisibleActionSha256, capture.VisibleActionUtf8Bytes,
+            capture.ExtractorContractId, [new("a@Example.test", null, "body", null, "sent")], Fixture.Sender)).Disposition);
+        Assert.Equal(Assert.Single(before.SmtpMailOutboxes), Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes));
+        Assert.Single(fixture.Store.ReadSnapshot().Captures);
+        Assert.Single(fixture.Store.ReadSnapshot().Mails);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task SmtpInsertFailure_RollsBackCaptureAndEveryOutbox(int failAtInsert) {
+        int inserts = 0;
+        using var fixture = new Fixture(new(BeforeSmtpOutboxInsert: () => {
+            if (++inserts == failAtInsert) { throw new IOException("injected SMTP insert failure"); }
+        }));
+        const string action = "收件人：a@Example.test\nsynthetic first body\n[Galatea] 已寄出。\n收件人：b@Example.test\nsynthetic second body\n[Galatea] 已寄出。";
+        await Assert.ThrowsAsync<IOException>(() => fixture.ExtractAndCapture(action,
+            Range("a@Example.test", 2, 2, 3), Range("b@Example.test", 5, 5, 6, 4)));
+        Assert.Equal(failAtInsert, inserts);
+        fixture.Reopen(); // Check the committed database, including rollback of an earlier SMTP INSERT.
+        var snapshot = fixture.Store.ReadSnapshot();
+        Assert.Empty(snapshot.Captures);
+        Assert.Empty(snapshot.Mails);
+        Assert.Empty(snapshot.SmtpMailOutboxes);
+        using var connection = fixture.OpenSql();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT (SELECT count(*) FROM action_capture) + (SELECT count(*) FROM outbound_mail) + (SELECT count(*) FROM smtp_mail_outbox);";
+        Assert.Equal(0L, command.ExecuteScalar());
+    }
+
+    [Fact]
+    public async Task SenderInvocation_SeesAttemptingCommittedThroughSeparateConnection() {
+        using var fixture = new Fixture();
+        await fixture.CaptureEmail();
+        var sender = new CallbackSender(request => {
+            using var connection = fixture.OpenSql();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT state FROM smtp_mail_outbox WHERE dispatch_id=$dispatch;";
+            command.Parameters.AddWithValue("$dispatch", request.DispatchId);
+            Assert.Equal("Attempting", command.ExecuteScalar());
+        });
+        Assert.True(await new GalateaSmtpOutboxConsumer(sender).ConsumeOneAsync(fixture.Store, CancellationToken.None));
+        Assert.Equal(1, sender.Calls);
+        Assert.Equal(GalateaSmtpMailState.ProviderAccepted, fixture.Store.ReadSnapshot().SmtpMailOutboxes.Single().State);
+    }
+
+    [Fact]
+    public async Task InterruptedResultCommit_RestartMakesUnknownAndNeitherLoopNorRestartResends() {
+        bool interruptedAfterSender = false;
+        var sender = new CallbackSender(_ => { });
+        using var fixture = new Fixture(new(BeforeCommit: operation => {
+            if (operation == "smtp-ProviderAccepted") {
+                Assert.Equal(1, sender.Calls);
+                interruptedAfterSender = true;
+                throw new IOException("interrupted after sender returned, before result commit");
+            }
+        }));
+        await fixture.CaptureEmail();
+        var consumer = new GalateaSmtpOutboxConsumer(sender);
+        await Assert.ThrowsAsync<IOException>(() => consumer.ConsumeOneAsync(fixture.Store, CancellationToken.None));
+        Assert.True(interruptedAfterSender);
+        Assert.Equal(GalateaSmtpMailState.Attempting, fixture.Store.ReadSnapshot().SmtpMailOutboxes.Single().State);
+        Assert.False(await consumer.ConsumeOneAsync(fixture.Store, CancellationToken.None));
+        fixture.Reopen();
+        var unknown = fixture.Store.ReadSnapshot().SmtpMailOutboxes.Single();
+        Assert.Equal(GalateaSmtpMailState.OutcomeUnknown, unknown.State);
+        Assert.Equal("PROCESS_RESTART", unknown.ResultCode);
+        Assert.False(await consumer.ConsumeOneAsync(fixture.Store, CancellationToken.None));
+        fixture.Reopen();
+        Assert.Equal(unknown, fixture.Store.ReadSnapshot().SmtpMailOutboxes.Single());
+        Assert.False(await consumer.ConsumeOneAsync(fixture.Store, CancellationToken.None));
+        Assert.Equal(1, sender.Calls);
+    }
+
+    [Fact]
     public async Task V5Migration_DoesNotBackfillAndExistingCaptureRemainsAlreadyCaptured() {
         using var fixture = new Fixture();
         await fixture.CaptureEmail();
+        await fixture.CaptureEmail(); // Two distinct synthetic old captures; no runtime database is used.
         string captureBefore = JsonSerializer.Serialize(fixture.Store.ReadSnapshot().Captures);
         string mailsBefore = JsonSerializer.Serialize(fixture.Store.ReadSnapshot().Mails);
         fixture.Store.Dispose();
@@ -235,7 +319,9 @@ public sealed class GalateaSmtpOutboundTests {
         Assert.Empty(snapshot.SmtpMailOutboxes);
         Assert.Equal(captureBefore, JsonSerializer.Serialize(snapshot.Captures));
         Assert.Equal(mailsBefore, JsonSerializer.Serialize(snapshot.Mails));
-        Assert.Equal(GalateaMailRecipientClass.Unrouted, snapshot.RecipientClass(snapshot.Mails.Single()));
+        Assert.Equal(2, snapshot.Captures.Count);
+        Assert.Equal(2, snapshot.Mails.Count);
+        Assert.All(snapshot.Mails, mail => Assert.Equal(GalateaMailRecipientClass.Unrouted, snapshot.RecipientClass(mail)));
         var reconciler = new GalateaOutboundMailExtractionReconciler(fixture.Store, new NeverExtract(), Fixture.Sender);
         Assert.IsType<GalateaOutboundMailExtractionReconcileResult.AlreadyCaptured>(await reconciler.ReconcileAsync(fixture.Engine));
         Assert.Empty(fixture.Store.ReadSnapshot().SmtpMailOutboxes);
@@ -306,6 +392,15 @@ public sealed class GalateaSmtpOutboundTests {
         internal List<GalateaSmtpSendRequest> Requests { get; } = [];
         public Task<GalateaSmtpSendResult> SendAsync(GalateaSmtpSendRequest request, CancellationToken cancellationToken) {
             Requests.Add(request); return inner.SendAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class CallbackSender(Action<GalateaSmtpSendRequest> onCall) : IGalateaSmtpSender {
+        internal int Calls { get; private set; }
+        public Task<GalateaSmtpSendResult> SendAsync(GalateaSmtpSendRequest request, CancellationToken cancellationToken) {
+            Calls++;
+            onCall(request);
+            return Task.FromResult(new GalateaSmtpSendResult(GalateaSmtpMailState.ProviderAccepted, "OFFLINE_ACCEPTED"));
         }
     }
 
