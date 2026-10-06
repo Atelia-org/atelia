@@ -99,6 +99,7 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
     private readonly Func<SendMailIntent, GalateaInternalMailTarget?>?
         _resolveInternalTarget;
 
+    private readonly string? _smtpSenderAccountReference;
     internal Action<string>? CapturedMailDiagnosticSinkForTest { get; set; }
     internal Action<string>? ExtractionDiagnosticSinkForTest { get; set; }
 
@@ -107,12 +108,14 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
         IOutboundMailExtractor extractor,
         GalateaSenderSnapshot sender,
         Func<SendMailIntent, GalateaInternalMailTarget?>?
-            resolveInternalTarget = null
+            resolveInternalTarget = null,
+        string? smtpSenderAccountReference = null
     ) {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _extractor = extractor
             ?? throw new ArgumentNullException(nameof(extractor));
         _resolveInternalTarget = resolveInternalTarget;
+        _smtpSenderAccountReference = smtpSenderAccountReference;
         _sender = sender ?? throw new ArgumentNullException(nameof(sender));
     }
 
@@ -254,7 +257,8 @@ internal sealed class GalateaOutboundMailExtractionReconciler {
             _resolveInternalTarget is null ? null :
                 GalateaDelegationStateSnapshot.Freeze(
                     intents.Select(intent => _resolveInternalTarget(intent))
-                )
+                ),
+            _smtpSenderAccountReference
         );
         GalateaDelegationCaptureResult capture;
         try {

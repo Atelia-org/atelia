@@ -171,7 +171,8 @@ internal sealed record GalateaDelegationCaptureRequest(
     string ExtractorContractId,
     IReadOnlyList<SendMailIntent> Intents,
     GalateaSenderSnapshot Sender,
-    IReadOnlyList<GalateaInternalMailTarget?>? InternalTargets = null
+    IReadOnlyList<GalateaInternalMailTarget?>? InternalTargets = null,
+    string? SmtpSenderAccountReference = null
 );
 
 /// <summary>Already-resolved, immutable target locator supplied by the host.</summary>

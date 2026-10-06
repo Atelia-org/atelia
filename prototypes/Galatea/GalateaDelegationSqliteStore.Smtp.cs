@@ -22,7 +22,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         """;
 
     private void InsertSmtpMailOutbox(SqliteConnection connection, SqliteTransaction transaction,
-        string dispatchId, string recipient, string characterId) {
+        string dispatchId, string recipient, string characterId, string? senderAccountReference) {
         if (!GalateaExternalMailAddress.TryParse(recipient, out var address)) {
             throw new InvalidDataException("SMTP capture requires a single ASCII address.");
         }
@@ -37,7 +37,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.Parameters.AddWithValue("$recipient", address!.Value);
         command.Parameters.AddWithValue("$character", characterId);
         // Host identity, never recipient/body controlled; not a credential path.
-        command.Parameters.AddWithValue("$account", "offline:" + characterId);
+        string reference = senderAccountReference ?? "offline:" + characterId;
+        if (!GalateaSmtpConfig.IsReferenceFor(reference, characterId)) {
+            throw new InvalidDataException("Invalid SMTP capture binding.");
+        }
+        command.Parameters.AddWithValue("$account", reference);
         // Fault injection at the outbox write boundary, inside the capture transaction.
         _hooks.BeforeSmtpOutboxInsert?.Invoke();
         command.ExecuteNonQuery();
@@ -80,7 +84,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             var mail = mails.SingleOrDefault(m => m.DispatchId == row.DispatchId);
             if (mail is null || mail.IsCodexRouted || mail.State != GalateaDurableMailState.Unrouted
                 || internalRows.Any(r => r.DispatchId == row.DispatchId)
-                || row.FromCharacterId != owner.CharacterId || row.SenderAccountReference != "offline:" + owner.CharacterId
+                || row.FromCharacterId != owner.CharacterId || !GalateaSmtpConfig.IsReferenceFor(row.SenderAccountReference, owner.CharacterId)
                 || !GalateaExternalMailAddress.TryParse(mail.Recipient, out var address)
                 || address!.Value != row.Recipient || row.Revision < 0
                 || (row.State is GalateaSmtpMailState.Pending or GalateaSmtpMailState.Attempting

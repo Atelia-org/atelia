@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Atelia.Completion;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
@@ -25,7 +26,8 @@ public sealed record GalateaConfig(
     GalateaRecapGridRuntimeConfig? RecapGrid = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null,
-    string? CharacterConnectionStateExtractorConnectionId = null
+    string? CharacterConnectionStateExtractorConnectionId = null,
+    GalateaSmtpConfig? Smtp = null
 ) {
     // This directory is derived once from the complete config-file character set.
     // Direct in-process test configurations intentionally leave it unset; the
@@ -208,7 +210,9 @@ internal sealed record GalateaRuntimeFileConfig(
     bool MaintenanceMode = false,
     GalateaRecapGridFileConfig? RecapGrid = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null
+    IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    GalateaSmtpConfig? Smtp = null
 );
 
 /// <summary>
@@ -254,7 +258,10 @@ public sealed record GalateaCharacterConfig(
     string DefaultConnectionId,
     IReadOnlyList<GalateaCharacterConnectionOption> ConnectionOptions,
     int AutonomyIntervalMinutes = 0
-);
+) {
+    // Frozen by the loader from host SMTP bindings, never from character text.
+    internal string? SmtpSenderAccountReference { get; init; }
+}
 
 public sealed record GalateaCharacterConnectionOption(
     string ConnectionId,

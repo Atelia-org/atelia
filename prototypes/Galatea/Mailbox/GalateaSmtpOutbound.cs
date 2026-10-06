@@ -79,7 +79,7 @@ internal sealed class GalateaSmtpOutboxConsumer(IGalateaSmtpSender sender) {
         && code.All(c => c is >= 'A' and <= 'Z' or >= '0' and <= '9' or '_');
 }
 
-/// <summary>Phase 1 background driver; default composition is always the offline sender.</summary>
+/// <summary>Background driver routing by the captured host account identity.</summary>
 internal sealed class GalateaSmtpOutboxBackgroundService : BackgroundService {
     private readonly GalateaHostService _host;
     private readonly IGalateaSmtpSender _sender;

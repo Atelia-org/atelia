@@ -435,9 +435,56 @@ internal static class GalateaStrictConfigReader {
                     RequireToken(reader.TokenType, JsonTokenType.StartObject, property);
                     ValidateRecapGridObject(ref reader);
                     break;
+                case "smtp":
+                    RequireToken(reader.TokenType, JsonTokenType.StartObject, property);
+                    ValidateSmtpObject(ref reader);
+                    break;
                 default:
                     throw Unknown("runtime", property);
             }
+        }
+    }
+
+    private static void ValidateSmtpObject(ref Utf8JsonReader reader) {
+        var seen = NewPropertySet();
+        while (ReadProperty(ref reader, seen, "smtp", out string property)) {
+            RequireReadValue(ref reader, property);
+            switch (property) {
+                case "enabled":
+                    RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
+                    break;
+                case "timeoutSeconds":
+                    if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt32(out int seconds)
+                        || seconds is < 1 or > 300) { throw new InvalidDataException("Invalid SMTP timeout."); }
+                    break;
+                case "senderAccounts":
+                    ValidateObjectArray(ref reader, MaximumCharacterCount, property, ValidateSmtpBindingObject);
+                    break;
+                default: throw Unknown("smtp", property);
+            }
+        }
+        if (!seen.Contains("enabled") || !seen.Contains("senderAccounts")) {
+            throw new InvalidDataException("SMTP requires enabled and senderAccounts.");
+        }
+    }
+
+    private static void ValidateSmtpBindingObject(ref Utf8JsonReader reader) {
+        var seen = NewPropertySet();
+        while (ReadProperty(ref reader, seen, "smtp binding", out string property)) {
+            RequireReadValue(ref reader, property);
+            switch (property) {
+                case "characterId": case "bindingId": case "fromAddress": case "credentialPath":
+                    RequireToken(reader.TokenType, JsonTokenType.String, property);
+                    break;
+                case "enabled":
+                    RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
+                    break;
+                case "displayName": RequireStringOrNull(reader.TokenType, property); break;
+                default: throw Unknown("smtp binding", property);
+            }
+        }
+        foreach (string field in new[] { "characterId", "bindingId", "fromAddress", "credentialPath" }) {
+            if (!seen.Contains(field)) { throw new InvalidDataException("SMTP binding fields are missing."); }
         }
     }
 

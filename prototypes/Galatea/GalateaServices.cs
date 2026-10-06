@@ -4159,7 +4159,8 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
                     delegationHandle.Store,
                     outboundMailExtractor,
                     new GalateaSenderSnapshot("character", character.CharacterId, character.CharacterName.Value),
-                    resolveInternalMailTarget
+                    resolveInternalMailTarget,
+                    character.SmtpSenderAccountReference
                 );
         }
     }
@@ -4535,6 +4536,11 @@ internal static class GalateaConfigLoader {
             connectionsFile
         );
 
+        GalateaSmtpConfig smtp = GalateaSmtpConfig.Resolve(rootFile.Runtime.Smtp,
+            characters.Select(character => character.CharacterId));
+        characters = Array.AsReadOnly(characters.Select(character => character with {
+            SmtpSenderAccountReference = smtp.ReferenceFor(character.CharacterId)
+        }).ToArray());
         var config = new GalateaConfig(
             Characters: characters,
             Players: ResolvePlayers(rootFile.Players),
@@ -4556,7 +4562,8 @@ internal static class GalateaConfigLoader {
             MaintenanceMode: rootFile.Runtime.MaintenanceMode,
             RecapGrid: LoadRecapGridConfig(rootFile.Runtime.RecapGrid),
             CompletionAttemptTimeoutSeconds: rootFile.Runtime.CompletionAttemptTimeoutSeconds,
-            CharacterConnectionStateExtractorConnectionId: characterConnectionStateExtractorConnectionId
+            CharacterConnectionStateExtractorConnectionId: characterConnectionStateExtractorConnectionId,
+            Smtp: smtp
         ) with {
             CharacterRecipientDirectory = characterRecipientDirectory
         };
@@ -5068,6 +5075,7 @@ internal static class GalateaConfigTemplateFactory {
             Players: [new GalateaPlayerFileConfig("player-main", "玩家", "REPLACE_WITH_YOUR_PASSWORD")],
             Runtime: new GalateaRuntimeFileConfig(
               ListenUrls: ["http://0.0.0.0:3510"],
+              Smtp: GalateaSmtpConfig.Disabled,
               RecapGrid: new GalateaRecapGridFileConfig(
                 Maintenance: new GalateaRecapGridMaintenanceFileConfig(
                     ConnectionId: DefaultConnectionId,

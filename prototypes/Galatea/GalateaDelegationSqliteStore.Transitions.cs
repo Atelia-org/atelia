@@ -125,7 +125,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         else if (GalateaMailRecipientClassifier.Classify(request.Intents[ordinal].Recipient, null, request.Sender.Name)
                             == GalateaMailRecipientClass.Email) {
                             InsertSmtpMailOutbox(connection, transaction, dispatchIds[ordinal],
-                                request.Intents[ordinal].Recipient, _owner.CharacterId);
+                                request.Intents[ordinal].Recipient, _owner.CharacterId, request.SmtpSenderAccountReference);
                         }
                     }
                     if (request.Intents.Count != 0) {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Completion;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Control;
@@ -11,6 +12,65 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRootConfigFieldLanguageTests {
+    [Fact]
+    public void SmtpBindings_LoadLazilyAndFreezeHostReference() {
+        using var fixture = new RootConfigFixture();
+        JsonObject root = ParseRoot(MinimalV14);
+        string path = Path.Combine(fixture.Root, "never-read-synthetic-credentials.json");
+        var binding = new GalateaSmtpAccountBinding("alice", "account-v1", "host@Example.test", path, true, "Host");
+        root["runtime"]!["smtp"] = JsonSerializer.SerializeToNode(new GalateaSmtpConfig(true, [binding], 60), GalateaJson.Options);
+        GalateaConfig config = fixture.Load(root.ToJsonString());
+        Assert.False(File.Exists(path));
+        Assert.Equal(binding.Reference, Assert.Single(config.Characters).SmtpSenderAccountReference);
+        Assert.Equal(path, Assert.Single(config.Smtp!.SenderAccounts!).CredentialPath);
+        root["runtime"]!["smtp"]!["enabled"] = false;
+        Assert.Null(Assert.Single(fixture.Load(root.ToJsonString()).Characters).SmtpSenderAccountReference);
+    }
+
+    [Theory]
+    [InlineData("unknown-field")]
+    [InlineData("unknown-binding-field")]
+    [InlineData("duplicate-field")]
+    [InlineData("timeout-zero")]
+    [InlineData("timeout-too-large")]
+    [InlineData("relative-path")]
+    [InlineData("unknown-character")]
+    [InlineData("duplicate-character")]
+    [InlineData("bad-address")]
+    [InlineData("bad-binding-id")]
+    [InlineData("display-control")]
+    public void SmtpBindings_RejectInvalidStrictOrSemanticPolicy(string mode) {
+        using var fixture = new RootConfigFixture();
+        JsonObject root = ParseRoot(MinimalV14);
+        var binding = new GalateaSmtpAccountBinding("alice", "account-v1", "host@Example.test", Path.Combine(fixture.Root, "synthetic.json"), true);
+        root["runtime"]!["smtp"] = JsonSerializer.SerializeToNode(new GalateaSmtpConfig(true, [binding]), GalateaJson.Options);
+        JsonObject smtp = root["runtime"]!["smtp"]!.AsObject();
+        JsonObject account = smtp["senderAccounts"]!.AsArray()[0]!.AsObject();
+        switch (mode) {
+            case "unknown-field": smtp["extra"] = 1; break;
+            case "unknown-binding-field": account["extra"] = 1; break;
+            case "timeout-zero": smtp["timeoutSeconds"] = 0; break;
+            case "timeout-too-large": smtp["timeoutSeconds"] = 301; break;
+            case "relative-path": account["credentialPath"] = "relative.json"; break;
+            case "unknown-character": account["characterId"] = "missing"; break;
+            case "duplicate-character": smtp["senderAccounts"]!.AsArray().Add(account.DeepClone()); break;
+            case "bad-address": account["fromAddress"] = "Display <host@Example.test>"; break;
+            case "bad-binding-id": account["bindingId"] = "bad:id"; break;
+            case "display-control": account["displayName"] = "Host\r\nInjected"; break;
+        }
+        string json = root.ToJsonString();
+        if (mode == "duplicate-field") { json = json.Replace("\"timeoutSeconds\":60", "\"timeoutSeconds\":60,\"timeoutSeconds\":61", StringComparison.Ordinal); }
+        Assert.ThrowsAny<InvalidDataException>(() => fixture.Load(json));
+    }
+
+    [Fact]
+    public void SmtpDefaultTemplateIsStrictAndRealSendingDisabled() {
+        var root = GalateaConfigTemplateFactory.CreateRootFile();
+        Assert.False(root.Runtime.Smtp!.Enabled); Assert.Empty(root.Runtime.Smtp.SenderAccounts!);
+        GalateaStrictConfigReader.ValidateRoot(JsonSerializer.SerializeToUtf8Bytes(root, GalateaJson.Options));
+    }
+
+
     [Fact]
     public void RuntimePolicySerializerRoundTripsDefaultBootstrapShapeWithoutNullOverride() {
         GalateaRootFileConfig root = JsonSerializer.Deserialize<GalateaRootFileConfig>(MinimalV14, GalateaJson.Options)!;
