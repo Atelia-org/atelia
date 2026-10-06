@@ -127,12 +127,39 @@ public sealed class GalateaNetworkSmtpTests {
         File.Delete(fixture.CredentialPath);
         var network = new NeverNetworkSender();
         var request = fixture.Request with { SenderAccountReference = "offline:alice" };
-        var router = new GalateaConfiguredSmtpSender(fixture.Config with { Enabled = enabled },
+        var router = new GalateaConfiguredSmtpSender(fixture.Config with { Enabled = enabled, OfflineMode = !enabled },
             new GalateaOfflineSmtpSender(GalateaOfflineSmtpBehavior.Accepted), network);
         var result = await router.SendAsync(request, default);
-        Assert.Equal("OFFLINE_ACCEPTED", result.Code); Assert.Equal(0, network.Calls);
+        Assert.Equal(enabled ? "SMTP_OFFLINE_ISOLATED" : "OFFLINE_ACCEPTED", result.Code); Assert.Equal(0, network.Calls);
         var direct = await new GalateaNetworkSmtpSender(fixture.Config).SendAsync(request, default);
         Assert.Equal("SMTP_OFFLINE_ISOLATED", direct.Code); Assert.Equal(0, fixture.Server.Connections);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("binding-disabled")]
+    [InlineData("other-role")]
+    [InlineData("case-mismatch")]
+    public async Task UnavailableRole_NeverFallsBackToAnySender(string mode) {
+        await using var fixture = new TransportFixture();
+        File.Delete(fixture.CredentialPath);
+        var config = mode switch {
+            "missing" => fixture.Config with { SenderAccounts = [] },
+            "binding-disabled" => fixture.Config with { SenderAccounts = [fixture.Binding with { Enabled = false }] },
+            _ => fixture.Config
+        };
+        var request = mode switch {
+            "other-role" => fixture.Request with { FromCharacterId = "bob" },
+            "case-mismatch" => fixture.Request with { FromCharacterId = "Alice" },
+            _ => fixture.Request
+        };
+        var offline = new NeverNetworkSender();
+        var network = new NeverNetworkSender();
+        var result = await new GalateaConfiguredSmtpSender(config, offline, network).SendAsync(request, default);
+        Assert.Equal(GalateaSmtpMailState.DefiniteFailure, result.State);
+        Assert.Equal("SMTP_BINDING_UNAVAILABLE", result.Code);
+        Assert.Equal(0, offline.Calls); Assert.Equal(0, network.Calls);
+        Assert.Equal(0, fixture.Server.Connections);
     }
 
     [Theory]

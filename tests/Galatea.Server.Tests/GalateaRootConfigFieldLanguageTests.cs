@@ -12,6 +12,28 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRootConfigFieldLanguageTests {
+    [Theory]
+    [InlineData("missing", "blocked:alice:NO_SENDER_BINDING")]
+    [InlineData("binding-disabled", "blocked:alice:SENDER_BINDING_DISABLED")]
+    [InlineData("offline", "offline:alice")]
+    [InlineData("disabled", "blocked:alice:SMTP_DISABLED")]
+    public void SmtpModes_StrictLoaderFreezesExactRolePolicy(string mode, string reference) {
+        using var fixture = new RootConfigFixture();
+        JsonObject root = ParseRoot(MinimalV14);
+        var binding = new GalateaSmtpAccountBinding("alice", "synthetic-v1", "host@Example.test",
+            Path.Combine(fixture.Root, "unopened-synthetic.json"), false);
+        var policy = mode switch {
+            "missing" => new GalateaSmtpConfig(true, []),
+            "binding-disabled" => new(true, [binding]),
+            "offline" => new(false, [], OfflineMode: true),
+            _ => GalateaSmtpConfig.Disabled
+        };
+        root["runtime"]!["smtp"] = JsonSerializer.SerializeToNode(policy, GalateaJson.Options);
+        var config = fixture.Load(root.ToJsonString());
+        Assert.Equal(reference, Assert.Single(config.Characters).SmtpSenderAccountReference);
+        Assert.False(File.Exists(binding.CredentialPath));
+    }
+
     [Fact]
     public void SmtpBindings_LoadLazilyAndFreezeHostReference() {
         using var fixture = new RootConfigFixture();
@@ -24,10 +46,13 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         Assert.Equal(binding.Reference, Assert.Single(config.Characters).SmtpSenderAccountReference);
         Assert.Equal(path, Assert.Single(config.Smtp!.SenderAccounts!).CredentialPath);
         root["runtime"]!["smtp"]!["enabled"] = false;
-        Assert.Null(Assert.Single(fixture.Load(root.ToJsonString()).Characters).SmtpSenderAccountReference);
+        Assert.Equal("blocked:alice:SMTP_DISABLED", Assert.Single(fixture.Load(root.ToJsonString()).Characters).SmtpSenderAccountReference);
     }
 
     [Theory]
+    [InlineData("conflicting-modes")]
+    [InlineData("offline-wrong-type")]
+    [InlineData("empty-disabled-path")]
     [InlineData("unknown-field")]
     [InlineData("unknown-binding-field")]
     [InlineData("duplicate-field")]
@@ -47,6 +72,9 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         JsonObject smtp = root["runtime"]!["smtp"]!.AsObject();
         JsonObject account = smtp["senderAccounts"]!.AsArray()[0]!.AsObject();
         switch (mode) {
+            case "conflicting-modes": smtp["offlineMode"] = true; break;
+            case "offline-wrong-type": smtp["offlineMode"] = "true"; break;
+            case "empty-disabled-path": account["enabled"] = false; account["credentialPath"] = ""; break;
             case "unknown-field": smtp["extra"] = 1; break;
             case "unknown-binding-field": account["extra"] = 1; break;
             case "timeout-zero": smtp["timeoutSeconds"] = 0; break;
@@ -66,7 +94,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     [Fact]
     public void SmtpDefaultTemplateIsStrictAndRealSendingDisabled() {
         var root = GalateaConfigTemplateFactory.CreateRootFile();
-        Assert.False(root.Runtime.Smtp!.Enabled); Assert.Empty(root.Runtime.Smtp.SenderAccounts!);
+        Assert.False(root.Runtime.Smtp!.Enabled); Assert.False(root.Runtime.Smtp.OfflineMode); Assert.Empty(root.Runtime.Smtp.SenderAccounts!);
         GalateaStrictConfigReader.ValidateRoot(JsonSerializer.SerializeToUtf8Bytes(root, GalateaJson.Options));
     }
 

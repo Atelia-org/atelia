@@ -31,17 +31,22 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             INSERT INTO smtp_mail_outbox(dispatch_id, recipient, from_character_id,
                 sender_account_reference, state, result_code, revision)
-            VALUES ($dispatch, $recipient, $character, $account, 'Pending', NULL, 0);
+            VALUES ($dispatch, $recipient, $character, $account, $state, $code, 0);
             """;
         command.Parameters.AddWithValue("$dispatch", dispatchId);
         command.Parameters.AddWithValue("$recipient", address!.Value);
         command.Parameters.AddWithValue("$character", characterId);
         // Host identity, never recipient/body controlled; not a credential path.
-        string reference = senderAccountReference ?? "offline:" + characterId;
+        string reference = senderAccountReference ?? GalateaSmtpConfig.Disabled.ReferenceFor(characterId);
         if (!GalateaSmtpConfig.IsReferenceFor(reference, characterId)) {
             throw new InvalidDataException("Invalid SMTP capture binding.");
         }
         command.Parameters.AddWithValue("$account", reference);
+        // Policy rejection is a terminal, observable per-mail record in the same capture transaction.
+        // Enabling a binding later cannot turn this old rejected mail into a pending send.
+        string? blocked = GalateaSmtpConfig.BlockedReason(reference, characterId);
+        command.Parameters.AddWithValue("$state", blocked is null ? "Pending" : "DefiniteFailure");
+        command.Parameters.AddWithValue("$code", (object?)blocked ?? DBNull.Value);
         // Fault injection at the outbox write boundary, inside the capture transaction.
         _hooks.BeforeSmtpOutboxInsert?.Invoke();
         command.ExecuteNonQuery();
@@ -85,6 +90,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
             if (mail is null || mail.IsCodexRouted || mail.State != GalateaDurableMailState.Unrouted
                 || internalRows.Any(r => r.DispatchId == row.DispatchId)
                 || row.FromCharacterId != owner.CharacterId || !GalateaSmtpConfig.IsReferenceFor(row.SenderAccountReference, owner.CharacterId)
+                || (GalateaSmtpConfig.BlockedReason(row.SenderAccountReference, owner.CharacterId) is { } blocked
+                    && (row.State != GalateaSmtpMailState.DefiniteFailure || row.ResultCode != blocked))
                 || !GalateaExternalMailAddress.TryParse(mail.Recipient, out var address)
                 || address!.Value != row.Recipient || row.Revision < 0
                 || (row.State is GalateaSmtpMailState.Pending or GalateaSmtpMailState.Attempting

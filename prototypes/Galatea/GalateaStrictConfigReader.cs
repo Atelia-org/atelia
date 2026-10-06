@@ -451,6 +451,7 @@ internal static class GalateaStrictConfigReader {
             RequireReadValue(ref reader, property);
             switch (property) {
                 case "enabled":
+                case "offlineMode":
                     RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
                     break;
                 case "timeoutSeconds":

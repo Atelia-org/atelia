@@ -13,6 +13,56 @@ namespace Atelia.Galatea.Server.Tests;
 
 // Deterministic tool responses exercise the host, not the model's judgement.
 public sealed class GalateaSmtpOutboundTests {
+    [Theory]
+    [InlineData("missing", "NO_SENDER_BINDING")]
+    [InlineData("binding-disabled", "SENDER_BINDING_DISABLED")]
+    [InlineData("other-role", "NO_SENDER_BINDING")]
+    [InlineData("global-disabled", "SMTP_DISABLED")]
+    public async Task HostPolicyRejection_IsPersistedAtCaptureAndNeverRebound(string mode, string code) {
+        var binding = new GalateaSmtpAccountBinding("alice", "synthetic-v1", "host@Example.test",
+            Path.Combine(Path.GetTempPath(), "not-created-synthetic-account.json"), true);
+        var policy = GalateaSmtpConfig.Resolve(mode switch {
+            "missing" => new(true, []),
+            "binding-disabled" => new(true, [binding with { Enabled = false }]),
+            "other-role" => new(true, [binding with { CharacterId = "bob" }]),
+            _ => GalateaSmtpConfig.Disabled
+        }, ["alice", "bob"]);
+        using var fixture = new Fixture(smtpReference: policy.ReferenceFor("alice"));
+        await fixture.CaptureEmail();
+        var row = Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes);
+        Assert.Equal(GalateaSmtpMailState.DefiniteFailure, row.State);
+        Assert.Equal(code, row.ResultCode);
+        Assert.Equal(GalateaSmtpConfig.BlockedReference("alice", code), row.SenderAccountReference);
+        Assert.Single(fixture.Store.ReadSnapshot().Mails);
+        var never = new ForbiddenSender();
+        var consumer = new GalateaSmtpOutboxConsumer(new GalateaConfiguredSmtpSender(policy, never, never));
+        Assert.False(await consumer.ConsumeOneAsync(fixture.Store, default));
+        fixture.Reopen();
+        var reconciler = new GalateaOutboundMailExtractionReconciler(fixture.Store, new NeverExtract(), Fixture.Sender,
+            smtpSenderAccountReference: binding.Reference);
+        Assert.IsType<GalateaOutboundMailExtractionReconcileResult.AlreadyCaptured>(await reconciler.ReconcileAsync(fixture.Engine));
+        var enabled = new GalateaSmtpOutboxConsumer(new GalateaConfiguredSmtpSender(new(true, [binding]), never, never));
+        Assert.False(await enabled.ConsumeOneAsync(fixture.Store, default));
+        Assert.Equal(row, Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes));
+    }
+
+    [Fact]
+    public async Task ExplicitOfflineMode_CapturesAndConsumesWithOfflineSender() {
+        var policy = GalateaSmtpConfig.Resolve(new(false, [], OfflineMode: true), ["alice"]);
+        using var fixture = new Fixture(smtpReference: policy.ReferenceFor("alice"));
+        await fixture.CaptureEmail();
+        Assert.Equal(GalateaSmtpMailState.Pending, Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes).State);
+        var consumer = new GalateaSmtpOutboxConsumer(new GalateaConfiguredSmtpSender(policy,
+            new GalateaOfflineSmtpSender(GalateaOfflineSmtpBehavior.Accepted), new ForbiddenSender()));
+        Assert.True(await consumer.ConsumeOneAsync(fixture.Store, default));
+        Assert.Equal("OFFLINE_ACCEPTED", Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes).ResultCode);
+    }
+
+    private sealed class ForbiddenSender : IGalateaSmtpSender {
+        public Task<GalateaSmtpSendResult> SendAsync(GalateaSmtpSendRequest request, CancellationToken ct) =>
+            throw new InvalidOperationException("Forbidden sender invoked by synthetic policy test.");
+    }
+
     [Fact]
     public async Task RealCaptureBinding_IsFrozenAndNeverReboundByAlreadyCaptured() {
         using var fixture = new Fixture(smtpReference: "smtp:alice:account-v1");
@@ -55,11 +105,11 @@ public sealed class GalateaSmtpOutboundTests {
         var consumer = new GalateaSmtpOutboxConsumer(new GalateaConfiguredSmtpSender(transport.Config));
         Assert.True(await consumer.ConsumeOneAsync(fixture.Store, default));
         var row = Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes);
-        Assert.Equal("offline:alice", row.SenderAccountReference); Assert.Equal("OFFLINE_UNKNOWN", row.ResultCode);
+        Assert.Equal("offline:alice", row.SenderAccountReference); Assert.Equal("SMTP_OFFLINE_ISOLATED", row.ResultCode);
         Assert.Equal(0, transport.Server.Connections);
     }
     [Fact]
-    public async Task DefaultHost_BackgroundConsumerUsesOnlyOfflineSender() {
+    public async Task DefaultHost_RejectsEmailWithoutExplicitSendingMode() {
         var connection = new CompletionConnectionConfig("test", "openai-chat", "fixture", "openai-chat/strict", "http://offline.invalid/");
         var helper = connection with { Id = "helper" };
         var client = new ScriptClient(new([Range("a@Example.test", 2, 2, 3)]), new([]));
@@ -84,7 +134,7 @@ public sealed class GalateaSmtpOutboundTests {
             Assert.True(DateTime.UtcNow < deadline, "Offline background result did not commit.");
             await Task.Delay(50);
         }
-        Assert.Equal("OFFLINE_UNKNOWN", store.ReadSnapshot().SmtpMailOutboxes.Single().ResultCode);
+        Assert.Equal("SMTP_DISABLED", store.ReadSnapshot().SmtpMailOutboxes.Single().ResultCode);
         await host.DisposeAsync(); // Direct disposal must drain the consumer before releasing stores.
     }
 
@@ -468,7 +518,7 @@ public sealed class GalateaSmtpOutboundTests {
         internal SessionJournalEngine Engine { get; }
         private readonly string? _smtpReference;
         internal Fixture(GalateaDelegationStoreTestHooks? hooks = null, string? smtpReference = null) {
-            _smtpReference = smtpReference;
+            _smtpReference = smtpReference ?? "offline:alice";
             Directory.CreateDirectory(_root);
             Engine = SessionJournalEngine.Create(Path.Combine(_root, "session"), new SessionCreateOptions("fixture", "system", "surface"));
             Store = GalateaDelegationSqliteStore.CreateNew(StorePath, Owner,

@@ -2,7 +2,7 @@
 
 基线：`127a0b1f9a18761f341e4266faa28c2b01595fec`，分支 `g01/smtp-outbound`。本期只开发与离线验证，不部署、不读取真实凭据、不连接外部 SMTP、不真实发送。第一期持久状态机与事务边界沿用；数据库仍为 V6，不回填旧记录。
 
-兼容边界：新代码可以读取第一期 V6 离线行；第一期二进制的身份校验不能读取含 `smtp:` 引用的新行，旧严格配置读取器也不接受新增 SMTP 字段。第一期未部署，本期不需要运行库迁移；不提供自动降级或生产回退工具。
+兼容边界：新代码可以读取第一期 V6 离线行；本补充增加 `blocked:` 身份格式，C-022 二进制不能读取这种新行。第一期二进制的身份校验不能读取含 `smtp:` 引用的新行，旧严格配置读取器也不接受新增 SMTP 字段。第一期未部署，本期不需要运行库迁移；不提供自动降级或生产回退工具。
 
 ## 实现选择
 
@@ -14,7 +14,7 @@
 
 ## config.json 与严格读取
 
-扩展 `runtime.smtp`，保留配置版本 v14。缺省字段意味着关闭；默认 bootstrap 模板显式输出关闭块。严格读取仍拒绝未知字段、重复字段、错误类型；SMTP 配置还验证角色已配置、每角色至多一个绑定、ASCII 发件地址、绝对凭据路径、绑定 ID 与超时范围。
+扩展 `runtime.smtp`，保留配置版本 v14。缺省字段意味着关闭真实发送，也关闭离线替身；默认 bootstrap 模板显式输出关闭块。离线替身必须显式设置 `offlineMode: true`，不可与 `enabled: true` 同时设置。严格读取仍拒绝未知字段、重复字段、错误类型；SMTP 配置还验证角色已配置、每角色至多一个绑定、ASCII 发件地址、绝对凭据路径、绑定 ID 与超时范围。
 
 以下是合并进既有 config.json 的片段，所有值都是示例；角色 ID 必须替换为既有角色的精确 ID：
 
@@ -23,6 +23,7 @@
   "runtime": {
     "smtp": {
       "enabled": false,
+      "offlineMode": false,
       "timeoutSeconds": 60,
       "senderAccounts": [
         {
@@ -39,9 +40,9 @@
 }
 ```
 
-全局与绑定均启用才为新捕获选择 `smtp:<角色ID>:<bindingId>`；否则新行固定为 `offline:<角色ID>`。displayName 缺省或 null 时仅用发件地址；它不能包含控制字符。绑定 ID 只允许 1–64 个 ASCII 字母、数字、连字符、下划线。凭据路径只检查配置语法，不在启动、捕获或离线路由时读文件。
+全局与该角色绑定均启用才为新捕获选择 `smtp:<角色ID>:<bindingId>`。只有显式离线模式（`enabled: false, offlineMode: true`）才创建 `offline:<角色ID>` 待发记录。其余情形按下面的策略直接记录确定失败，不交给离线替身。displayName 缺省或 null 时仅用发件地址；它不能包含控制字符。绑定 ID 只允许 1–64 个 ASCII 字母、数字、连字符、下划线。凭据路径只检查配置语法，不在启动、捕获或离线路由时读文件。
 
-文件 loader 冻结每角色的捕获引用，经 reconciler 作为宿主字段交给 capture；引用与 outbox 在原有捕获事务内写入。可写重开只验证身份格式，不读 SMTP 配置或凭据。已有捕获仍返回 AlreadyCaptured，不改引用、不补建路由。消费时必须匹配同一角色、同一绑定 ID且全局与绑定仍启用；缺失、禁用或不同绑定均确定失败，不借用另一个账号，也不自动重发。
+文件 loader 冻结每角色的捕获引用，经 reconciler 作为宿主字段交给 capture；引用与 outbox 在原有捕获事务内写入。可写重开只验证身份格式，不读 SMTP 配置或凭据。已有捕获仍返回 AlreadyCaptured，不改引用、不补建路由。消费时必须匹配同一角色、同一绑定 ID 且全局与绑定仍启用；缺失、禁用或不同绑定均确定失败，不借用另一个账号，也不自动重发。
 
 绑定 ID 必须标识同一个账号，不能重新分配给另一发件账号。当前数据库冻结的是绑定引用，不是完整账号配置：若管理员保留同一 ID 却改写地址、用户名或主机，程序无法独立发现这种账号重新解释。此为运维契约与未覆盖风险；更换账号应使用新绑定 ID，旧行不会自动转换。凭据轮换可保留账号身份。
 
@@ -66,7 +67,7 @@ security 取 `tls`（隐式 TLS）、`starttls`（必需升级）或 `none`。`n
 
 ## 离线隔离与重放前提
 
-配置路由器首先检查 `offline:` 前缀，合法离线身份仅调用离线替身；真实发送器入口另独立拒绝所有 `offline:` 引用，并在读取凭据或开 socket 前返回 `SMTP_OFFLINE_ISOLATED`。因此任何配置启用或账号绑定都不能把离线 Pending 重新解释为真实发送。没有离线转真实、补寄、状态复位或未知重试接口。
+配置路由器首先检查 `offline:` 前缀，只有显式离线模式下的合法离线身份才调用离线替身；其余模式记录确定失败；真实发送器入口另独立拒绝所有 `offline:` 引用，并在读取凭据或开 socket 前返回 `SMTP_OFFLINE_ISOLATED`。因此任何配置启用或账号绑定都不能把离线 Pending 重新解释为真实发送。没有离线转真实、补寄、状态复位或未知重试接口。
 
 旧 Unrouted 不补建 outbox 的前提仍是持久来源身份不被替换：不删除/重建捕获数据库，不以新 Action 地址重放旧正文。迁移不回填、AlreadyCaptured 不重新解析；本期不迁移、不读取运行数据库。若重建持久身份或把旧文字作为新的本次寄信再提交，就超出了这项隔离的保证。
 
@@ -99,3 +100,66 @@ DATA 的 250 只表示服务商受理，不是最终送达；明确拒绝回复�
 - 模型提取仍用确定性工具调用测试宿主，不证明模型自主抽取正确。此处不读取运行数据库或私人数据。
 
 实际用例结果、逐例名称与命令/耗时记录在本轮 `.artifacts/c022/`；全套服务器测试不在本期要求内。邮件相关回归沿用 C-019 筛选并排除五类硬编码 `/dev/shm` 的 Recap 夹具。真实服务商、实际凭据字段、最终送达、生产切换与真实发送尚未验证。
+
+## C-023：显式模式与缺少绑定时的确定失败
+
+本补充基于 `1e0cff0f6763f0756c715848c627d25bcb1db2e3`。只按宿主确认的 `characterId` 精确匹配，使用 Ordinal 语义；角色显示名、家目录名、邮件正文均不参与绑定选择。实际角色 ID 由宿主确认，例如 `cyber`、`gpt`；这些例子不指定任何发件账号。所有示例、测试路径均为假路径，开发期测试凭据不默认属于任何角色，也不默认成为长期身份。
+
+### 捕获策略与可见性
+
+| 配置与角色绑定 | 新捕获 SMTP outbox 结果 | 固定原因码 |
+| --- | --- | --- |
+| `enabled: true`，该角色有启用的绑定 | `Pending`，冻结 `smtp:<角色ID>:<bindingId>` | 无 |
+| `enabled: true`，该角色无绑定 | `DefiniteFailure` | `NO_SENDER_BINDING` |
+| `enabled: true`，该角色绑定已禁用 | `DefiniteFailure` | `SENDER_BINDING_DISABLED` |
+| `enabled: false, offlineMode: false`（缺省） | `DefiniteFailure` | `SMTP_DISABLED` |
+| `enabled: false, offlineMode: true`（显式测试模式） | `Pending`，冻结 `offline:<角色ID>` | 由替身返回 |
+
+拒绝使用 `blocked:<角色ID>:<原因码>` 引用，不含账号路径或凭据。失败行与 capture、outbound_mail 在同一事务中创建，revision 初始为 0；读取时校验 blocked 身份只能对应同一原因码的确定失败终态。不会进入消费循环；重启、之后启用绑定、旧 Action 再协调均不补发。没有跨角色或共享账号回退。缺少引用的旧调用入口也默认确定失败，不能隐式开启离线模式。
+
+**可观察范围：宿主可见，角色目前没有自动 SMTP 回执。** 宿主可在每角色 delegation 存储的 `smtp_mail_outbox` 按 dispatch 查询 `state`、`result_code`、`from_character_id`，并关联 `outbound_mail` 的来源 Action 和 artifact ordinal。`outbound_mail.state` 仍为路由层的 `Unrouted`，不能拿它替代 SMTP 结果。以下是只读查询示意（开发验证只使用合成数据库）：
+
+```sql
+SELECT m.source_action_address, m.artifact_ordinal, s.dispatch_id,
+       s.from_character_id, s.state, s.result_code
+FROM smtp_mail_outbox s JOIN outbound_mail m ON m.dispatch_id = s.dispatch_id;
+```
+
+本补充没有把结果注入角色 Observation、邮件或 Note，没有实现角色界面的自动失败提示。因此角色不能仅凭自己的叙事确认是否外发成功；自动回执仍是未覆盖项。选择捕获时记录确定失败，是为了消除静默替身消费并保证逐封失败持久可查；这不等于已完成角色反馈通路。
+
+### 合法配置示例
+
+无绑定：`{"enabled":true,"offlineMode":false,"senderAccounts":[]}`。全局关闭：`{"enabled":false,"offlineMode":false,"senderAccounts":[]}`。显式离线测试：`{"enabled":false,"offlineMode":true,"senderAccounts":[]}`。省略 `offlineMode` 等价于 false；两个模式同时为 true 被严格配置加载拒绝。
+
+已禁用绑定仍使用合法、非空的绝对路径字段，文件无需存在，加载和拒绝捕获均不读文件。无需禁用绑定时直接省略该角色条目；不使用空路径作为开关。
+
+```json
+{
+  "enabled": true,
+  "offlineMode": false,
+  "senderAccounts": [{
+    "characterId": "alice",
+    "bindingId": "synthetic-v1",
+    "fromAddress": "host@Example.test",
+    "credentialPath": "/absolute/fake-accounts/alice.json",
+    "enabled": false
+  }]
+}
+```
+
+### 离线行隔离与配置切换
+
+已有 `offline:` 行永远不交给网络发送器。只有显式离线模式允许替身消费；关闭或启用真实发送时遇到残留离线 Pending，消费结果为 `DefiniteFailure / SMTP_OFFLINE_ISOLATED`，不读取凭据、不连网。其后切回离线模式也不复活该终态。已有真实 Pending 若绑定被删除、禁用或改变 ID，沿用 `SMTP_BINDING_UNAVAILABLE` 的确定失败，不借其他账号。
+
+### 补充合成测试
+
+- `HostPolicyRejection_IsPersistedAtCaptureAndNeverRebound`：四例覆盖无绑定、绑定禁用、只绑定另一角色、全局关闭；捕获即确定失败、重开与 AlreadyCaptured 不改写、消费者不调用任何发送器。
+- `ExplicitOfflineMode_CapturesAndConsumesWithOfflineSender`：只有显式模式才按第一期替身路径消费。
+- `SmtpModes_StrictLoaderFreezesExactRolePolicy`：四例通过严格 loader 冻结上述策略，不读假凭据文件。
+- `SmtpBindings_RejectInvalidStrictOrSemanticPolicy`：增加模式冲突、错误字段类型、禁用条目空路径拒绝。
+- `DefaultHost_RejectsEmailWithoutExplicitSendingMode`：默认宿主捕获失败为 `SMTP_DISABLED`。
+- `OfflinePending_WithNewEnabledBindingNeverBecomesNetworkMail` 与 `OfflineReferences_NeverEnterInjectedNetworkOrReadCredentials`：更新为显式离线路由，真实模式拒绝历史离线行，网络调用计数为零。
+- `UnavailableRole_NeverFallsBackToAnySender`：四例验证无绑定、禁用、另一角色、大小写不匹配均不调用网络或离线替身，不读假凭据。
+- `RealReference_RequiresExactEnabledHostBinding`：沿用错角色、缺少绑定、禁用与变更引用的直接发送边界验证。
+
+模型提取仍用确定性工具输出验证宿主，不证明模型的授权或内容判断。无需读取真实数据库、真实凭据或连接外部 SMTP。
