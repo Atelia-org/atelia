@@ -47,7 +47,7 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
             Stream transport = network;
             SslStream? tls = null;
             try {
-                if (credentials.Security == "tls") {
+                if (credentials.Security == "implicit") {
                     stage = "TLS";
                     tls = await SecureAsync(transport, credentials.Host, ct).ConfigureAwait(false);
                     transport = tls;
@@ -98,6 +98,9 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
             }
             finally { tls?.Dispose(); }
         }
+        catch (CredentialValidationException exception) {
+            return Failure(exception.Code);
+        }
         catch (ReplyException exception) {
             // An explicit 4xx/5xx transaction rejection is known, including after DATA.
             return exception.Code is >= 400 and <= 599
@@ -119,33 +122,52 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
     private static GalateaSmtpSendResult UncertainOrFailure(bool data, string code) =>
         new(data ? GalateaSmtpMailState.OutcomeUnknown : GalateaSmtpMailState.DefiniteFailure, code);
 
-    private sealed record Credentials(string Host, int Port, string Security, string Username, string AuthorizationCode);
+    private sealed record Credentials(string Provider, string Host, int Port, string Security, string Username, string AuthorizationCode);
+    private sealed class CredentialValidationException(string code) : Exception {
+        internal string Code { get; } = code;
+    }
     private static Credentials ReadCredentials(GalateaSmtpAccountBinding binding) {
-        // File format is deliberately centralized here for the owner to confirm/map later.
+        // V1 field names confirmed by the owner; never inspect a real file during development.
         byte[] bytes = GalateaStrictConfigReader.ReadBoundedRegularFile(binding.CredentialPath, 64 * 1024, "SMTP credentials");
         try {
             using JsonDocument document = JsonDocument.Parse(bytes);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object) { throw new InvalidDataException(); }
-            string[] fields = ["host", "port", "security", "username", "authorizationCode", "fromAddress"];
+            string[] fields = ["v", "provider", "smtpHost", "smtpPort", "tlsMode", "username", "authorizationCode"];
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in root.EnumerateObject()) {
                 if (!fields.Contains(property.Name, StringComparer.Ordinal) || !seen.Add(property.Name)) { throw new InvalidDataException(); }
             }
             if (seen.Count != fields.Length) { throw new InvalidDataException(); }
-            string host = root.GetProperty("host").GetString()!;
-            int port = root.GetProperty("port").GetInt32();
-            string security = root.GetProperty("security").GetString()!;
+            var version = root.GetProperty("v");
+            if (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out int v) || v != 1) {
+                throw new CredentialValidationException("SMTP_CREDENTIAL_VERSION_UNSUPPORTED");
+            }
+            string provider = root.GetProperty("provider").GetString()!;
+            string host = root.GetProperty("smtpHost").GetString()!;
+            int port = root.GetProperty("smtpPort").GetInt32();
+            string security = root.GetProperty("tlsMode").GetString()!;
             string user = root.GetProperty("username").GetString()!;
             string secret = root.GetProperty("authorizationCode").GetString()!;
-            if (string.IsNullOrWhiteSpace(host) || host.Length > 253 || host.Any(char.IsControl)
-                || port is < 1 or > 65535 || security is not ("tls" or "starttls" or "none")
+            if (provider is null || provider.Length > 128 || provider.Any(char.IsControl)
+                || string.IsNullOrWhiteSpace(host) || host.Length > 253 || host.Any(char.IsControl)
+                || port is < 1 or > 65535
                 || string.IsNullOrWhiteSpace(user) || user.Any(char.IsControl)
-                || string.IsNullOrWhiteSpace(secret) || secret.Any(char.IsControl)
-                || root.GetProperty("fromAddress").GetString() != binding.FromAddress) {
+                || string.IsNullOrWhiteSpace(secret) || secret.Any(char.IsControl)) {
                 throw new InvalidDataException();
             }
-            return new(host, port, security, user, secret);
+            if (security is not ("implicit" or "starttls" or "none")) {
+                throw new CredentialValidationException("SMTP_CREDENTIAL_TLS_MODE_UNSUPPORTED");
+            }
+            // SMTP envelope and MIME From remain host-bound; credentials supply only login identity.
+            // Both addresses must be canonical narrow ASCII mailboxes, with no whitespace trimming here.
+            if (!GalateaExternalMailAddress.TryParse(user, out var loginAddress) || loginAddress!.Value != user
+                || !GalateaExternalMailAddress.TryParse(binding.FromAddress, out var senderAddress) || senderAddress!.Value != binding.FromAddress
+                || !string.Equals(binding.FromAddress, user, StringComparison.OrdinalIgnoreCase)) {
+                throw new CredentialValidationException("SENDER_ADDRESS_MISMATCH");
+            }
+            // Provider is metadata only; it never selects an endpoint, transport or account.
+            return new(provider, host, port, security, user, secret);
         }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }

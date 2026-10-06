@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Atelia.Galatea.Server.Mailbox;
 using Xunit;
 
@@ -96,7 +97,7 @@ public sealed class GalateaNetworkSmtpTests {
         if (mode == "malformed") { File.WriteAllText(fixture.CredentialPath, "SECRET_MARKER invalid json"); }
         if (mode == "duplicate") {
             string json = File.ReadAllText(fixture.CredentialPath);
-            File.WriteAllText(fixture.CredentialPath, json.Replace("{", "{\"host\":\"SECRET_MARKER\",", StringComparison.Ordinal));
+            File.WriteAllText(fixture.CredentialPath, json.Replace("{", "{\"smtpHost\":\"SECRET_MARKER\",", StringComparison.Ordinal));
         }
         if (mode == "from-mismatch") { fixture.WriteCredentials(from: "other@Example.test"); }
         if (mode == "symlink") {
@@ -105,10 +106,90 @@ public sealed class GalateaNetworkSmtpTests {
         }
         var sender = new GalateaNetworkSmtpSender(fixture.Config); // Construction never reads the missing/invalid file.
         var result = await sender.SendAsync(fixture.Request, default);
-        Assert.Equal(GalateaSmtpMailState.DefiniteFailure, result.State); Assert.Equal("SMTP_CREDENTIALS_FAILED", result.Code);
+        Assert.Equal(GalateaSmtpMailState.DefiniteFailure, result.State);
+        Assert.Equal(mode == "from-mismatch" ? "SENDER_ADDRESS_MISMATCH" : "SMTP_CREDENTIALS_FAILED", result.Code);
         Assert.Equal(0, fixture.Server.Connections);
         Assert.DoesNotContain("SECRET_MARKER", result.ToString());
         Assert.DoesNotContain(fixture.CredentialPath, result.ToString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CredentialsV1_AcceptsProviderMetadataAndCaseInsensitiveLogin(bool changeCase) {
+        await using var fixture = new TransportFixture();
+        string login = changeCase ? "HOST@example.TEST" : "host@Example.test";
+        fixture.WriteCredentials(from: login);
+        var json = JsonNode.Parse(File.ReadAllText(fixture.CredentialPath))!.AsObject();
+        json["provider"] = "qq"; // Metadata must not change the synthetic loopback endpoint or protocol.
+        File.WriteAllText(fixture.CredentialPath, json.ToJsonString());
+        var result = await new GalateaNetworkSmtpSender(fixture.Config).SendAsync(fixture.Request, default);
+        Assert.Equal(GalateaSmtpMailState.ProviderAccepted, result.State);
+        Assert.Equal("SMTP_DATA_ACCEPTED", result.Code);
+        Assert.Equal(login, fixture.Server.LoginUsername);
+        Assert.Equal("MAIL FROM:<host@Example.test>", fixture.Server.MailFrom);
+        Assert.Contains("<host@Example.test>", fixture.Server.Message!);
+        Assert.DoesNotContain("SECRET_MARKER", fixture.Server.Message!);
+        if (changeCase) { Assert.DoesNotContain(login, fixture.Server.Message!); }
+    }
+
+    [Theory]
+    [InlineData("v")]
+    [InlineData("provider")]
+    [InlineData("smtpHost")]
+    [InlineData("smtpPort")]
+    [InlineData("tlsMode")]
+    [InlineData("username")]
+    [InlineData("authorizationCode")]
+    public async Task CredentialsV1_MissingRequiredFieldFailsBeforeConnect(string field) {
+        await using var fixture = new TransportFixture();
+        var json = JsonNode.Parse(File.ReadAllText(fixture.CredentialPath))!.AsObject();
+        Assert.True(json.Remove(field)); File.WriteAllText(fixture.CredentialPath, json.ToJsonString());
+        var result = await new GalateaNetworkSmtpSender(fixture.Config).SendAsync(fixture.Request, default);
+        Assert.Equal(GalateaSmtpMailState.DefiniteFailure, result.State);
+        Assert.Equal("SMTP_CREDENTIALS_FAILED", result.Code); Assert.Equal(0, fixture.Server.Connections);
+    }
+
+    [Theory]
+    [InlineData("version-zero", "SMTP_CREDENTIAL_VERSION_UNSUPPORTED")]
+    [InlineData("version-two", "SMTP_CREDENTIAL_VERSION_UNSUPPORTED")]
+    [InlineData("version-string", "SMTP_CREDENTIAL_VERSION_UNSUPPORTED")]
+    [InlineData("version-fraction", "SMTP_CREDENTIAL_VERSION_UNSUPPORTED")]
+    [InlineData("unknown-tls", "SMTP_CREDENTIAL_TLS_MODE_UNSUPPORTED")]
+    [InlineData("old-tls-name", "SMTP_CREDENTIAL_TLS_MODE_UNSUPPORTED")]
+    [InlineData("unknown-field", "SMTP_CREDENTIALS_FAILED")]
+    [InlineData("old-format", "SMTP_CREDENTIALS_FAILED")]
+    [InlineData("port-zero", "SMTP_CREDENTIALS_FAILED")]
+    [InlineData("port-too-large", "SMTP_CREDENTIALS_FAILED")]
+    [InlineData("port-string", "SMTP_CREDENTIALS_FAILED")]
+    [InlineData("provider-type", "SMTP_CREDENTIALS_FAILED")]
+    [InlineData("username-whitespace", "SENDER_ADDRESS_MISMATCH")]
+    public async Task CredentialsV1_InvalidSchemaFailsWithoutConnectingOrLeaking(string mode, string code) {
+        await using var fixture = new TransportFixture();
+        var json = JsonNode.Parse(File.ReadAllText(fixture.CredentialPath))!.AsObject();
+        switch (mode) {
+            case "version-zero": json["v"] = 0; break;
+            case "version-two": json["v"] = 2; break;
+            case "version-string": json["v"] = "1"; break;
+            case "version-fraction": json["v"] = 1.5; break;
+            case "unknown-tls": json["tlsMode"] = "SECRET_MARKER"; break;
+            case "old-tls-name": json["tlsMode"] = "tls"; break;
+            case "unknown-field": json["fromAddress"] = "host@Example.test"; break;
+            case "old-format": json = JsonSerializer.SerializeToNode(new {
+                host = "127.0.0.1", port = fixture.Server.Port, security = "none", username = "host@Example.test",
+                authorizationCode = "SECRET_MARKER", fromAddress = "host@Example.test"
+            })!.AsObject(); break;
+            case "port-zero": json["smtpPort"] = 0; break;
+            case "port-too-large": json["smtpPort"] = 65536; break;
+            case "port-string": json["smtpPort"] = "465"; break;
+            case "provider-type": json["provider"] = 1; break;
+            case "username-whitespace": json["username"] = " host@Example.test "; break;
+        }
+        File.WriteAllText(fixture.CredentialPath, json.ToJsonString());
+        var result = await new GalateaNetworkSmtpSender(fixture.Config).SendAsync(fixture.Request, default);
+        Assert.Equal(GalateaSmtpMailState.DefiniteFailure, result.State); Assert.Equal(code, result.Code);
+        Assert.Equal(0, fixture.Server.Connections);
+        Assert.DoesNotContain("SECRET_MARKER", result.ToString()); Assert.DoesNotContain(fixture.CredentialPath, result.ToString());
     }
 
     [Fact]
@@ -199,7 +280,8 @@ public sealed class GalateaNetworkSmtpTests {
         }
         internal void WriteCredentials(string host = "127.0.0.1", string security = "none", string from = "host@Example.test") =>
             File.WriteAllText(CredentialPath, JsonSerializer.Serialize(new {
-                host, port = Server.Port, security, username = "synthetic-user", authorizationCode = "SECRET_MARKER", fromAddress = from
+                v = 1, provider = "synthetic-provider", smtpHost = host, smtpPort = Server.Port,
+                tlsMode = security == "tls" ? "implicit" : security, username = from, authorizationCode = "SECRET_MARKER"
             }));
         public async ValueTask DisposeAsync() { await Server.DisposeAsync(); Directory.Delete(_root, recursive: true); }
     }
@@ -211,6 +293,7 @@ public sealed class GalateaNetworkSmtpTests {
         internal X509Certificate2? Certificate { get; }
         internal int Port { get; }
         internal int Connections { get; private set; }
+        internal string? LoginUsername { get; private set; }
         internal string? MailFrom { get; private set; }
         internal string? RcptTo { get; private set; }
         internal string? Message { get; private set; }
@@ -254,7 +337,8 @@ public sealed class GalateaNetworkSmtpTests {
                 await Reply("250-loopback"); await Reply(mode == "auth-unsupported" ? "250 SIZE 100000" : "250 AUTH LOGIN");
                 if (mode is "starttls-missing" or "auth-unsupported") { return; }
                 Assert.Equal("AUTH LOGIN", await Read()); await Reply("334 VXNlcg==");
-                Assert.Equal("synthetic-user", Encoding.UTF8.GetString(Convert.FromBase64String(await Read()))); await Reply("334 UGFzcw==");
+                LoginUsername = Encoding.UTF8.GetString(Convert.FromBase64String(await Read()));
+                Assert.Equal("host@Example.test", LoginUsername, ignoreCase: true); await Reply("334 UGFzcw==");
                 Assert.Equal("SECRET_MARKER", Encoding.UTF8.GetString(Convert.FromBase64String(await Read())));
                 if (mode == "auth-rejected") { await Reply("535 SECRET_MARKER /synthetic/private/path"); return; }
                 await Reply("235 authenticated"); MailFrom = await Read(); await Reply("250 sender"); RcptTo = await Read();

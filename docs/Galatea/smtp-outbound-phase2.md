@@ -46,22 +46,25 @@
 
 绑定 ID 必须标识同一个账号，不能重新分配给另一发件账号。当前数据库冻结的是绑定引用，不是完整账号配置：若管理员保留同一 ID 却改写地址、用户名或主机，程序无法独立发现这种账号重新解释。此为运维契约与未覆盖风险；更换账号应使用新绑定 ID，旧行不会自动转换。凭据轮换可保留账号身份。
 
-## 凭据格式：待刘世超对照实际文件确认字段名
+## 凭据格式：已按刘世超提供的字段名确认
 
-以下是实现期望的格式，不是指定真实文件的字段调查；真实文件从未读取。字段映射集中在 `GalateaNetworkSmtpSender.ReadCredentials`，核对后可在这一处调整。
+字段名与类型依据刘世超 2026-10-06 经 Galatea 转述的格式确认；没有读取或核验真实文件的内容和值。读取集中在 `GalateaNetworkSmtpSender.ReadCredentials`，以下仍是合成示例。
 
 ```json
 {
-  "host": "127.0.0.1",
-  "port": 2525,
-  "security": "starttls",
-  "username": "synthetic-user",
-  "authorizationCode": "SYNTHETIC-FAKE-VALUE",
-  "fromAddress": "host@Example.test"
+  "v": 1,
+  "provider": "synthetic-provider",
+  "smtpHost": "127.0.0.1",
+  "smtpPort": 2525,
+  "tlsMode": "starttls",
+  "username": "host@Example.test",
+  "authorizationCode": "SYNTHETIC-FAKE-VALUE"
 }
 ```
 
-security 取 `tls`（隐式 TLS）、`starttls`（必需升级）或 `none`。`none` 仅允许字面量回环 IP，供本机假服务器测试；域名即便可能解析为回环，也不能用明文。port 范围 1–65535。fromAddress 必须与宿主绑定逐字一致；它不是凭据文件覆盖宿主发件身份的入口。文件要求不超过 64 KiB、严格 JSON、六个已知字段全部存在、无重复字段；使用已有 Linux no-follow regular-file 读取，拒绝符号链接。未来实际字段确认与真实账号联通验证均未执行。
+七个字段全部必需；`v` 必须是整数 1，其他版本或类型返回 `SMTP_CREDENTIAL_VERSION_UNSUPPORTED`。`provider` 只保留为读取结果中的内存元数据，不持久化、不记录原值、不参与主机、端口、TLS 或账号选择；限字符串、128 字符以内且不含控制字符。`smtpPort` 范围 1–65535。`tlsMode` 逐字接受 `implicit`（隐式 TLS）、`starttls`（必需升级）或 `none`，未知值返回 `SMTP_CREDENTIAL_TLS_MODE_UNSUPPORTED`。`none` 仅允许字面量回环 IP，供本机假服务器测试；域名即便可能解析为回环，也不能用明文。文件要求不超过 64 KiB、严格 JSON、无未知或重复字段；使用已有 Linux no-follow regular-file 读取，拒绝符号链接。缺字段、一般类型/范围错误、旧 C-022 格式、未知或重复字段、文件/符号链接错误统一为 `SMTP_CREDENTIALS_FAILED`。
+
+凭据文件不含 `fromAddress`；发件地址仅来自 `runtime.smtp.senderAccounts[].fromAddress`。绑定地址与 `username` 都须是规范的窄语法 ASCII 单邮箱地址，此处不裁空格；按 ASCII 不区分大小写比较（代码使用两者均通过 ASCII 校验后的 OrdinalIgnoreCase）。不一致时在连接前返回 `DefiniteFailure / SENDER_ADDRESS_MISMATCH`，不含地址或凭据原值。AUTH 保留用户名原有大小写，MAIL FROM 与 MIME From 保留宿主绑定地址，不被凭据改写。本期不提供绕过一致性检查的开关；需要不同登录名或别名发件的服务商暂不支持。真实账号联通、文件内容与实际字段值仍未核验。
 
 只有真正选中网络路径、开始发送且尚未取消时读取文件。账号值不进数据库或报告；传输层没有协议日志接口。文件/解析/认证异常与服务器回复正文均不外抛、不记录，只返回固定原因码；后台原有 content-free 日志仍不包含异常正文。读取字节缓冲在解析后清零；托管字符串的内存即时清零不作保证。
 
@@ -163,3 +166,9 @@ FROM smtp_mail_outbox s JOIN outbound_mail m ON m.dispatch_id = s.dispatch_id;
 - `RealReference_RequiresExactEnabledHostBinding`：沿用错角色、缺少绑定、禁用与变更引用的直接发送边界验证。
 
 模型提取仍用确定性工具输出验证宿主，不证明模型的授权或内容判断。无需读取真实数据库、真实凭据或连接外部 SMTP。
+
+## C-024：确认凭据字段与回归范围
+
+基线 `d3b6c2531af8da654579f136216f077709fb08a1`。字段确认只依据 Galatea 转述的刘世超说明，未读取真实凭据。`CredentialsV1_AcceptsProviderMetadataAndCaseInsensitiveLogin`、`CredentialsV1_MissingRequiredFieldFailsBeforeConnect`、`CredentialsV1_InvalidSchemaFailsWithoutConnectingOrLeaking` 使用临时目录中的合成文件和 127.0.0.1 假服务器；既有重复字段、符号链接、地址不一致测试同步改用 V1 格式。
+
+沿用 C-019 邮件过滤条件并排除五类旧 Recap 夹具。C-022 的 408 例在 C-023 后扩为 413 例（新增五例，默认宿主测试改名）；逐例映射中保留改名关系，不将其计为丢失。Debug 中跳过的 Release 专属例另构建 Release 后运行。执行结果、完整命令与逐例对照放在本工作树的忽略目录 `.artifacts/c024/`。
