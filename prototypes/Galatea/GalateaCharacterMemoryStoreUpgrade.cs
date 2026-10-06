@@ -1,4 +1,5 @@
 using Atelia.Galatea.Server.CharacterMemory;
+using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
@@ -19,8 +20,9 @@ internal static class GalateaCharacterMemoryStoreUpgrade {
                 ?? throw new InvalidDataException("The requested Character is not configured.");
             var owner = new CharacterMemoryStoreOwner(character.CharacterId,
                 CharacterMemorySessionComposition.CreateSessionRepositoryId(character.SessionDir));
+            using SessionJournalEngine journal = SessionJournalEngine.OpenReadOnly(character.SessionDir);
             CharacterMemoryStoreUpgradeResult result = CharacterMemorySqliteStore.UpgradeExisting(
-                character.CharacterMemoryStateDir, owner, apply);
+                character.CharacterMemoryStateDir, owner, apply, journal: journal);
             output.WriteLine($"Character Memory upgrade: characterId={character.CharacterId}, outcome={result.Outcome}, sourceVersion={result.SourceVersion}, targetVersion={result.TargetVersion}.");
             if (result.BackupPath is not null) { output.WriteLine("Backup: " + result.BackupPath); }
             return 0;

@@ -234,11 +234,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         Assert.Equal(
             [Reply],
-            observation.Notices.Select(static notice => notice.Body)
+            observation.Notices.Where(static notice => notice is
+                    PlayerTurnNotice.Reply or PlayerTurnNotice.DeliveryFailure)
+                .Select(static notice => Assert.IsType<PlayerTurnNotice.Reply>(notice).Body)
                 .ToArray()
         );
         GalateaDelegationStateSnapshot consumed = session.DelegationHandle
             .Store.ReadSnapshot();
+        Assert.Equal(2, observation.Notices.Count);
+        AssertAcceptedMailReceiptPrefix(observation, consumed, ["automatic task"]);
         Assert.Null(consumed.ActiveLease);
         Assert.Equal(
             GalateaReplyNoticeState.Consumed,
@@ -300,12 +304,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             "alice",
             CancellationToken.None
         );
-        GalateaLiveTurn turn = session.StartTurn(
-            new GalateaFreshInput.HeartbeatActivation(
-                session.Character.CharacterName, 10
-            ),
-            new GalateaTurnOptions(main.Id)
-        );
+        GalateaFreshAdmissionPlan plan = GalateaFreshAdmissionPlan.Compose(
+            new GalateaFreshInput.HeartbeatActivation(session.Character.CharacterName, 10),
+            PlayerTurnObservationEnvelope.TruncateToSecond(clock.GetLocalNow()),
+            new GalateaSenderSnapshot("character", session.Character.CharacterId,
+                session.Character.CharacterName.Value));
+        GalateaLiveTurn turn = session.StartTurn(plan.FreshInput,
+            new GalateaTurnOptions(main.Id), admissionPlan: plan);
         try {
             await service.RunTurnAsync(
                 session,
@@ -1016,11 +1021,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.NotNull(composite.ExternalLocalTimestamp);
         Assert.Equal(
             [ReplyOne, ReplyTwo],
-            composite.Notices.Select(static notice => notice.Body)
+            composite.Notices.Where(static notice => notice is
+                    PlayerTurnNotice.Reply or PlayerTurnNotice.DeliveryFailure)
+                .Select(static notice => Assert.IsType<PlayerTurnNotice.Reply>(notice).Body)
                 .ToArray()
         );
         GalateaDelegationStateSnapshot consumed = session.DelegationHandle
             .Store.ReadSnapshot();
+        Assert.Equal(3, composite.Notices.Count);
+        AssertAcceptedMailReceiptPrefix(composite, consumed, ["first task", "second task"]);
         Assert.All(consumed.Notices, static notice => {
             Assert.Equal(GalateaReplyNoticeState.Consumed, notice.State);
             Assert.NotNull(notice.ConsumedTurnEndAddress);
@@ -1138,12 +1147,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             manualObservation.TriggerKind
         );
         Assert.Equal(marker, manualObservation.PlayerText);
-        Assert.Empty(manualObservation.Notices);
+        Assert.Single(manualObservation.Notices);
         RecentTurnsResponseDto manualRecent = await service
             .GetRecentTurnsAsync(session, CancellationToken.None);
         Assert.NotNull(manualRecent.RewindLatestToken);
         GalateaDelegationStateSnapshot stillReady = session.DelegationHandle
             .Store.ReadSnapshot();
+        AssertAcceptedMailReceiptPrefix(manualObservation, stillReady, ["automatic task"]);
         Assert.Null(stillReady.ActiveLease);
         Assert.Equal(
             GalateaReplyNoticeState.Ready,
@@ -1380,7 +1390,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 .RequireSnapshot().Turns.Single();
             PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(receiving.ObservationContent);
             PlayerTurnNotice.DeliveryFailure interruption = Assert.IsType<PlayerTurnNotice.DeliveryFailure>(
-                Assert.Single(observation.Notices));
+                Assert.Single(observation.Notices, static notice => notice is
+                    PlayerTurnNotice.Reply or PlayerTurnNotice.DeliveryFailure));
+            Assert.Equal(2, observation.Notices.Count);
+            AssertAcceptedMailReceiptPrefix(observation,
+                restartedSession.RequireDelegationHandle().Store.ReadSnapshot(), ["interrupted task"]);
             Assert.Equal("semantic-notice-v1", ready.NoticeFormat);
             Assert.Equal(ready.Detail, interruption.Detail);
             Assert.Equal(ready.Sender, interruption.Sender);
@@ -1432,6 +1446,28 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(0, backend.TotalCallCount);
+    }
+
+    private static void AssertAcceptedMailReceiptPrefix(
+        PlayerTurnObservation observation, GalateaDelegationStateSnapshot snapshot,
+        IReadOnlyList<string> submittedBodies
+    ) {
+        PlayerTurnNotice.ActionReceipt receipt = Assert.Single(
+            observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>());
+        Assert.Same(receipt, observation.Notices[0]);
+        MailReceiptBatch batch = Assert.IsType<MailReceiptBatch>(receipt.Batch);
+        GalateaOutboundMailSnapshot[] mails = snapshot.Mails
+            .Where(mail => mail.SourceActionAddress == batch.SourceActionAddress)
+            .OrderBy(mail => mail.ArtifactOrdinal).ToArray();
+        Assert.Equal(submittedBodies.Count, mails.Length);
+        Assert.Equal(mails.Select(mail => mail.DispatchId), batch.Items.Select(item => item.DispatchId));
+        Assert.Equal(submittedBodies.Select(ActionReceiptPreview.Create), batch.Items.Select(item => item.Preview));
+        Assert.Equal(mails.Select(mail => ActionReceiptPreview.Create(mail.Recipient)),
+            batch.Items.Select(item => item.RecipientPreview));
+        Assert.All(mails, mail => Assert.True(mail.IsCodexRouted));
+        Assert.All(batch.Items, item => Assert.Equal("accepted", item.Outcome));
+        Assert.Equal(batch.Items.Count, Assert.Single(snapshot.Captures,
+            capture => capture.SourceActionAddress == batch.SourceActionAddress).ArtifactCount);
     }
 
     private static GalateaAutonomyCadencePulseResult

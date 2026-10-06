@@ -4,7 +4,7 @@
 > performed merely by having the command available; each `--apply` remains a
 > separate operator-authorized action after backup and dry-run.
 
-普通 Codex 进程崩溃、线程缺失或历史检查失败由运行时自动有限恢复。当前 wire V6 / delegation SQLite V5 的规则见[运行时](runtime.md)与[结构化输入方案](structured-input-rendering-design.md)；有限恢复政策沿用[恢复方案](codex-delegation-recovery-refactor-plan.md)。运行时不读取 Codex 私有 SQLite 或 rollout JSONL。
+普通 Codex 进程崩溃、线程缺失或历史检查失败由运行时自动有限恢复。当前 wire V6 / delegation SQLite V6 的规则见[运行时](runtime.md)与[结构化输入方案](structured-input-rendering-design.md)；有限恢复政策沿用[恢复方案](codex-delegation-recovery-refactor-plan.md)。运行时不读取 Codex 私有 SQLite 或 rollout JSONL。
 
 ## 识别当前状态
 
@@ -15,19 +15,31 @@
 
 inbox 容量被占满时需正常消费已有回信；后台保留待结算邮件，不通过丢信绕过容量。重启保留失败计数，不能用反复重启重置预算。
 
-## SQLite V5 离线升级
+### spec [R-OPERATOR-SQLITE-V5-UPGRADE] DEPRECATED：V5 阶段离线升级
 
-代码升级后，已有 V1/V2/V3/V4 store 必须显式升级；普通启动不会自动改写旧库。V3→V4 增加角色邮件附表，不将历史 `Unrouted` 重新解释为待投递信；V4→V5 增加内容来源、机读绑定与实际发送承诺，保留旧 Task 和 Bound 原文。使用已转换的 V10 配置，先停服并确认 writer lock 已释放，然后执行：
+V3→V4 增加角色邮件附表，不将历史 `Unrouted` 重新解释为待投递信；V4→V5 增加内容来源、机读绑定与实际发送承诺，保留旧 Task 和 Bound 原文。此前使用 V10 配置与 wire V6 的部署说明属于该阶段。当前升级目标由 @[R-OPERATOR-ACTION-RECEIPT-UPGRADE] 替代；旧测试与迁移证据不改写成新版本验收。
+
+### spec [R-OPERATOR-ACTION-RECEIPT-UPGRADE] delegation V6 / CharacterMemory V5 显式离线升级
+
+现有 delegation V1..V5 与 CharacterMemory V1..V4 MUST 停服后分别显式升级，普通启动不会自动改写旧库。使用当前有效配置，先确认目标 Character、备份和全部 writer lock 已释放；两个命令都默认 dry-run：
 
 ```bash
 dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
   operator upgrade-delegation-store \
   --config /absolute/path/to/config.json --character exact-character
+
+dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
+  operator upgrade-character-memory-store \
+  --config /absolute/path/to/config.json --character exact-character
 ```
 
-默认 dry-run。确认目标、备份位置和诊断后，在明确的部署窗口用相同命令追加 `--apply`。命令持有原生命周期锁，先备份，再事务迁移并严格重开；重复执行当前格式返回 `AlreadyCurrent`。保持原 baseline/frontier、capture、邮件 ID、terminal 和 notice/lease 事实；旧 Started/Unknown 不凭空获得未发送证明。同步部署 C# 和重新构建的 Node V6 sidecar，不能混用旧 wire。
+在明确授权的部署窗口用相同命令追加 `--apply`。命令持有原生命周期锁，先备份，再事务迁移并严格重开；当前格式返回 `AlreadyCurrent`。两库独立升级，一域已成功不会因另一域拒绝而回滚；不要启动尚未完成升级的实例。
 
-本次代码与模拟测试不等于真实用户库已迁移，也不等于 live provider 验证。首次恢复后检查失败回信是否正常消费、下一任务是否推进；保留升级备份。
+delegation V6 新增 Mail receipt 表，旧 capture 不 backfill。CharacterMemory V5 把已存在的旧 Pending 保存回执转换成当前短 snapshot；没有回执义务的旧历史 Applied 不补发。Note 命令从配置确定 `SessionDir` 并以 `SessionJournalEngine.OpenReadOnly` 提供 provider-free 原 H/I exact proof，dry-run 与 apply 都先核对全部旧 Bound：已 append 则 Delivered，NotAppended 才回滚并转换；任一 unknown / Conflict / Corruption MUST 保留整个该 owner 的旧 schema 与原 Bound 字节，不能只凭 SQLite 状态推断是否 append。
+
+新回执只使用 `action-receipt-v1`，旧 Journal / Prepared / 已冻结 Observation 与旧 reader 保真，旧 Delivered 不补发。保留原 baseline/frontier、capture、业务 IDs、terminal、reply notice/lease 与 Started/Unknown 的派发权限；此次升级不让未知工作获得未发送证明。当前 sidecar wire 仍为 V6，与 delegation schema V6 是两个独立版本。详细迁移合同与实施证据见[统一操作回执方案](mail-note-receipt-preview-refactor-design.md#5-迁移换取唯一当前路径)。
+
+文档与模拟验收不代表真实实例已迁移，也不代表 live provider 已验证。升级后保留备份；实际实例切换和重启遵循原 operator 授权边界。
 
 ## 可选的人工完成证据恢复
 

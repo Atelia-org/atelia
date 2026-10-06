@@ -1685,66 +1685,20 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         if (messageError is not null) {
             throw new ArgumentException(messageError, nameof(userMessage));
         }
-        bool isDelegateReplyDiscriminator = string.Equals(
-            userMessage,
-            PlayerTurnObservationEnvelope
-                .DelegateReplyLeasePlayerTextDiscriminator,
-            StringComparison.Ordinal
-        );
-        GalateaDurableReplyLeaseBeginResult cutoff =
-            host.ReplyLeaseReconciler.BeginCutoff(
-                userMessage, ReadPendingReceiptNotice(host));
-        if (cutoff is GalateaDurableReplyLeaseBeginResult.Empty) {
-            return StartPlayerTurnWithoutReplyLease(
-                host,
-                userMessage,
-                options,
-                sender
-            );
-        }
-        if (cutoff is GalateaDurableReplyLeaseBeginResult.Created created) {
-            if (isDelegateReplyDiscriminator) {
-                created.Lease.RollbackBeforeEffect();
-                return StartPlayerTurnWithoutReplyLease(
-                    host,
-                    userMessage,
-                    options,
-                    sender
-                );
-            }
-            return StartPlayerTurnWithCreatedCutoff(
-                host,
-                userMessage,
-                options,
-                created,
-                sender
-            );
-        }
-        throw new InvalidDataException(
-            "Unknown durable reply cutoff result."
-        );
+        // The historical discriminator is reserved for the reply-only lease
+        // dialect; an actual Player action with this text remains a Player action.
+        bool reservedDiscriminator = userMessage == PlayerTurnObservationEnvelope
+            .DelegateReplyLeasePlayerTextDiscriminator;
+        GalateaFreshAdmissionPlan plan = ComposeFreshAdmission(
+            host, new GalateaFreshInput.PlayerAction(userMessage, sender), options,
+            takeReadyReplies: !reservedDiscriminator);
+        return StartPlannedFreshTurn(host, plan, options);
     }
-
-    private static GalateaLiveTurn StartPlayerTurnWithoutReplyLease(
-        CharacterSessionHost host,
-        string playerText,
-        GalateaTurnOptions options,
-        GalateaSenderSnapshot sender
-    ) {
-        return host.StartTurn(new GalateaFreshInput.PlayerAction(playerText, sender), options);
-    }
-
-    private static PlayerTurnNotice.NoteSaveReceipt? ReadPendingReceiptNotice(
-        CharacterSessionHost host
-    ) => host.CharacterMemoryReconciler?.ReadPendingReceiptDelivery() is { } receipt
-        ? CharacterNoteSaveReceipt.SelectForObservation(receipt)
-        : null;
 
     /// <summary>
-    /// Conditionally starts a fresh turn from the durable Ready reply prefix.
-    /// The caller must own <see cref="CharacterSessionHost.TurnLock"/> and must
-    /// already have admitted an exact Idle session boundary and connection.
-    /// Empty is side-effect free with respect to the reply lease and live turn.
+    /// Conditionally starts the durable Ready reply FIFO prefix chosen by the
+    /// fresh composer. The caller owns TurnLock and an exact Idle admission.
+    /// Empty creates neither a reply lease nor a live turn.
     /// </summary>
     internal GalateaReadyReplyTurnStartResult StartReadyReplyTurn(
         CharacterSessionHost host,
@@ -1753,95 +1707,59 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
         options = FreezeConnectionState(host, options);
-        GalateaDurableReplyLeaseBeginResult cutoff = host
-            .ReplyLeaseReconciler.BeginCutoff(
-                PlayerTurnObservationEnvelope
-                    .DelegateReplyLeasePlayerTextDiscriminator,
-                ReadPendingReceiptNotice(host)
-            );
-        return cutoff switch {
-            GalateaDurableReplyLeaseBeginResult.Empty =>
-                new GalateaReadyReplyTurnStartResult.Empty(),
-            GalateaDurableReplyLeaseBeginResult.Created created =>
-                new GalateaReadyReplyTurnStartResult.Started(
-                    StartDelegateReplyTurnWithCreatedCutoff(
-                        host,
-                        options,
-                        created
-                    )
-                ),
-            _ => throw new InvalidDataException(
-                "Unknown durable reply cutoff result."
-            )
-        };
+        IReadOnlyList<GalateaReplyNoticeSnapshot> ready =
+            host.DelegationHandle!.Store.ReadSnapshot().Notices;
+        GalateaFreshAdmissionPlan? plan = GalateaFreshAdmissionPlan.ComposeReadyReply(
+            CaptureObservationTimestamp(), CaptureCharacter(host), options.ConnectionState,
+            host.DelegationHandle.Store.ReadPendingReceiptDelivery(),
+            host.CharacterMemoryReconciler?.ReadPendingReceiptDelivery(), ready);
+        return plan is null
+            ? new GalateaReadyReplyTurnStartResult.Empty()
+            : new GalateaReadyReplyTurnStartResult.Started(
+                StartPlannedFreshTurn(host, plan, options));
     }
 
-    private static GalateaLiveTurn StartDelegateReplyTurnWithCreatedCutoff(
-        CharacterSessionHost host,
-        GalateaTurnOptions options,
-        GalateaDurableReplyLeaseBeginResult.Created created
+    private GalateaFreshAdmissionPlan ComposeFreshAdmission(
+        CharacterSessionHost host, GalateaFreshInput fresh,
+        GalateaTurnOptions options, bool takeReadyReplies = false
     ) {
+        bool enriched = fresh is not GalateaFreshInput.InboundMail;
+        return GalateaFreshAdmissionPlan.Compose(fresh,
+            CaptureObservationTimestamp(), CaptureCharacter(host), options.ConnectionState,
+            enriched ? host.DelegationHandle?.Store.ReadPendingReceiptDelivery() : null,
+            enriched ? host.CharacterMemoryReconciler?.ReadPendingReceiptDelivery() : null,
+            takeReadyReplies ? host.DelegationHandle?.Store.ReadSnapshot().Notices : null);
+    }
+
+    private DateTimeOffset CaptureObservationTimestamp() =>
+        PlayerTurnObservationEnvelope.TruncateToSecond(_timeProvider.GetLocalNow());
+
+    private static GalateaSenderSnapshot CaptureCharacter(CharacterSessionHost host) =>
+        new("character", host.Character.CharacterId, host.Character.CharacterName.Value);
+
+    private static GalateaLiveTurn StartPlannedFreshTurn(
+        CharacterSessionHost host, GalateaFreshAdmissionPlan plan,
+        GalateaTurnOptions options
+    ) {
+        GalateaDurableReplyLease? lease = null;
+        if (plan.FreshInput is GalateaFreshInput.PlayerAction or GalateaFreshInput.DelegateReply) {
+            string playerText = plan.FreshInput is GalateaFreshInput.PlayerAction player
+                ? player.Text : PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator;
+            GalateaDurableReplyLeaseBeginResult begun = host.ReplyLeaseReconciler
+                .BeginMembership(playerText, plan.ReplyMembers);
+            lease = begun is GalateaDurableReplyLeaseBeginResult.Created created ? created.Lease : null;
+        }
         try {
-            return host.StartTurn(
-                new GalateaFreshInput.DelegateReply(
-                    created.Lease.ReadNotices()
-                ),
-                options,
-                created.Lease
-            );
+            return host.StartTurn(plan.FreshInput, options, lease, plan);
         }
         catch (Exception original) {
-            try {
-                created.Lease.RollbackBeforeEffect();
-            }
-            catch (Exception cleanup) when (
-                GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+            try { lease?.RollbackBeforeEffect(); }
+            catch (Exception cleanup) when (GalateaExceptionClassifier.IsNonFatal(cleanup)) {
                 if (!GalateaExceptionClassifier.IsNonFatal(original)) {
                     ExceptionDispatchInfo.Capture(original).Throw();
                 }
                 throw new AggregateException(
-                    "Fresh-turn admission and durable cutoff rollback both failed.",
-                    original,
-                    cleanup
-                );
-            }
-            ExceptionDispatchInfo.Capture(original).Throw();
-            throw;
-        }
-    }
-
-    private static GalateaLiveTurn StartPlayerTurnWithCreatedCutoff(
-        CharacterSessionHost host,
-        string playerText,
-        GalateaTurnOptions options,
-        GalateaDurableReplyLeaseBeginResult.Created created,
-        GalateaSenderSnapshot sender
-    ) {
-        try {
-            return host.StartTurn(
-                new GalateaFreshInput.PlayerAction(
-                    playerText,
-                    sender,
-                    created.Lease.ReadNotices()
-                ),
-                options,
-                created.Lease
-            );
-        }
-        catch (Exception original) {
-            try {
-                created.Lease.RollbackBeforeEffect();
-            }
-            catch (Exception cleanup) when (
-                GalateaExceptionClassifier.IsNonFatal(cleanup)) {
-                if (!GalateaExceptionClassifier.IsNonFatal(original)) {
-                    ExceptionDispatchInfo.Capture(original).Throw();
-                }
-                throw new AggregateException(
-                    "Fresh-turn admission and durable cutoff rollback both failed.",
-                    original,
-                    cleanup
-                );
+                    "Fresh-turn admission and durable cutoff rollback both failed.", original, cleanup);
             }
             ExceptionDispatchInfo.Capture(original).Throw();
             throw;
@@ -1860,6 +1778,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(admitted);
+        ReconcileActionReceiptDeliveries(host, cancellationToken);
         await ReconcileActiveCharacterNoteDerivedInfoPlanAsync(host)
             .ConfigureAwait(false);
         SessionRuntimeRecoveryRequirements current =
@@ -1906,10 +1825,9 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         if (sender is not null && (sender.Kind != "character" || internalDelivery is null)) {
             throw new ArgumentException("Trusted Character sender requires an internal delivery binding.", nameof(sender));
         }
-        return host.StartTurn(
-            new GalateaFreshInput.InboundMail(message, internalDelivery, injectedBy, sender),
-            options
-        );
+        GalateaFreshAdmissionPlan plan = ComposeFreshAdmission(host,
+            new GalateaFreshInput.InboundMail(message, internalDelivery, injectedBy, sender), options);
+        return StartPlannedFreshTurn(host, plan, options);
     }
 
     internal GalateaLiveTurn StartRecovery(
@@ -1930,8 +1848,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         GalateaCharacterMailDeliveryReconciler.Reconcile(
             _delegationSupervisor, host, cancellationToken);
-        GalateaNoteReceiptDelivery.Reconcile(
-            host.CharacterMemoryReconciler, host.Engine, cancellationToken);
+        ReconcileActionReceiptDeliveries(host, cancellationToken);
         SessionCompletedTurnRewindPrepareResult preparation =
             host.Engine.PrepareLatestCompletedTurnRewind(
                 expectedHead,
@@ -2091,13 +2008,10 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             ?? throw new InvalidOperationException(
                 "Heartbeat activation requires a positive autonomy interval."
             );
-        GalateaLiveTurn turn = host.StartTurn(
-            new GalateaFreshInput.HeartbeatActivation(
-                host.Character.CharacterName,
-                host.Character.AutonomyIntervalMinutes
-            ),
-            options
-        );
+        GalateaFreshAdmissionPlan plan = ComposeFreshAdmission(host,
+            new GalateaFreshInput.HeartbeatActivation(host.Character.CharacterName,
+                host.Character.AutonomyIntervalMinutes), options);
+        GalateaLiveTurn turn = StartPlannedFreshTurn(host, plan, options);
         if (cadence.TryClaimAutonomousActivationStarted(out
                 GalateaAutonomyCadenceClaim? claim)) {
             turn.BindAutonomyCadenceClaim(
@@ -3029,31 +2943,12 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
                 "RecapGrid会话设置无法在当前边界安全更新。",
                 "recap-grid-desired-setup-unavailable");
         }
-        GalateaFreshInput fresh = liveTurn.FreshInput
-            ?? throw new InvalidOperationException("Fresh send requires typed input.");
-        DateTimeOffset observationTimestamp = PlayerTurnObservationEnvelope.TruncateToSecond(_timeProvider.GetLocalNow());
-        var characterSnapshot = new GalateaSenderSnapshot("character", host.Character.CharacterId, host.Character.CharacterName.Value);
-        PlayerTurnObservation? preliminaryPlayerObservation = fresh switch {
-            GalateaFreshInput.PlayerAction player => new PlayerTurnObservation(player.Text, observationTimestamp, player.Notices),
-            GalateaFreshInput.DelegateReply reply => PlayerTurnObservation.CreateDelegateReply(observationTimestamp, reply.Notices),
-            GalateaFreshInput.HeartbeatActivation activation => PlayerTurnObservation.CreateHeartbeatActivation(
-                observationTimestamp, activation.CharacterName,
-                intervalMinutes: activation.IntervalMinutes),
-            GalateaFreshInput.InboundMail => null,
-            _ => throw new InvalidOperationException("Unknown fresh input kind.")
-        };
-        IReadOnlyList<PlayerTurnNotice> notices = preliminaryPlayerObservation?.Notices ?? [];
-        CharacterNoteReceiptDeliverySnapshot? receiptDelivery = preliminaryPlayerObservation is null
-            ? null : host.CharacterMemoryReconciler?.ReadPendingReceiptDelivery();
-        if (receiptDelivery is not null) {
-            PlayerTurnNotice.NoteSaveReceipt selectedReceipt = CharacterNoteSaveReceipt.SelectForObservation(
-                receiptDelivery,
-                receipt => FitsStructuredObservation(fresh, observationTimestamp, characterSnapshot, [.. notices, receipt], [], liveTurn.Options.ConnectionState));
-            notices = [.. notices, selectedReceipt];
-            preliminaryPlayerObservation = preliminaryPlayerObservation!.WithNotices(notices);
-        }
-        SessionInputContent prompted = GalateaObservationContent.Create(fresh,
-            observationTimestamp, characterSnapshot, notices, [], liveTurn.Options.ConnectionState);
+        // Setup may have appended a governing Setup after admission. It does
+        // not abandon the currently owned CutoffFrozen lease or resample I.
+        GalateaFreshAdmissionPlan plan = liveTurn.AdmissionPlan
+            ?? throw new InvalidOperationException("Fresh send requires a frozen admission plan.");
+        PlayerTurnObservation? preliminaryPlayerObservation = plan.PreliminaryObservation;
+        SessionInputContent prompted = plan.PreliminaryInput;
         await using GalateaRecapGridTurn turn =
             await recapGrid.OpenFreshAsync(
                 host.Engine,
@@ -3122,13 +3017,12 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
                     preliminaryPlayerObservation,
                     recallContext,
                     cancellationToken,
-                    candidates => FitsStructuredObservation(fresh, observationTimestamp, characterSnapshot, notices, candidates, liveTurn.Options.ConnectionState),
+                    plan.FitsRecalls,
                     prompted,
                     liveTurn.TurnId
                 ).ConfigureAwait(false);
             if (recalls.Count > 0) {
-                prompted = GalateaObservationContent.Create(fresh,
-                    observationTimestamp, characterSnapshot, notices, recalls, liveTurn.Options.ConnectionState);
+                prompted = plan.WithRecalls(recalls);
             }
         }
         _ = liveTurn.DurableReplyLease?.BindObservationBase(
@@ -3145,10 +3039,13 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
                 prompted
             );
         }
-        if (receiptDelivery is not null) {
-            GalateaNoteReceiptDelivery.Bind(
-                host.CharacterMemoryReconciler!, host.Engine,
-                receiptDelivery, ready.GoverningSetup.Head, prompted);
+        if (plan.MailReceipt is { } mailReceipt) {
+            ActionReceiptDelivery.Bind(host.DelegationHandle!.Store, host.Engine,
+                mailReceipt, ready.GoverningSetup.Head, prompted);
+        }
+        if (plan.NoteReceipt is { } noteReceipt) {
+            ActionReceiptDelivery.Bind(host.CharacterMemoryReconciler!.ReceiptDeliveryStore,
+                host.Engine, noteReceipt, ready.GoverningSetup.Head, prompted);
         }
         TurnResult result;
         try {
@@ -3166,23 +3063,6 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             result.Message,
             result.Invocation,
             result.Errors);
-    }
-
-    private static bool FitsStructuredObservation(
-        GalateaFreshInput fresh,
-        DateTimeOffset timestamp,
-        GalateaSenderSnapshot character,
-        IReadOnlyList<PlayerTurnNotice> notices,
-        IReadOnlyList<PlayerTurnRecall> recalls,
-        GalateaConnectionStateSnapshot? connectionState = null
-    ) {
-        try {
-            _ = GalateaObservationContent.Create(fresh, timestamp, character, notices, recalls, connectionState);
-            return true;
-        }
-        catch (ArgumentOutOfRangeException) {
-            return false;
-        }
     }
 
     private async ValueTask<IReadOnlyList<PlayerTurnRecall>>
@@ -3939,6 +3819,17 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         }
     }
 
+    private static void ReconcileActionReceiptDeliveries(
+        CharacterSessionHost host, CancellationToken cancellationToken
+    ) {
+        if (host.DelegationHandle is { } delegation) {
+            ActionReceiptDelivery.Reconcile(delegation.Store, host.Engine, cancellationToken);
+        }
+        if (host.CharacterMemoryReconciler is { } memory) {
+            ActionReceiptDelivery.Reconcile(memory.ReceiptDeliveryStore, host.Engine, cancellationToken);
+        }
+    }
+
     internal void ReconcileAcceptanceCleanup(CharacterSessionHost host) =>
         _ = ReconcileDurableDeliveries(host, CancellationToken.None);
 
@@ -3949,8 +3840,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     ) {
         GalateaCharacterMailDeliveryReconciler.Reconcile(
             _delegationSupervisor, host, cancellationToken);
-        GalateaNoteReceiptDelivery.Reconcile(
-            host.CharacterMemoryReconciler, host.Engine, cancellationToken);
+        ReconcileActionReceiptDeliveries(host, cancellationToken);
         GalateaDurableReplyLeaseReconcileResult result = host
             .ReplyLeaseReconciler.ReconcileActiveLease(
                 host.Engine,
@@ -4363,13 +4253,16 @@ public sealed class CharacterSessionHost : IAsyncDisposable {
     internal GalateaLiveTurn StartTurn(
         GalateaFreshInput freshInput,
         GalateaTurnOptions options,
-        GalateaDurableReplyLease? durableReplyLease = null
+        GalateaDurableReplyLease? durableReplyLease = null,
+        GalateaFreshAdmissionPlan? admissionPlan = null
     ) {
         ArgumentNullException.ThrowIfNull(freshInput);
+        ArgumentNullException.ThrowIfNull(admissionPlan);
         var liveTurn = new GalateaLiveTurn(
             freshInput,
             options,
-            durableReplyLease
+            durableReplyLease,
+            admissionPlan
         );
         lock (_turnStateGate) {
             _lastTurn = null;

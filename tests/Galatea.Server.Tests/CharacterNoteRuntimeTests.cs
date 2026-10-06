@@ -114,10 +114,12 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             await service.RunTurnAsync(session, receiptTurn, CancellationToken.None);
             PlayerTurnObservation receiptInput = ReadLatestObservation(session);
-            PlayerTurnNotice.NoteSaveReceipt receiptNotice = Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
-                Assert.Single(receiptInput.Notices)
-            );
-            Assert.Equal(NoteText, Assert.Single(Assert.IsType<CharacterNoteReceiptSelection>(receiptNotice.Selection).ExactTexts));
+            Assert.Collection(receiptInput.Notices,
+                notice => Assert.IsType<MailReceiptBatch>(Assert.IsType<PlayerTurnNotice.ActionReceipt>(notice).Batch),
+                notice => Assert.IsType<NoteReceiptBatch>(Assert.IsType<PlayerTurnNotice.ActionReceipt>(notice).Batch));
+            PlayerTurnNotice.ActionReceipt receiptNotice = Assert.Single(
+                receiptInput.Notices.OfType<PlayerTurnNotice.ActionReceipt>(), notice => notice.Batch is NoteReceiptBatch);
+            Assert.Equal(ActionReceiptPreview.Create(NoteText), Assert.Single(Assert.IsType<NoteReceiptBatch>(receiptNotice.Batch).Items).Preview);
             SessionInputContent storedReceiptInput = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns).ObservationContent;
             Assert.Equal(GalateaInputProjector.Instance.Project(storedReceiptInput),
@@ -1492,7 +1494,8 @@ public sealed class CharacterNoteRuntimeTests {
                     null,
                     "body"
                 ),
-                new GalateaTurnOptions(main.Id)
+                new GalateaTurnOptions(main.Id),
+                injectedBy: GalateaDelegateTestConfiguration.PlayerSender
             );
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             service.FinishTurn(session, inbound);
@@ -1544,17 +1547,18 @@ public sealed class CharacterNoteRuntimeTests {
             GalateaFreshInput.PlayerAction input = Assert.IsType<
                 GalateaFreshInput.PlayerAction>(turn.FreshInput);
             Assert.IsType<PlayerTurnNotice.Reply>(
-                Assert.Single(input.Notices)
+                Assert.Single(input.Notices.OfType<PlayerTurnNotice.Reply>())
             );
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             await service.RunTurnAsync(session, turn, CancellationToken.None);
             service.FinishTurn(session, turn);
             PlayerTurnObservation observation = ReadLatestObservation(session);
             Assert.Single(observation.Notices.OfType<PlayerTurnNotice.Reply>());
-            CharacterNoteReceiptSelection receipt = Assert.IsType<CharacterNoteReceiptSelection>(
-                Assert.Single(observation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection);
-            Assert.Equal(NoteText, Assert.Single(receipt.ExactTexts));
-            Assert.Equal("m1:00000001", Assert.Single(receipt.MemoIds).Value);
+            NoteReceiptBatch receipt = Assert.IsType<NoteReceiptBatch>(
+                Assert.Single(observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>(),
+                    notice => notice.Batch is NoteReceiptBatch).Batch);
+            Assert.Equal(ActionReceiptPreview.Create(NoteText), Assert.Single(receipt.Items).Preview);
+            Assert.Equal("m1:00000001", Assert.Single(receipt.Items).MemoId.Value);
             Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
         }
         finally {

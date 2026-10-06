@@ -10,7 +10,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         CharacterMemoryStoreTestHooks hooks
     ) {
         long version = ReadPragmaInteger(connection, "user_version");
-        if (version is 3 or SchemaVersion) { return; }
+        if (version is 3 or 4 or SchemaVersion) { return; }
         if (version != 2) { throw Corrupt("Character Memory schema is not V2 or V3."); }
         const string operation = "migrate-character-memory-v2-to-v3";
         _ = ValidateOpenedDatabase(connection, owner, expectedVersion: 2);

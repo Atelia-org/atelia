@@ -312,7 +312,8 @@ internal sealed record GalateaDelegationStateSnapshot(
     IReadOnlyList<GalateaOutboundMailSnapshot> Mails,
     IReadOnlyList<GalateaInternalMailOutboxSnapshot> InternalMailOutboxes,
     IReadOnlyList<GalateaReplyNoticeSnapshot> Notices,
-    GalateaReplyLeaseSnapshot? ActiveLease
+    GalateaReplyLeaseSnapshot? ActiveLease,
+    IReadOnlyList<ActionReceiptDeliverySnapshot> MailReceipts
 ) {
     internal static IReadOnlyList<T> Freeze<T>(IEnumerable<T> values) =>
         new ReadOnlyCollection<T>(values.ToArray());

@@ -2,6 +2,8 @@
 
 状态：**已实施并完成隔离与真实实例验收，见[实施验收](player-character-implementation-work-order.md)。** 修订日期：2026-09-16。本文列出规范性约束；实际测试、迁移与运行证据集中在实施验收记录。
 
+> **2026-10-06 后继回执合同**：[Mail / Note 统一操作回执与正文预览](mail-note-receipt-preview-refactor-design.md)替代本文的 Note 全文优先、独立回执选择和旧 Pending 当前写入路径；其实施与验证状态由该方案集中记录。本文 2026-09-16 的实施验收与审查结论保留当时语境。
+
 本文是 [Player / Character 分离方案](player-character-separation-design.md) 的输入存储与恢复专题。当前用户已明确：给 LLM 的 user message、Observation、PlayerTurnObservation、Codex session user prompt 等输入，使用稳定机读格式持久化，调用 LLM 时临时渲染；缓存不改变瞬态语义。此决定替代前版新增 FrozenTask 的设计。
 
 ## 1. 需求账本与最小模型
@@ -188,8 +190,16 @@ Delivered 仍表示目标已 durable append，与模型是否成功理解/完成
 
 ### 5.2 receipt、recall 和派生上下文
 
-- CharacterMemory 的新回执保存成功事实、源 Action、pod、按 ordinal 排列的 MemoId 与当时 ExactText/不可变来源，绑定和 Applied 验证读取这些事实。旧 `notice_body` / `rendered_observation` 按原格式解释；旧 Pending 与新绑定的衔接见第 7 节，不将新包装改字段名后保存。
-- 当前 Note 批量保存可能大于通知预算，原有全文→仅保存标识降级不能遗漏。用一个 receipt 专用内容选择函数，在首次请求计划确定前选择“全部确认保存的 IDs + 可展开的完整正文”；放不下时保留全部 IDs、零正文，不截断。结果进入既有内容计划，无 presentationMode 或通用选择框架。相同 Prepared 换 renderer 后放不下，只能报告未发送失败，不能再次删字段；Bound/Delivered 对账也不运行该选择函数。
+### spec [S-INPUT-NOTE-FULL-TEXT-RECEIPT] DEPRECATED：Note 全文优先回执
+
+2026-09-16 合同要求回执持有当时 ExactText/不可变来源，并在首次请求规划前选择全部 IDs 加完整正文，预算不足则 IDs-only；旧 Pending 可作为 legacy 块进入新绑定。该当前写入路径由 @[S-INPUT-ACTION-RECEIPT-SNAPSHOT] 与 @[R-INPUT-ACTION-RECEIPT-UPGRADE] 替代，已冻结历史输入仍按原合同读取。
+
+### spec [S-INPUT-ACTION-RECEIPT-SNAPSHOT] 确认事务冻结操作回执，fresh composer 一次选择
+
+Mail / Note 新写入 MUST 遵循[统一回执方案](mail-note-receipt-preview-refactor-design.md)的确认资格、短预览、`action-receipt-v1`、整体 full/null 投影及共享 composer 合同。通知 snapshot 保留完整来源和业务 IDs；完整业务正文仍归原 owner。选择冻结后，换 renderer MUST NOT 删除字段、重选通知或重算预览；Bound/Delivered 对账只使用冻结输入与 exact proof。旧 kind 的原字段、边界和解释 MUST 保真读取，不得以新预览规则拒绝历史。
+
+其他内容消费者继续遵守以下边界：
+
 - Codex reply lease 保存精确选中的 notices、各自来源及组合输入；claim/bind/settle 的原子范围与单 writer 保留，未知结果不重选一批回信。
 - Dynamic Recall 明确保存 sourceId/不可变版本、当时 title、exactText 及已选顺序；若采用 gist 等内容也保存其当时值。当前 `GalateaMemoExactTextBodyRenderer` 生成的“标题/正文”串不能成为新版持久 Body。Title→OriginBarrier→RecallBarrier→预算→0..1 的既有选择语义保留；计划冻结后不按 renderer 重选候选或读取最新 Memo。
 - Note DerivedInfo 的上下文读者直接读取结构化事实，在实际 LLM 调用时投影。`GalateaVisibleActionTextRenderer` 虽以 Renderer 命名，实际 Text block 保序选择、连接和 inline-think 排除属于**稳定语义提取**，不能与 md-json 样式一起替换。新 provenance 基于 Action/稳定语义视图，旧 fingerprint 按原算法；改变可见性、抽取指令或工具 schema 要按领域合同变更处理。
@@ -239,7 +249,13 @@ Codex 临时包装过长时保持未发送的 Queued 工作，报告局部投影
 
 旧日志和已发送/Bound 请求不原地重写。已知旧 envelope 可以投影为结构化内存视图；来源缺失标记为旧记录未提供，不查当前账号补造作者。无法可靠解码的原文保留 legacy content，不猜测字段。正常新写入只使用新内容合同；旧 reader 是已有数据的消费边界，不是长期双写。
 
-**既存内容的来源格式与本次 Observation 的绑定格式分别判别。** 旧 Pending receipt/reply 可以作为显式 legacy 块进入新 structured Observation，保留旧冻结正文及已有来源；这不是生成并持久化新的渲染全文。已 Bound 的旧输入仍按原证明结算，不能为了统一格式改写它。
+### spec [R-INPUT-LEGACY-PENDING-BINDING] DEPRECATED：旧 Pending 回执直接进入新绑定
+
+2026-09-16 允许旧 Pending receipt/reply 作为 legacy 块进入新 structured Observation。操作回执的当前 writer 已由 @[R-INPUT-ACTION-RECEIPT-UPGRADE] 替代；reply 的历史读取边界不受此次改动影响。
+
+### spec [R-INPUT-ACTION-RECEIPT-UPGRADE] 旧确认义务显式升级，旧绑定先证明
+
+CharacterMemory V5 / delegation V6 的升级 MUST 遵循[统一回执迁移合同](mail-note-receipt-preview-refactor-design.md#5-迁移换取唯一当前路径)：旧 Pending 回执转换为当前 snapshot；旧 Bound 先用只读 Journal 提供原 H/I 的 exact proof，已 append 则 Delivered，NotAppended 才回滚并转换。unknown / Conflict / Corruption MUST 保留整个该 owner 的旧 schema 与原 Bound 字节。已冻结的 Journal / Prepared / Observation commitment MUST NOT 重写，旧 Delivered MUST NOT 补发。新 writer 不再生成 legacy receipt，历史 reader 保留原解释。
 
 SQLite owner/dispatch ID 保持旧值，但本文涉及 receipt、lease、outbox 和 Prepared 的真实格式变化，不能再承诺“CharacterMemory 完全不用迁移”。各域只为新增机读内容和发送事实升级，保持原业务身份、原子事务与恢复状态。不增加全库改名、ID 映射或通用迁移框架。
 
@@ -259,10 +275,10 @@ SQLite owner/dispatch ID 保持旧值，但本文涉及 receipt、lease、outbox
 | 稀疏 Start 响应、同 generation 通知与冷重启 | 本进程相关 Start 可建立 live 关联；迟到矛盾 userMessage 被拒绝；清缓存后旧关联不复活，cold 必须回读原 userMessage。 |
 | 目标 append 后、sender settle 前 crash，随后 undo 抢先 | 结构化 exact proof 先结算，至多一次投递、无证据窗口丢失。 |
 | 旧 Prepared / Bound / Applied receipt / reply lease | 旧版本正常读回与恢复；新 renderer 不参与旧 canonical 校验。 |
-| 旧 Pending receipt/reply 进入新 structured Bound，append 后 crash | 原文和已知来源保留；按新绑定的机读内容对账，不补造身份，不重写旧 Bound。 |
+| 旧 Pending receipt 显式升级、旧 reply 进入新 structured Bound，append 后 crash | receipt 以新 snapshot 绑定；历史 reply 保留原文和来源；按冻结机读内容对账，不重写旧 Bound。 |
 | 近容量 store 换成更冗长 renderer | strict reopen 不受影响；超长请求在发送前失败，保留输入与未发送事实。 |
 | 新生成的 receipt/recap/辅助 LLM 请求 | 持久文件只有机读内容与调用事实，不出现 renderer 生成的包装、模板快照或重复全文日志。 |
-| 大 Note batch、Memo 修改、VisibleAction 样式/语义变更 | IDs-only 选择在计划前完成；重渲染不再删字段；recall 使用当时 title/exactText，旧 provenance 不随风格漂移。 |
+| 大 Note batch、Memo 修改、VisibleAction 样式/语义变更 | 新回执 full/null 选择在共享计划中完成；重渲染不再删字段；recall 使用当时 title/exactText，旧 provenance 不随风格漂移。 |
 | 禁用 renderer 后审计、修改 setup 布局后重开、篡改引用 | audit/reopen/DesiredSetup 不依赖 style；真实内容、工具序列或尝试归属篡改被拒绝。 |
 | 辅助 query / Recap 未携带主线 setup，历史时间与 Memo 已变化 | 选中块的原来源、时间、类型含义和版本仍正确；源不可用明确失败，不以当前事实替代。 |
 | 禁用 renderer 后 MemoPod Open/Freeze，Recall 清缓存/编辑交错 | 机读发布和打开正常；Recall 投影失败零调用；清缓存不改 Pod 身份，ResumeEditing 后即使原样 Freeze 也使旧结果失效。 |

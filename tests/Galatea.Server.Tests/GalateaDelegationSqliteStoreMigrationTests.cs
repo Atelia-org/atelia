@@ -13,7 +13,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     public static TheoryData<int, string> LegacyStates {
         get {
             var cases = new TheoryData<int, string>();
-            foreach (int version in new[] { 1, 2, 3, 4 }) {
+            foreach (int version in new[] { 1, 2, 3, 4, 5 }) {
                 foreach (string state in new[] {
                     "Queued", "Binding", "Started", "OutcomeUnknown", "Accepted",
                     "TerminalCompleted", "TerminalFailed", "Quarantined", "Leased", "Consumed"
@@ -41,9 +41,10 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Equal((long)version, Scalar(result.BackupPath, "PRAGMA user_version;"));
         Assert.Equal(fixture.LegacyRows, ReadBusinessRows(result.BackupPath, normalize: false));
         Assert.Equal(fixture.BusinessRows, ReadBusinessRows(fixture.DatabasePath));
-        Assert.Equal(5L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal(6L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         using (GalateaDelegationSqliteStore store = fixture.Open()) {
             Assert.Equal(fixture.Snapshot, JsonSerializer.Serialize(store.ReadSnapshot()));
+            Assert.Empty(store.ReadSnapshot().MailReceipts);
         }
         byte[] after = File.ReadAllBytes(fixture.DatabasePath);
         GalateaDelegationStoreUpgradeResult retry = fixture.Upgrade(apply: true);
@@ -57,6 +58,8 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
     public void DryRun_IsBytePreservingAndCreatesNoBackup(int version) {
         using var fixture = new MigrationFixture("Leased", version);
         byte[] before = File.ReadAllBytes(fixture.DatabasePath);
@@ -78,7 +81,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         GalateaDelegationStoreUpgradeResult result = fixture.Upgrade(apply: true);
 
         Assert.Equal("Upgraded", result.Outcome);
-        Assert.Equal(5L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal(6L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(0L, Scalar(fixture.DatabasePath,
             "SELECT COUNT(*) FROM internal_mail_outbox;"));
         using GalateaDelegationSqliteStore store = fixture.Open();
@@ -99,7 +102,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             ? new GalateaDelegationStoreTestHooks(AfterCommitBeforeReturn: fail)
             : new GalateaDelegationStoreTestHooks(BeforeCommit: fail);
         Assert.Throws<IOException>(() => fixture.Upgrade(apply: true, hooks));
-        Assert.Equal(afterCommit ? 5L : version,
+        Assert.Equal(afterCommit ? 6L : version,
             Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(afterCommit || version is 2 or 3 ? 0L : 1L, Scalar(fixture.DatabasePath,
             "SELECT count(*) FROM pragma_table_info('outbound_mail') WHERE name = 'frozen_route_policy_fingerprint';"));
@@ -427,18 +430,35 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             UPDATE outbound_mail SET content_format='legacy-task', sender_name=NULL, task_sha256=NULL, task_utf8_bytes=NULL;
             UPDATE reply_notice SET body=CASE WHEN kind='DeliveryFailure' THEN COALESCE(detail, code) ELSE body END,
                 notice_format='legacy-text', sender_kind=NULL, sender_id=NULL, sender_name=NULL, detail=NULL, thread_id=NULL, turn_id=NULL;
+            DELETE FROM mail_receipt_delivery;
             """;
         convert.ExecuteNonQuery();
     }
 
     private static void CreateLegacy(string sourcePath, string targetPath, int version) {
         using SqliteConnection target = Connect(targetPath, SqliteOpenMode.ReadWriteCreate);
-        if (version is 3 or 4) {
+        if (version is 3 or 4 or 5) {
             using (SqliteConnection source = Connect(sourcePath, SqliteOpenMode.ReadOnly)) {
                 source.BackupDatabase(target);
             }
             using SqliteCommand downgrade = target.CreateCommand();
+            if (version == 5) {
+                downgrade.CommandText = """
+                    DROP TABLE mail_receipt_delivery;
+                    PRAGMA writable_schema = ON;
+                    UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = 6', 'schema_version = 5') WHERE name='delegation_meta';
+                    PRAGMA writable_schema = OFF;
+                    PRAGMA schema_version = 401;
+                    PRAGMA ignore_check_constraints = ON;
+                    UPDATE delegation_meta SET schema_version=5;
+                    PRAGMA ignore_check_constraints = OFF;
+                    PRAGMA user_version=5;
+                    """;
+                downgrade.ExecuteNonQuery();
+                return;
+            }
             downgrade.CommandText = """
+                DROP TABLE mail_receipt_delivery;
                 ALTER TABLE outbound_mail DROP COLUMN content_format;
                 ALTER TABLE outbound_mail DROP COLUMN sender_name;
                 ALTER TABLE outbound_mail DROP COLUMN task_sha256;

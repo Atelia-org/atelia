@@ -1,101 +1,156 @@
+using Atelia.Completion.Abstractions;
 using Atelia.Galatea.Server.CharacterMemory;
+using Atelia.MemoPod;
 using Atelia.SessionJournal;
-using Microsoft.Data.Sqlite;
+using System.Text.Json;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed partial class CharacterMemorySqliteStoreTests {
     [Theory]
-    [InlineData("Pending")]
-    [InlineData("ObservationBound")]
-    [InlineData("Delivered")]
-    public void V3SemanticReceiptMigrationPreservesOldBytesAndRequiresExplicitUpgrade(string state) {
-        CharacterNoteReceiptDeliveryState targetState = Enum.Parse<CharacterNoteReceiptDeliveryState>(state);
+    [InlineData(3, false)]
+    [InlineData(4, false)]
+    [InlineData(4, true)]
+    public void ExplicitUpgradeFreezesPendingFromAppliedLedgerWithoutParsingHistoricalBody(int version, bool semantic) {
         using var fixture = new ReadyStore();
-        _ = fixture.Store.SettleApplied(PrepareReceiptBatch(fixture, Address(150)));
-        CharacterNoteReceiptDeliverySnapshot receipt = fixture.Store.ReadPendingReceiptDelivery()!;
-        string oldBody = HistoricalNoteReceiptFixture.OldWording(CharacterNoteSaveReceipt.CreateDurable(receipt.Facts!.Memos).Notice.Body);
-        if (targetState != CharacterNoteReceiptDeliveryState.Pending) {
-            receipt = fixture.Store.BindReceiptDelivery(receipt.SourceActionAddress, receipt.StateRevision, Address(151), RenderReceiptObservation(receipt));
-        }
-        if (targetState == CharacterNoteReceiptDeliveryState.Delivered) {
-            receipt = fixture.Store.CompleteReceiptDelivery(receipt.SourceActionAddress, receipt.StateRevision, Address(152));
-        }
-        var old = receipt with {
-            Facts = null, BoundInput = null, NoticeBody = oldBody,
-            RenderedObservation = targetState == CharacterNoteReceiptDeliveryState.ObservationBound
-                ? PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation("historical turn", notices: [new PlayerTurnNotice.NoteSaveReceipt(oldBody)])) : null
-        };
-        CharacterMemoryStatusSnapshot status = fixture.Store.ReadStatusSnapshot();
+        const string exact = "12345678901234567890123456789012😀" + "middle-unshown-text" + "abcdefghijklmnop";
+        _ = fixture.Store.SettleApplied(PrepareReceiptBatch(fixture, Address(150), exact));
+        ActionReceiptDeliverySnapshot pending = fixture.Store.ReadPendingReceiptDelivery()!;
+        var old = new CharacterNoteReceiptDeliverySnapshot(pending.SourceActionAddress,
+            CharacterNoteReceiptDeliveryState.Pending, semantic ? null : LegacyCharacterMemoryReceiptFixture.Body,
+            pending.CreatedRevision, pending.StateRevision, null, null, null);
         fixture.DisposeStore();
-        HistoricalNoteReceiptFixture.WriteFrozenNotice(fixture.DirectoryPath, old);
         string database = Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName);
-        DowngradeSyntheticReceiptStoreToV3(database);
+        LegacyCharacterMemoryReceiptFixture.Install(database, old, version, semantic);
+        byte[] original = File.ReadAllBytes(database);
         Assert.Throws<InvalidDataException>(() => CharacterMemorySqliteStore.OpenExisting(fixture.DirectoryPath, fixture.Owner));
-        using var upgraded = CharacterMemorySqliteStore.OpenExisting(fixture.DirectoryPath, fixture.Owner, upgradeLegacyFormat: true);
-        Assert.Equal(old, upgraded.ReadReceiptDeliveryExact(old.SourceActionAddress));
-        Assert.Equal(status, upgraded.ReadStatusSnapshot());
-        Assert.Equal(4L, ReadVersion(database));
+        Assert.Equal(original, File.ReadAllBytes(database));
+        Assert.Equal("DryRunReady", CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, false).Outcome);
+        Assert.Equal(original, File.ReadAllBytes(database));
+        Assert.Empty(MemoryUpgradeTestInspection.Backups(fixture.DirectoryPath));
+        var result = CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, true);
+        Assert.Equal(version, MemoryUpgradeTestInspection.Version(result.BackupPath!));
+        using var reopened = CharacterMemorySqliteStore.OpenExisting(fixture.DirectoryPath, fixture.Owner);
+        ActionReceiptDeliverySnapshot converted = reopened.ReadPendingReceiptDelivery()!;
+        NoteReceiptBatch batch = Assert.IsType<NoteReceiptBatch>(converted.FrozenBatch);
+        Assert.Equal(old.CreatedRevision, converted.CreatedRevision);
+        Assert.Equal(old.StateRevision, converted.StateRevision);
+        Assert.Equal(MemoId.Parse("m1:00000001"), Assert.Single(batch.Items).MemoId);
+        Assert.Equal("12345678901234567890123456789012 …（省略）… abcdefghijklmnop", batch.Items[0].Preview);
+        Assert.Equal(exact, Assert.Single(reopened.ReadCaptureExact(old.SourceActionAddress)!.Notes).ExactText);
+        Assert.Equal(5, MemoryUpgradeTestInspection.Version(database));
     }
 
-    private static long ReadVersion(string database) {
-        using var connection = new SqliteConnection($"Data Source={database};Mode=ReadWrite;Pooling=False");
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA user_version;";
-        return (long)command.ExecuteScalar()!;
+    [Theory]
+    [InlineData(3, "NotAppended")]
+    [InlineData(3, "InProgress")]
+    [InlineData(3, "Terminal")]
+    [InlineData(4, "NotAppended")]
+    [InlineData(4, "InProgress")]
+    [InlineData(4, "Terminal")]
+    public void OldBoundExactProofSettlesOrConvertsAtomicallyAndLeavesRawHistoryUnchanged(int version, string proofState) {
+        using var fixture = new ReadyStore();
+        _ = fixture.Store.SettleApplied(PrepareReceiptBatch(fixture, Address(151)));
+        ActionReceiptDeliverySnapshot pending = fixture.Store.ReadPendingReceiptDelivery()!;
+        string session = Path.Combine(fixture.DirectoryPath, "proof-session");
+        SessionInputContent input;
+        string head;
+        string? observation = null;
+        using (SessionJournalEngine writer = SessionJournalEngine.Create(session, new("model", "system", "fixture"))) {
+            head = EventAddressTextCodec.Format(writer.ReadCurrentHead()!.Value);
+            input = version == 3 ? SessionInputContent.Text(PlayerTurnObservationEnvelope.Wrap(
+                new PlayerTurnObservation("historical", notices: [new PlayerTurnNotice.NoteSaveReceipt(LegacyCharacterMemoryReceiptFixture.Body)])))
+                : LegacySemanticInput(pending.SourceActionAddress, "saved note");
+            if (proofState != "NotAppended") {
+                observation = EventAddressTextCodec.Format(writer.AppendObservation(input));
+                if (proofState == "Terminal") {
+                    writer.AppendImportedAgentAction(new ActionMessage([new ActionBlock.Text("already received")]),
+                        new CompletionDescriptor("fixture", "fixture-v1", "model"));
+                }
+            }
+        }
+        var old = new CharacterNoteReceiptDeliverySnapshot(pending.SourceActionAddress,
+            CharacterNoteReceiptDeliveryState.ObservationBound, version == 3 ? LegacyCharacterMemoryReceiptFixture.Body : null,
+            pending.CreatedRevision, pending.StateRevision + 1, head,
+            version == 3 ? input.TextValue : null, null, BoundInput: version == 4 ? input : null);
+        fixture.DisposeStore();
+        string database = Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName);
+        LegacyCharacterMemoryReceiptFixture.Install(database, old, version, semantic: version == 4);
+        string[] originalCells = MemoryUpgradeTestInspection.ReadLegacyReceiptCells(database);
+        Dictionary<string, byte[]> journalBytes = Directory.GetFiles(session, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => path, File.ReadAllBytes);
+        using SessionJournalEngine journal = SessionJournalEngine.OpenReadOnly(session);
+        byte[] original = File.ReadAllBytes(database);
+        Assert.Equal("DryRunReady", CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, false, journal: journal).Outcome);
+        Assert.Equal(original, File.ReadAllBytes(database));
+        int ownerLockChecks = 0;
+        var hooks = new CharacterMemoryStoreTestHooks(BeforeCommit: operation => {
+            if (operation != "migrate-character-memory-v4-to-v5") { return; }
+            Assert.True(journal.IsReadOnly);
+            Assert.ThrowsAny<IOException>(() => CharacterMemorySqliteStore.OpenExisting(fixture.DirectoryPath, fixture.Owner));
+            ownerLockChecks++;
+        });
+        var result = CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, true, hooks, journal);
+        Assert.Equal(1, ownerLockChecks);
+        Assert.Equal(originalCells, MemoryUpgradeTestInspection.ReadLegacyReceiptCells(result.BackupPath!));
+        using var reopened = CharacterMemorySqliteStore.OpenExisting(fixture.DirectoryPath, fixture.Owner);
+        ActionReceiptDeliverySnapshot converted = reopened.ReadReceiptDeliveryExact(old.SourceActionAddress)!;
+        Assert.Null(converted.BoundInput);
+        Assert.Equal(old.CreatedRevision, converted.CreatedRevision);
+        Assert.True(converted.StateRevision > old.StateRevision);
+        if (proofState == "NotAppended") {
+            Assert.Equal(ActionReceiptDeliveryState.Pending, converted.State);
+            Assert.NotNull(converted.FrozenBatch);
+            Assert.Null(converted.ExpectedSessionHead);
+        }
+        else {
+            Assert.Equal(ActionReceiptDeliveryState.Delivered, converted.State);
+            Assert.Null(converted.FrozenBatch);
+            Assert.Equal(head, converted.ExpectedSessionHead);
+            Assert.Equal(observation, converted.ObservationAddress);
+        }
+        foreach ((string path, byte[] bytes) in journalBytes) { Assert.Equal(bytes, File.ReadAllBytes(path)); }
     }
 
-    private static void DowngradeSyntheticReceiptStoreToV3(string database) {
-        // Exact historical V3 receipt schema: fixtures carry the old contract explicitly.
-        const string receiptSchema = """
-        CREATE TABLE note_receipt_delivery (
-            source_action_address TEXT NOT NULL PRIMARY KEY
-                REFERENCES note_action_capture(source_action_address)
-                ON DELETE RESTRICT,
-            state TEXT NOT NULL CHECK(state IN (
-                'Pending', 'ObservationBound', 'Delivered'
-            )),
-            notice_body TEXT NOT NULL CHECK(length(notice_body) > 0),
-            created_revision INTEGER NOT NULL CHECK(created_revision >= 1),
-            state_revision INTEGER NOT NULL CHECK(state_revision >= created_revision),
-            expected_session_head TEXT NULL,
-            rendered_observation TEXT NULL,
-            observation_address TEXT NULL,
-            CHECK(
-                (state = 'Pending' AND expected_session_head IS NULL
-                    AND rendered_observation IS NULL AND observation_address IS NULL)
-                OR (state = 'ObservationBound' AND expected_session_head IS NOT NULL
-                    AND rendered_observation IS NOT NULL AND observation_address IS NULL)
-                OR (state = 'Delivered' AND expected_session_head IS NOT NULL
-                    AND rendered_observation IS NULL AND observation_address IS NOT NULL)
-            )
-        ) STRICT
-        """;
-        ExecuteSql(database, """
-            DROP INDEX ux_note_receipt_single_bound;
-            DROP INDEX ix_note_receipt_pending_schedule;
-            ALTER TABLE note_receipt_delivery RENAME TO receipt_v4_fixture;
-            """ + receiptSchema + ";" + """
-            INSERT INTO note_receipt_delivery SELECT source_action_address, state, notice_body,
-                created_revision, state_revision, expected_session_head, rendered_observation,
-                observation_address FROM receipt_v4_fixture;
-            DROP TABLE receipt_v4_fixture;
-            CREATE UNIQUE INDEX ux_note_receipt_single_bound
-            ON note_receipt_delivery((1)) WHERE state = 'ObservationBound';
-            CREATE INDEX ix_note_receipt_pending_schedule
-            ON note_receipt_delivery(created_revision, source_action_address)
-            WHERE state = 'Pending';
-            PRAGMA writable_schema = ON;
-            UPDATE sqlite_schema SET sql = replace(sql, 'schema_version = 4', 'schema_version = 3')
-                WHERE type = 'table' AND name = 'character_memory_meta';
-            PRAGMA writable_schema = OFF;
-            PRAGMA schema_version = 400;
-            PRAGMA ignore_check_constraints = ON;
-            UPDATE character_memory_meta SET schema_version = 3;
-            PRAGMA ignore_check_constraints = OFF;
-            PRAGMA user_version = 3;
-            """);
+    [Theory]
+    [InlineData(3, false)]
+    [InlineData(3, true)]
+    [InlineData(4, false)]
+    [InlineData(4, true)]
+    public void UnknownOldBoundProofKeepsEntireOldOwnerAndCreatesNoBackup(int version, bool apply) {
+        using var fixture = new ReadyStore();
+        _ = fixture.Store.SettleApplied(PrepareReceiptBatch(fixture, Address(152)));
+        ActionReceiptDeliverySnapshot pending = fixture.Store.ReadPendingReceiptDelivery()!;
+        string session = Path.Combine(fixture.DirectoryPath, "conflict-session");
+        string head;
+        using (SessionJournalEngine writer = SessionJournalEngine.Create(session, new("model", "system", "fixture"))) {
+            head = EventAddressTextCodec.Format(writer.ReadCurrentHead()!.Value);
+            writer.AppendObservation("different original input");
+        }
+        var old = new CharacterNoteReceiptDeliverySnapshot(pending.SourceActionAddress,
+            CharacterNoteReceiptDeliveryState.ObservationBound, LegacyCharacterMemoryReceiptFixture.Body,
+            pending.CreatedRevision, pending.StateRevision + 1, head,
+            PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation("historical", notices:
+                [new PlayerTurnNotice.NoteSaveReceipt(LegacyCharacterMemoryReceiptFixture.Body)])), null);
+        fixture.DisposeStore();
+        string database = Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName);
+        LegacyCharacterMemoryReceiptFixture.Install(database, old, version);
+        byte[] original = File.ReadAllBytes(database);
+        using SessionJournalEngine journal = SessionJournalEngine.OpenReadOnly(session);
+        Assert.Throws<InvalidDataException>(() => CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply, journal: journal));
+        Assert.Equal(original, File.ReadAllBytes(database));
+        Assert.Equal(version, MemoryUpgradeTestInspection.Version(database));
+        Assert.Empty(MemoryUpgradeTestInspection.Backups(fixture.DirectoryPath));
     }
+
+    private static SessionInputContent LegacySemanticInput(string source, string exact) => SessionInputContent.Structured(
+        GalateaObservationContent.V1SchemaId, JsonSerializer.SerializeToElement(new {
+            v = 1, kind = "player-action", sender = new { kind = "player", id = "admin", name = "Operator" },
+            externalLocalTimestamp = "2026-09-15T00:00:00.0000000+00:00", action = new { text = "next" },
+            notices = new[] { new { kind = "note-save-receipt", sender = new { kind = "runtime", id = "galatea", name = "Galatea runtime" },
+                receipt = new { sourceActionAddress = source, podId = CharacterNoteDefaultPodV1.PodId.Value,
+                    saved = new[] { new { ordinal = 0, memoId = "m1:00000001" } }, exactTexts = new[] { exact } } } },
+            recalls = Array.Empty<object>()
+        }));
 }

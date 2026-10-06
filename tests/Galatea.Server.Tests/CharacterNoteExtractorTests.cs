@@ -396,7 +396,7 @@ public sealed class CharacterNoteExtractorTests {
         string memoryPath = Path.Combine(root, "memory");
         var owner = new CharacterMemoryStoreOwner("user", sessionPath);
         GalateaTerminalActionExtractionTarget target;
-        CharacterNoteReceiptFacts receiptFacts;
+        NoteReceiptBatch receiptFacts;
         long receiptRevision;
         string[] memoIds;
         try {
@@ -415,14 +415,13 @@ public sealed class CharacterNoteExtractorTests {
                     await memory.ReconcileTargetAsync(engine, target));
                 Assert.Equal(texts, applied.Memos.Select(static memo => memo.ExactText));
                 memoIds = applied.Memos.Select(static memo => memo.MemoId.Value).ToArray();
-                CharacterNoteReceiptDeliverySnapshot receipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+                ActionReceiptDeliverySnapshot receipt = Assert.IsType<ActionReceiptDeliverySnapshot>(
                     memory.ReadPendingReceiptDelivery());
-                receiptFacts = Assert.IsType<CharacterNoteReceiptFacts>(receipt.Facts);
-                Assert.Equal(texts, receiptFacts.Memos.Select(static memo => memo.ExactText));
-                Assert.Equal(memoIds, receiptFacts.Memos.Select(static memo => memo.MemoId.Value));
+                receiptFacts = Assert.IsType<NoteReceiptBatch>(receipt.FrozenBatch);
+                Assert.Equal(texts.Select(ActionReceiptPreview.Create), receiptFacts.Items.Select(static memo => memo.Preview));
+                Assert.Equal(memoIds, receiptFacts.Items.Select(static memo => memo.MemoId.Value));
                 Assert.Equal(EventAddressTextCodec.Format(action), receiptFacts.SourceActionAddress);
-                Assert.Null(receipt.NoticeBody);
-                Assert.Null(receipt.RenderedObservation);
+                Assert.Null(receipt.BoundInput);
                 receiptRevision = receipt.CreatedRevision;
             }
 
@@ -436,11 +435,10 @@ public sealed class CharacterNoteExtractorTests {
                 memoryPath, owner, changedExtractor);
             Assert.IsType<CharacterNoteDefaultPodReconcileResult.AlreadyApplied>(
                 await reopenedMemory.ReconcileTargetAsync(reopenedEngine, target));
-            CharacterNoteReceiptDeliverySnapshot recoveredReceipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+            ActionReceiptDeliverySnapshot recoveredReceipt = Assert.IsType<ActionReceiptDeliverySnapshot>(
                 reopenedMemory.ReadPendingReceiptDelivery());
-            Assert.Equal(receiptFacts, recoveredReceipt.Facts);
-            Assert.Null(recoveredReceipt.NoticeBody);
-            Assert.Null(recoveredReceipt.RenderedObservation);
+            Assert.Equal(receiptFacts, recoveredReceipt.FrozenBatch);
+            Assert.Null(recoveredReceipt.BoundInput);
             Assert.Equal(receiptRevision, recoveredReceipt.CreatedRevision);
             var pod = global::Atelia.MemoPod.MemoPod.Open(memoryPath, CharacterNoteDefaultPodV1.PodId);
             Assert.Equal(texts, pod.List().Select(static memo => memo.ExactText));

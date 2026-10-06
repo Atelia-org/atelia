@@ -9,7 +9,8 @@ namespace Atelia.Galatea.Server;
 internal sealed partial class GalateaDelegationSqliteStore {
     private static GalateaDelegationStateSnapshot ReadSnapshotCore(
         SqliteConnection connection,
-        SqliteTransaction? transaction
+        SqliteTransaction? transaction,
+        int expectedVersion = SchemaVersion
     ) {
         GalateaDelegationStoreOwner owner;
         GalateaDelegationStoreBaseline baseline;
@@ -90,6 +91,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
             transaction
         );
         RequireOnlyActiveLeaseRows(connection, transaction, activeLease);
+        IReadOnlyList<ActionReceiptDeliverySnapshot> mailReceipts = expectedVersion >= 6
+            ? ReadMailReceiptDeliveries(connection, transaction)
+            : Array.Empty<ActionReceiptDeliverySnapshot>();
 
         ValidateProjection(
             owner,
@@ -104,6 +108,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             notices,
             activeLease
         );
+        ValidateMailReceiptDeliveries(mailReceipts, captures, mails, internalMailOutboxes, storeRevision);
         return new GalateaDelegationStateSnapshot(
             owner,
             baseline,
@@ -115,7 +120,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
             GalateaDelegationStateSnapshot.Freeze(mails),
             GalateaDelegationStateSnapshot.Freeze(internalMailOutboxes),
             GalateaDelegationStateSnapshot.Freeze(notices),
-            activeLease
+            activeLease,
+            GalateaDelegationStateSnapshot.Freeze(mailReceipts)
         );
     }
 

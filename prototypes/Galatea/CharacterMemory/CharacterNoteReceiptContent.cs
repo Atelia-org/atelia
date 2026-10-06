@@ -5,7 +5,7 @@ using Atelia.MemoPod;
 
 namespace Atelia.Galatea.Server.CharacterMemory;
 
-/// <summary>One immutable Applied batch. Content comes from the capture ledger, never a current Memo lookup.</summary>
+/// <summary>Legacy V4 Applied-source authority, used only while proving and upgrading historical receipt rows.</summary>
 internal sealed class CharacterNoteReceiptFacts : IEquatable<CharacterNoteReceiptFacts> {
     internal CharacterNoteReceiptFacts(string sourceActionAddress, IReadOnlyList<CharacterNoteAppliedMemo> memos) {
         _ = EventAddressTextCodec.Parse(sourceActionAddress);
@@ -39,7 +39,7 @@ internal sealed class CharacterNoteReceiptFacts : IEquatable<CharacterNoteReceip
     }
 }
 
-/// <summary>All saved identities, plus either all complete texts or none. This is content selection.</summary>
+/// <summary>Historical note-save-receipt content. Its complete-text and ID-only wire meanings remain unchanged.</summary>
 internal sealed class CharacterNoteReceiptSelection {
     internal CharacterNoteReceiptSelection(CharacterNoteReceiptFacts facts, bool includeExactTexts)
         : this(facts.SourceActionAddress, facts.Memos.Select(m => m.MemoId).ToArray(),

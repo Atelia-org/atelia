@@ -140,8 +140,9 @@ public sealed class GalateaAutonomyPostProcessingTests {
             SessionInputContent stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns).ObservationContent;
             PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(stored);
-            Assert.Equal(NoteText, Assert.Single(Assert.Single(observation.Notices
-                .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection!.ExactTexts));
+            Assert.Equal(ActionReceiptPreview.Create(NoteText), Assert.Single(Assert.IsType<NoteReceiptBatch>(
+                Assert.Single(observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>(),
+                    notice => notice.Batch is NoteReceiptBatch).Batch).Items).Preview);
             Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
             Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             Assert.Equal(NoteText, Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
@@ -266,8 +267,9 @@ public sealed class GalateaAutonomyPostProcessingTests {
                     .OfType<ObservationMessage>().Last().Content);
                 PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(
                     GalateaRequestedObservation.BusinessContent(content));
-                Assert.Equal(NoteText, Assert.Single(Assert.Single(observation.Notices
-                    .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection!.ExactTexts));
+                Assert.Equal(ActionReceiptPreview.Create(NoteText), Assert.Single(Assert.IsType<NoteReceiptBatch>(
+                    Assert.Single(observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>(),
+                        notice => notice.Batch is NoteReceiptBatch).Batch).Items).Preview);
                 Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
             }
             observer?.OnTextDelta(text);

@@ -38,9 +38,9 @@ internal static class LegacyPreparedV7Fixture {
 
     /// <summary>Seeds an empty test repository with actual v1 raw inputs and a nonempty v7 exact request.</summary>
     internal static EventAddress CreatePending(string repository, CompletionConnectionConfig connection,
-        ICompletionClient client, bool started, string adapterLabel) {
+        ICompletionClient client, bool started, string adapterLabel, string? frozenObservation = null) {
         const string systemPrompt = "Historical Galatea character instructions.";
-        string observationText = GalateaUserMessageEnvelope.Wrap("fixture observation");
+        string observationText = frozenObservation ?? GalateaUserMessageEnvelope.Wrap("fixture observation");
         EventAddress runtimeAddress;
         EventAddress promptAddress;
         EventAddress created;

@@ -13,8 +13,8 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 /// SessionJournal TurnLock; this store additionally holds a process-lifetime
 /// exclusive filesystem lock and serializes every operation on one handle.
 /// </summary>
-internal sealed partial class CharacterMemorySqliteStore : IDisposable {
-    internal const int SchemaVersion = 4;
+internal sealed partial class CharacterMemorySqliteStore : IDisposable, IActionReceiptDeliveryStore {
+    internal const int SchemaVersion = 5;
     internal const int ApplicationId = 0x47434D31; // "GCM1"
     internal const string DatabaseFileName = "character-memory.sqlite3";
     internal const string LockFileName = "character-memory.lock";
@@ -30,6 +30,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         "843f6eeaf776183c0195c169f673eb13d75d91548007eeac64d1d2a25641cff6";
     private const string V4MetaSchemaSha256 =
         "2dcf15ce5f4a1f79e81ccad5d8538b508a29db7b9ac8ed3f4101f11c2dff1518";
+    private const string V5MetaSchemaSha256 =
+        "a478dbc153476c6deaec090e2d76b88def049e8417272e1fecc73c8a8b742bbc";
     private const string CaptureSchemaSha256 =
         "bdd6634ced7368d131652007a23eafd62a4345095bf6583e95d707b9531429fd";
     private const string V2NoteSchemaSha256 =
@@ -140,8 +142,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     internal static CharacterMemorySqliteStore OpenExisting(
         string storeDirectory,
         CharacterMemoryStoreOwner owner,
-        CharacterMemoryStoreTestHooks? hooks = null,
-        bool upgradeLegacyFormat = false
+        CharacterMemoryStoreTestHooks? hooks = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(storeDirectory);
         GalateaDelegationDurableFiles.RequireLinux();
@@ -172,18 +173,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 create: false
             );
             ConfigureOpenedDatabase(connection);
-            if (ReadPragmaInteger(connection, "user_version") != SchemaVersion && !upgradeLegacyFormat) {
+            if (ReadPragmaInteger(connection, "user_version") != SchemaVersion) {
                 throw new InvalidDataException("Character Memory requires an explicit offline format upgrade before opening.");
             }
-            MigrateV1ToV2IfNeeded(
-                connection,
-                owner,
-                hooks ?? CharacterMemoryStoreTestHooks.None
-            );
-            MigrateV2ToV3IfNeeded(
-                connection, owner, hooks ?? CharacterMemoryStoreTestHooks.None
-            );
-            MigrateV3ToV4IfNeeded(connection, owner, hooks ?? CharacterMemoryStoreTestHooks.None);
             CharacterMemoryStatusSnapshot snapshot =
                 ValidateOpenedDatabase(connection, owner);
             return new CharacterMemorySqliteStore(
@@ -568,7 +560,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         command.CommandText = """
             CREATE TABLE character_memory_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 4),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 5),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -744,10 +736,11 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     quarantine_code, quarantine_observed_pod_state_identity,
                     store_revision
                 ) VALUES (
-                    1, 4, $user, $repository, $segment, $tail, $head,
+                    1, $schema, $user, $repository, $segment, $tail, $head,
                     'Provisioning', $target, NULL, NULL, NULL, NULL, NULL, 0
                 );
                 """;
+            command.Parameters.AddWithValue("$schema", SchemaVersion);
             command.Parameters.AddWithValue("$user", owner.CharacterId);
             command.Parameters.AddWithValue(
                 "$repository",
@@ -849,7 +842,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         ValidateGlobalCountInvariants(connection, status);
         ValidateAllDerivedInfoWork(connection);
         if (expectedVersion >= 3) {
-            ValidateReceiptDeliveryRows(connection);
+            if (expectedVersion < 5) { ValidateLegacyReceiptDeliveryRows(connection); }
+            else { ValidateReceiptDeliveryRows(connection); }
         }
         return status;
     }
@@ -926,7 +920,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         RequireExactTableSchema(
             connection,
             "character_memory_meta",
-            expectedVersion switch { 2 => V2MetaSchemaSha256, 3 => V3MetaSchemaSha256, 4 => V4MetaSchemaSha256,
+            expectedVersion switch { 2 => V2MetaSchemaSha256, 3 => V3MetaSchemaSha256, 4 => V4MetaSchemaSha256, 5 => V5MetaSchemaSha256,
                 _ => throw Corrupt("Unsupported Character Memory schema version.") }
         );
         RequireExactTableSchema(

@@ -85,14 +85,37 @@ internal static class GalateaObservationSchema {
         int receiptCount = 0;
         int externalCount = 0;
         int index = 0;
+        bool actionReceiptPrefixEnded = false;
+        bool? actionReceiptPreviews = null;
+        var actionReceiptDomains = new HashSet<string>(StringComparer.Ordinal);
+        long actionReceiptBytes = 2; // The selected action receipt notice array's brackets.
         foreach (JsonElement notice in notices.EnumerateArray()) {
             string noticeKind = ValidateNotice(notice);
-            if (noticeKind is "note-save-receipt" or "legacy-note-save-receipt") {
+            if (noticeKind == "action-receipt-v1") {
+                JsonElement receipt = notice.GetProperty("receipt");
+                string domain = receipt.GetProperty("kind").GetString()!;
+                if (actionReceiptPrefixEnded || !actionReceiptDomains.Add(domain)
+                    || domain == "mail" && actionReceiptDomains.Contains("note-save")) {
+                    throw new InvalidDataException("Action receipts must be a Mail then Note prefix with at most one batch per domain.");
+                }
+                bool previews = GalateaActionReceiptSchema.Validate(receipt);
+                if (actionReceiptPreviews is { } expected && expected != previews) {
+                    throw new InvalidDataException("All action receipt notices must use the same preview projection.");
+                }
+                actionReceiptPreviews = previews;
+                actionReceiptBytes += GalateaInputValidation.StrictUtf8.GetByteCount(notice.GetRawText())
+                    + (actionReceiptDomains.Count > 1 ? 1 : 0);
+            }
+            else if (noticeKind is "note-save-receipt" or "legacy-note-save-receipt") {
+                actionReceiptPrefixEnded = true;
                 receiptCount++;
                 if (index != notices.GetArrayLength() - 1 || receiptCount > 1) { throw new InvalidDataException("Receipt must be the single final notice."); }
             }
-            else { externalCount++; }
+            else { actionReceiptPrefixEnded = true; externalCount++; }
             index++;
+        }
+        if (actionReceiptBytes > GalateaObservationLimits.MaximumActionReceiptNoticesUtf8Bytes) {
+            throw new InvalidDataException("Action receipt notice array exceeds its JSON byte limit.");
         }
         if (kind == "heartbeat-activation" && externalCount != 0 || kind == "delegate-reply" && externalCount == 0) {
             throw new InvalidDataException("Notice kinds do not match the trigger.");
@@ -117,7 +140,20 @@ internal static class GalateaObservationSchema {
             if (notice.TryGetProperty("body", out _)) { paths.Add($"/notices/{i}/body"); }
             if (notice.TryGetProperty("detail", out JsonElement detail) && detail.ValueKind == JsonValueKind.String) { paths.Add($"/notices/{i}/detail"); }
             if (notice.TryGetProperty("receipt", out JsonElement receipt)) {
-                for (int j = 0; j < receipt.GetProperty("exactTexts").GetArrayLength(); j++) { paths.Add($"/notices/{i}/receipt/exactTexts/{j}"); }
+                if (notice.GetProperty("kind").GetString() == "action-receipt-v1") {
+                    int j = 0;
+                    foreach (JsonElement item in receipt.GetProperty("items").EnumerateArray()) {
+                        foreach (string field in new[] { "preview", "recipientPreview" }) {
+                            if (item.TryGetProperty(field, out JsonElement preview) && preview.ValueKind == JsonValueKind.String) {
+                                paths.Add($"/notices/{i}/receipt/items/{j}/{field}");
+                            }
+                        }
+                        j++;
+                    }
+                }
+                else {
+                    for (int j = 0; j < receipt.GetProperty("exactTexts").GetArrayLength(); j++) { paths.Add($"/notices/{i}/receipt/exactTexts/{j}"); }
+                }
             }
             i++;
         }
@@ -215,6 +251,14 @@ internal static class GalateaObservationSchema {
                 GalateaInputValidation.RequireObject(value, "kind", "sender", "receipt");
                 RequireSenderKind(GalateaInputValidation.ReadSender(value.GetProperty("sender")), "runtime");
                 ValidateReceipt(value.GetProperty("receipt"));
+                break;
+            case "action-receipt-v1":
+                GalateaInputValidation.RequireObject(value, "kind", "sender", "receipt");
+                GalateaInputSource receiptSender = GalateaInputValidation.ReadSender(value.GetProperty("sender"));
+                if (receiptSender != new GalateaInputSource("runtime", "galatea", "Galatea runtime")) {
+                    throw new InvalidDataException("Action receipt requires the Galatea runtime sender.");
+                }
+                _ = GalateaActionReceiptSchema.Validate(value.GetProperty("receipt"));
                 break;
             case "legacy-reply":
             case "legacy-delivery-failure":

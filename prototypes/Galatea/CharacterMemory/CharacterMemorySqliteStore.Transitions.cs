@@ -410,7 +410,10 @@ internal sealed partial class CharacterMemorySqliteStore {
                         && ReadDerivedInfoWorkExact(request.SourceActionAddress)
                             is not null
                         && (result.Disposition == CharacterMemorySettleDisposition.AlreadyApplied
-                            || ReadReceiptDeliveryExact(request.SourceActionAddress) is not null)
+                            || ReadReceiptDeliveryExact(request.SourceActionAddress) is { } receipt
+                                && receipt.CreatedRevision == result.StoreRevision
+                                && receipt.FrozenBatch is NoteReceiptBatch frozen
+                                && frozen.Equals(FreezeNoteReceiptBatch(result.Capture)))
                         && status.StoreRevision == result.StoreRevision;
                 }
             );

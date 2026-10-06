@@ -36,7 +36,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         CharacterMemoryStoreTestHooks hooks
     ) {
         long version = ReadPragmaInteger(connection, "user_version");
-        if (version is 2 or 3 or SchemaVersion) { return; }
+        if (version is 2 or 3 or 4 or SchemaVersion) { return; }
         if (version != PreviousSchemaVersion) {
             throw Corrupt(
                 $"Character Memory schema version '{version}' is unsupported."

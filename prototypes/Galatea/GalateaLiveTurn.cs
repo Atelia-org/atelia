@@ -62,7 +62,8 @@ internal sealed class GalateaLiveTurn {
     public GalateaLiveTurn(
         GalateaFreshInput? freshInput,
         GalateaTurnOptions options,
-        GalateaDurableReplyLease? durableReplyLease = null
+        GalateaDurableReplyLease? durableReplyLease = null,
+        GalateaFreshAdmissionPlan? admissionPlan = null
     ) {
         bool freshInputLeaseValid = freshInput switch {
             GalateaFreshInput.PlayerAction => true,
@@ -83,6 +84,15 @@ internal sealed class GalateaLiveTurn {
         FreshInput = freshInput;
         Options = options ?? throw new ArgumentNullException(nameof(options));
         DurableReplyLease = durableReplyLease;
+        if (admissionPlan is not null && !ReferenceEquals(admissionPlan.FreshInput, freshInput)) {
+            throw new ArgumentException("A live turn requires the exact planned fresh input.", nameof(admissionPlan));
+        }
+        if (admissionPlan is not null
+            && (admissionPlan.ConnectionState != options.ConnectionState
+                || (admissionPlan.ReplyMembers.Count == 0) != (durableReplyLease is null))) {
+            throw new ArgumentException("The admission plan requires its frozen connection state and claimed reply membership.", nameof(admissionPlan));
+        }
+        AdmissionPlan = admissionPlan;
         StopController = new GalateaTurnStopController();
     }
 
@@ -91,6 +101,8 @@ internal sealed class GalateaLiveTurn {
     internal GalateaFreshInput? FreshInput { get; }
 
     internal GalateaDurableReplyLease? DurableReplyLease { get; }
+
+    internal GalateaFreshAdmissionPlan? AdmissionPlan { get; }
 
     internal GalateaAutonomyCadenceTurnSettlement
         AutonomyCadenceSettlement { get; } = new();

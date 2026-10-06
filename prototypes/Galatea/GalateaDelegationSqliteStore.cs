@@ -7,8 +7,8 @@ namespace Atelia.Galatea.Server;
 /// <summary>
 /// Explicitly constructed durable delegation current-state authority.
 /// </summary>
-internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
-    internal const int SchemaVersion = 5;
+internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActionReceiptDeliveryStore {
+    internal const int SchemaVersion = 6;
     internal const int ApplicationId = 0x47444C47; // "GDLG"
     internal const string DatabaseFileName = "delegation-state.sqlite3";
     internal const string LockFileName = "delegation-state.lock";
@@ -381,7 +381,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             }
         }
         RequireOwner(connection, transaction: null, owner, limits, expectedVersion);
-        return ReadSnapshotCore(connection, transaction: null);
+        return ReadSnapshotCore(connection, transaction: null, expectedVersion);
     }
 
     private static void ValidateSchemaIdentity(
@@ -422,6 +422,11 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             expected.Add("table:internal_mail_outbox");
             expected.Add("index:ux_internal_mail_message_id");
             expected.Add("index:ix_internal_mail_target_state");
+        }
+        if (expectedVersion >= 6) {
+            expected.Add("table:mail_receipt_delivery");
+            expected.Add("index:ux_mail_receipt_single_bound");
+            expected.Add("index:ix_mail_receipt_pending_schedule");
         }
         if (!actual.SetEquals(expected)) {
             throw new InvalidDataException(
@@ -529,6 +534,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "lease_id->reply_lease.lease_id:RESTRICT",
             "notice_id->reply_notice.notice_id:RESTRICT"
         ]);
+        if (expectedVersion >= 6) { ValidateMailReceiptDeliverySchema(connection); }
     }
 
     private static IReadOnlyList<string> ColumnsForVersion(

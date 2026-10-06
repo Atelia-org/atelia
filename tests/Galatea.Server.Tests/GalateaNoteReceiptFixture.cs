@@ -17,7 +17,10 @@ namespace Atelia.Galatea.Server.Tests;
 /// </summary>
 internal static class GalateaNoteReceiptFixture {
     internal static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
-    internal const string NoteText = "The blue door opens toward the quiet garden.";
+    internal const string UniqueMiddle = "UNIQUE_NOTE_MIDDLE_MUST_STAY_IN_MEMOPOD";
+    internal const string NoteText = "The blue door opens toward the quiet garden. "
+        + "The map records a long path through the apple trees. "
+        + UniqueMiddle + " The pond reflects the stars beyond the glasshouse.";
     internal const string NoteAction = "I submitted a long-term Note save request with exact text:\n"
         + NoteText + "\nI completed the submission.";
     internal const string DerivedTitle = "Blue garden door";
@@ -31,7 +34,7 @@ internal static class GalateaNoteReceiptFixture {
         GalateaServerAgentHostedService Loop, GalateaLabClock Clock, Factory Completion);
 
     internal sealed record DurableState(Memo Note, string PodIdentity,
-        CharacterNoteReceiptDeliverySnapshot Receipt, IReadOnlyList<SessionCompletedTurnProjection> Turns);
+        ActionReceiptDeliverySnapshot Receipt, IReadOnlyList<SessionCompletedTurnProjection> Turns);
 
     internal static async Task<Epoch> StartEpochAsync(GalateaScenarioLab lab, GalateaLabClock clock, Factory completion) {
         IServiceProvider services = lab.Host.Factory.Services; // No HTTP client or Player request.
@@ -86,7 +89,7 @@ internal static class GalateaNoteReceiptFixture {
             return new(Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
                     epoch.Session.Character.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()),
                 Assert.IsType<string>(memory.ReadStatusSnapshot().SettledDefaultPodStateIdentity),
-                Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(memory.ReadReceiptDeliveryExact(source)),
+                Assert.IsType<ActionReceiptDeliverySnapshot>(memory.ReadReceiptDeliveryExact(source)),
                 turns);
         }
         finally { epoch.Session.TurnLock.Release(); }

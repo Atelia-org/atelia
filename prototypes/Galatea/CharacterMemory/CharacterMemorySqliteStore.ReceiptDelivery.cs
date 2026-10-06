@@ -30,7 +30,7 @@ internal sealed partial class CharacterMemorySqliteStore {
             )
         ) STRICT
         """;
-    private const string ReceiptDeliverySchemaSql = """
+    private const string V4ReceiptDeliverySchemaSql = """
         CREATE TABLE note_receipt_delivery (
             source_action_address TEXT NOT NULL PRIMARY KEY
                 REFERENCES note_action_capture(source_action_address) ON DELETE RESTRICT,
@@ -66,30 +66,56 @@ internal sealed partial class CharacterMemorySqliteStore {
         WHERE state = 'Pending'
         """;
 
+    private const string ReceiptDeliverySchemaSql = """
+        CREATE TABLE note_receipt_delivery (
+            source_action_address TEXT NOT NULL PRIMARY KEY
+                REFERENCES note_action_capture(source_action_address) ON DELETE RESTRICT,
+            state TEXT NOT NULL CHECK(state IN ('Pending', 'ObservationBound', 'Delivered')),
+            created_revision INTEGER NOT NULL CHECK(created_revision >= 1),
+            state_revision INTEGER NOT NULL CHECK(state_revision >= created_revision),
+            receipt_content BLOB NULL,
+            expected_session_head TEXT NULL,
+            bound_input BLOB NULL,
+            observation_address TEXT NULL,
+            CHECK(
+                (state = 'Pending' AND receipt_content IS NOT NULL AND expected_session_head IS NULL
+                    AND bound_input IS NULL AND observation_address IS NULL)
+                OR (state = 'ObservationBound' AND receipt_content IS NOT NULL AND expected_session_head IS NOT NULL
+                    AND bound_input IS NOT NULL AND observation_address IS NULL)
+                OR (state = 'Delivered' AND receipt_content IS NULL AND expected_session_head IS NOT NULL
+                    AND bound_input IS NULL AND observation_address IS NOT NULL)
+            )
+        ) STRICT
+        """;
+
     private static void CreateReceiptDeliverySchema(
         SqliteConnection connection, SqliteTransaction? transaction = null, int version = SchemaVersion
     ) {
         using SqliteCommand command = connection.CreateCommand();
         if (transaction is not null) { command.Transaction = transaction; }
-        command.CommandText = (version == 3 ? V3ReceiptDeliverySchemaSql : ReceiptDeliverySchemaSql) + ";"
-            + ReceiptBoundIndexSql + ";" + ReceiptPendingIndexSql + ";";
+        command.CommandText = ReceiptSchemaSql(version) + ";" + ReceiptBoundIndexSql + ";" + ReceiptPendingIndexSql + ";";
         command.ExecuteNonQuery();
     }
 
-    internal CharacterNoteReceiptDeliverySnapshot? ReadPendingReceiptDelivery()
+    private static string ReceiptSchemaSql(int version) => version switch {
+        3 => V3ReceiptDeliverySchemaSql,
+        4 => V4ReceiptDeliverySchemaSql,
+        5 => ReceiptDeliverySchemaSql,
+        _ => throw Corrupt("Unsupported Character Note receipt schema."),
+    };
+
+    public ActionReceiptDeliverySnapshot? ReadPendingReceiptDelivery()
         => ReadReceiptDeliveryWhere("state = 'Pending' ORDER BY created_revision, source_action_address LIMIT 1");
 
-    internal CharacterNoteReceiptDeliverySnapshot? ReadBoundReceiptDelivery()
+    public ActionReceiptDeliverySnapshot? ReadBoundReceiptDelivery()
         => ReadReceiptDeliveryWhere("state = 'ObservationBound'");
 
-    internal CharacterNoteReceiptDeliverySnapshot? ReadReceiptDeliveryExact(string source) {
+    public ActionReceiptDeliverySnapshot? ReadReceiptDeliveryExact(string source) {
         RequireEventAddress(source, nameof(source));
         return ReadReceiptDeliveryWhere("source_action_address = $source", source);
     }
 
-    private CharacterNoteReceiptDeliverySnapshot? ReadReceiptDeliveryWhere(
-        string predicate, string? source = null
-    ) {
+    private ActionReceiptDeliverySnapshot? ReadReceiptDeliveryWhere(string predicate, string? source = null) {
         lock (_gate) {
             ThrowIfDisposed();
             using SqliteConnection connection = OpenVerifiedConnection();
@@ -97,50 +123,133 @@ internal sealed partial class CharacterMemorySqliteStore {
         }
     }
 
-    private static CharacterNoteReceiptDeliverySnapshot? ReadReceiptDeliveryCore(
-        SqliteConnection connection, SqliteTransaction? transaction,
-        string predicate, string? source = null
+    private static ActionReceiptDeliverySnapshot? ReadReceiptDeliveryCore(
+        SqliteConnection connection, SqliteTransaction? transaction, string predicate, string? source = null
     ) {
         using SqliteCommand command = connection.CreateCommand();
         if (transaction is not null) { command.Transaction = transaction; }
-        bool legacySchema = ReadPragmaInteger(connection, "user_version") == 3;
         command.CommandText = """
-            SELECT source_action_address, state, CAST(notice_body AS BLOB), created_revision,
-                   state_revision, expected_session_head, rendered_observation,
-                   observation_address,
-            """ + (legacySchema ? " 'legacy-text', NULL " : " receipt_format, bound_input ")
-            + " FROM note_receipt_delivery WHERE " + predicate;
+            SELECT source_action_address, state, created_revision, state_revision,
+                receipt_content, expected_session_head, bound_input, observation_address
+            FROM note_receipt_delivery WHERE
+            """ + " " + predicate;
         if (source is not null) { command.Parameters.AddWithValue("$source", source); }
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()) { return null; }
-        CharacterNoteReceiptDeliveryState state = reader.GetString(1) switch {
-            "Pending" => CharacterNoteReceiptDeliveryState.Pending,
-            "ObservationBound" => CharacterNoteReceiptDeliveryState.ObservationBound,
-            "Delivered" => CharacterNoteReceiptDeliveryState.Delivered,
+        ActionReceiptDeliveryState state = reader.GetString(1) switch {
+            "Pending" => ActionReceiptDeliveryState.Pending,
+            "ObservationBound" => ActionReceiptDeliveryState.ObservationBound,
+            "Delivered" => ActionReceiptDeliveryState.Delivered,
             _ => throw Corrupt("Unknown Character Note receipt delivery state."),
         };
-        var result = new CharacterNoteReceiptDeliverySnapshot(
-            reader.GetString(0), state, reader.IsDBNull(2) ? null : ReadFrozenReceiptBody(reader, 2), reader.GetInt64(3),
-            reader.GetInt64(4), reader.IsDBNull(5) ? null : reader.GetString(5),
-            reader.IsDBNull(6) ? null : reader.GetString(6),
-            reader.IsDBNull(7) ? null : reader.GetString(7),
-            BoundInput: reader.IsDBNull(9) ? null : ReadBoundInput(reader.GetFieldValue<byte[]>(9))
-        );
-        string format = reader.GetString(8);
+        var result = new ActionReceiptDeliverySnapshot(
+            reader.GetString(0), state, reader.GetInt64(2), reader.GetInt64(3),
+            reader.IsDBNull(4) ? null : ReadFrozenNoteReceiptBatch(reader.GetFieldValue<byte[]>(4)),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.IsDBNull(6) ? null : ReadBoundInput(reader.GetFieldValue<byte[]>(6)),
+            reader.IsDBNull(7) ? null : reader.GetString(7));
         if (reader.Read()) { throw Corrupt("Multiple Character Note receipt delivery rows matched."); }
         reader.Close();
-        if (format == "applied-source-v1") {
-            CharacterMemoryCaptureSnapshot capture = ReadCaptureCore(connection, transaction, result.SourceActionAddress)
-                ?? throw Corrupt("Receipt source capture is absent.");
-            if (capture.State != CharacterMemoryCaptureState.Applied || capture.StateRevision != result.CreatedRevision || result.NoticeBody is not null) {
-                throw Corrupt("Semantic receipt does not reference its immutable Applied capture.");
-            }
-            result = result with { Facts = new CharacterNoteReceiptFacts(capture.SourceActionAddress,
-                capture.Notes.Select(note => new CharacterNoteAppliedMemo(capture.SourceActionAddress,
-                    note.ArtifactOrdinal, CharacterNoteDefaultPodV1.PodId, MemoId.Parse(note.MemoId!), note.ExactText)).ToArray()) };
-        }
-        else if (format != "legacy-text" || result.NoticeBody is null) { throw Corrupt("Invalid receipt format."); }
+        RequireReceiptCaptureRelation(connection, transaction, result);
+        RequireReceiptRowState(connection, transaction, result);
         return result;
+    }
+
+    private static void RequireReceiptRowState(
+        SqliteConnection connection, SqliteTransaction? transaction, ActionReceiptDeliverySnapshot row
+    ) {
+        RequireEventAddress(row.SourceActionAddress, nameof(row.SourceActionAddress));
+        long storeRevision = ReadStatusCore(connection, transaction).StoreRevision;
+        if (row.StateRevision > storeRevision) { throw Corrupt("Receipt revision exceeds its owner revision."); }
+        if (row.State != ActionReceiptDeliveryState.Pending && row.StateRevision <= row.CreatedRevision) {
+            throw Corrupt("A bound or delivered receipt requires a later transition revision.");
+        }
+        if (row.ExpectedSessionHead is { } head) { RequireEventAddress(head, nameof(head)); }
+        if (row.ObservationAddress is { } address) { RequireEventAddress(address, nameof(address)); }
+        if (row.State != ActionReceiptDeliveryState.ObservationBound) { return; }
+        using SqliteCommand earlier = connection.CreateCommand();
+        if (transaction is not null) { earlier.Transaction = transaction; }
+        earlier.CommandText = """
+            SELECT count(*) FROM note_receipt_delivery
+            WHERE state = 'Pending' AND (created_revision < $revision
+                OR (created_revision = $revision AND source_action_address < $source));
+            """;
+        earlier.Parameters.AddWithValue("$revision", row.CreatedRevision);
+        earlier.Parameters.AddWithValue("$source", row.SourceActionAddress);
+        if ((long)earlier.ExecuteScalar()! != 0) { throw Corrupt("Bound Note receipt skipped an earlier Pending batch."); }
+        RequireReceiptInput(row.BoundInput ?? throw Corrupt("Bound Note receipt has no frozen input."), row);
+    }
+
+    private static NoteReceiptBatch ReadFrozenNoteReceiptBatch(byte[] bytes) {
+        if (bytes.Length > 128 * 1024) { throw Corrupt("Frozen Note receipt exceeds its codec budget."); }
+        try {
+            NoteReceiptBatch batch = ActionReceiptBatchCodec.ReadFrozen(StrictUtf8.GetString(bytes)) as NoteReceiptBatch
+                ?? throw Corrupt("Character Memory receipt must contain a Note batch.");
+            batch.RequireFrozen();
+            return batch;
+        }
+        catch (ArgumentException) { throw Corrupt("Frozen Note receipt must be valid UTF-8 receipt content."); }
+        catch (JsonException) { throw Corrupt("Frozen Note receipt must be valid receipt JSON."); }
+    }
+
+    private static NoteReceiptBatch FreezeNoteReceiptBatch(CharacterMemoryCaptureSnapshot capture) {
+        if (capture.State is not (CharacterMemoryCaptureState.Planned or CharacterMemoryCaptureState.Applied)
+            || capture.Notes.Count != capture.ArtifactCount
+            || capture.Notes.Count is < 1 or > CharacterNoteBounds.MaximumIntentCount) {
+            throw Corrupt("Applied receipt requires a nonempty bounded Note batch.");
+        }
+        var items = new NoteReceiptItem[capture.Notes.Count];
+        for (int ordinal = 0; ordinal < items.Length; ordinal++) {
+            CharacterMemoryNoteSnapshot note = capture.Notes[ordinal];
+            if (note.ArtifactOrdinal != ordinal || note.MemoId is null) {
+                throw Corrupt("Applied receipt requires assigned Memo IDs in artifact order.");
+            }
+            items[ordinal] = new NoteReceiptItem(MemoId.Parse(note.MemoId), ActionReceiptPreview.Create(note.ExactText));
+        }
+        var batch = new NoteReceiptBatch(capture.SourceActionAddress, CharacterNoteDefaultPodV1.PodId, items);
+        batch.RequireFrozen();
+        return batch;
+    }
+
+    private static byte[] SerializeNoteReceiptBatch(NoteReceiptBatch batch)
+        => StrictUtf8.GetBytes(ActionReceiptBatchCodec.SerializeFrozen(batch));
+
+    // Only immutable capture identity and Memo IDs are checked here. Receipt reads
+    // and binds do not hydrate the ledger's complete Note text or the current Pod.
+    private static void RequireReceiptCaptureRelation(
+        SqliteConnection connection, SqliteTransaction? transaction, ActionReceiptDeliverySnapshot row
+    ) {
+        using SqliteCommand capture = connection.CreateCommand();
+        if (transaction is not null) { capture.Transaction = transaction; }
+        capture.CommandText = "SELECT state, state_revision, artifact_count FROM note_action_capture WHERE source_action_address = $source;";
+        capture.Parameters.AddWithValue("$source", row.SourceActionAddress);
+        int count;
+        using (SqliteDataReader reader = capture.ExecuteReader()) {
+            if (!reader.Read() || reader.GetString(0) != "Applied" || reader.GetInt64(1) != row.CreatedRevision) {
+                throw Corrupt("Receipt delivery does not match its immutable Applied capture.");
+            }
+            count = reader.GetInt32(2);
+        }
+        if (row.FrozenBatch is not { } frozen) { return; }
+        if (frozen is not NoteReceiptBatch batch || batch.SourceActionAddress != row.SourceActionAddress
+            || batch.PodId != CharacterNoteDefaultPodV1.PodId || batch.Items.Count != count) {
+            throw Corrupt("Frozen Note receipt has invalid capture identity.");
+        }
+        batch.RequireFrozen();
+        using SqliteCommand ids = connection.CreateCommand();
+        if (transaction is not null) { ids.Transaction = transaction; }
+        ids.CommandText = "SELECT artifact_ordinal, memo_id FROM character_note WHERE source_action_address = $source ORDER BY artifact_ordinal;";
+        ids.Parameters.AddWithValue("$source", row.SourceActionAddress);
+        using SqliteDataReader notes = ids.ExecuteReader();
+        int ordinal = 0;
+        while (notes.Read()) {
+            if (ordinal >= batch.Items.Count || notes.GetInt32(0) != ordinal
+                || notes.GetString(1) != batch.Items[ordinal].MemoId.Value) {
+                throw Corrupt("Frozen Note receipt differs from its ordered Applied Memo IDs.");
+            }
+            ordinal++;
+        }
+        if (ordinal != count) { throw Corrupt("Frozen Note receipt is not the complete Applied batch."); }
     }
 
     private static SessionInputContent ReadBoundInput(byte[] bytes) {
@@ -153,138 +262,110 @@ internal sealed partial class CharacterMemorySqliteStore {
         return content;
     }
 
-    private static string ReadFrozenReceiptBody(SqliteDataReader reader, int ordinal) {
-        // Decode the original SQLite TEXT bytes strictly; GetString would
-        // replace malformed UTF-8 before the payload contract could reject it.
-        byte[] bytes = reader.GetFieldValue<byte[]>(ordinal);
-        if (bytes.Length > PlayerTurnObservationEnvelope.MaximumNoteSaveReceiptUtf8Bytes) {
-            throw Corrupt("Frozen receipt body exceeds its UTF-8 budget.");
-        }
-        try {
-            string body = StrictUtf8.GetString(bytes);
-            _ = new PlayerTurnNotice.NoteSaveReceipt(body);
-            return body;
-        }
-        catch (ArgumentException) {
-            throw Corrupt("Frozen receipt body must be nonblank valid UTF-8 text.");
-        }
-    }
-
-    internal CharacterNoteReceiptDeliverySnapshot BindReceiptDelivery(
-        string source, long expectedRevision, string expectedHead,
-        SessionInputContent observation
+    public ActionReceiptDeliverySnapshot BindReceiptDelivery(
+        string source, long expectedRevision, string expectedHead, SessionInputContent observation
     ) {
         RequireEventAddress(expectedHead, nameof(expectedHead));
         ArgumentNullException.ThrowIfNull(observation);
         _ = ReadBoundInput(observation.ToUtf8Json());
-        return TransitionReceiptDelivery(source, expectedRevision,
-            CharacterNoteReceiptDeliveryState.Pending,
-            CharacterNoteReceiptDeliveryState.ObservationBound,
-            expectedHead, observation, null);
+        return TransitionReceiptDelivery(source, expectedRevision, ActionReceiptDeliveryState.Pending,
+            ActionReceiptDeliveryState.ObservationBound, expectedHead, observation, null);
     }
 
-    internal CharacterNoteReceiptDeliverySnapshot RollbackReceiptDelivery(
-        string source, long expectedRevision
-    ) => TransitionReceiptDelivery(source, expectedRevision,
-        CharacterNoteReceiptDeliveryState.ObservationBound,
-        CharacterNoteReceiptDeliveryState.Pending, null, null, null);
+    public ActionReceiptDeliverySnapshot RollbackReceiptDelivery(string source, long expectedRevision)
+        => TransitionReceiptDelivery(source, expectedRevision, ActionReceiptDeliveryState.ObservationBound,
+            ActionReceiptDeliveryState.Pending, null, null, null);
 
-    internal CharacterNoteReceiptDeliverySnapshot CompleteReceiptDelivery(
-        string source, long expectedRevision, string observationAddress
-    ) {
+    public ActionReceiptDeliverySnapshot CompleteReceiptDelivery(string source, long expectedRevision, string observationAddress) {
         RequireEventAddress(observationAddress, nameof(observationAddress));
-        return TransitionReceiptDelivery(source, expectedRevision,
-            CharacterNoteReceiptDeliveryState.ObservationBound,
-            CharacterNoteReceiptDeliveryState.Delivered,
-            null, null, observationAddress);
+        return TransitionReceiptDelivery(source, expectedRevision, ActionReceiptDeliveryState.ObservationBound,
+            ActionReceiptDeliveryState.Delivered, null, null, observationAddress);
     }
 
-    private CharacterNoteReceiptDeliverySnapshot TransitionReceiptDelivery(
-        string source, long expectedRevision,
-        CharacterNoteReceiptDeliveryState from, CharacterNoteReceiptDeliveryState to,
+    private ActionReceiptDeliverySnapshot TransitionReceiptDelivery(
+        string source, long expectedRevision, ActionReceiptDeliveryState from, ActionReceiptDeliveryState to,
         string? expectedHead, SessionInputContent? observation, string? address
     ) {
         RequireEventAddress(source, nameof(source));
         if (expectedRevision < 1) { throw new ArgumentOutOfRangeException(nameof(expectedRevision)); }
         lock (_gate) {
             ThrowIfDisposed();
-            return ExecuteWrite("transition-note-receipt-delivery",
-                (connection, transaction) => {
-                    _ = RequireReady(connection, transaction);
-                    CharacterNoteReceiptDeliverySnapshot current = ReadReceiptDeliveryCore(
-                        connection, transaction, "source_action_address = $source", source
-                    ) ?? throw new CharacterMemoryStoreConflictException("Receipt delivery is absent.");
-                    if (current.StateRevision != expectedRevision || current.State != from) {
-                        throw new CharacterMemoryStoreConflictException("Receipt delivery handle is stale.");
+            return ExecuteWrite("transition-note-receipt-delivery", (connection, transaction) => {
+                _ = RequireReady(connection, transaction);
+                ActionReceiptDeliverySnapshot current = ReadReceiptDeliveryCore(connection, transaction,
+                    "source_action_address = $source", source)
+                    ?? throw new CharacterMemoryStoreConflictException("Receipt delivery is absent.");
+                if (current.StateRevision != expectedRevision || current.State != from) {
+                    throw new CharacterMemoryStoreConflictException("Receipt delivery handle is stale.");
+                }
+                if (to == ActionReceiptDeliveryState.ObservationBound) {
+                    RequireReceiptInput(observation!, current);
+                    ActionReceiptDeliverySnapshot? first = ReadReceiptDeliveryCore(connection, transaction,
+                        "state = 'Pending' ORDER BY created_revision, source_action_address LIMIT 1");
+                    if (first?.SourceActionAddress != source) {
+                        throw new CharacterMemoryStoreConflictException("Only the earliest Pending Note receipt may bind.");
                     }
-                    if (to == CharacterNoteReceiptDeliveryState.ObservationBound) {
-                        RequireReceiptInput(observation!, current);
-                        if (ReadReceiptDeliveryCore(connection, transaction,
-                                "state = 'ObservationBound'") is not null) {
-                            throw new CharacterMemoryStoreConflictException("Another receipt delivery is already bound.");
-                        }
+                    if (ReadReceiptDeliveryCore(connection, transaction, "state = 'ObservationBound'") is not null) {
+                        throw new CharacterMemoryStoreConflictException("Another receipt delivery is already bound.");
                     }
-                    if (to == CharacterNoteReceiptDeliveryState.Delivered) {
-                        expectedHead = current.ExpectedSessionHead;
-                        observation = null;
-                    }
-                    long revision = IncrementStoreRevision(connection, transaction);
-                    using SqliteCommand command = connection.CreateCommand();
-                    command.Transaction = transaction;
-                    command.CommandText = """
-                        UPDATE note_receipt_delivery SET state = $state,
-                            state_revision = $revision, expected_session_head = $head,
-                            rendered_observation = NULL, bound_input = $observation, observation_address = $address
-                        WHERE source_action_address = $source AND state_revision = $expected;
-                        """;
-                    command.Parameters.AddWithValue("$state", to.ToString());
-                    command.Parameters.AddWithValue("$revision", revision);
-                    command.Parameters.AddWithValue("$head", (object?)expectedHead ?? DBNull.Value);
-                    command.Parameters.AddWithValue("$observation", (object?)observation?.ToUtf8Json() ?? DBNull.Value);
-                    command.Parameters.AddWithValue("$address", (object?)address ?? DBNull.Value);
-                    command.Parameters.AddWithValue("$source", source);
-                    command.Parameters.AddWithValue("$expected", expectedRevision);
-                    RequireOne(command.ExecuteNonQuery(), "receipt delivery transition");
-                    return ReadReceiptDeliveryCore(connection, transaction,
-                        "source_action_address = $source", source)!;
-                },
-                result => ReceiptEquivalent(ReadReceiptDeliveryExact(source), result));
+                }
+                if (to == ActionReceiptDeliveryState.Delivered) { expectedHead = current.ExpectedSessionHead; }
+                long revision = IncrementStoreRevision(connection, transaction);
+                using SqliteCommand command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    UPDATE note_receipt_delivery SET state = $state, state_revision = $revision,
+                        receipt_content = CASE WHEN $state = 'Delivered' THEN NULL ELSE receipt_content END,
+                        expected_session_head = $head, bound_input = $observation, observation_address = $address
+                    WHERE source_action_address = $source AND state_revision = $expected;
+                    """;
+                command.Parameters.AddWithValue("$state", to.ToString());
+                command.Parameters.AddWithValue("$revision", revision);
+                command.Parameters.AddWithValue("$head", (object?)expectedHead ?? DBNull.Value);
+                command.Parameters.AddWithValue("$observation", (object?)observation?.ToUtf8Json() ?? DBNull.Value);
+                command.Parameters.AddWithValue("$address", (object?)address ?? DBNull.Value);
+                command.Parameters.AddWithValue("$source", source);
+                command.Parameters.AddWithValue("$expected", expectedRevision);
+                RequireOne(command.ExecuteNonQuery(), "receipt delivery transition");
+                return ReadReceiptDeliveryCore(connection, transaction, "source_action_address = $source", source)!;
+            }, result => ReceiptEquivalent(ReadReceiptDeliveryExact(source), result));
         }
     }
 
     private static void InsertPendingReceiptDelivery(
-        SqliteConnection connection, SqliteTransaction transaction,
-        CharacterMemoryCaptureSnapshot capture, long revision
+        SqliteConnection connection, SqliteTransaction transaction, CharacterMemoryCaptureSnapshot capture, long revision
     ) {
+        NoteReceiptBatch frozen = FreezeNoteReceiptBatch(capture);
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO note_receipt_delivery(source_action_address, state, notice_body,
-                created_revision, state_revision, expected_session_head,
-                rendered_observation, observation_address, receipt_format, bound_input)
-            VALUES ($source, 'Pending', NULL, $revision, $revision, NULL, NULL, NULL, 'applied-source-v1', NULL);
+            INSERT INTO note_receipt_delivery(source_action_address, state, created_revision, state_revision,
+                receipt_content, expected_session_head, bound_input, observation_address)
+            VALUES ($source, 'Pending', $revision, $revision, $receipt, NULL, NULL, NULL);
             """;
         command.Parameters.AddWithValue("$source", capture.SourceActionAddress);
         command.Parameters.AddWithValue("$revision", revision);
+        command.Parameters.AddWithValue("$receipt", SerializeNoteReceiptBatch(frozen));
         RequireOne(command.ExecuteNonQuery(), "receipt delivery creation");
     }
 
     private static void ValidateReceiptDeliverySchema(SqliteConnection connection, int version = SchemaVersion) {
-        string[] columns = [
-            "source_action_address", "state", "notice_body", "created_revision", "state_revision",
-            "expected_session_head", "rendered_observation", "observation_address"];
+        string[] columns = version == 5
+            ? ["source_action_address", "state", "created_revision", "state_revision", "receipt_content",
+                "expected_session_head", "bound_input", "observation_address"]
+            : ["source_action_address", "state", "notice_body", "created_revision", "state_revision",
+                "expected_session_head", "rendered_observation", "observation_address"];
         if (version == 4) { columns = [.. columns, "receipt_format", "bound_input"]; }
         RequireExactColumns(connection, "note_receipt_delivery", columns);
         RequireStrictTable(connection, "note_receipt_delivery");
         RequireExactTableSchema(connection, "note_receipt_delivery",
             Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
-                StrictUtf8.GetBytes(NormalizeSchemaSql(version == 3 ? V3ReceiptDeliverySchemaSql : ReceiptDeliverySchemaSql)))));
-        RequireExactForeignKeys(connection, "note_receipt_delivery", [
-            "source_action_address->note_action_capture.source_action_address:RESTRICT"]);
-        RequireExactIndex(connection, "note_receipt_delivery", "ux_note_receipt_single_bound",
-            -2, null, ReceiptBoundIndexSql);
+                StrictUtf8.GetBytes(NormalizeSchemaSql(ReceiptSchemaSql(version))))));
+        RequireExactForeignKeys(connection, "note_receipt_delivery",
+            ["source_action_address->note_action_capture.source_action_address:RESTRICT"]);
+        RequireExactIndex(connection, "note_receipt_delivery", "ux_note_receipt_single_bound", -2, null, ReceiptBoundIndexSql);
         RequireExactCompositeIndex(connection, "note_receipt_delivery", "ix_note_receipt_pending_schedule",
-            false, [(3, "created_revision"), (0, "source_action_address")], ReceiptPendingIndexSql);
+            false, [(version == 5 ? 2 : 3, "created_revision"), (0, "source_action_address")], ReceiptPendingIndexSql);
     }
 
     private static void ValidateReceiptDeliveryRows(SqliteConnection connection) {
@@ -294,72 +375,25 @@ internal sealed partial class CharacterMemorySqliteStore {
         using (SqliteDataReader reader = command.ExecuteReader()) {
             while (reader.Read()) { sources.Add(reader.GetString(0)); }
         }
-        long storeRevision = ReadStatusCore(connection, null).StoreRevision;
         foreach (string source in sources) {
             RequireEventAddress(source, nameof(source));
-            CharacterNoteReceiptDeliverySnapshot row = ReadReceiptDeliveryCore(connection, null,
-                "source_action_address = $source", source)!;
-            CharacterMemoryCaptureSnapshot capture = ReadCaptureCore(connection, null, source)
-                ?? throw Corrupt("Receipt source capture is absent.");
-            if (capture.State != CharacterMemoryCaptureState.Applied
-                || row.CreatedRevision != capture.StateRevision
-                || row.StateRevision > storeRevision) {
-                throw Corrupt("Receipt delivery does not match its durable Applied capture.");
-            }
-            // NoticeBody is frozen in the Applied transaction. Later renderer
-            // wording changes must not invalidate or rewrite that saved notice.
-            if (row.ExpectedSessionHead is { } head) { RequireEventAddress(head, nameof(head)); }
-            if (row.ObservationAddress is { } address) { RequireEventAddress(address, nameof(address)); }
-            if (row.RenderedObservation is { } observation
-                && (string.IsNullOrWhiteSpace(observation)
-                    || TextExtractorUtf8.GetByteCount(observation)
-                        > PlayerTurnObservationEnvelope.MaximumRenderedUtf8Bytes)) {
-                throw Corrupt("Receipt delivery Observation is invalid.");
-            }
-            if (row.RenderedObservation is { } rendered) {
-                RequireReceiptObservation(rendered, row.NoticeBody
-                    ?? throw Corrupt("Legacy bound receipt has no notice body."));
-            }
-            if (row.BoundInput is { } input) { RequireReceiptInput(input, row); }
+            _ = ReadReceiptDeliveryCore(connection, null, "source_action_address = $source", source);
         }
     }
 
-    private static void RequireReceiptInput(SessionInputContent input, CharacterNoteReceiptDeliverySnapshot row) {
+    private static void RequireReceiptInput(SessionInputContent input, ActionReceiptDeliverySnapshot row) {
         PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(input);
-        if (observation.Notices.Count == 0
-            || observation.Notices[^1] is not PlayerTurnNotice.NoteSaveReceipt notice
-            || observation.Notices.Count(n => n is PlayerTurnNotice.NoteSaveReceipt) != 1) {
-            throw Corrupt("Bound input must contain exactly its receipt as the final notice.");
-        }
-        if (row.Facts is { } facts) {
-            CharacterNoteReceiptSelection selection = notice.Selection
-                ?? throw Corrupt("Semantic receipt cannot bind a legacy body.");
-            if (selection.SourceActionAddress != facts.SourceActionAddress
-                || !selection.MemoIds.SequenceEqual(facts.Memos.Select(memo => memo.MemoId))
-                || selection.ExactTexts.Count != 0 && !selection.ExactTexts.SequenceEqual(facts.Memos.Select(memo => memo.ExactText))) {
-                throw Corrupt("Bound receipt content differs from its immutable Applied batch.");
-            }
-        }
-        else if (notice.Selection is not null || !notice.IsLegacyDurable
-            || notice.LegacySourceActionAddress != row.SourceActionAddress
-            || !string.Equals(notice.Body, row.NoticeBody, StringComparison.Ordinal)) {
-            throw Corrupt("Legacy receipt body must remain exact in a new structured Observation.");
+        PlayerTurnNotice.ActionReceipt[] notices = observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>()
+            .Where(notice => notice.Batch is NoteReceiptBatch).ToArray();
+        if (notices.Length != 1 || row.FrozenBatch is not NoteReceiptBatch batch
+            || !batch.MatchesProjection(notices[0].Batch)) {
+            throw Corrupt("Bound Note receipt differs from its immutable frozen batch.");
         }
     }
 
-    private static bool ReceiptEquivalent(CharacterNoteReceiptDeliverySnapshot? left, CharacterNoteReceiptDeliverySnapshot right) =>
-        left is not null && (left with { Facts = null }) == (right with { Facts = null })
-        && (left.Facts is null && right.Facts is null || left.Facts is { } a && right.Facts is { } b
-            && a.SourceActionAddress == b.SourceActionAddress && a.Memos.SequenceEqual(b.Memos));
-
-    private static void RequireReceiptObservation(string rendered, string noticeBody) {
-        if (!PlayerTurnObservationEnvelope.TryUnwrap(rendered, out PlayerTurnObservation observation)
-            || observation.Notices.Count == 0
-            || observation.Notices[^1] is not PlayerTurnNotice.NoteSaveReceipt receipt
-            || !string.Equals(receipt.Body, noticeBody, StringComparison.Ordinal)
-            || observation.Notices.Count(static item => item is PlayerTurnNotice.NoteSaveReceipt) != 1
-            || !string.Equals(PlayerTurnObservationEnvelope.Wrap(observation), rendered, StringComparison.Ordinal)) {
-            throw Corrupt("Bound receipt Observation must canonically contain exactly its frozen save receipt.");
-        }
-    }
+    private static bool ReceiptEquivalent(ActionReceiptDeliverySnapshot? left, ActionReceiptDeliverySnapshot right)
+        => left is not null && (left with { FrozenBatch = null }) == (right with { FrozenBatch = null })
+            && (left.FrozenBatch is null && right.FrozenBatch is null
+                || left.FrozenBatch is { } a && right.FrozenBatch is { } b
+                    && a.ToJson().GetRawText() == b.ToJson().GetRawText());
 }

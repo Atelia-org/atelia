@@ -75,10 +75,17 @@ md-json 只将需要 JSON 转义的候选值移到 fence，其余值留在 JSON 
 | `delegate-reply` | Runtime 触发；各条回信或失败通知保留自己的来源与 dispatch/thread/turn/notice 关联。 |
 | `inbound-mail` | 内部信记录核实的 Character sender；HTTP 注入记录已认证 Player 与信内自称 From，二者不混同。 |
 
-notices 与 recalls 各自保留来源；不能把整个 composite 当成 Player 的话。Note receipt 最多一条且在 notices
-末尾；Heartbeat 不带外界 Reply/DeliveryFailure，DelegateReply 必须有外界 notice。业务时间在形成 Observation
-时采样，不能因重渲染变成当前时间。具体字段、数量、UTF-8 边界和闭合 schema 由
-[`GalateaObservationContent`](../../prototypes/Galatea/GalateaObservationContent.cs) 验证。
+notices 与 recalls 各自保留来源；不能把整个 composite 当成 Player 的话。业务时间在形成 Observation 时采样，不能因重渲染变成当前时间。具体字段、数量、UTF-8 边界和闭合 schema 由 [`GalateaObservationContent`](../../prototypes/Galatea/GalateaObservationContent.cs) 验证。
+
+### spec [S-RUNTIME-NOTE-RECEIPT-SUFFIX] DEPRECATED：Note-only 末尾回执
+
+旧 `note-save-receipt` / legacy kind 最多一条并位于 notices 末尾；其历史 reader 保留此规则。当前 writer 的顺序由 @[S-RUNTIME-ACTION-RECEIPT-COMPOSER] 替代。
+
+### spec [S-RUNTIME-ACTION-RECEIPT-COMPOSER] 统一回执与回信一次规划
+
+新操作回执 MUST 遵循[统一回执方案](mail-note-receipt-preview-refactor-design.md)：`action-receipt-v1` 作为 notice 前缀，固定 Mail→Note，每域最多一个 FIFO batch，随后是按 completionSequence 排列的 Ready reply。总 notice 上限 16，选中 0/1/2 份回执时 Ready reply 至多 16/15/14。完整来源和业务 IDs 始终保留；全部 preview 要么 string、要么一起 null，选择不修改 owner snapshot。
+
+共享 fresh composer MUST 用实际 trigger、sender、timestamp、connectionState 和本轮行动文本规划 receipt 投影与 Ready prefix；其不可变计划贯穿 lease membership、optional recall 与 fresh send，所有参与者绑定相同最终输入。Heartbeat 不领取外界 Reply/DeliveryFailure，DelegateReply MUST 带真实外界 notice；回执不算 external notice。InboundMail / recovery 不新领取回执、回信或 recall，也不为回执单独创建轮次。这里只保证同一输入内选中的回执前置，不设置跨轮确认屏障。
 
 v4 输入在接纳时冻结 `connectionState`：`runtimeOverrideConnectionId` 是当时的进程内选择，`effectiveConnectionId` 是常规新回合选择，`turnConnectionId` 是该回合实际使用的连接，`effectiveName` 与 `turnName` 是对应的显示名，`lastChange` 是最近一次有效切换的可空历史记录。它覆盖全部新回合来源，包括 inbound-mail。快照随 Observation 正常落盘，仅是当时输入证据；恢复已有输入不从当前内存重算，也不从历史快照恢复 override。旧 v1/v2 没有此字段；v3 保留旧的机读状态投影，按原 schema 读取。具体语义见[状态驱动的连接选择](character-connection-state-design.md)。
 
@@ -86,16 +93,14 @@ v4 输入在接纳时冻结 `connectionState`：`runtimeOverrideConnectionId` �
 
 新写入的 canonical 内容是机读 JSON，不再是旧 `PlayerTurnObservationEnvelope` 的 heading/info string/fence。
 旧 text Observation 继续经有限的历史 envelope/classifier 读取；无法确定的来源不补造。已 Bound 的旧格式
-按原 exact bytes 证明，不把新 projector 用作旧 canonical verifier。旧 Pending notice 可以以显式 legacy 内容
-进入新的 structured Observation，来源格式与新绑定格式相互独立。
+按原 exact bytes 证明，不把新 projector 用作旧 canonical verifier。旧 Pending 回执经显式升级转换为当前 snapshot；旧 reply 的来源格式与新绑定格式仍相互独立。
 
 recent 从 typed 字段生成可读视图；只有 PlayerAction 的原动作可恢复到 composer，自动触发和 inbound 不
 冒充玩家动作。普通入口在 per-character `TurnLock` 内先结算 reply lease/extraction gap，再完成 normalization。
 normalizer 只接收玩家动作原文，不接收 Ready notice；一般异常仍沿现有 fail-open 政策，取消、fatal、显式
 `GalateaTurnException` 与输入超限阻止新轮次。待恢复 Prepared 或旧 Failed 不能被新输入覆盖；先恢复原任务或显式结束，再接收新轮次，不自动 abandon 旧输入。
 
-SQLite CutoffFrozen lease 原子选择已 Ready 的 bounded FIFO 前缀；后来 Ready 的结果留给下一轮。完成 desired
-setup、确定 recall/receipt 内容后，用 exact selected base 和同一份 structured Observation 绑定，再 append。
+SQLite CutoffFrozen lease 原子领取共享 composer 已选定的 Ready bounded FIFO membership；后来 Ready 的结果留给下一轮。完成 desired setup、确定 optional recall 内容后，用 exact selected base 和同一份 structured Observation 绑定，再 append。
 容量按机读内容检查；实际请求在渲染后检查发送限额。换布局不能删字段、重选 notice 或更改已绑定来源。
 inbound/recovery 不领取新 cutoff，也不重新 normalize 或 fresh recall。
 
@@ -103,7 +108,7 @@ inbound/recovery 不领取新 cutoff，也不重新 normalize 或 fresh recall�
 
 per-session `IGalateaPlayerTurnRecallProvider` 在 CharacterMemory lazy attach 后构造。`galatea.memo-recall=null` 或 maintenance mode 使用 disabled singleton，在 context/barrier 建立前直接绕过，因此 disabled 路径没有 selector I/O；仅将 binding 设 null 不影响独立的 save-receipt 投递。enabled recall 服务三种 fresh trigger（包括带 reply lease 的 PlayerAction），inbound/recovery 不做 fresh recall。
 
-它把已采样 timestamp、尚无 recall 的 typed Observation、本轮 Reply/DeliveryFailure 与同一 pre-append raw window 最近一条非空 visible Action 组装为 `atelia.galatea.memo-recall-context.v4` JSON query，作为本次辅助调用的瞬态输入，不落盘，也不再调用 query-builder 模型。`player-action` 带完整 playerText；heartbeat 带当轮持久的 characterName 与 `externalIntervalMinutes` snapshot；`delegate-reply` 以 externalNotices 提供结果。v1 heartbeat 只接受并保持 `10`，新 v2 heartbeat 接受并保持 `1..525_600`；读取历史绝不从当前 config 重算。query 的稳定 inputMeaning 解释时间、分块来源及旧记录边界。最近 Action 保留原 sourceStartInclusive/sourceEndInclusive，明确是 GM 可见叙述，不冒充角色发言。optional notice 按 whole-item prefix、Action 按 whole item 纳入 512 KiB query budget，`NoteSaveReceipt` 不进入 query。Default MemoPod 在短 `_podMutationGate` 内按 settled identity 打开 Frozen handle，provider await 在 gate 外。
+它把已采样 timestamp、尚无 recall 的 typed Observation、本轮 Reply/DeliveryFailure 与同一 pre-append raw window 最近一条非空 visible Action 组装为 `atelia.galatea.memo-recall-context.v4` JSON query，作为本次辅助调用的瞬态输入，不落盘，也不再调用 query-builder 模型。`player-action` 带完整 playerText；heartbeat 带当轮持久的 characterName 与 `externalIntervalMinutes` snapshot；`delegate-reply` 以 externalNotices 提供结果。v1 heartbeat 只接受并保持 `10`，新 v2 heartbeat 接受并保持 `1..525_600`；读取历史绝不从当前 config 重算。query 的稳定 inputMeaning 解释时间、分块来源及旧记录边界。最近 Action 保留原 sourceStartInclusive/sourceEndInclusive，明确是 GM 可见叙述，不冒充角色发言。optional notice 按 whole-item prefix、Action 按 whole item 纳入 512 KiB query budget，全部确认回执（新 `action-receipt-v1` 与历史 `NoteSaveReceipt`）不进入 query。Default MemoPod 在短 `_podMutationGate` 内按 settled identity 打开 Frozen handle，provider await 在 gate 外。
 
 selector 最多返回 8 个 ordered ID；runtime 以 Title eligibility、`CharacterNoteOriginBarrier`、`RecallBarrier` 和 1 MiB final Observation budget 选择第一条 `MemoExactText`，最终注入 `0..1` 条。SourceId 是 `memo-pod:v1/<32-lowerhex PodId>/<canonical MemoId>`，保存当时 title、exactText 和 Pod 状态版本，投影时再呈现，正文不截断。空 selector 或全部候选过滤是正常 underfill；configured provider/authority failure 则 fail closed，阻止 main Completion。receipt 先占预算，recall 只使用剩余空间；最终 structured Observation 在 selector 后、`SendAsync` 前绑定到 reply lease 与 receipt outbox。恢复复用已选机读内容，不重新 recall、领取或采样时间。MemoPod Open/Freeze 冻结并验证机读 document；Recall 前才惰性渲染缓存，await 前后仍核对同一冻结内容周期，缓存对象不承担周期身份。
 
@@ -125,7 +130,7 @@ live 身份由同 generation 的 `turn/start` 请求与关联响应建立，不�
 
 耗尽后，同一 SQLite 事务终结本地等待、写入唯一 DeliveryFailure notice 并释放 active slot。`RESULT_UNCONFIRMED` 明确告诉角色结果未确认、旧工作可能仍在运行；`NOT_DISPATCHED_RETRIES_EXHAUSTED` 表示确认未发送。下一封邮件可以创建新线程继续；本地 terminal 不被迟到结果覆盖，该旧任务也不能隔离新任务的 route；普通远端矛盾证据仍按原规则处理。inbox 满时保留状态并等待容量，不继续外部调用。数据库/本地状态损坏仍需人工检查。完整决策与边界见[有限恢复方案](codex-delegation-recovery-refactor-plan.md)。
 
-每个 Character 的 `homeDir` 是代行者执行新任务的工作目录。共享 sidecar/app-server 的进程目录为 `/`；`ensure-binding` 和 `start-turn` 逐请求传 `cwd`，已使用的 thread 通过 resume 与显式 turn override 使用当前 home；同 generation 新建空线程的首轮直接 start，避免缺 rollout 的 resume 错误。`inspect-dispatch` 不带 CWD，也不要求历史目录仍存在或属于当前 allowedRoots。delegation SQLite V5 保留统一恢复计数与独立角色邮件 outbox，并记录结构化 sender/notice/binding 与实际任务发送证据；旧格式只经显式离线升级进入新库。改 home 或 Codex 配置不会因此拒绝旧库。健康时保留同角色线程；失效或结果不明终结后解除绑定。Ready/Leased 回信和 frozen 主线请求继续保留。现有库必须停服后显式离线升级；操作见[恢复与升级说明](codex-delegation-operator-recovery.md)。
+每个 Character 的 `homeDir` 是代行者执行新任务的工作目录。共享 sidecar/app-server 的进程目录为 `/`；`ensure-binding` 和 `start-turn` 逐请求传 `cwd`，已使用的 thread 通过 resume 与显式 turn override 使用当前 home；同 generation 新建空线程的首轮直接 start，避免缺 rollout 的 resume 错误。`inspect-dispatch` 不带 CWD，也不要求历史目录仍存在或属于当前 allowedRoots。delegation SQLite V6 保留统一恢复计数与独立角色邮件 outbox，并记录结构化 sender/notice/binding 与实际任务发送证据；旧格式只经显式离线升级进入新库。改 home 或 Codex 配置不会因此拒绝旧库。健康时保留同角色线程；失效或结果不明终结后解除绑定。Ready/Leased 回信和 frozen 主线请求继续保留。现有库必须停服后显式离线升级；操作见[恢复与升级说明](codex-delegation-operator-recovery.md)。
 
 关闭时 nonterminal dispatch 保持持久状态；重启后继续有限恢复。C# client 按 dispatch 持有 start claim；只有匹配当前 Pending/requestId 的受控未发送回执能一次释放，迟到或重复帧无权释放后续调用的 claim。格式合法但没有 Pending 的迟到响应只记录诊断；真正的 framing、correlation、ownership 或 child reap 故障仍走进程故障处理。SQLite 和 reply lease 仍是持久任务与回信的唯一所有者。
 
@@ -151,14 +156,19 @@ Mail 与 Character Memory 是同一 frozen terminal Action 上相互独立的 du
 
 admission 固定先恢复 store 中全局 `0..1` active Captured/Planned batch，再检查 global quarantine，随后才处理 latest exact terminal Action；不扫描完整 history。重启 attach 不执行 provider 提取，后续 admission/pulse 承接该 gate。baseline physical frontier 覆盖启用前历史。absent capture 可以重跑 extractor，captured/planned batch 只能恢复 apply；普通新轮次与 Undo/rewind 仍先服从该结算门禁；pending/stop 仅在安全 Journal 边界结束原输入，不为结束任务启动新提取。已 Applied 的 Memo 不因 rewind 自动删除。细节与状态表见 [Default MemoPod V1](character-note-default-memopod-v1.md)。
 
-新的 `Planned -> Applied` transaction 原子建立 SQLite V4 save-receipt outbox，保存成功事实、源 Action、Pod、
-ordered Memo IDs 与当时正文/不可变来源，不预先生成展示通知。zero、Rejected、AlreadyApplied 和旧历史
-Applied 不新增义务。`Pending -> ObservationBound -> Delivered` 的 exact base 与 raw proof 门禁保留；
-Delivered 只证明 Observation append，不证明 provider 收到或理解；Terminated 也保留送达证明，结束/rewind 前先结算。
+### spec [S-RUNTIME-NOTE-FULL-TEXT-RECEIPT] DEPRECATED：V4 Note 全文优先
 
-首次请求规划在预算内选择全部确认 IDs 加完整正文，放不下则全部 IDs、零正文，不截断 Note。
-选择进入持久绑定后，换风格只能重新呈现，不能再次删字段。旧 `notice_body`/`rendered_observation`
-按旧合同读取和证明，旧 Delivered 不重发；新 structured Bound 可以携带显式 legacy receipt 原文。
+V4 阶段在 Applied 事务建立 Note-only outbox，首次规划选择全部 IDs 加完整正文，预算不足则 IDs-only，并允许显式 legacy receipt 原文参与新绑定。该当前写入路径由 @[S-RUNTIME-CONFIRMATION-SNAPSHOT] 替代；已冻结历史输入保持原 exact 解释。
+
+### spec [S-RUNTIME-CONFIRMATION-SNAPSHOT] 两个 owner 在确认事务冻结短回执
+
+Mail capture 事务与 Note `Planned -> Applied` 事务 MUST 各自原子建立 pending receipt snapshot。Mail `accepted` 只证明该次提交建立有效 route/internal outbox，`unrouted` 表示未进入队列；Note 只证明已保存到 Default MemoPod。正文和 recipient 的 scalar 预览规则以[统一回执方案](mail-note-receipt-preview-refactor-design.md#3-预览与内容版本)为准；业务正文仍完整，Mail 清理正文不重算或撤销预览。AlreadyCaptured / AlreadyApplied、zero、Rejected 与旧历史 Applied 不新增义务。
+
+`Pending -> ObservationBound -> Delivered` 使用原 exact base / input / raw Journal proof；receipt Delivered 仅证明 Observation append，Terminated 也保留该证明。两个 owner 在 attach、admission、异常 cleanup、显式结束、relay 的公共 fresh 准备和 rewind 前共同对账；unknown / conflict 阻止推进或移动 head。已 Delivered 不因 rewind 重发。将来进展通知只在 fresh 组装处扩展，本轮没有新 API、查询状态机或 wake 策略。
+
+### spec [R-RUNTIME-ACTION-RECEIPT-EXPLICIT-UPGRADE] Note V5 / delegation V6 显式切换
+
+现有 CharacterMemory V4 与 delegation V5 MUST 停服并分别显式升级到 V5 / V6，不自动升级、不修改 live 实例。升级器以 provider-free 只读 Journal 提供旧 Bound 的原 H/I exact proof：已 append 则结算，NotAppended 才回滚并转换为当前 Pending；任一 unknown / Conflict / Corruption 保留整个该 owner 的旧 schema / Bound 字节。旧 Pending 转换为短 snapshot，旧 Delivered 不补发，历史 Journal / Prepared / commitment 不重写。操作见[离线恢复与升级说明](codex-delegation-operator-recovery.md)，实施与验证证据由[统一回执方案](mail-note-receipt-preview-refactor-design.md)集中记录。
 
 每个新 Applied 同时创建 DerivedInfo `Pending` work。session-owned pump 对每个 external signal 最多推进一批：短暂持 `TurnLock` 从 Journal 恢复 exact source 并验证 fingerprint，随后锁外用独立 30 秒 deadline 调 `CharacterNoteDerivedInfoEnricher`。模型 timeout/invalid/failure 保持 Pending，不撤销 ExactText/receipt，也不使主 turn 失败；round-robin cursor 防止长期失败 batch 遮挡后项。结果先 durable `Prepared`，后续 provider-free 依 base/target identity 走 `UpdateDerivedInfo -> Planned -> Freeze/confirm -> Applied`；只有 Planned 占用 mutation slot。该泵没有 durable retry schedule/attempt counter；若 provider 忽略 cancellation，shutdown 等它返回才释放 session/durable 资源。
 

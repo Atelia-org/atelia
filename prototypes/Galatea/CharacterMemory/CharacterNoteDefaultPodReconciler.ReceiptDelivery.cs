@@ -1,34 +1,36 @@
 namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal sealed partial class CharacterNoteDefaultPodReconciler {
-    internal CharacterNoteReceiptDeliverySnapshot? ReadPendingReceiptDelivery() {
+    internal IActionReceiptDeliveryStore ReceiptDeliveryStore => _store;
+
+    internal ActionReceiptDeliverySnapshot? ReadPendingReceiptDelivery() {
         ThrowIfDisposed();
         return _store.ReadPendingReceiptDelivery();
     }
 
-    internal CharacterNoteReceiptDeliverySnapshot? ReadBoundReceiptDelivery() {
+    internal ActionReceiptDeliverySnapshot? ReadBoundReceiptDelivery() {
         ThrowIfDisposed();
         return _store.ReadBoundReceiptDelivery();
     }
 
-    internal CharacterNoteReceiptDeliverySnapshot? ReadReceiptDeliveryExact(string source) {
+    internal ActionReceiptDeliverySnapshot? ReadReceiptDeliveryExact(string source) {
         ThrowIfDisposed();
         return _store.ReadReceiptDeliveryExact(source);
     }
 
-    internal CharacterNoteReceiptDeliverySnapshot BindReceiptDelivery(
+    internal ActionReceiptDeliverySnapshot BindReceiptDelivery(
         string source, long expectedRevision, string expectedHead, Atelia.SessionJournal.SessionInputContent observation
     ) {
         ThrowIfDisposed();
         return _store.BindReceiptDelivery(source, expectedRevision, expectedHead, observation);
     }
 
-    internal CharacterNoteReceiptDeliverySnapshot RollbackReceiptDelivery(string source, long expectedRevision) {
+    internal ActionReceiptDeliverySnapshot RollbackReceiptDelivery(string source, long expectedRevision) {
         ThrowIfDisposed();
         return _store.RollbackReceiptDelivery(source, expectedRevision);
     }
 
-    internal CharacterNoteReceiptDeliverySnapshot CompleteReceiptDelivery(
+    internal ActionReceiptDeliverySnapshot CompleteReceiptDelivery(
         string source, long expectedRevision, string observationAddress
     ) {
         ThrowIfDisposed();

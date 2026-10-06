@@ -60,7 +60,7 @@
 | [GalateaDelegationDurableContract](../../prototypes/Galatea/GalateaDelegationDurableContract.cs) 的 `CreateDispatchId` | 现有 dispatch ID 是 `gd1-` 加 64hex，不能直接充当 message ID；无需修改其算法。 |
 | [GalateaDelegationSupervisor](../../prototypes/Galatea/GalateaDelegationSupervisor.cs) | 启动打开所有已配置且存在的 sender stores；Session 则按需 attach。通过 supervisor 查询邮件，不依赖 sender Session 存在。 |
 | [Program](../../prototypes/Galatea/Program.cs) 的 `/mailbox/inbound`、[AutomaticTurnCoordinator](../../prototypes/Galatea/GalateaAutomaticTurnCoordinator.cs) | HTTP inbound 可接纳 `FailedTurnMustBeAbandoned`，自动入口只接纳 exact Idle；不能整段照搬 HTTP policy。 |
-| [GalateaNoteReceiptDelivery](../../prototypes/Galatea/GalateaNoteReceiptDelivery.cs)、[CompletedTurns proof](../../prototypes/SessionJournal/SessionJournalEngine.CompletedTurns.cs) | 复用 exact base/content proof，但该 proof 只定位当前或最近一轮，**不是历史 messageId 搜索或去重接口**。Note receipt 在本用户 store，角色信则在其他 sender store。 |
+| [ActionReceiptDelivery](../../prototypes/Galatea/ActionReceiptDelivery.cs)、[CompletedTurns proof](../../prototypes/SessionJournal/SessionJournalEngine.CompletedTurns.cs) | 复用 exact base/content proof，但该 proof 只定位当前或最近一轮，**不是历史 messageId 搜索或去重接口**。Note receipt 在本用户 store，角色信则在其他 sender store。 |
 | [GalateaAcceptedTurnRunner](../../prototypes/Galatea/GalateaAcceptedTurnRunner.cs) | runner 接手目标 `TurnLock`，到 finally 才释放；sender capture 路径不能等待另一个角色的锁。 |
 
 三个不可省去的失败轨迹：

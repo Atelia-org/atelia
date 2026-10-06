@@ -31,12 +31,11 @@ public sealed class GalateaDurableReplyLeaseTests {
     );
 
     [Fact]
-    public void BeginCutoff_NoReadyIsTypedEmptyAndWritesNothing() {
+    public void FreshComposer_NoReadyIsTypedEmptyAndWritesNothing() {
         using var fixture = new Fixture();
         GalateaDelegationStateSnapshot before = fixture.Store.ReadSnapshot();
 
-        GalateaDurableReplyLeaseBeginResult result = fixture.Reconciler
-            .BeginCutoff("player");
+        GalateaDurableReplyLeaseBeginResult result = BeginPlanned(fixture, "player");
 
         Assert.IsType<GalateaDurableReplyLeaseBeginResult.Empty>(result);
         GalateaDelegationStateSnapshot after = fixture.Store.ReadSnapshot();
@@ -49,13 +48,13 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     [Fact]
-    public void BeginCutoff_FreezesFifoAndProjectsExactNoticeKinds() {
+    public void FreshComposer_FreezesFifoAndProjectsExactNoticeKinds() {
         using var fixture = new Fixture();
         fixture.ProduceReadyReply("reply-1");
         fixture.ProduceReadyFailure("failure-2");
 
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             "player"
         );
         Assert.Matches(
@@ -106,7 +105,7 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     [Fact]
-    public void BeginCutoff_CapsTheEarliestFifoPrefixAtCodeOwnedLimit() {
+    public void FreshComposer_CapsTheEarliestFifoPrefixAtCodeOwnedLimit() {
         using var fixture = new Fixture(maximumInboxReplies: 24);
         for (int index = 0;
              index < PlayerTurnObservationEnvelope.MaximumNoticeCount + 1;
@@ -115,7 +114,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         }
 
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             "player"
         );
         GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
@@ -142,46 +141,45 @@ public sealed class GalateaDurableReplyLeaseTests {
         for (int index = 0; index < 16; index++) {
             fixture.ProduceReadyReply("reply-" + index);
         }
-        var receipt = Receipt("saved receipt");
+        ActionReceiptDeliverySnapshot receipt = PendingNoteReceipt("saved receipt");
         string discriminator = PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator;
+        GalateaFreshAdmissionPlan plan = Compose(fixture, discriminator, receipt)!;
         GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
-            fixture.Reconciler.BeginCutoff(discriminator, receipt)).Lease;
+            fixture.Reconciler.BeginMembership(discriminator, plan.ReplyMembers)).Lease;
         Assert.Equal(15, lease.ReadNotices().Count);
         Assert.Equal("reply-15", Assert.Single(fixture.Store.ReadSnapshot().Notices,
             static notice => notice.State == GalateaReplyNoticeState.Ready).Body);
-        SessionInputContent rendered = CreateInput(
-            PlayerTurnObservation.CreateDelegateReply(
-                ObservationTimestamp, [.. lease.ReadNotices(), receipt]));
-        _ = lease.BindObservationBase(fixture.Engine, fixture.Engine.ReadCurrentHead()!.Value, rendered);
-        _ = fixture.Engine.AppendObservation(rendered);
+        Assert.IsType<PlayerTurnNotice.ActionReceipt>(plan.Notices[0]);
+        _ = lease.BindObservationBase(fixture.Engine, fixture.Engine.ReadCurrentHead()!.Value,
+            plan.PreliminaryInput);
+        _ = fixture.Engine.AppendObservation(plan.PreliminaryInput);
         _ = AppendTerminal(fixture.Engine, "processed replies and save confirmation");
         Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Consumed>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine));
-        GalateaDurableReplyLease remaining = BeginCreated(fixture.Reconciler, discriminator);
+        GalateaDurableReplyLease remaining = BeginCreated(fixture, discriminator);
         Assert.Equal("reply-15", Assert.Single(remaining.ReadNotices()).Body);
         remaining.RollbackBeforeEffect();
     }
 
     [Fact]
-    public void PendingReceiptReservesWholeEnvelopeBytesBeforeReplyCutoff() {
+    public void MembershipUsesActualSmallPlayerTextInsteadOfUniversalPlayerBudget() {
         using var fixture = new Fixture();
-        fixture.ProduceReadyReply(new string('x', PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes));
-        fixture.ProduceReadyReply(new string('y', PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes));
-        var receipt = new PlayerTurnNotice.NoteSaveReceipt(new CharacterNoteReceiptSelection(
-            Address(99), Enumerable.Range(1, 4).Select(index => MemoId.Parse($"m1:{index:x8}")).ToArray(),
-            Enumerable.Range(0, 4).Select(index => new string((char)('r' + index), CharacterNoteBounds.MaximumExactTextUtf8Bytes)).ToArray()));
+        for (int index = 0; index < 3; index++) {
+            fixture.ProduceReadyReply(new string((char)('x' + index),
+                PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes));
+        }
+        GalateaFreshAdmissionPlan plan = Compose(fixture, "player", PendingNoteReceipt("saved"))!;
+        Assert.Equal(3, plan.ReplyMembers.Count);
+        Assert.Throws<ArgumentOutOfRangeException>(() => GalateaObservationContent.Create(
+            new GalateaFreshInput.PlayerAction(new string('\u0001', GalateaHttpV1.MaximumMessageUtf8Bytes),
+                GalateaDelegateTestConfiguration.PlayerSender), ObservationTimestamp,
+            new GalateaSenderSnapshot("character", "user", "Galatea"), plan.Notices));
         GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
-            fixture.Reconciler.BeginCutoff("player", receipt)).Lease;
-        Assert.Single(lease.ReadNotices());
-        Assert.True(GalateaObservationContent.FitsEveryValidPlayerText([
-            .. lease.ReadNotices(), receipt]));
-        Assert.False(GalateaObservationContent.FitsEveryValidPlayerText([
-            .. lease.ReadNotices(), receipt], reserveConnectionState: true));
-        var compact = new PlayerTurnNotice.NoteSaveReceipt(new CharacterNoteReceiptSelection(
-            receipt.Selection!.SourceActionAddress, receipt.Selection.MemoIds, []));
-        Assert.True(GalateaObservationContent.FitsEveryValidPlayerText([
-            .. lease.ReadNotices(), compact], reserveConnectionState: true));
-        lease.RollbackBeforeEffect();
+            fixture.Reconciler.BeginMembership("player", plan.ReplyMembers)).Lease;
+        _ = lease.BindObservationBase(fixture.Engine, fixture.Engine.ReadCurrentHead()!.Value,
+            plan.PreliminaryInput);
+        fixture.ReopenStore();
+        Assert.Equal(3, fixture.Store.ReadSnapshot().ActiveLease!.NoticeIds.Count);
     }
 
     [Fact]
@@ -189,7 +187,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         fixture.ProduceReadyReply("reply");
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             "player"
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
@@ -247,7 +245,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         fixture.ProduceReadyReply("reply");
         fixture.ProduceReadyFailure("failure");
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator);
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
         var receipt = Receipt("saved\n");
@@ -287,7 +285,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         string marker = PlayerTurnObservationEnvelope
             .DelegateReplyLeasePlayerTextDiscriminator;
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             marker
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
@@ -334,7 +332,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         string marker = PlayerTurnObservationEnvelope
             .DelegateReplyLeasePlayerTextDiscriminator;
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             marker
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
@@ -380,7 +378,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         string marker = PlayerTurnObservationEnvelope
             .DelegateReplyLeasePlayerTextDiscriminator;
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             marker
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
@@ -420,7 +418,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         string marker = PlayerTurnObservationEnvelope
             .DelegateReplyLeasePlayerTextDiscriminator;
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             marker
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
@@ -449,7 +447,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         fixture.ProduceReadyReply("reply");
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             PlayerTurnObservationEnvelope
                 .DelegateReplyLeasePlayerTextDiscriminator
         );
@@ -486,7 +484,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using (var fixture = new Fixture()) {
             fixture.ProduceReadyReply("reply");
             GalateaDurableReplyLease lease = BeginCreated(
-                fixture.Reconciler,
+                fixture,
                 "player"
             );
             EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
@@ -507,7 +505,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using (var fixture = new Fixture()) {
             fixture.ProduceReadyReply("reply");
             GalateaDurableReplyLease lease = BeginCreated(
-                fixture.Reconciler,
+                fixture,
                 PlayerTurnObservationEnvelope
                     .DelegateReplyLeasePlayerTextDiscriminator
             );
@@ -532,7 +530,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         using var fixture = new Fixture();
         fixture.ProduceReadyReply("reply");
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             PlayerTurnObservationEnvelope
                 .DelegateReplyLeasePlayerTextDiscriminator
         );
@@ -770,7 +768,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         var notice = Assert.Single(fixture.Store.ReadSnapshot().Notices);
         Assert.Equal(GalateaReplyNoticeState.Consumed, notice.State);
         Assert.Equal(EventAddressTextCodec.Format(ended.End.Address), notice.ConsumedTurnEndAddress);
-        Assert.IsType<GalateaDurableReplyLeaseBeginResult.Empty>(fixture.Reconciler.BeginCutoff("next"));
+        Assert.IsType<GalateaDurableReplyLeaseBeginResult.Empty>(BeginPlanned(fixture, "next"));
         Assert.IsType<GalateaTerminalActionExtractionReadResult.NoTerminalActionAtHead>(
             GalateaTerminalActionExtractionTargetReader.ReadAt(fixture.Engine, ended.End.Address));
     }
@@ -838,7 +836,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
         );
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
-            fixture.Reconciler.BeginCutoff("another player turn")
+            BeginPlanned(fixture, "another player turn")
         );
     }
 
@@ -857,7 +855,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             )
         );
         fixture.ProduceReadyReply("reply");
-        _ = BeginCreated(fixture.Reconciler, "player");
+        _ = BeginCreated(fixture, "player");
 
         Assert.IsType<GalateaDurableReplyLeaseReconcileResult.RolledBack>(
             fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
@@ -935,7 +933,7 @@ public sealed class GalateaDurableReplyLeaseTests {
     private static BoundLease CreateBoundLease(Fixture fixture) {
         fixture.ProduceReadyReply("reply");
         GalateaDurableReplyLease lease = BeginCreated(
-            fixture.Reconciler,
+            fixture,
             "player"
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
@@ -955,11 +953,35 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     private static GalateaDurableReplyLease BeginCreated(
-        GalateaDurableReplyLeaseReconciler reconciler,
-        string playerText
+        Fixture fixture, string playerText
     ) => Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
-        reconciler.BeginCutoff(playerText)
-    ).Lease;
+        BeginPlanned(fixture, playerText)).Lease;
+
+    private static GalateaDurableReplyLeaseBeginResult BeginPlanned(
+        Fixture fixture, string playerText
+    ) {
+        GalateaFreshAdmissionPlan? plan = Compose(fixture, playerText);
+        return fixture.Reconciler.BeginMembership(playerText, plan?.ReplyMembers ?? []);
+    }
+
+    private static GalateaFreshAdmissionPlan? Compose(
+        Fixture fixture, string playerText, ActionReceiptDeliverySnapshot? receipt = null
+    ) {
+        var character = new GalateaSenderSnapshot("character", "user", "Galatea");
+        IReadOnlyList<GalateaReplyNoticeSnapshot> ready = fixture.Store.ReadSnapshot().Notices;
+        return playerText == PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator
+            ? GalateaFreshAdmissionPlan.ComposeReadyReply(ObservationTimestamp, character,
+                null, null, receipt, ready)
+            : GalateaFreshAdmissionPlan.Compose(new GalateaFreshInput.PlayerAction(playerText,
+                GalateaDelegateTestConfiguration.PlayerSender), ObservationTimestamp,
+                character, noteReceipt: receipt, readyNotices: ready);
+    }
+
+    private static ActionReceiptDeliverySnapshot PendingNoteReceipt(string preview) => new(
+        Address(99), ActionReceiptDeliveryState.Pending, CreatedRevision: 1, StateRevision: 0,
+        new NoteReceiptBatch(Address(99), MemoPodId.Parse("00000000000000000000000000000001"),
+            [new NoteReceiptItem(MemoId.Parse("m1:00000001"), preview)]),
+        ExpectedSessionHead: null, BoundInput: null, ObservationAddress: null);
 
     private static EventAddress AppendTerminal(
         SessionJournalEngine engine,

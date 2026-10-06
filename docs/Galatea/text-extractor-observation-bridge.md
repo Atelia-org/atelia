@@ -1,6 +1,8 @@
 # TextExtractor / Observation Bridge
 
-> **当前格式边界（2026-09-16）**：本文保留异步双向通讯桥的职责说明；后文 canonical Observation 包装／冻结文本的描述属于旧输入格式。当前 CharacterMemory SQLite V4、delegation SQLite V5 的新内容使用稳定机读记录，主线和辅助 LLM 请求时瞬态投影；capture、Applied 与投递对账职责不变。现行合同见[结构化输入方案](structured-input-rendering-design.md)及[运行时](runtime.md)，实际迁移与调用证据见[迁移验收](player-character-migration-validation.md)。
+> **后继回执边界（2026-10-06）**：[统一操作回执与正文预览方案](mail-note-receipt-preview-refactor-design.md)定义 Mail / Note 当前回执合同及 CharacterMemory V5 / delegation V6 显式升级；实施验证在该方案集中记录。本文历史 envelope 与 V3 阶段说明不作为当前 writer 模板。
+
+> **历史格式边界（2026-09-16）**：本文保留异步双向通讯桥的职责说明；后文 canonical Observation 包装／冻结文本的描述属于旧输入格式。该阶段 CharacterMemory SQLite V4、delegation SQLite V5 的新内容使用稳定机读记录，主线和辅助 LLM 请求时瞬态投影；capture、Applied 与投递对账职责不变。现行合同见[结构化输入方案](structured-input-rendering-design.md)及[运行时](runtime.md)，实际迁移与调用证据见[迁移验收](player-character-migration-validation.md)。
 
 本文记录 Galatea 当前已经落地的一种 runtime 与角色之间的异步双向通讯模式：
 
@@ -9,8 +11,7 @@
 
 这不是单次 provider invocation 内部的 tool call / tool result loop。它是 runtime 在 turn 边界外侧实现的通讯桥：
 主线角色模型只继续书写故事；runtime在durable turn边界读取和提取。Mail与Character Note分别进入自己的durable
-owner；Note在durable apply到默认MemoPod的同一SQLite事务中建立save receipt outbox，再以Observation数据注入。
-三trigger共享记忆与durable投递的当前契约见[Automatic memory工作单](automatic-memory-work-order.md)。
+owner；Mail capture 与 Note durable apply 分别在本域同一事务冻结操作回执，再共享 fresh Observation 组装与 exact Journal 投递证明。合同见[统一回执方案](mail-note-receipt-preview-refactor-design.md)；记忆闭环阶段证据见[Automatic memory工作单](automatic-memory-work-order.md)。
 
 ## 源码地图
 
@@ -40,12 +41,12 @@ Character Memory specialization：
 - [`CharacterNoteDefaultPodReconciler`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDefaultPodReconciler.cs)：durable capture/zero tombstone、Default MemoPod plan/apply与restart/admission恢复owner。
 - [`CharacterNoteDerivedInfoEnricher`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoEnricher.cs)：在ExactText已保存后，基于source turn的raw Observation、visible Action与ordered Note targets生成完整Title/Gist/Summary batch。
 - [`CharacterNoteDerivedInfoPump`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoPump.cs)：session-owned非阻塞调度器；只在context materialization时短暂持有`TurnLock`，provider调用与Pod apply在锁外执行。
-- [`CharacterNoteSaveReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)：从durable Applied Memo identities与ExactText冻结诚实保存回执；极端正文使用明确标识的compact确认。
-- [`GalateaNoteReceiptDelivery`](../../prototypes/Galatea/GalateaNoteReceiptDelivery.cs)：将SQLite V3 receipt outbox绑定到exact raw Observation，并以journal proof结算投递。
+- [`ActionReceiptBatch` / `ActionReceiptPreview`](../../prototypes/Galatea/ActionReceiptContent.cs)：Mail / Note 的冻结通知与统一 Unicode scalar 预览；历史 Note kind 保留独立 reader。
+- [`ActionReceiptDelivery`](../../prototypes/Galatea/ActionReceiptDelivery.cs)：两个领域回执 owner 共享绑定、回滚与 exact Journal proof 结算。
 - [`CharacterNoteOriginBarrier`](../../prototypes/Galatea/CharacterMemory/CharacterNoteOriginBarrier.cs)：把当前provider-visible raw Action与CharacterMemory durable provenance做bounded exact join，阻止来源正文仍直接可见的Memo被动态召回重复注入；production recall disabled时整条barrier路径在context selection前绕过。
 - [`GalateaMemoRecallQueryRenderer`](../../prototypes/Galatea/CharacterMemory/GalateaMemoRecallQueryRenderer.cs)：把preliminary typed Observation与同窗recent Action确定性渲染成MemoPod query，不增加前置LLM。
 - [`GalateaDefaultMemoPodRecallProvider`](../../prototypes/Galatea/CharacterMemory/GalateaDefaultMemoPodRecallProvider.cs)：在settled Default Pod Frozen epoch上调用selector，并以Title、两道barrier与Observation budget规划0..1条`MemoExactText`。
-- `PlayerTurnNotice.NoteSaveReceipt`：三种trigger Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
+- `PlayerTurnNotice.NoteSaveReceipt`：历史 variant，保留旧末尾读取规则；新 writer 只生成 `action-receipt-v1`。
 
 入口与注入点：
 
@@ -74,10 +75,13 @@ successful fresh/recovery主Completion只读取/render一次terminal Action targ
 但Quarantined/invariant fail closed。`DeferredAfterCapture`不回执，并由下一次admission先恢复；admission自己的
 pre-capture失败也会阻止新mutation。
 
-每次新的`Planned -> Applied`在同一SQLite V3事务中建立冻结回执，资格不依赖post-completion返回值或final head：
-admission recovery即使settle了off-lineage source，也仍有真实保存事实可通知。AlreadyApplied不新建义务，zero/Rejected
-无回执，Deferred等待真正Applied；旧版历史Applied migration不补发。Mail failure、caller cancellation或后续head change
-不撤销已提交的Memo与outbox。病态adaptive-fence正文改用明确标注的Source Action/Memo IDs确认，不静默丢弃。
+### spec [S-BRIDGE-NOTE-ONLY-RECEIPT] DEPRECATED：Note-only 全文/compact 通知
+
+V3 阶段在 Applied 事务建立冻结 Note 回执，极端 adaptive-fence 正文使用 Source Action / Memo IDs 的 compact 确认。其历史字段和读取规则保留；当前通知创建由 @[S-BRIDGE-CONFIRMATION-SNAPSHOT] 替代。
+
+### spec [S-BRIDGE-CONFIRMATION-SNAPSHOT] 确认事务拥有通知义务
+
+Mail capture 与 Note Applied MUST 在各自确认事务中冻结短 receipt batch。资格不依赖 post-completion 返回值或 final head：admission recovery 即使 settle off-lineage Note source，也仍有真实保存事实。重复 capture/apply 不新建义务，zero/Rejected 无回执，Deferred 等待真正 Applied。Mail failure、caller cancellation 与后续 head change 不撤销已确认事实。完整 IDs、preview 及 accepted/unrouted 的含义以[统一回执方案](mail-note-receipt-preview-refactor-design.md)为准。
 
 这一路的语义 authority 是分层的：
 
@@ -90,21 +94,17 @@ admission recovery即使settle了off-lineage source，也仍有真实保存事�
 
 runtime 也不把外部事件塞进角色的 hidden state。它把外部信息写成主线模型可见的 Observation 数据，让角色在下一轮叙事中读取。
 
-现行有两种注入形状：
+### spec [S-BRIDGE-LEGACY-COMPOSITE-SUFFIX] DEPRECATED：旧 envelope 与末尾回执
 
-- Typed composite Observation：`PlayerTurnObservationEnvelope`写入真实trigger与单次采样的外界本地时间，再按recalls、external notices、末尾receipt顺序组合；Heartbeat不带external notices，DelegateReply必须至少带一条，所有trigger的notice总上限仍为16。
-- Inbound mail Observation：`GalateaMailboxObservationEnvelope` 把外部来信写成 escaped XML envelope，再作为 fresh input 启动一轮主线 Completion。
+旧阶段使用 `PlayerTurnObservationEnvelope` / escaped inbound envelope，Note-only receipt 位于 notices 末尾，cutoff 独立预留一个槽位。该格式的历史 reader 保留原解释，当前写入与选择由 @[S-BRIDGE-ACTION-RECEIPT-COMPOSER] 替代。
 
-PlayerAction与DelegateReply中的external notices对位tool-result：它们是上一次或更早outbound artifact的异步结果，
-但不在原provider invocation内返回。runtime在`BeginCutoff`时冻结bounded FIFO前缀，之后才Ready的结果留给下一轮；
-存在pending保存回执时，cutoff预留一个notice槽位和该冻结回执的实际预算。
+### spec [S-BRIDGE-ACTION-RECEIPT-COMPOSER] 同一机读输入承载确认与异步结果
 
-Note save receipt使用SQLite V3 `Pending -> ObservationBound -> Delivered` outbox。三个fresh trigger都可领取，
-inbound与recovery不新领取。runtime先附receipt、再调用共享Memo selector；query V2保留真实trigger，receipt不进入query。
-final canonical Observation bytes在SendAsync前绑定到exact base head。raw proof为NotAppended时回到Pending；
-InProgress或Terminal即标记Delivered，含义仅为Observation已durable append，不是provider已收到或角色已理解。
-冲突证据fail closed。abandon/rewind前先结算bound receipt；Delivered之后即使rewind也不重发。
-receipt只证明采纳的Note内容已保存到默认MemoPod，不承诺与叙事Action逐字符一致，也不承诺分类、metadata补全或召回；pending在pre-dispatch failure/restart后保留。
+现行 Observation 持久化稳定机读 JSON，请求时瞬态投影；正文不从显示包装恢复。普通 PlayerAction、HeartbeatActivation 与 DelegateReply 共享一次 fresh 规划：Mail→Note 回执前缀各域最多一批，随后是已选 Ready reply FIFO prefix，notice 总上限 16；InboundMail / recovery 不新领取。
+
+composer 同时选择 receipt full/null 投影与实际 Ready membership，之后 optional recall 仅使用剩余预算，不反过来重选回执。Memo recall query 只选择 Reply / DeliveryFailure，新确认回执不进入 query。最终同一 Observation 在 append 前绑定到所有参与者。receipt Delivered 只证明输入 durable append，不证明 provider 收到、角色理解、邮件送达或召回成功。
+
+NotAppended 才回 Pending；exact InProgress / Terminal / Terminated 可结算 Delivered；unknown / conflict fail closed。所有已绑定 owner 必须在 cleanup、结束与 rewind/head 变化前对账；Delivered 不重发。精确字段、预览、投影、排序与显式升级合同见[统一回执方案](mail-note-receipt-preview-refactor-design.md)，不另设通知 API 或回执专用唤醒。
 
 这一路的安全/耐久边界是：
 

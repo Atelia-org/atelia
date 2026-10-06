@@ -65,12 +65,13 @@ internal sealed class GalateaLabNoteReceiptResponsesServer : IAsyncDisposable {
         }
     }
 
-    internal void ExpectReceipt(CharacterNoteReceiptDeliverySnapshot receipt) {
+    internal void ExpectReceipt(ActionReceiptDeliverySnapshot receipt) {
         Require(_receiptFacts is null && Volatile.Read(ref _totalCalls) == 0,
             "The receipt script must be armed exactly once before dispatch.");
-        _receiptFacts = receipt.Facts is { } facts
-            ? [facts.SourceActionAddress, .. facts.Memos.SelectMany(memo => new[] { memo.MemoId.Value, memo.ExactText })]
-            : [receipt.NoticeBody ?? throw new InvalidDataException("Missing legacy receipt")];
+        var batch = receipt.FrozenBatch as NoteReceiptBatch
+            ?? throw new InvalidDataException("Missing frozen Note preview receipt.");
+        _receiptFacts = [batch.SourceActionAddress,
+            .. batch.Items.SelectMany(item => new[] { item.MemoId.Value, item.Preview! })];
     }
 
     internal void AuthorizeRestart() {
@@ -124,7 +125,9 @@ internal sealed class GalateaLabNoteReceiptResponsesServer : IAsyncDisposable {
                 int call = Interlocked.Increment(ref _mainCalls);
                 Require(_receiptFacts is not null && UserInputContains(request, UserMessage)
                         && _receiptFacts.All(fact => UserInputContains(request, fact)),
-                    "The main request must contain the synthetic observation and exact frozen receipt.");
+                    "The main request must contain the synthetic observation and frozen preview receipt.");
+                Require(!LatestUserInput(request).Contains(GalateaNoteReceiptFixture.UniqueMiddle, StringComparison.Ordinal),
+                    "The current receipt observation must omit the Note's unique middle text.");
                 if (call == 1) {
                     Require(HelperCalls == 0, "The settled seed must not dispatch a helper.");
                     _firstBody = body;
@@ -171,6 +174,12 @@ internal sealed class GalateaLabNoteReceiptResponsesServer : IAsyncDisposable {
             && item.GetProperty("content").EnumerateArray().Any(content =>
                 content.TryGetProperty("text", out JsonElement text)
                 && text.GetString()!.Contains(value, StringComparison.Ordinal)));
+
+    private static string LatestUserInput(JsonElement request) => string.Concat(
+        request.GetProperty("input").EnumerateArray().Last(item =>
+            item.TryGetProperty("role", out JsonElement role) && role.GetString() == "user")
+            .GetProperty("content").EnumerateArray().Select(content =>
+                content.TryGetProperty("text", out JsonElement text) ? text.GetString() : null));
 
     private static Task WriteCompletedAsync(HttpContext context, string text) {
         context.Response.ContentType = "text/event-stream";

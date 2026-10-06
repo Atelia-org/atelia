@@ -248,6 +248,13 @@ internal abstract class PlayerTurnNotice {
             nameof(body)
         ) { }
     }
+
+    internal sealed class ActionReceipt : PlayerTurnNotice {
+        internal ActionReceipt(ActionReceiptBatch batch) {
+            Batch = batch ?? throw new ArgumentNullException(nameof(batch));
+        }
+        internal ActionReceiptBatch Batch { get; }
+    }
 }
 
 internal enum PlayerTurnObservationTriggerKind {
@@ -382,9 +389,9 @@ internal sealed class PlayerTurnObservation {
                     throw new ArgumentOutOfRangeException(nameof(heartbeatIntervalMinutes));
                 }
                 if (frozen.Any(static notice =>
-                        notice is not PlayerTurnNotice.NoteSaveReceipt)) {
+                        notice is not (PlayerTurnNotice.NoteSaveReceipt or PlayerTurnNotice.ActionReceipt))) {
                     throw new ArgumentException(
-                        "HeartbeatActivation may only contain a Note save receipt notice.",
+                        "HeartbeatActivation may only contain receipt notices.",
                         nameof(notices)
                     );
                 }
@@ -496,6 +503,27 @@ internal sealed class PlayerTurnObservation {
                         + "and it must be the final notice.",
                     nameof(notices)
                 );
+            }
+        }
+        bool prefixEnded = false;
+        bool? hasPreviews = null;
+        var domains = new HashSet<string>(StringComparer.Ordinal);
+        foreach (PlayerTurnNotice notice in frozen) {
+            if (notice is not PlayerTurnNotice.ActionReceipt receipt) { prefixEnded = true; continue; }
+            ActionReceiptBatch batch = receipt.Batch;
+            if (prefixEnded || !domains.Add(batch.Kind) || batch.Kind == "mail" && domains.Contains("note-save")) {
+                throw new ArgumentException("Action receipts must be a Mail then Note prefix with one batch per domain.", nameof(notices));
+            }
+            if (hasPreviews is { } expected && expected != batch.HasPreviews) {
+                throw new ArgumentException("Action receipt notices must use the same preview projection.", nameof(notices));
+            }
+            hasPreviews = batch.HasPreviews;
+        }
+        if (domains.Count != 0) {
+            byte[] receiptJson = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+                frozen.OfType<PlayerTurnNotice.ActionReceipt>().Select(GalateaObservationContent.NoticeJson).ToArray());
+            if (receiptJson.Length > GalateaObservationLimits.MaximumActionReceiptNoticesUtf8Bytes) {
+                throw new ArgumentOutOfRangeException(nameof(notices), "Action receipt notice array exceeds its JSON byte limit.");
             }
         }
         return Array.AsReadOnly(frozen);
@@ -1216,6 +1244,7 @@ internal static class PlayerTurnObservationEnvelope {
                 PlayerTurnNotice.DeliveryFailure => FailureHeading,
                 PlayerTurnNotice.NoteSaveReceipt =>
                     NoteSaveReceiptHeading,
+                PlayerTurnNotice.ActionReceipt => "历史操作确认",
                 _ => throw new ArgumentException(
                     "Unsupported player-turn notice kind.",
                     nameof(observation)
@@ -1225,6 +1254,7 @@ internal static class PlayerTurnObservationEnvelope {
                 .Append(heading)
                 .Append("：\n")
                 .Append(notice switch {
+                    PlayerTurnNotice.ActionReceipt receipt => ActionReceiptDisplay.Render(receipt.Batch),
                     PlayerTurnNotice.NoteSaveReceipt { Selection: { } selected } =>
                         "已保存到默认 MemoPod。\nSource Action: " + selected.SourceActionAddress
                         + "\n" + string.Join("\n", selected.MemoIds.Select(id => "Memo: " + id.Value))

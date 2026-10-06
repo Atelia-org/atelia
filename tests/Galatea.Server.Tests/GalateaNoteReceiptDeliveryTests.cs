@@ -15,58 +15,50 @@ public sealed class GalateaNoteReceiptDeliveryTests {
     [Fact]
     public async Task BoundWithoutObservation_ColdReopenRollsBackAndPreservesFrozenReceipt() {
         using var fixture = await Fixture.CreateAsync();
-        CharacterNoteReceiptDeliverySnapshot pending = fixture.Pending;
+        ActionReceiptDeliverySnapshot pending = fixture.Pending;
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
         SessionInputContent rendered = fixture.Bind();
-        Assert.Equal(CharacterNoteReceiptDeliveryState.ObservationBound, fixture.Exact.State);
+        Assert.Equal(ActionReceiptDeliveryState.ObservationBound, fixture.Exact.State);
 
         // Models a pre-dispatch stop or a crash after binding but before append.
         await fixture.ColdReopenAsync();
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
 
-        CharacterNoteReceiptDeliverySnapshot rolledBack = fixture.Pending;
-        Assert.Equal(pending.NoticeBody, rolledBack.NoticeBody);
+        ActionReceiptDeliverySnapshot rolledBack = fixture.Pending;
+        Assert.Equal(pending.FrozenBatch, rolledBack.FrozenBatch);
         Assert.Equal(pending.CreatedRevision, rolledBack.CreatedRevision);
         Assert.True(rolledBack.StateRevision > pending.StateRevision);
         Assert.Null(rolledBack.ExpectedSessionHead);
-        Assert.Null(rolledBack.RenderedObservation);
+        Assert.Null(rolledBack.BoundInput);
         Assert.Null(rolledBack.ObservationAddress);
         Assert.Equal(baseHead, fixture.Engine.ReadCurrentHead());
         Assert.Null(fixture.Memory.ReadBoundReceiptDelivery());
         Assert.Equal(rendered, fixture.Bind());
         _ = fixture.Engine.AppendObservation(rendered);
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, fixture.Exact.State);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
+        Assert.Equal(ActionReceiptDeliveryState.Delivered, fixture.Exact.State);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task AppendedObservationBeforeLedgerAck_ColdReopenDeliversInProgressExactlyOnce(bool historicalWording) {
+    [Fact]
+    public async Task AppendedObservationBeforeLedgerAck_ColdReopenDeliversInProgressExactlyOnce() {
         using var fixture = await Fixture.CreateAsync();
-        if (historicalWording) {
-            CharacterNoteReceiptDeliverySnapshot historical = fixture.Pending with {
-                NoticeBody = HistoricalNoteReceiptFixture.OldWording(CharacterNoteSaveReceipt.CreateDurable(fixture.Pending.Facts!.Memos).Notice.Body), Facts = null, BoundInput = null,
-            };
-            await fixture.ColdReopenAsync(historical);
-            Assert.Equal(historical, fixture.Pending);
-        }
         SessionInputContent rendered = fixture.Bind();
         EventAddress observation = fixture.Engine.AppendObservation(rendered);
-        Assert.Equal(CharacterNoteReceiptDeliveryState.ObservationBound, fixture.Exact.State);
+        Assert.Equal(ActionReceiptDeliveryState.ObservationBound, fixture.Exact.State);
 
         // Completion never ran: the durable Observation alone is the delivery boundary.
         await fixture.ColdReopenAsync();
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
-        CharacterNoteReceiptDeliverySnapshot delivered = fixture.Exact;
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, delivered.State);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
+        ActionReceiptDeliverySnapshot delivered = fixture.Exact;
+        Assert.Equal(ActionReceiptDeliveryState.Delivered, delivered.State);
         Assert.Equal(EventAddressTextCodec.Format(observation), delivered.ObservationAddress);
-        Assert.Null(delivered.RenderedObservation);
+        Assert.Null(delivered.BoundInput);
+        Assert.Null(delivered.FrozenBatch);
         Assert.Null(fixture.Memory.ReadPendingReceiptDelivery());
         Assert.Null(fixture.Memory.ReadBoundReceiptDelivery());
 
         await fixture.ColdReopenAsync();
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
         Assert.Equal(delivered, fixture.Exact);
         Assert.Equal(observation, fixture.Engine.ReadCurrentHead());
         // The outbox releases its duplicate payload, while the raw journal
@@ -90,9 +82,9 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         EventAddress terminal = AppendTerminal(fixture.Engine, "received");
 
         await fixture.ColdReopenAsync();
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
 
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, fixture.Exact.State);
+        Assert.Equal(ActionReceiptDeliveryState.Delivered, fixture.Exact.State);
         Assert.Equal(EventAddressTextCodec.Format(observation), fixture.Exact.ObservationAddress);
         Assert.Equal(terminal, fixture.Engine.ReadCurrentHead());
         Assert.Equal(1, fixture.Extractor.Calls);
@@ -108,12 +100,12 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         var ended = Assert.IsType<SessionTurnEndResult.Ended>(
             fixture.Engine.EndPendingTurn(observation, reason));
         await fixture.ColdReopenAsync();
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
         var delivered = fixture.Exact;
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, delivered.State);
+        Assert.Equal(ActionReceiptDeliveryState.Delivered, delivered.State);
         Assert.Equal(EventAddressTextCodec.Format(observation), delivered.ObservationAddress);
         await fixture.ColdReopenAsync();
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
         Assert.Equal(delivered, fixture.Exact);
         Assert.Null(fixture.Memory.ReadPendingReceiptDelivery());
         Assert.Equal(ended.End.Address, fixture.Engine.ReadCurrentHead());
@@ -124,13 +116,13 @@ public sealed class GalateaNoteReceiptDeliveryTests {
     public async Task DifferentAppendedObservation_FailsClosedAndKeepsBindingAcrossReopen() {
         using var fixture = await Fixture.CreateAsync();
         _ = fixture.Bind();
-        CharacterNoteReceiptDeliverySnapshot bound = fixture.Exact;
+        ActionReceiptDeliverySnapshot bound = fixture.Exact;
         _ = fixture.Engine.AppendObservation(PlayerTurnObservationEnvelope.Wrap(
             new PlayerTurnObservation("not the bound turn", Timestamp)));
 
         await fixture.ColdReopenAsync();
         GalateaTurnException error = Assert.Throws<GalateaTurnException>(() =>
-            GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine));
+            ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine));
         Assert.Contains("exact Observation evidence", error.Message, StringComparison.Ordinal);
         Assert.Equal(bound, fixture.Exact);
         Assert.Null(fixture.Memory.ReadPendingReceiptDelivery());
@@ -140,13 +132,13 @@ public sealed class GalateaNoteReceiptDeliveryTests {
     [Fact]
     public async Task ChangedBaseBeforeBinding_RejectsWithoutClaimingPendingReceipt() {
         using var fixture = await Fixture.CreateAsync();
-        CharacterNoteReceiptDeliverySnapshot pending = fixture.Pending;
+        ActionReceiptDeliverySnapshot pending = fixture.Pending;
         EventAddress staleBase = fixture.Engine.ReadCurrentHead()!.Value;
         _ = fixture.Engine.AppendObservation("intervening observation");
         _ = AppendTerminal(fixture.Engine, "intervening action");
 
-        Assert.Throws<GalateaTurnException>(() => GalateaNoteReceiptDelivery.Bind(
-            fixture.Memory, fixture.Engine, pending, staleBase, fixture.Render(pending)));
+        Assert.Throws<GalateaTurnException>(() => ActionReceiptDelivery.Bind(
+            fixture.Memory.ReceiptDeliveryStore, fixture.Engine, pending, staleBase, fixture.Render(pending)));
 
         Assert.Equal(pending, fixture.Pending);
         Assert.Null(fixture.Memory.ReadBoundReceiptDelivery());
@@ -158,13 +150,13 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
         _ = fixture.Engine.AppendObservation(fixture.Bind());
         EventAddress terminal = AppendTerminal(fixture.Engine, "received");
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
-        CharacterNoteReceiptDeliverySnapshot delivered = fixture.Exact;
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
+        ActionReceiptDeliverySnapshot delivered = fixture.Exact;
 
         Assert.IsType<SessionTurnRetractionResult.Moved>(fixture.Engine.RewindLatestCompletedTurn(terminal));
         Assert.Equal(baseHead, fixture.Engine.ReadCurrentHead());
         await fixture.ColdReopenAsync();
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
         Assert.IsType<CharacterNoteDefaultPodReconcileResult.AlreadyApplied>(
             await fixture.Memory.ReconcileTargetAsync(fixture.Engine, fixture.Target));
 
@@ -178,16 +170,16 @@ public sealed class GalateaNoteReceiptDeliveryTests {
     public async Task CancelledProof_DoesNotChangeBoundReceipt() {
         using var fixture = await Fixture.CreateAsync();
         _ = fixture.Engine.AppendObservation(fixture.Bind());
-        CharacterNoteReceiptDeliverySnapshot bound = fixture.Exact;
+        ActionReceiptDeliverySnapshot bound = fixture.Exact;
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        Assert.Throws<OperationCanceledException>(() => GalateaNoteReceiptDelivery.Reconcile(
-            fixture.Memory, fixture.Engine, cancellation.Token));
+        Assert.Throws<OperationCanceledException>(() => ActionReceiptDelivery.Reconcile(
+            fixture.Memory.ReceiptDeliveryStore, fixture.Engine, cancellation.Token));
 
         Assert.Equal(bound, fixture.Exact);
-        GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, fixture.Exact.State);
+        ActionReceiptDelivery.Reconcile(fixture.Memory.ReceiptDeliveryStore, fixture.Engine);
+        Assert.Equal(ActionReceiptDeliveryState.Delivered, fixture.Exact.State);
     }
 
     private static EventAddress AppendTerminal(SessionJournalEngine engine, string text) =>
@@ -216,8 +208,8 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         internal CharacterNoteDefaultPodReconciler Memory { get; private set; } = null!;
         internal Extractor Extractor { get; } = new();
         internal GalateaTerminalActionExtractionTarget Target { get; private set; } = null!;
-        internal CharacterNoteReceiptDeliverySnapshot Pending => Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(Memory.ReadPendingReceiptDelivery());
-        internal CharacterNoteReceiptDeliverySnapshot Exact => Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+        internal ActionReceiptDeliverySnapshot Pending => Assert.IsType<ActionReceiptDeliverySnapshot>(Memory.ReadPendingReceiptDelivery());
+        internal ActionReceiptDeliverySnapshot Exact => Assert.IsType<ActionReceiptDeliverySnapshot>(
             Memory.ReadReceiptDeliveryExact(EventAddressTextCodec.Format(Target.SourceAction)));
 
         internal static async Task<Fixture> CreateAsync() {
@@ -234,28 +226,25 @@ public sealed class GalateaNoteReceiptDeliveryTests {
             fixture.Target = new GalateaTerminalActionExtractionTarget(source, visible);
             Assert.IsType<CharacterNoteDefaultPodReconcileResult.AppliedNow>(
                 await fixture.Memory.ReconcileTargetAsync(fixture.Engine, fixture.Target));
-            Assert.Equal(CharacterNoteReceiptDeliveryState.Pending, fixture.Pending.State);
+            Assert.Equal(ActionReceiptDeliveryState.Pending, fixture.Pending.State);
             return fixture;
         }
 
-        internal SessionInputContent Render(CharacterNoteReceiptDeliverySnapshot receipt) =>
+        internal SessionInputContent Render(ActionReceiptDeliverySnapshot receipt) =>
             GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Galatea"), 10),
                 Timestamp, new GalateaSenderSnapshot("character", "user", "Galatea"),
-                [CharacterNoteSaveReceipt.SelectForObservation(receipt)]);
+                [new PlayerTurnNotice.ActionReceipt(receipt.FrozenBatch!)]);
 
         internal SessionInputContent Bind() {
-            CharacterNoteReceiptDeliverySnapshot pending = Pending;
+            ActionReceiptDeliverySnapshot pending = Pending;
             SessionInputContent content = Render(pending);
-            GalateaNoteReceiptDelivery.Bind(Memory, Engine, pending, Engine.ReadCurrentHead()!.Value, content);
+            ActionReceiptDelivery.Bind(Memory.ReceiptDeliveryStore, Engine, pending, Engine.ReadCurrentHead()!.Value, content);
             return content;
         }
 
-        internal async Task ColdReopenAsync(CharacterNoteReceiptDeliverySnapshot? historical = null) {
+        internal async Task ColdReopenAsync() {
             Memory.Dispose();
             Engine.Dispose();
-            if (historical is not null) {
-                HistoricalNoteReceiptFixture.WriteFrozenNotice(MemoryPath, historical);
-            }
             Engine = SessionJournalEngine.Open(SessionPath);
             Memory = await CharacterNoteDefaultPodReconciler.OpenExistingAsync(MemoryPath, Owner, Extractor);
         }

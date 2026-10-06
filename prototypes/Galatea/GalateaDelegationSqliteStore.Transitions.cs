@@ -44,6 +44,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 .Select((_, ordinal) => GalateaDelegationDurableContract
                     .CreateDispatchId(_owner.CharacterId, sourceAddress, ordinal))
                 .ToArray();
+            MailReceiptBatch? frozenReceipt = null;
+            IReadOnlyList<GalateaInternalMailOutboxSnapshot> capturedInternalOutboxes = [];
             return ExecuteWrite(
                 "capture-action-batch",
                 (connection, transaction) => {
@@ -121,21 +123,19 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             );
                         }
                     }
+                    if (request.Intents.Count != 0) {
+                        frozenReceipt = CreateCapturedMailReceiptBatch(request, dispatchIds);
+                        InsertPendingMailReceiptDelivery(connection, transaction, frozenReceipt, storeRevision);
+                    }
+                    capturedInternalOutboxes = ReadInternalMailOutboxes(connection, transaction)
+                        .Where(value => value.SourceActionAddress == request.SourceActionAddress).ToArray();
                     return new GalateaDelegationCaptureResult(
                         GalateaDelegationCaptureDisposition.Captured,
                         storeRevision,
                         GalateaDelegationStateSnapshot.Freeze(dispatchIds)
                     );
                 },
-                (snapshot, result) => snapshot.StoreRevision
-                        == result.StoreRevision
-                    && snapshot.Captures.Any(value =>
-                        string.Equals(
-                            value.SourceActionAddress,
-                            request.SourceActionAddress,
-                            StringComparison.Ordinal)
-                        && value.ArtifactCount == request.Intents.Count)
-                    && InternalTargetsPublished(snapshot, result, request)
+                (snapshot, result) => CapturedMailBatchPublished(snapshot, result, request, frozenReceipt, capturedInternalOutboxes)
             );
         }
     }
@@ -1248,6 +1248,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
         if (dispatchIds.Count != artifactCount) {
             throw Corrupt("Duplicate capture artifact_count is invalid.");
         }
+        mailReader.Close();
+        // A duplicate never creates a new receipt, but the stored business and
+        // frozen notification must still pass the current strict reader.
+        _ = ReadSnapshotCore(connection, transaction: null);
         return new GalateaDelegationCaptureResult(
             GalateaDelegationCaptureDisposition.AlreadyCaptured,
             storeRevision,
@@ -1329,26 +1333,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.Parameters.AddWithValue("$from", target.FromCharacterName);
         command.Parameters.AddWithValue("$message", messageId);
         command.ExecuteNonQuery();
-    }
-
-    private static bool InternalTargetsPublished(
-        GalateaDelegationStateSnapshot snapshot,
-        GalateaDelegationCaptureResult result,
-        GalateaDelegationCaptureRequest request
-    ) {
-        if (request.InternalTargets is null) { return true; }
-        for (int ordinal = 0; ordinal < request.InternalTargets.Count; ordinal++) {
-            if (request.InternalTargets[ordinal] is not { } target) { continue; }
-            string dispatchId = result.DispatchIds[ordinal];
-            if (!snapshot.InternalMailOutboxes.Any(value =>
-                    string.Equals(value.DispatchId, dispatchId, StringComparison.Ordinal)
-                    && string.Equals(value.TargetCharacterId, target.TargetCharacterId, StringComparison.Ordinal)
-                    && string.Equals(value.TargetSessionRepositoryId, target.TargetSessionRepositoryId, StringComparison.Ordinal)
-                    && string.Equals(value.FromCharacterName, target.FromCharacterName, StringComparison.Ordinal))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static GalateaOutboundMailSnapshot ReadMailRequired(

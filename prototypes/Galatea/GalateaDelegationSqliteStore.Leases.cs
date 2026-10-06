@@ -60,7 +60,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         selected.Add(notice);
                     }
                     RequireReadyPrefix(notices, selected);
-                    RequireRenderableLease(selected);
                     _ = IncrementStoreRevision(connection, transaction);
                     using (SqliteCommand insertLease = connection.CreateCommand()) {
                         insertLease.Transaction = transaction;
@@ -641,17 +640,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 selected.Select(static value => value.NoticeId),
                 StringComparer.Ordinal)) {
             throw Conflict("Reply lease membership is not the earliest Ready prefix.");
-        }
-    }
-
-    private static void RequireRenderableLease(
-        IReadOnlyList<GalateaReplyNoticeSnapshot> notices
-    ) {
-        PlayerTurnNotice[] ready = notices.Select(GalateaDurableNoticeContent.Project).ToArray();
-        if (!GalateaObservationContent.FitsEveryValidPlayerText(ready)) {
-            throw new InvalidOperationException(
-                "The reply lease prefix cannot fit every valid player text."
-            );
         }
     }
 

@@ -463,12 +463,14 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
     [Fact]
     public void V1StrictStoreMigratesOnceAndCreatesPendingForAppliedOnly() {
         using var fixture = V1Store.Create(valid: true);
+        Assert.Throws<InvalidDataException>(() => CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner()));
+        Assert.Equal("Upgraded", CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: true).Outcome);
         using (CharacterMemorySqliteStore store =
                CharacterMemorySqliteStore.OpenExisting(
                    fixture.Path,
                    Owner()
-               , upgradeLegacyFormat: true)) {
-            Assert.Equal(4, ReadUserVersion(fixture.DatabasePath));
+               )) {
+            Assert.Equal(5, ReadUserVersion(fixture.DatabasePath));
             CharacterMemoryStatusSnapshot status = store.ReadStatusSnapshot();
             Assert.Equal(8, status.StoreRevision);
             Assert.Equal(Address(63), status.ActiveSourceAction);
@@ -483,7 +485,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
         }
 
         using CharacterMemorySqliteStore reopened =
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true);
+            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner());
         Assert.Equal(CharacterMemoryDerivedInfoState.Pending,
             reopened.ReadNextDerivedInfoWork()!.State);
     }
@@ -493,13 +495,13 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
         using var fixture = V1Store.Create(valid: false);
 
         Assert.Throws<InvalidDataException>(() =>
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true));
+            CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: true));
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
     }
 
     [Fact]
-    public void V1MigrationAfterCommitLossStrictlyReopensV3() {
+    public void V1MigrationAfterCommitLossStrictlyReopensV5() {
         using var fixture = V1Store.Create(valid: true);
         int fired = 0;
         var hooks = new CharacterMemoryStoreTestHooks(
@@ -511,14 +513,10 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             }
         );
 
-        using CharacterMemorySqliteStore store =
-            CharacterMemorySqliteStore.OpenExisting(
-                fixture.Path,
-                Owner(),
-                hooks
-            , upgradeLegacyFormat: true);
+        Assert.Equal("Upgraded", CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: true, hooks).Outcome);
+        using CharacterMemorySqliteStore store = CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner());
         Assert.Equal(1, fired);
-        Assert.Equal(4, ReadUserVersion(fixture.DatabasePath));
+        Assert.Equal(5, ReadUserVersion(fixture.DatabasePath));
         Assert.NotNull(store.ReadDerivedInfoWorkExact(Address(60)));
     }
 
@@ -535,19 +533,21 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             }
         );
 
-        Assert.Throws<IOException>(() =>
-            CharacterMemorySqliteStore.OpenExisting(
+        InvalidDataException failure = Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.UpgradeExisting(
                 fixture.Path,
                 Owner(),
+                apply: true,
                 hooks
-            , upgradeLegacyFormat: true));
+            ));
+        Assert.IsType<IOException>(failure.InnerException);
         Assert.Equal(1, fired);
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
 
-        using CharacterMemorySqliteStore migrated =
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true);
-        Assert.Equal(4, ReadUserVersion(fixture.DatabasePath));
+        Assert.Equal("Upgraded", CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: true).Outcome);
+        using CharacterMemorySqliteStore migrated = CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner());
+        Assert.Equal(5, ReadUserVersion(fixture.DatabasePath));
         Assert.NotNull(migrated.ReadDerivedInfoWorkExact(Address(60)));
     }
 
@@ -568,7 +568,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             """);
 
         Assert.Throws<InvalidDataException>(() =>
-            CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner(), upgradeLegacyFormat: true));
+            CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: true));
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
     }
@@ -592,18 +592,19 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
         );
 
         Assert.Throws<InvalidDataException>(() =>
-            CharacterMemorySqliteStore.OpenExisting(
+            CharacterMemorySqliteStore.UpgradeExisting(
                 fixture.Path,
                 Owner(),
+                apply: true,
                 hooks
-            , upgradeLegacyFormat: true));
+            ));
         Assert.Equal(1, fired);
         Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
         Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
     }
 
     [Fact]
-    public void StrictV2ReopenRejectsPartialDerivedInfoBatch() {
+    public void StrictCurrentReopenRejectsPartialDerivedInfoBatch() {
         using var fixture = new ReadyStore();
         _ = ApplyCapture(
             fixture.Store,
@@ -624,11 +625,11 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            , upgradeLegacyFormat: true));
+            ));
     }
 
     [Fact]
-    public void StrictV2ReopenRecomputesHistoricalDerivedInfoCommitment() {
+    public void StrictCurrentReopenRecomputesHistoricalDerivedInfoCommitment() {
         using var fixture = new ReadyStore();
         CharacterMemoryDerivedInfoWorkSnapshot pending = ApplyCapture(
             fixture.Store,
@@ -650,11 +651,11 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            , upgradeLegacyFormat: true));
+            ));
     }
 
     [Fact]
-    public void StrictV2ReopenRejectsUnownedDerivedInfoFields() {
+    public void StrictCurrentReopenRejectsUnownedDerivedInfoFields() {
         using var fixture = new ReadyStore();
         _ = fixture.Store.CaptureNew(
             Capture(Address(72), ["active exact capture"])
@@ -670,11 +671,11 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            , upgradeLegacyFormat: true));
+            ));
     }
 
     [Fact]
-    public void StrictV2ReopenRejectsRejectedWorkWithPlanIdentities() {
+    public void StrictCurrentReopenRejectsRejectedWorkWithPlanIdentities() {
         using var fixture = new ReadyStore();
         CharacterMemoryDerivedInfoWorkSnapshot pending = ApplyCapture(
             fixture.Store,
@@ -706,11 +707,11 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            , upgradeLegacyFormat: true));
+            ));
     }
 
     [Fact]
-    public void StrictV2ReopenRequiresCreatedRevisionToEqualAppliedCapture() {
+    public void StrictCurrentReopenRequiresCreatedRevisionToEqualAppliedCapture() {
         using var fixture = new ReadyStore();
         CharacterMemoryDerivedInfoWorkSnapshot pending = ApplyCapture(
             fixture.Store,
@@ -732,7 +733,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            , upgradeLegacyFormat: true));
+            ));
     }
 
     [Fact]
@@ -800,7 +801,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
     }
 
     [Fact]
-    public void StrictV2ReopenRejectsWrongPendingScheduleIndex() {
+    public void StrictCurrentReopenRejectsWrongPendingScheduleIndex() {
         using var fixture = new ReadyStore();
         string path = fixture.DatabasePath;
         fixture.DisposeStore();
@@ -815,7 +816,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
             CharacterMemorySqliteStore.OpenExisting(
                 fixture.DirectoryPath,
                 fixture.Owner
-            , upgradeLegacyFormat: true));
+            ));
     }
 
     private static CharacterMemoryDerivedInfoWorkSnapshot ApplyCapture(

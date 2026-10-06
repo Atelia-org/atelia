@@ -13,9 +13,6 @@ namespace Atelia.Galatea.Server;
 
 /// <summary>Stable input facts. Encoding, decoding and proofs do not invoke an LLM renderer.</summary>
 internal static class GalateaObservationContent {
-    // Five IDs, four option names, source address and evidence; JSON may escape each
-    // input byte as six ASCII bytes. Reserve before claiming a new reply lease.
-    internal const int MaximumConnectionStateJsonUtf8Bytes = (5 * 128 + 4 * 4096 + 256 + 2048) * 6 + 1024;
     internal const string V1SchemaId = GalateaObservationSchema.V1SchemaId;
     internal const string V2SchemaId = GalateaObservationSchema.V2SchemaId;
     internal const string V3SchemaId = GalateaObservationSchema.V3SchemaId;
@@ -100,16 +97,6 @@ internal static class GalateaObservationContent {
 
     private static object SenderJson(GalateaSenderSnapshot sender) => new { kind = sender.Kind, id = sender.Id, name = sender.Name };
 
-    internal static bool FitsEveryValidPlayerText(IReadOnlyList<PlayerTurnNotice> notices, bool reserveConnectionState = false) {
-        if (notices.Count > PlayerTurnObservationEnvelope.MaximumNoticeCount) { return false; }
-        JsonElement value = JsonSerializer.SerializeToElement(notices.Select(NoticeJson).ToArray());
-        // JSON can encode one control character in six bytes. Reserve the complete
-        // admitted Player text budget and bounded wrapper/identity fields.
-        return GalateaBoundedJson.StrictUtf8.GetByteCount(value.GetRawText())
-            + GalateaHttpV1.MaximumMessageUtf8Bytes * 6L + 16 * 1024
-            + (reserveConnectionState ? MaximumConnectionStateJsonUtf8Bytes : 0) <= MaximumContentUtf8Bytes;
-    }
-
     internal static bool FitsPlayerTurnContent(PlayerTurnObservation observation) {
         JsonElement value = JsonSerializer.SerializeToElement(new {
             text = observation.TriggerKind == PlayerTurnObservationTriggerKind.PlayerAction ? observation.PlayerText : null,
@@ -131,6 +118,9 @@ internal static class GalateaObservationContent {
         },
         PlayerTurnNotice.NoteSaveReceipt { Selection: { } selection } => new {
             kind = "note-save-receipt", sender = SenderJson(RuntimeSender), receipt = selection.ToJson()
+        },
+        PlayerTurnNotice.ActionReceipt receipt => new {
+            kind = "action-receipt-v1", sender = SenderJson(RuntimeSender), receipt = receipt.Batch.ToJson()
         },
         PlayerTurnNotice.Reply { IsLegacyDurable: true } reply => new { kind = "legacy-reply", body = reply.Body,
             dispatchId = reply.DispatchId, threadId = reply.ThreadId, turnId = reply.TurnId, noticeId = reply.NoticeId },
@@ -175,6 +165,7 @@ internal static class GalateaObservationContent {
                 GalateaInputContentValidation.ReadSender(value.GetProperty("sender")), value.GetProperty("dispatchId").GetString()!,
                 NullableString(value, "stage"), NullableString(value, "threadId"), NullableString(value, "turnId"), NullableString(value, "noticeId")),
             "note-save-receipt" => new PlayerTurnNotice.NoteSaveReceipt(ReadReceipt(value.GetProperty("receipt"))),
+            "action-receipt-v1" => new PlayerTurnNotice.ActionReceipt(ActionReceiptBatchCodec.Read(value.GetProperty("receipt"))),
             "legacy-reply" => PlayerTurnNotice.Reply.FromLegacyDurable(value.GetProperty("body").GetString()!, NullableString(value, "dispatchId"),
                 NullableString(value, "threadId"), NullableString(value, "turnId"), NullableString(value, "noticeId")),
             "legacy-delivery-failure" => PlayerTurnNotice.DeliveryFailure.FromLegacyDurable(value.GetProperty("body").GetString()!, NullableString(value, "dispatchId"),

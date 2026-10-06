@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using Atelia.SessionJournal;
 using Microsoft.Data.Sqlite;
 
 namespace Atelia.Galatea.Server.CharacterMemory;
@@ -11,7 +12,8 @@ internal sealed partial class CharacterMemorySqliteStore {
     /// <summary>Offline maintenance. The same lifetime lock covers preflight, backup, writes and cold verification.</summary>
     internal static CharacterMemoryStoreUpgradeResult UpgradeExisting(
         string storeDirectory, CharacterMemoryStoreOwner owner, bool apply,
-        CharacterMemoryStoreTestHooks? hooks = null
+        CharacterMemoryStoreTestHooks? hooks = null,
+        SessionJournalEngine? journal = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(storeDirectory);
         GalateaDelegationDurableFiles.RequireLinux();
@@ -31,13 +33,17 @@ internal sealed partial class CharacterMemorySqliteStore {
         int version = 0;
         try {
             string originalAuthority;
-            string expectedV4Authority;
+            string expectedCurrentAuthority;
+            LegacyReceiptUpgradeProof[] proofs;
             using (SqliteConnection source = OpenConnection(database, create: false, readOnly: true)) {
                 ConfigureOpenedDatabase(source, readOnly: true);
                 version = checked((int)ReadPragmaInteger(source, "user_version"));
                 ValidateUpgradeSource(source, owner, version);
                 if (version == SchemaVersion) { return new("AlreadyCurrent", version, SchemaVersion, null); }
                 originalAuthority = ReadUpgradeAuthorityDigest(source, version);
+                // Resolve every old commitment before any schema write, including
+                // intermediate upgrades. Unknown proof preserves the complete owner.
+                proofs = PreflightLegacyReceiptUpgrade(source, version, journal);
 
                 phase = "projection";
                 using (var projected = new SqliteConnection("Data Source=:memory:;Cache=Private;Pooling=False")) {
@@ -46,9 +52,9 @@ internal sealed partial class CharacterMemorySqliteStore {
                     ConfigureUpgradeProjection(projected);
                     ValidateUpgradeSource(projected, owner, version);
                     RequireUpgradeAuthority(originalAuthority, ReadUpgradeAuthorityDigest(projected, version));
-                    UpgradeConnection(projected, owner, CharacterMemoryStoreTestHooks.None);
+                    UpgradeConnection(projected, owner, CharacterMemoryStoreTestHooks.None, proofs);
                     _ = ValidateOpenedDatabase(projected, owner);
-                    expectedV4Authority = ReadUpgradeAuthorityDigest(projected, SchemaVersion);
+                    expectedCurrentAuthority = ReadUpgradeAuthorityDigest(projected, SchemaVersion);
                 }
                 if (!apply) { return new("DryRunReady", version, SchemaVersion, null); }
 
@@ -74,15 +80,15 @@ internal sealed partial class CharacterMemorySqliteStore {
                 ConfigureOpenedDatabase(writable, readOnly: true);
                 ValidateUpgradeSource(writable, owner, version);
                 RequireUpgradeAuthority(originalAuthority, ReadUpgradeAuthorityDigest(writable, version));
-                UpgradeConnection(writable, owner, hooks);
+                UpgradeConnection(writable, owner, hooks, proofs);
                 _ = ValidateOpenedDatabase(writable, owner);
-                RequireUpgradeAuthority(expectedV4Authority, ReadUpgradeAuthorityDigest(writable, SchemaVersion));
+                RequireUpgradeAuthority(expectedCurrentAuthority, ReadUpgradeAuthorityDigest(writable, SchemaVersion));
             }
             phase = "cold-reopen";
             using (SqliteConnection reopened = OpenConnection(database, create: false, readOnly: true)) {
                 ConfigureOpenedDatabase(reopened, readOnly: true);
                 _ = ValidateOpenedDatabase(reopened, owner);
-                RequireUpgradeAuthority(expectedV4Authority, ReadUpgradeAuthorityDigest(reopened, SchemaVersion));
+                RequireUpgradeAuthority(expectedCurrentAuthority, ReadUpgradeAuthorityDigest(reopened, SchemaVersion));
             }
             return new("Upgraded", version, SchemaVersion, backupPath);
         }
@@ -96,15 +102,17 @@ internal sealed partial class CharacterMemorySqliteStore {
         }
     }
 
-    private static void UpgradeConnection(SqliteConnection connection, CharacterMemoryStoreOwner owner, CharacterMemoryStoreTestHooks hooks) {
+    private static void UpgradeConnection(SqliteConnection connection, CharacterMemoryStoreOwner owner,
+        CharacterMemoryStoreTestHooks hooks, IReadOnlyList<LegacyReceiptUpgradeProof> proofs) {
         MigrateV1ToV2IfNeeded(connection, owner, hooks);
         MigrateV2ToV3IfNeeded(connection, owner, hooks);
         MigrateV3ToV4IfNeeded(connection, owner, hooks);
+        MigrateV4ToV5IfNeeded(connection, owner, hooks, proofs);
     }
 
     private static void ValidateUpgradeSource(SqliteConnection connection, CharacterMemoryStoreOwner owner, int version) {
         if (version == 1) { _ = ValidateV1Database(connection, owner, transaction: null); }
-        else if (version is 2 or 3 or SchemaVersion) { _ = ValidateOpenedDatabase(connection, owner, expectedVersion: version); }
+        else if (version is 2 or 3 or 4 or SchemaVersion) { _ = ValidateOpenedDatabase(connection, owner, expectedVersion: version); }
         else { throw Corrupt("Unsupported Character Memory upgrade source version."); }
     }
 

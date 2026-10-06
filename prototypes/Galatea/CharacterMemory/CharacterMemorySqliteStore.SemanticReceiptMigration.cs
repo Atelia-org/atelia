@@ -7,7 +7,7 @@ internal sealed partial class CharacterMemorySqliteStore {
     private static void MigrateV3ToV4IfNeeded(SqliteConnection connection,
         CharacterMemoryStoreOwner owner, CharacterMemoryStoreTestHooks hooks) {
         long version = ReadPragmaInteger(connection, "user_version");
-        if (version == 4) { return; }
+        if (version is 4 or SchemaVersion) { return; }
         if (version != 3) { throw Corrupt("Character Memory semantic migration requires V3."); }
         const string operation = "migrate-character-memory-v3-to-v4";
         _ = ValidateOpenedDatabase(connection, owner, expectedVersion: 3);

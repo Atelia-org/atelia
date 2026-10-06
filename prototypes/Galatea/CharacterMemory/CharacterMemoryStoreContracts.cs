@@ -229,6 +229,7 @@ internal sealed record CharacterMemorySettleResult(
     CharacterMemoryCaptureSnapshot Capture
 );
 
+// V3/V4 migration-only row shape. Current owners use ActionReceiptDeliverySnapshot.
 internal enum CharacterNoteReceiptDeliveryState {
     Pending,
     ObservationBound,

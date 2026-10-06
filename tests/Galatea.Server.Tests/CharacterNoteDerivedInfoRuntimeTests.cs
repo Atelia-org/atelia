@@ -73,12 +73,11 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             service.FinishTurn(session, turn);
 
             Assert.Equal("completed", turn.Status);
-            CharacterNoteReceiptDeliverySnapshot pending = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+            ActionReceiptDeliverySnapshot pending = Assert.IsType<ActionReceiptDeliverySnapshot>(
                 session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
-            CharacterNoteReceiptFacts facts = Assert.IsType<CharacterNoteReceiptFacts>(pending.Facts);
-            Assert.Equal(ExactText, Assert.Single(facts.Memos).ExactText);
-            Assert.Null(pending.NoticeBody);
-            Assert.Null(pending.RenderedObservation);
+            NoteReceiptBatch facts = Assert.IsType<NoteReceiptBatch>(pending.FrozenBatch);
+            Assert.Equal(ActionReceiptPreview.Create(ExactText), Assert.Single(facts.Items).Preview);
+            Assert.Null(pending.BoundInput);
             SessionInputContent stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns).ObservationContent;
             Assert.True(stored.IsStructured);

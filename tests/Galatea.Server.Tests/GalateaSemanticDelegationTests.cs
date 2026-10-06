@@ -117,7 +117,7 @@ public sealed class GalateaSemanticDelegationTests {
         GalateaOutboundMailSnapshot accepted = fixture.Mail;
         _ = fixture.Store.RecordCompletedMail(accepted.DispatchId, accepted.Revision, "thread-a", "turn-a", "original remote reply");
         using SessionJournalEngine journal = SessionJournalEngine.Create(Path.Combine(fixture.Root, "journal"), new("model", "system", "test"));
-        var created = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(new GalateaDurableReplyLeaseReconciler(fixture.Store).BeginCutoff("continue"));
+        var created = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(BeginFixtureMembership(fixture.Store));
         SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.PlayerAction("continue", new("player", "admin", "Operator")),
             Fixture.Timestamp, fixture.Sender, created.Lease.ReadNotices());
         EventAddress head = journal.ReadCurrentHead()!.Value;
@@ -343,7 +343,7 @@ public sealed class GalateaSemanticDelegationTests {
                 ("$head", head), ("$input", Encoding.UTF8.GetString(bytes)));
         }
         else {
-            var lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(new GalateaDurableReplyLeaseReconciler(fixture.Store).BeginCutoff("continue"));
+            var lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(BeginFixtureMembership(fixture.Store));
             fixture.ExecuteSql("UPDATE reply_lease SET state='ObservationBound',expected_session_head=$head,bound_input=$input,observation_utf8_bytes=$bytes,observation_sha256=$sha;",
                 ("$head", head), ("$input", Encoding.UTF8.GetString(bytes)), ("$bytes", bytes.Length), ("$sha", Convert.ToHexStringLower(SHA256.HashData(bytes))));
         }
@@ -392,7 +392,7 @@ public sealed class GalateaSemanticDelegationTests {
         _ = await fixture.Driver(new Transport()).PulseAsync();
         GalateaOutboundMailSnapshot mail = fixture.Mail;
         _ = fixture.Store.RecordCompletedMail(mail.DispatchId, mail.Revision, "thread-a", "turn-a", "reply");
-        _ = new GalateaDurableReplyLeaseReconciler(fixture.Store).BeginCutoff("continue");
+        _ = BeginFixtureMembership(fixture.Store);
         string oldObservation = PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation("continue", Fixture.Timestamp,
             [new PlayerTurnNotice.Reply("reply")]));
         byte[] bytes = Encoding.UTF8.GetBytes(oldObservation);
@@ -421,7 +421,7 @@ public sealed class GalateaSemanticDelegationTests {
         mail = Assert.Single(fixture.Store.ReadSnapshot().Mails, candidate => candidate.State == GalateaDurableMailState.Accepted);
         _ = fixture.Store.RecordCompletedMail(mail.DispatchId, mail.Revision, "thread-a", "turn-a", "new reply");
         using SessionJournalEngine journal = SessionJournalEngine.Create(Path.Combine(fixture.Root, "journal"), new("model", "system", "test"));
-        var cutoff = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(new GalateaDurableReplyLeaseReconciler(fixture.Store).BeginCutoff("continue"));
+        var cutoff = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(BeginFixtureMembership(fixture.Store));
         PlayerTurnNotice[] notices = cutoff.Lease.ReadNotices().ToArray();
         Assert.Equal(2, notices.Length);
         Assert.Null(Assert.IsType<PlayerTurnNotice.Reply>(notices[0]).Sender);
@@ -435,6 +435,11 @@ public sealed class GalateaSemanticDelegationTests {
         Assert.Null(fixture.Store.ReadSnapshot().ActiveLease!.RenderedObservation);
         Assert.Equal(input, fixture.Store.ReadSnapshot().ActiveLease!.BoundInput);
     }
+
+    private static GalateaDurableReplyLeaseBeginResult BeginFixtureMembership(GalateaDelegationSqliteStore store) =>
+        new GalateaDurableReplyLeaseReconciler(store).BeginMembership("continue", store.ReadSnapshot().Notices
+            .Where(notice => notice.State == GalateaReplyNoticeState.Ready).OrderBy(notice => notice.CompletionSequence)
+            .Take(16).Select(notice => new GalateaReplyLeaseMember(notice.NoticeId, notice.Revision)).ToArray());
 
     private sealed class Fixture : IDisposable {
         internal static readonly DateTimeOffset Timestamp = new(2026, 9, 15, 9, 0, 0, TimeSpan.FromHours(8));
@@ -488,13 +493,14 @@ public sealed class GalateaSemanticDelegationTests {
             connection.Open();
             using SqliteCommand command = connection.CreateCommand();
             command.CommandText = "SELECT sql FROM sqlite_schema WHERE name='delegation_meta';";
-            string metaSql = ((string)command.ExecuteScalar()!).Replace("schema_version = 5", "schema_version = 4", StringComparison.Ordinal);
+            string metaSql = ((string)command.ExecuteScalar()!).Replace("schema_version = 6", "schema_version = 4", StringComparison.Ordinal);
             command.CommandText = "ALTER TABLE delegation_meta RENAME TO prior_meta;" + metaSql + ";" + """
                 INSERT INTO delegation_meta SELECT singleton,4,user_id,session_repository_id,
                     capture_frontier_segment_number,capture_frontier_tail_offset,baseline_selected_head,
                     maximum_queued_mails,maximum_task_utf8_bytes,maximum_reply_utf8_bytes,maximum_inbox_replies,
                     maximum_inbox_utf8_bytes,next_completion_sequence,revision FROM prior_meta;
                 DROP TABLE prior_meta;
+                DROP TABLE mail_receipt_delivery;
                 ALTER TABLE outbound_mail DROP COLUMN content_format;
                 ALTER TABLE outbound_mail DROP COLUMN sender_name;
                 ALTER TABLE outbound_mail DROP COLUMN task_sha256;

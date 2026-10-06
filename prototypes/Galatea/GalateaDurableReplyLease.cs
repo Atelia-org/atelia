@@ -1,5 +1,4 @@
 using Atelia.EventJournal;
-using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
@@ -249,81 +248,23 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
         _store = store ?? throw new ArgumentNullException(nameof(store));
     }
 
-    internal GalateaDurableReplyLeaseBeginResult BeginCutoff(
+    internal GalateaDurableReplyLeaseBeginResult BeginMembership(
         string playerText,
-        PlayerTurnNotice.NoteSaveReceipt? reservedReceipt = null
+        IReadOnlyList<GalateaReplyLeaseMember> members
     ) {
         _ = new PlayerTurnObservation(playerText);
-        GalateaDelegationStateSnapshot snapshot = _store.ReadSnapshot();
-        if (snapshot.ActiveLease is not null) {
-            throw new GalateaDelegationStoreConflictException(
-                "A durable reply lease is already active."
-            );
-        }
-        GalateaReplyNoticeSnapshot[] available = snapshot.Notices
-            .Where(static notice =>
-                notice.State == GalateaReplyNoticeState.Ready)
-            .OrderBy(static notice => notice.CompletionSequence)
-            .ToArray();
-        if (available.Length == 0) {
+        ArgumentNullException.ThrowIfNull(members);
+        if (members.Count == 0) {
+            if (_store.ReadSnapshot().ActiveLease is not null) {
+                throw new GalateaDelegationStoreConflictException(
+                    "A durable reply lease is already active.");
+            }
             return new GalateaDurableReplyLeaseBeginResult.Empty();
         }
-
-        var selected = new List<GalateaReplyNoticeSnapshot>(Math.Min(
-            available.Length,
-            PlayerTurnObservationEnvelope.MaximumNoticeCount
-        ));
-        foreach (GalateaReplyNoticeSnapshot notice in available) {
-            if (selected.Count
-                == PlayerTurnObservationEnvelope.MaximumNoticeCount
-                    - (reservedReceipt is null ? 0 : 1)) {
-                break;
-            }
-            PlayerTurnNotice[] proposed = [
-                .. selected.Select(ProjectReadyNotice),
-                ProjectReadyNotice(notice)
-            ];
-            if (reservedReceipt is not null) {
-                proposed = [.. proposed, reservedReceipt];
-            }
-            if (!GalateaObservationContent
-                    .FitsEveryValidPlayerText(proposed, reserveConnectionState: true)) {
-                // Keep all saved identities while allowing the earliest reply to
-                // make progress when connection metadata leaves no room for note text.
-                if (selected.Count != 0 || reservedReceipt?.Selection is not { } receipt
-                    || receipt.ExactTexts.Count == 0) { break; }
-                reservedReceipt = new PlayerTurnNotice.NoteSaveReceipt(
-                    new CharacterNoteReceiptSelection(receipt.SourceActionAddress, receipt.MemoIds, []));
-                proposed = [ProjectReadyNotice(notice), reservedReceipt];
-                if (!GalateaObservationContent.FitsEveryValidPlayerText(proposed, reserveConnectionState: true)) { break; }
-            }
-            selected.Add(notice);
-        }
-        if (selected.Count == 0) {
-            throw new InvalidDataException(
-                "The earliest Ready notice cannot fit a durable player-turn Observation."
-            );
-        }
-
-        string leaseId = LeaseIdPrefix + Guid.NewGuid().ToString("N");
-        GalateaReplyLeaseSnapshot lease =
-            _store.BeginReplyLeaseMembership(
-                leaseId,
-                playerText,
-                selected.Select(static notice =>
-                    new GalateaReplyLeaseMember(
-                        notice.NoticeId,
-                        notice.Revision
-                    )
-                ).ToArray()
-            );
+        GalateaReplyLeaseSnapshot lease = _store.BeginReplyLeaseMembership(
+            LeaseIdPrefix + Guid.NewGuid().ToString("N"), playerText, members);
         return new GalateaDurableReplyLeaseBeginResult.Created(
-            new GalateaDurableReplyLease(
-                _store,
-                lease.LeaseId,
-                lease.Revision
-            )
-        );
+            new GalateaDurableReplyLease(_store, lease.LeaseId, lease.Revision));
     }
 
     /// <summary>
@@ -554,8 +495,5 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
         );
     }
 
-    private static PlayerTurnNotice ProjectReadyNotice(
-        GalateaReplyNoticeSnapshot notice
-    ) => GalateaDurableNoticeContent.Project(notice);
 
 }

@@ -1,6 +1,8 @@
 # Character Note Default MemoPod V1
 
-> **当前格式边界（2026-09-16）**：本文保留 Default Pod V1、后续 SQLite V3 回执方案及其阶段记录。当前 CharacterMemory SQLite 为 V4；新版回执保存机读事实，旧 `notice_body`／冻结 Observation 按原格式读取，不能作为新写入模板。capture、Planned→Applied、old-or-new reconciliation 和回执投递证明仍适用。后继边界见[结构化输入合同](structured-input-rendering-design.md)、[当前运行时](runtime.md)；真实升级与通信结果见[迁移验收](player-character-migration-validation.md)。
+> **后继回执边界（2026-10-06）**：[统一操作回执与正文预览方案](mail-note-receipt-preview-refactor-design.md)定义当前 Note 回执写入目标、CharacterMemory V5 显式升级与 shared delivery；实施验证在该方案集中记录。本文 V1/V3/V4 阶段证据保留历史语境。
+
+> **历史格式边界（2026-09-16）**：本文保留 Default Pod V1、后续 SQLite V3 回执方案及其阶段记录。该阶段 CharacterMemory SQLite 为 V4；新版回执保存机读事实，旧 `notice_body`／冻结 Observation 按原格式读取，不能作为新写入模板。capture、Planned→Applied、old-or-new reconciliation 和回执投递证明仍适用。后继边界见[结构化输入合同](structured-input-rendering-design.md)、[当前运行时](runtime.md)；真实升级与通信结果见[迁移验收](player-character-migration-validation.md)。
 
 ## 状态
 
@@ -189,7 +191,9 @@ store同一时刻最多有一个`Captured`或`Planned` batch；`active_source_ac
 
 每个store目录有process-lifetime exclusive lock。生产只允许一个writable owner；`UserSessionHost.TurnLock`继续序列化同一session的reconcile，但不能替代跨进程lock。
 
-### 5.1 当前V3 receipt outbox
+### spec [F-NOTE-V3-TEXT-RECEIPT-OUTBOX] DEPRECATED：V3 冻结文本回执 outbox
+
+此节保留 V3 阶段合同；当前通知 payload 和升级路径由 @[F-NOTE-V5-ACTION-RECEIPT-OUTBOX] 替代。
 
 `note_receipt_delivery`以`source_action_address`为主键/FK，冻结`notice_body`、`created_revision`、`state_revision`，
 并保存`expected_session_head`、`rendered_observation`与`observation_address`。状态为
@@ -200,6 +204,12 @@ source/base与Observation address，不永久复制外部回信或recall正文�
 
 旧store先strict验证，再事务化迁移到V3；V1经过V2 DerivedInfo迁移。旧版已Applied历史不会补建receipt，
 旧Captured/Planned在V3下首次真正Applied时创建。AlreadyApplied不创建第二份义务。升级不从旧receipt正文/debug log猜测投递状态。
+
+### spec [F-NOTE-V5-ACTION-RECEIPT-OUTBOX] Applied 事务冻结短回执
+
+新的非空 `Planned -> Applied` MUST 在同一事务冻结当前 Note receipt batch 并建立 Pending 义务；AlreadyApplied、zero、Rejected 和旧历史 Applied 不补建。来源 Action、PodId、全部 ordered Memo IDs 保留完整，preview 为事务中冻结的有界字符串，不额外复制 ExactText 或渲染包装。通知表示、共享投影和投递规则以[统一回执方案](mail-note-receipt-preview-refactor-design.md)为 canonical。
+
+V5 MUST 经显式离线升级进入：provider-free 只读 Journal 证明旧 Bound；未知或冲突保留整个 owner 旧 schema / Bound 字节。旧 Pending 转换，旧 Delivered 不补发，历史 Journal / Prepared / 已绑定输入不重写。完整业务 ExactText、Pod state identity 与 old-or-new apply reconciliation 不因回执缩短而改变。
 
 ## 6. Apply protocol
 
@@ -343,6 +353,8 @@ Mail与Note是独立durable effects。Mail失败、caller cancellation或后来h
 
 所有normal HTTP durable mutation入口继续先走同一admission gate；因此pending batch会在Undo/rewind之前settle，而已经Applied的Memo不会因SessionJournal rewind自动删除。
 
+当前共享回执组装和投递遵循 @[S-NOTE-ACTION-RECEIPT-PRESENTATION]。以下 Note-only 流程为 V3 阶段说明，原 exact proof 与 append 语义仍保留：
+
 Receipt投递在fresh PlayerAction、HeartbeatActivation与DelegateReply共享；inbound/recovery不领取新receipt。
 runtime先选Pending receipt，再做optional Memo recall，冻结完整Observation后绑定exact base head。
 `GalateaNoteReceiptDelivery`读取raw journal exact proof：NotAppended回到Pending，InProgress/Terminal标记Delivered；
@@ -395,6 +407,10 @@ V6把session、delegation、character-memory与optional call-log路径关系收�
 
 V1当时从development request升级时保留了tool字段；当前[忠实代写合同](character-note-transcription.md)保留tool name，字段已收敛为`text`，`ContractId`随语义与tool合同变化。历史capture仍用首次采纳内容，不因新合同重提取。
 
+### spec [S-NOTE-LEGACY-SUFFIX-RECEIPT] DEPRECATED：V1/V3 全文保存回执与末尾顺序
+
+以下 hard-cut、全文/compact 及任意 playerText 预留规则保留为当时合同；当前生成路径由 @[S-NOTE-ACTION-RECEIPT-PRESENTATION] 替代。
+
 `PlayerTurnNotice.NoteRequestReceipt` hard-cut为`NoteSaveReceipt`：
 
 - heading：`Note 保存回执`；
@@ -407,7 +423,13 @@ V1当时从development request升级时保留了tool字段；当前[忠实代写
 持续到达而永久饥饿；optional recall只使用receipt之后的剩余Observation预算。fallback不截断保存正文冒充完整展示，
 不承诺metadata已补全或记忆已召回。
 
-不保留旧heading、旧info string或旧strong type compatibility reader；项目尚未发布，及时重构优于双协议。2026-08-30实施前只读审计两个configured本机SessionJournal，对旧`## Note 请求回执`heading的binary/text命中均为0，因此当前没有需要迁移或保留legacy reader的durable V0 Observation证据。
+V1 当时未保留 V0 旧heading、旧info string或旧strong type compatibility reader；项目尚未发布，及时重构优于双协议。2026-08-30实施前只读审计两个configured本机SessionJournal，对旧`## Note 请求回执`heading的binary/text命中均为0，因此当前没有需要迁移或保留legacy reader的durable V0 Observation证据。
+
+### spec [S-NOTE-ACTION-RECEIPT-PRESENTATION] 新回执为确认前缀，历史 reader 保真
+
+当前 writer MUST 只生成 `action-receipt-v1`，Note variant 为 `note-save`；它确认该批次已保存，展示的是识别预览，不冒充完整 Note 正文。Note 与 Mail 在同一 fresh composer 中各取最多一批并选择统一 full/null 投影，全部 IDs 始终保留。顺序、预算和 exact delivery 以[统一回执方案](mail-note-receipt-preview-refactor-design.md)为准；旧 `note-save-receipt` / legacy variant 的历史读取 MUST 保留原字段和末尾规则。
+
+receipt Delivered 只证明输入已 append；MUST NOT 解释为 provider 收到、角色理解、邮件送达或 metadata/recall 完成。attach、admission、cleanup、结束与 rewind 准备前 MUST 先结算所有已绑定回执 owner。进展通知只保留 fresh 组装扩展位置，本轮不新增查询 API、状态订阅或回执专用唤醒。
 
 ## 10. Explicit non-goals / complexity tripwires
 

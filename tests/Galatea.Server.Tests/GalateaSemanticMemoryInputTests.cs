@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.CharacterMemory;
@@ -37,24 +38,20 @@ public sealed class GalateaSemanticMemoryInputTests {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ReceiptSelectionRetainsEverySavedIdAndChoosesWholeTextsOnly(bool large) {
+    public void FrozenReceiptRetainsEverySavedIdAndOnlyBoundedPreviews(bool large) {
         string source = EventAddressTextCodec.Format(new Atelia.EventJournal.EventAddress(Atelia.Data.SizedPtr.Create(4, 4), 1, Atelia.EventJournal.AddressHint.None));
         CharacterNoteAppliedMemo[] memos = Enumerable.Range(0, large ? 16 : 1).Select(i =>
             new CharacterNoteAppliedMemo(source, i, CharacterNoteDefaultPodV1.PodId,
                 MemoId.Parse("m1:" + (i + 1).ToString("x8")), new string(large ? '\u0001' : 'x', large ? 16 * 1024 : 128))).ToArray();
-        var facts = new CharacterNoteReceiptFacts(source, memos);
-        var receipt = new CharacterNoteReceiptDeliverySnapshot(source, CharacterNoteReceiptDeliveryState.Pending,
-            null, 3, 3, null, null, null, facts);
-        PlayerTurnNotice.NoteSaveReceipt selected = CharacterNoteSaveReceipt.SelectForObservation(receipt);
-        Assert.Null(receipt.NoticeBody);
-        Assert.Equal(memos.Select(m => m.MemoId), selected.Selection!.MemoIds);
-        Assert.Equal(large ? 0 : memos.Length, selected.Selection.ExactTexts.Count);
+        var batch = new NoteReceiptBatch(source, CharacterNoteDefaultPodV1.PodId,
+            memos.Select(m => new NoteReceiptItem(m.MemoId, ActionReceiptPreview.Create(m.ExactText))).ToArray());
+        var selected = new PlayerTurnNotice.ActionReceipt(batch);
+        Assert.Equal(memos.Select(m => m.MemoId), batch.Items.Select(item => item.MemoId));
+        Assert.All(batch.Items, item => Assert.True(item.Preview!.EnumerateRunes().Count() <= 56));
         SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10), Time, Character, [selected]);
-        PlayerTurnNotice.NoteSaveReceipt reopened = Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
+        PlayerTurnNotice.ActionReceipt reopened = Assert.IsType<PlayerTurnNotice.ActionReceipt>(
             Assert.Single(GalateaObservationContent.ReadPlayerTurn(input).Notices));
-        Assert.Equal(selected.Selection.MemoIds, reopened.Selection!.MemoIds);
-        Assert.Equal(selected.Selection.ExactTexts, reopened.Selection.ExactTexts);
-        Assert.Throws<InvalidOperationException>(() => selected.Body);
+        Assert.Equal(batch, reopened.Batch);
     }
 
     [Fact]

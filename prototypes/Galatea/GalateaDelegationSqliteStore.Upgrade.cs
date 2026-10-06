@@ -5,7 +5,7 @@ namespace Atelia.Galatea.Server;
 internal sealed record GalateaDelegationStoreUpgradeResult(string Outcome, string? BackupPath);
 
 internal sealed partial class GalateaDelegationSqliteStore {
-    /// <summary>Explicit offline upgrade. Ordinary opens accept only V5.</summary>
+    /// <summary>Explicit offline upgrade. Ordinary opens accept only the current schema.</summary>
     internal static GalateaDelegationStoreUpgradeResult UpgradeExisting(
         string storeDirectory, GalateaDelegationStoreOwner owner,
         GalateaDelegationStoreLimits limits, bool apply,
@@ -33,10 +33,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 _ = ValidateOpenedDatabase(source, owner, limits);
                 return new("AlreadyCurrent", null);
             }
-            if (version is not (1 or 2 or 3 or 4)) {
+            if (version is not (1 or 2 or 3 or 4 or 5)) {
                 throw new InvalidDataException($"Delegation schema version {version} cannot be upgraded.");
             }
-            if (version is 3 or 4) {
+            if (version == 5) {
+                _ = ValidateOpenedDatabase(source, owner, limits, expectedVersion: 5);
+            } else if (version is 3 or 4) {
                 ValidateV3UpgradeSource(source, owner, limits, version);
             } else {
                 ValidateLegacyUpgradeSource(source, owner, limits, version);
@@ -47,12 +49,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 2 => UpgradeRecoveryColumnsSql + UpgradeMetaToV3Sql
                     + UpgradeV3ToV4Sql,
                 3 => UpgradeV3ToV4Sql,
-                4 => string.Empty,
+                4 or 5 => string.Empty,
                 _ => throw new InvalidOperationException("Unexpected upgrade version.")
             };
-            sql += UpgradeV4ToV5Sql;
+            if (version < 5) { sql += UpgradeV4ToV5Sql; }
             // The only legacy projection lives in this offline upgrader. A
-            // disposable copy lets dry-run validate the exact future V5 state
+            // disposable copy lets dry-run validate the exact future state
             // without runtime dual-format readers or modifying the source.
             using (var projected = new SqliteConnection("Data Source=:memory:")) {
                 projected.Open();
@@ -60,16 +62,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 using SqliteCommand projection = projected.CreateCommand();
                 projection.CommandText = sql;
                 _ = projection.ExecuteNonQuery();
+                UpgradeDelegationV5ToV6(projected, transaction: null);
                 expected = ValidateOpenedDatabase(projected, owner, limits);
             }
             if (!apply) { return new("DryRunReady", null); }
             backupPath = CreateUpgradeBackup(source, databasePath, owner, limits, version);
-            string operation = $"upgrade-delegation-v{version}-to-v5";
+            string operation = $"upgrade-delegation-v{version}-to-v{SchemaVersion}";
             using SqliteTransaction transaction = source.BeginTransaction(deferred: false);
             using SqliteCommand upgrade = source.CreateCommand();
             upgrade.Transaction = transaction;
             upgrade.CommandText = sql;
             _ = upgrade.ExecuteNonQuery();
+            UpgradeDelegationV5ToV6(source, transaction);
             RequireSameUpgradeState(expected, ReadSnapshotCore(source, transaction));
             hooks?.BeforeCommit?.Invoke(operation);
             transaction.Commit();
@@ -176,7 +180,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
         using (SqliteConnection backup = OpenConnection(backupPath, create: false)) {
             source.BackupDatabase(backup);
             ConfigureOpenedDatabase(backup, readOnly: true);
-            if (version is 3 or 4) {
+            if (version == 5) {
+                _ = ValidateOpenedDatabase(backup, owner, limits, expectedVersion: 5);
+            } else if (version is 3 or 4) {
                 ValidateV3UpgradeSource(backup, owner, limits, version);
             } else {
                 ValidateLegacyUpgradeSource(backup, owner, limits, version);
@@ -201,9 +207,31 @@ internal sealed partial class GalateaDelegationSqliteStore {
             || before.Route != after.Route || !before.Captures.SequenceEqual(after.Captures)
             || !before.Mails.SequenceEqual(after.Mails)
             || !before.InternalMailOutboxes.SequenceEqual(after.InternalMailOutboxes)
-            || !before.Notices.SequenceEqual(after.Notices) || !sameLease) {
+            || !before.Notices.SequenceEqual(after.Notices) || !sameLease
+            || !before.MailReceipts.SequenceEqual(after.MailReceipts)) {
             throw new InvalidDataException("Delegation upgrade changed expected business state.");
         }
+    }
+
+    private static void UpgradeDelegationV5ToV6(SqliteConnection connection, SqliteTransaction? transaction) {
+        using SqliteCommand read = connection.CreateCommand();
+        if (transaction is not null) { read.Transaction = transaction; }
+        read.CommandText = "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'delegation_meta';";
+        string meta = ((string)read.ExecuteScalar()!).Replace("schema_version = 5", "schema_version = 6", StringComparison.Ordinal);
+        using SqliteCommand command = connection.CreateCommand();
+        if (transaction is not null) { command.Transaction = transaction; }
+        command.CommandText = "ALTER TABLE delegation_meta RENAME TO delegation_meta_v5;" + meta + ";" + """
+            INSERT INTO delegation_meta SELECT singleton, 6, user_id, session_repository_id,
+                capture_frontier_segment_number, capture_frontier_tail_offset,
+                baseline_selected_head, maximum_queued_mails, maximum_task_utf8_bytes,
+                maximum_reply_utf8_bytes, maximum_inbox_replies, maximum_inbox_utf8_bytes,
+                next_completion_sequence, revision FROM delegation_meta_v5;
+            DROP TABLE delegation_meta_v5;
+            PRAGMA user_version = 6;
+            """;
+        command.ExecuteNonQuery();
+        // Old captures have no durable confirmation-notification obligation.
+        CreateMailReceiptDeliverySchema(connection, transaction);
     }
 
     private const string UpgradeV1ColumnsSql = """

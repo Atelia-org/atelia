@@ -8,10 +8,8 @@ namespace Atelia.Galatea.Server.Tests;
 
 [Trait("Category", "GalateaLab")]
 public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task HostedNoteReceiptAcrossColdReopensSavesOnceAndDeliversOnceWithoutPlayer(bool historicalWording) {
+    [Fact]
+    public async Task HostedNoteReceiptAcrossColdReopensSavesOnceAndDeliversOnceWithoutPlayer() {
         var clock = new GalateaLabClock();
         var firstFactory = new GalateaNoteReceiptFixture.Factory(epoch: 1);
         await using var lab = GalateaScenarioLab.Create("hosted-note-receipt", firstFactory,
@@ -25,19 +23,12 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         var pending = await GalateaNoteReceiptFixture.ReadStateAsync(first);
         Assert.Single(pending.Turns);
         Assert.Equal(GalateaNoteReceiptFixture.NoteText, pending.Note.ExactText);
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Pending, pending.Receipt.State);
+        Assert.Equal(ActionReceiptDeliveryState.Pending, pending.Receipt.State);
         Assert.Equal(EventAddressTextCodec.Format(pending.Turns[0].RequireTerminalAction().Address), pending.Receipt.SourceActionAddress);
         Assert.Equal(pending.Receipt.CreatedRevision, pending.Receipt.StateRevision);
         Assert.Equal(1, firstFactory.SaveIntents);
         Assert.Equal(1, firstFactory.DerivedCalls);
-        string memoryDirectory = first.Session.Character.CharacterMemoryStateDir;
         await lab.StopAsync();
-        if (historicalWording) {
-            pending = pending with { Receipt = pending.Receipt with {
-                NoticeBody = HistoricalNoteReceiptFixture.OldWording(CharacterNoteSaveReceipt.CreateDurable(pending.Receipt.Facts!.Memos).Notice.Body), Facts = null, BoundInput = null,
-            } };
-            HistoricalNoteReceiptFixture.WriteFrozenNotice(memoryDirectory, pending.Receipt);
-        }
 
         // Missed downtime ticks are not replayed. A new host gets a fresh full
         // cadence interval, using freshly constructed external dependencies.
@@ -55,16 +46,18 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.Equal(pending.PodIdentity, delivered.PodIdentity);
         Assert.Equal(pending.Receipt.SourceActionAddress, delivered.Receipt.SourceActionAddress);
         Assert.Equal(pending.Receipt.CreatedRevision, delivered.Receipt.CreatedRevision);
-        Assert.Equal(pending.Receipt.NoticeBody, delivered.Receipt.NoticeBody);
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, delivered.Receipt.State);
+        Assert.Null(delivered.Receipt.FrozenBatch);
+        Assert.Equal(ActionReceiptDeliveryState.Delivered, delivered.Receipt.State);
         Assert.True(delivered.Receipt.StateRevision > pending.Receipt.StateRevision);
-        Assert.Null(delivered.Receipt.RenderedObservation);
+        Assert.Null(delivered.Receipt.BoundInput);
         Assert.Equal(EventAddressTextCodec.Format(delivered.Turns[0].ObservationAddress), delivered.Receipt.ObservationAddress);
         Assert.Equal(GalateaInputProjector.Instance.Project(delivered.Turns[0].ObservationContent), secondFactory.CurrentObservation);
         PlayerTurnObservation providerObservation = GalateaObservationContent.ReadPlayerTurn(delivered.Turns[0].ObservationContent);
-        var received = Assert.Single(providerObservation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>());
-        if (historicalWording) { Assert.Equal(pending.Receipt.NoticeBody, received.Body); }
-        else { Assert.Equal(GalateaNoteReceiptFixture.NoteText, Assert.Single(received.Selection!.ExactTexts)); }
+        var received = Assert.Single(providerObservation.Notices.OfType<PlayerTurnNotice.ActionReceipt>());
+        var batch = Assert.IsType<NoteReceiptBatch>(received.Batch);
+        Assert.Equal(pending.Receipt.FrozenBatch, batch);
+        Assert.Equal(ActionReceiptPreview.Create(GalateaNoteReceiptFixture.NoteText), Assert.Single(batch.Items).Preview);
+        Assert.DoesNotContain(GalateaNoteReceiptFixture.UniqueMiddle, secondFactory.CurrentObservation!, StringComparison.Ordinal);
         Assert.Equal(0, secondFactory.SaveIntents);
         Assert.Equal(0, secondFactory.DerivedCalls);
         await lab.StopAsync();
@@ -74,7 +67,7 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         await lab.ReopenAsync(thirdFactory);
         var third = await GalateaNoteReceiptFixture.StartEpochAsync(lab, clock, thirdFactory);
         Assert.Equal(delivered.Receipt, (await GalateaNoteReceiptFixture.ReadStateAsync(third)).Receipt);
-        // The real Host must attach a ledger containing a Delivered legacy
+        // The real Host must attach a ledger containing a Delivered
         // receipt before the browser can read its current turn.
         using (HttpClient http = lab.Host.CreateClient()) {
             using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
@@ -90,13 +83,13 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.Equal(pending.PodIdentity, final.PodIdentity);
         Assert.Equal(GalateaInputProjector.Instance.Project(final.Turns[0].ObservationContent), thirdFactory.CurrentObservation);
         PlayerTurnObservation current = GalateaObservationContent.ReadPlayerTurn(final.Turns[0].ObservationContent);
-        Assert.Empty(current.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>());
+        Assert.Empty(current.Notices.OfType<PlayerTurnNotice.ActionReceipt>());
         int receipts = 0;
         foreach (var turn in final.Turns) {
             PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(turn.ObservationContent);
             Assert.Equal(PlayerTurnObservationTriggerKind.HeartbeatActivation, observation.TriggerKind);
             Assert.Empty(observation.Recalls); // Memo recall is explicitly out of scope.
-            receipts += observation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>().Count();
+            receipts += observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>().Count();
         }
         Assert.Equal(1, receipts);
         Assert.Equal(1, firstFactory.MainCalls);

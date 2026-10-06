@@ -68,7 +68,7 @@ public sealed class GalateaFeatureRetrySettlementTests {
         long? receiptRevision = null;
         string? dispatchId = null;
         if (note) {
-            var receipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+            var receipt = Assert.IsType<ActionReceiptDeliverySnapshot>(
                 session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             receiptSource = receipt.SourceActionAddress;
             receiptRevision = receipt.StateRevision;
@@ -105,7 +105,7 @@ public sealed class GalateaFeatureRetrySettlementTests {
         Assert.Equal(0, reopenedProvider.FeatureCalls);
         if (note) {
             AssertSingleNote(restored);
-            var receipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+            var receipt = Assert.IsType<ActionReceiptDeliverySnapshot>(
                 restored.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             Assert.Equal(receiptSource, receipt.SourceActionAddress);
             Assert.Equal(receiptRevision, receipt.StateRevision);

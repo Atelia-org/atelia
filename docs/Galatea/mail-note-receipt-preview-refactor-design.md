@@ -1,6 +1,6 @@
 # Mail / Note 统一操作回执与正文预览重构方案
 
-> 状态：**Implementing，正在按本方案实施与验证**。日期：2026-10-06。源码基线：`40e5b246`。
+> 状态：**Implemented，代码与离线验收完成；实例尚未迁移或部署**。日期：2026-10-06。源码基线：`40e5b246`。
 >
 > 本文已完成 `dialectical-simplification` 的独立审阅与交叉质询，施工契约已收敛。以最终产品代码的简单性为准，允许迁移过程更复杂。用户已授权运行时代码、合成 fixtures、相关文档和 git 提交；实例迁移与部署不属于本次执行。
 
@@ -30,13 +30,13 @@
 | 位置 | 当前行为 / 对设计的影响 |
 |:--|:--|
 | [TextExtractor.cs](../../prototypes/Galatea/TextExtractor.cs)，L200 | 工具 ACK 只确认候选在内存中接纳，接收方是提取模型，不证明业务生效。 |
-| [CharacterNoteSaveReceipt.cs](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)，L24；[CharacterNoteReceiptContent.cs](../../prototypes/Galatea/CharacterMemory/CharacterNoteReceiptContent.cs)，L44–69 | 当前 Note 全文优先、预算不足才只回 IDs；全文进入 `exactTexts[]`。 |
+| 基线 `40e5b246` 的 `CharacterMemory/CharacterNoteSaveReceipt.cs`，L24；[历史 Note codec](../../prototypes/Galatea/CharacterMemory/CharacterNoteReceiptContent.cs) | 重构前 Note 全文优先、预算不足才只回 IDs；全文进入 `exactTexts[]`。旧 writer 在本次删除。 |
 | [GalateaServices.cs](../../prototypes/Galatea/GalateaServices.cs)，L1737、L3046、L3134–3159 | cutoff 预留回执与 fresh 内容选择分处两点；lease / Note 已分别绑定同一 Observation。 |
 | [GalateaDelegationSqliteStore.Transitions.cs](../../prototypes/Galatea/GalateaDelegationSqliteStore.Transitions.cs)，L8–139 | Mail capture、outbound 行和内部信 outbox 同事务；尚无发件受理回执。 |
 | 同文件 L1258–1323 | 内部信的 outbound 行也可能是 `Unrouted`，但有真实 internal outbox；不能只看 outbound 状态判定失败。 |
 | 同文件 L550、L1009–1011；[Recovery](../../prototypes/Galatea/GalateaDelegationSqliteStore.Recovery.cs) | 邮件 terminal / preflight / recovery 会清除正文。下一轮再从当前邮件生成 preview 可能已没有材料。 |
 | [CharacterMemorySqliteStore.Transitions.cs](../../prototypes/Galatea/CharacterMemory/CharacterMemorySqliteStore.Transitions.cs)，L389 | 新 Note 回执义务与 Applied settlement 原子提交，是应保留的成功边界。 |
-| [GalateaNoteReceiptDelivery.cs](../../prototypes/Galatea/GalateaNoteReceiptDelivery.cs)，L18–55 | exact Observation proof 决定 Delivered；不是 provider 完成或角色理解证明。 |
+| 基线 `40e5b246` 的 `GalateaNoteReceiptDelivery.cs`，L18–55；现由[共享投递](../../prototypes/Galatea/ActionReceiptDelivery.cs)承担 | exact Observation proof 决定 Delivered；不是 provider 完成或角色理解证明。 |
 | [GalateaObservationSchema.cs](../../prototypes/Galatea.Input/GalateaObservationSchema.cs)，L195–239 | notice 已按 kind 分派，V1..V4 共用该验证；没有独立的 schema→notice 集合身份。 |
 | [GalateaDelegationState.cs](../../prototypes/Galatea/GalateaDelegationState.cs)，L8；[ObservationLimits](../../prototypes/Galatea.Input/GalateaObservationLimits.cs) | Mail 单批最多 64、Note 最多 16；Mail recipient 最多 1024 UTF-8 bytes，subject 最多 4096。前稿 Note 16 KiB 不能直接覆盖 Mail。 |
 | [Transitions](../../prototypes/Galatea/GalateaDelegationSqliteStore.Transitions.cs)，L377、L870；[InternalMail](../../prototypes/Galatea/GalateaDelegationSqliteStore.InternalMail.cs)，L60；[Recovery](../../prototypes/Galatea/GalateaDelegationSqliteStore.Recovery.cs)，L190 | Started 不证明已发送；Codex Accepted 证明远端接纳；internal Delivered 证明收件 Journal append；RESULT_UNCONFIRMED 不等于肯定发送失败。 |
@@ -170,6 +170,10 @@ Note receipt 使用 `kind = "note-save"`、`sourceActionAddress`、`podId`、`it
 
 Heartbeat 已确定后才到达的新 Ready 留给后续轮次，不把 Heartbeat 重新归类或塞入 reply lease。当前 Memo recall query 继续只选 Reply / DeliveryFailure 作为检索依据；新确认回执不进入 query。使用同一冻结输入作为来源，不表示每个消费者都投影全部 notices。
 
+### spec [S-RECEIPT-PRESERVE-REPLY-DISCRIMINATOR] 保留既有 Player 触发身份例外
+
+真实 PlayerAction 的文本恰等于既有 `DelegateReplyLeasePlayerTextDiscriminator` 时，MUST 保持 Player trigger / sender，按基线不领取 Ready；回执仍可被本轮选中。该文案同时是旧 lease `player_text` 的 reply-only 判别值，不能在本次回执重构中让输入擅自改变 lease 意图。表中 PlayerAction 的 Ready 领取规则受此既有例外约束；Ready 留给后续普通 PlayerAction 或 DelegateReply。不新增持久 trigger 字段或兼容选择路径。
+
 ### spec [S-RECEIPT-CAUSAL-PRESENTATION] DEPRECATED：现行顺序见新条款
 
 此前“回执先于相关回信”的跨轮读法无法由每域一个 FIFO batch 保证；由 @[S-RECEIPT-SELECTED-NOTICE-ORDER] 替代，不引入确认屏障。
@@ -278,7 +282,7 @@ projector、CLI / 人类历史展示、Prepared 恢复与旧 Observation 重放 
 
 每个阶段完成垂直验证，不先建设无消费者的通用平台；最终发布一个当前生产模型，不长期保留平行旧新写路径。相关文件还包括 [GalateaObservationContent](../../prototypes/Galatea/GalateaObservationContent.cs)、[PlayerTurnObservation](../../prototypes/Galatea/PlayerTurnObservation.cs)、[共享 projector](../../prototypes/Galatea.Input/GalateaObservationInputProjector.cs)、[输入说明](../../prototypes/Galatea/GalateaSystemInstructionContent.cs)和 [Recent display](../../prototypes/Galatea/GalateaRecentTurnDisplayAdapter.cs)。
 
-### derived [A-RECEIPT-IMPLEMENTATION-HANDOFF] 下一轮施工按同一时序与验证范围推进
+### derived [A-RECEIPT-IMPLEMENTATION-HANDOFF] 施工时序与验证范围
 
 实现入口时序：
 
@@ -289,9 +293,9 @@ projector、CLI / 人类历史展示、Prepared 恢复与旧 Observation 重放 
 5. 依次bind lease、Mail、Note；全部成功后才append。计划/recall/claim/bind失败沿原失败cleanup处理；未append时仅在允许的无效果状态或exact NotAppended证据下回滚，不重做业务。
 6. append后receipt可Delivered；reply lease按原terminal / abandon资格结算。冷重开、显式结束、Undo均先共同对账，unknown不猜。
 
-下轮先核对实际HEAD、schema版本和工作区，记录现有定向测试baseline；随后串行执行受影响测试。当前实现的回归入口包括 `tests/Galatea.Server.Tests` 下的 CharacterMemoryReceiptDeliveryTests、CharacterMemorySemanticReceiptMigrationTests、CharacterMemoryStoreUpgradeTests、GalateaDurableReplyLeaseTests、GalateaNoteReceiptDeliveryTests、GalateaNoteReceiptProcessCrashTests、GalateaObservationSharedProjectionTests，以及 internal mail / relay / CLI测试。新增断言围绕下面的故障和可观察请求，不为计划记录类型本身增加镜像测试。全部非Live回归命令使用[E2E指南](e2e-testing.md#离线与非-live-命令)中的明确类筛选。
+施工先核对实际HEAD、schema版本和工作区，记录现有定向测试baseline；随后串行执行受影响测试。回归入口包括 `tests/Galatea.Server.Tests` 下的 CharacterMemoryReceiptDeliveryTests、CharacterMemorySemanticReceiptMigrationTests、CharacterMemoryStoreUpgradeTests、GalateaDurableReplyLeaseTests、GalateaNoteReceiptDeliveryTests、GalateaNoteReceiptProcessCrashTests、GalateaObservationSharedProjectionTests，以及 internal mail / relay / CLI测试。前几个存储测试文件属于 `CharacterMemorySqliteStoreTests` / `CharacterMemorySqliteStoreTestsV2` partial class，定向过滤须用实际 FQN，不能以文件名替代。新增断言围绕下面的故障和可观察请求，不为计划记录类型本身增加镜像测试。全部非Live回归命令使用[E2E指南](e2e-testing.md#离线与非-live-命令)中的明确类筛选。
 
-下一轮实施范围是运行时代码、合成fixtures与文档联动；实际实例迁移 / provider调用 / 部署须单独记录实际执行证据。方案准备不表示这些工作已经完成。
+本次实施范围是运行时代码、合成fixtures与文档联动；实际实例迁移 / provider调用 / 部署须单独记录实际执行证据。本次交付证据见后续实施记录。
 
 ### spec [A-RECEIPT-ACCEPTANCE] 以生产请求和故障窗口验收
 
@@ -323,7 +327,7 @@ projector、CLI / 人类历史展示、Prepared 恢复与旧 Observation 重放 
 
 ### derived [S-RECEIPT-DIALECTICAL-VERDICTS] 按当前消费者与故障轨迹裁决
 
-三角色分别为需求质疑、最小架构、语义守护。初次完善裁决版本与frozen内容；本次在进展扩展加入后进行独立审阅和交叉质询，争议已闭合，无需第三轮。主线程独立核验关键源码，没有以票数决定，也没有实施代码。
+三角色分别为需求质疑、最小架构、语义守护。初次完善裁决版本与frozen内容；方案阶段在进展扩展加入后进行独立审阅和交叉质询，争议已闭合，无需第三轮。方案阶段未实施代码；随后经用户授权进入本文记录的实施阶段。
 
 | 项目 | Verdict | 依据 / 最终处理 |
 |:--|:--|:--|
@@ -345,8 +349,38 @@ projector、CLI / 人类历史展示、Prepared 恢复与旧 Observation 重放 
 | 空进展接口 / 状态表 / 未用variant | defer | 用户要求保留扩展位置，composer / typed notices / 纯projector已满足；具体进展消费者接入时再落实身份、游标与节奏。 |
 | 全局时钟、随机 receipt ID、handler registry、回执新 wake | defer | 当前两个消费者不需要；只有新增具体领域或独立 wake 产品需求时再审。 |
 
-可观察的简化是：三个预览字段合为一个，两组平行数组合为一个item数组，admission / fresh内容选择合为一个plan，删除store的第二次预算预留；两个领域共用snapshot / 投递合同。新增第三库、全局调度身份、新容器版本、进展API / 表 / variant均为零。实际类型数和代码行变化需实施后量测。
+可观察的简化是：三个预览字段合为一个，两组平行数组合为一个item数组，admission / fresh内容选择合为一个plan，删除store的第二次预算预留；两个领域共用snapshot / 投递合同。新增第三库、全局调度身份、新容器版本、进展API / 表 / variant均为零。本次实际删除旧 `CharacterNoteSaveReceipt` writer、`GalateaNoteReceiptDelivery` 专用流程、`BeginCutoff` selector、Note current hydration、universal reserve helper 和无效 auto-upgrade 参数；窄历史 reader / 迁移保留。新增 Mail 持久回执与迁移、故障测试需要额外代码，不以总代码行减少代替设计简单性。
 
 当前没有需要用户追加决定的实施阻塞项。确认反馈发生于后续普通轮次，允许历史确认晚于实际回信；recipient仅是识别预览，没有wall-clock时延承诺。未来最新状态 / 逐阶段、终态保证和重复展示节奏在 @[S-RECEIPT-PROGRESS-FUTURE-TRIGGER] 延后，不阻塞本轮。
 
 实施时同步把[结构化输入合同](structured-input-rendering-design.md) §5.2 的“全文或IDs”现行规则及旧Pending进入新writer的描述指向本方案；[保存合同](character-note-default-memopod-v1.md)和[Observation Bridge](text-extractor-observation-bridge.md)的“唯一末尾receipt / 15槽”规则改为本方案的新kind分类与16槽分配。同步[运行时](runtime.md)、新Setup说明和[文档索引](README.md)，历史阶段证据及旧kind codec保留原含义。
+
+## 8. 实施交付与验收记录
+
+### derived [R-RECEIPT-IMPLEMENTATION-EVIDENCE] 2026-10-06 代码交付
+
+以 `bounded-delegation` 分包实施，共享 codec、两领域持久回执、显式迁移、host 组装、集成测试和文档分别拥有写入范围；另安排存储恢复与 host 链路的独立只读复核。根线程完成跨包集成和串行 .NET 验证。
+
+| 交付 | 实际入口 |
+|:--|:--|
+| Unicode 预览、两个闭合 batch、完整 / null 投影、历史 reader | [ActionReceiptContent](../../prototypes/Galatea/ActionReceiptContent.cs)、[strict schema](../../prototypes/Galatea.Input/GalateaActionReceiptSchema.cs)。当前不再生成旧全文 receipt。 |
+| 两 owner 共用 exact append 流程 | [ActionReceiptDelivery](../../prototypes/Galatea/ActionReceiptDelivery.cs)、[Note store](../../prototypes/Galatea/CharacterMemory/CharacterMemorySqliteStore.ReceiptDelivery.cs)、[Mail store](../../prototypes/Galatea/GalateaDelegationSqliteStore.ReceiptDelivery.cs)。确认事务冻结，Delivered 释放通知 payload。 |
+| 一次规划与所有 fresh caller | [GalateaFreshAdmissionPlan](../../prototypes/Galatea/GalateaFreshAdmissionPlan.cs)、[Services](../../prototypes/Galatea/GalateaServices.cs)。指定 membership claim；Setup / recall 复用原 plan，所有 owner 绑定同一最终 I。 |
+| 显式升级 | [Note V4→V5](../../prototypes/Galatea/CharacterMemory/CharacterMemorySqliteStore.PreviewReceiptUpgrade.cs)、[Note operator](../../prototypes/Galatea/GalateaCharacterMemoryStoreUpgrade.cs)、[delegation V6](../../prototypes/Galatea/GalateaDelegationSqliteStore.Upgrade.cs)。普通打开不自动升级；未知旧 Bound 保留原库，新 Mail 表不 backfill。 |
+| 实际请求、跨 owner 故障与历史 Prepared | [host / Undo 验证](../../tests/Galatea.Server.Tests/GalateaStructuredDeliveryRewindGateTests.cs)、[双 owner 冷恢复](../../tests/Galatea.Server.Tests/GalateaActionReceiptDeliveryTests.cs)、[进程 crash / 历史 bytes](../../tests/Galatea.Server.Tests/GalateaNoteReceiptProcessCrashTests.cs)。 |
+
+实际 host → fake provider 的本轮 Observation 缺少长正文的独特中段，保留完整业务 IDs 与正确预览；原 Note / 邮件正文不变。相同 I 的 provider 投影与 Journal 内容一致。验证覆盖 16 / 15 / 14 FIFO claim、晚到 Ready 不进入已定计划、Heartbeat / Inbound 合同、两投影紧预算、部分 bind / settle、正式 Undo、unknown proof 阻断、旧 schema 的 dry-run / apply 以及真实历史 Observation / Prepared 字节恢复。
+
+| 验证 | 结果 |
+|:--|:--|
+| 原代码定向 baseline | 100 passed，0 failed。 |
+| 最终 Debug 非 Live 全套，按 E2E 指南三个明确类排除 | **1519 passed，0 failed，1 skipped**；跳过项是现有 Release 专用诊断测试。 |
+| Release 专用项单独执行 | **1 passed，0 failed，0 skipped**：`ReleaseCapture_PersistsWithoutDiagnostic`。 |
+| 两份独立源码复核 | 没有剩余阻断项；Note 的冷开 FIFO 缺口已修复并补故障 fixture。 |
+| 文档 / 工作区检查 | Design-DSL 条款 / 引用、受影响本地链接与 `git diff --check` 通过；正式 scoped 文档检查 66 files，无新增诊断。其 4 个旧 AgentControl 缺失链接已从基线 HEAD 核实，保留原状。 |
+
+所有 .NET 命令串行使用 `--no-restore -m:1 -nr:false`。集成过程中修复新库初始 schema literal、严格 JSON discriminator 错误类别，并把旧单回执 / 纯回信断言改为校验新 Mail 前缀、来源、顺序与原结果全文。两个正常路径没有重新选择或读取当前正文。
+
+本次没有运行真实 provider、没有迁移或启动实际实例、没有部署。完整 relay 的新回执交叉场景未单独做故障注入；已验证其公共 fresh 对账边界并运行现有 relay 回归。正式 Undo 的失败验证使用 exact proof 故障；receipt 写事务失败在领域测试覆盖，没有额外在正式 Undo 路径注入 SQLite 写失败。上述验证边界不等同于实机切换验收。
+
+已维护相关合同、operator 指南、新 Setup 输入说明、文档索引与检查 scope。将来的进展通知按 @[S-RECEIPT-PROGRESS-FUTURE-TRIGGER] 另行接入，本次没有空进展 API / 表 / wire variant。

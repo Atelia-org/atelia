@@ -181,7 +181,7 @@ override 和最近切换记录只存在于进程内；冷启动初始为空，�
 - 已落盘但 generation 失败后，恢复会重用原 Observation，因而可能再次把同一说明发送给 provider。这不违反“仅首次新 Observation 新增一次”；不承诺物理请求 exactly-once，也不为去重改写历史输入。
 - 进程重启后 override、pending、已投递标记都消失，不从历史重建。历史中的说明继续只是历史事实；新回合如实展示新的当前配置。成功 Undo 清空同角色的这些进程状态；无须建立事件重放体系。
 
-参考 [GalateaNoteReceiptDelivery](../../prototypes/Galatea/GalateaNoteReceiptDelivery.cs) 的 exact append 证明方式，但只借用边界和读证明，不照搬 CharacterMemory SQLite outbox。省去投递标记的替代方案会导致 ID 重复暴露，不符合已确认的新目标。
+参考 [ActionReceiptDelivery](../../prototypes/Galatea/ActionReceiptDelivery.cs) 的 exact append 证明方式，但只借用边界和读证明，不照搬 CharacterMemory SQLite outbox。省去投递标记的替代方案会导致 ID 重复暴露，不符合已确认的新目标。
 
 ### 缓存与身份注意事项
 

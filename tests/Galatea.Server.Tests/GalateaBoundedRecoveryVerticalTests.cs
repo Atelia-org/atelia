@@ -188,7 +188,10 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
         internal void ConsumeBothNoticesAcrossReopen() {
             var reconciler = new GalateaDurableReplyLeaseReconciler(Store);
             GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
-                reconciler.BeginCutoff(PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator)).Lease;
+                reconciler.BeginMembership(PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator,
+                    Store.ReadSnapshot().Notices.Where(notice => notice.State == GalateaReplyNoticeState.Ready)
+                        .OrderBy(notice => notice.CompletionSequence)
+                        .Select(notice => new GalateaReplyLeaseMember(notice.NoticeId, notice.Revision)).ToArray())).Lease;
             Assert.Collection(lease.ReadNotices(),
                 notice => Assert.IsType<PlayerTurnNotice.DeliveryFailure>(notice),
                 notice => Assert.IsType<PlayerTurnNotice.Reply>(notice));
@@ -206,7 +209,10 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
             Assert.All(Store.ReadSnapshot().Notices, notice => Assert.Equal(GalateaReplyNoticeState.Consumed, notice.State));
             Assert.IsType<GalateaDurableReplyLeaseReconcileResult.None>(reconciler.ReconcileActiveLease(Engine));
             Assert.IsType<GalateaDurableReplyLeaseBeginResult.Empty>(
-                reconciler.BeginCutoff(PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator));
+                reconciler.BeginMembership(PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator,
+                    Store.ReadSnapshot().Notices.Where(notice => notice.State == GalateaReplyNoticeState.Ready)
+                        .OrderBy(notice => notice.CompletionSequence)
+                        .Select(notice => new GalateaReplyLeaseMember(notice.NoticeId, notice.Revision)).ToArray()));
         }
 
         public void Dispose() {

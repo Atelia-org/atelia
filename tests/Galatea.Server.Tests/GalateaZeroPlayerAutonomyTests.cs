@@ -114,8 +114,11 @@ public sealed class GalateaZeroPlayerAutonomyTests {
         GalateaReplyNoticeSnapshot reply = Assert.Single(durable.Notices);
         Assert.Equal(GalateaReplyNoticeState.Consumed, reply.State);
         Assert.Null(durable.ActiveLease);
-        PlayerTurnNotice.Reply received = Assert.IsType<PlayerTurnNotice.Reply>(Assert.Single(
-            GalateaObservationContent.ReadPlayerTurn(aliceTurns[1].ObservationContent).Notices));
+        PlayerTurnObservation replyObservation = GalateaObservationContent.ReadPlayerTurn(aliceTurns[1].ObservationContent);
+        Assert.Collection(replyObservation.Notices,
+            notice => Assert.IsType<MailReceiptBatch>(Assert.IsType<PlayerTurnNotice.ActionReceipt>(notice).Batch),
+            notice => Assert.IsType<PlayerTurnNotice.Reply>(notice));
+        PlayerTurnNotice.Reply received = Assert.Single(replyObservation.Notices.OfType<PlayerTurnNotice.Reply>());
         Assert.Equal(CodexFinal, received.Body);
         Assert.Equal("delegate", received.Sender!.Kind);
         Assert.Equal("codex", received.Sender.Id);

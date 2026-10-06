@@ -16,6 +16,9 @@ internal static class GalateaObservationLimits {
     internal const int MaximumFailureUtf8Bytes = 4 * 1024;
     internal const int MaximumNoteSaveReceiptUtf8Bytes = 512 * 1024;
     internal const int MaximumNoticeCount = 16;
+    internal const int MaximumActionReceiptNoticesUtf8Bytes = 128 * 1024;
+    internal const int MaximumActionReceiptPreviewScalars = 56;
+    internal const int MaximumMailReceiptItemCount = 64;
     internal const int MaximumMailSenderUtf8Bytes = 1024;
     internal const int MaximumMailRecipientUtf8Bytes = 1024;
     internal const int MaximumMailSubjectUtf8Bytes = 4 * 1024;

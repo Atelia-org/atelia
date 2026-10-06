@@ -8,7 +8,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             CREATE TABLE delegation_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 5),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 6),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -200,6 +200,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             ON reply_lease_item(notice_id);
             """;
         command.ExecuteNonQuery();
+        CreateMailReceiptDeliverySchema(connection);
     }
 
     private static void InsertInitialState(

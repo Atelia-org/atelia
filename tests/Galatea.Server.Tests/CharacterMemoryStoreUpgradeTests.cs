@@ -17,15 +17,21 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
         if (version == 2) { LeaveExactV2(fixture); }
         byte[] original = File.ReadAllBytes(fixture.DatabasePath);
         string[] notes = MemoryUpgradeTestInspection.ReadNotes(fixture.DatabasePath);
+        string[] existingBackups = MemoryUpgradeTestInspection.Backups(fixture.Path).Order(StringComparer.Ordinal).ToArray();
+        var existingBackupBytes = existingBackups.ToDictionary(path => path, File.ReadAllBytes);
         var dryRun = CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: false);
         Assert.Equal("DryRunReady", dryRun.Outcome);
         Assert.Equal(version, dryRun.SourceVersion);
         Assert.Null(dryRun.BackupPath);
         Assert.Equal(original, File.ReadAllBytes(fixture.DatabasePath));
-        Assert.Empty(MemoryUpgradeTestInspection.Backups(fixture.Path));
+        Assert.Equal(existingBackups, MemoryUpgradeTestInspection.Backups(fixture.Path).Order(StringComparer.Ordinal).ToArray());
+        foreach ((string path, byte[] bytes) in existingBackupBytes) { Assert.Equal(bytes, File.ReadAllBytes(path)); }
         var applied = CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: true);
         Assert.Equal("Upgraded", applied.Outcome);
         string backup = Assert.IsType<string>(applied.BackupPath);
+        Assert.DoesNotContain(backup, existingBackups);
+        string[] backupsAfterApply = MemoryUpgradeTestInspection.Backups(fixture.Path).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(existingBackups.Length + 1, backupsAfterApply.Length);
         Assert.Equal(version, MemoryUpgradeTestInspection.Version(backup));
         Assert.Equal(notes, MemoryUpgradeTestInspection.ReadNotes(backup));
         Assert.Equal(notes, MemoryUpgradeTestInspection.ReadNotes(fixture.DatabasePath));
@@ -35,7 +41,7 @@ public sealed partial class CharacterMemorySqliteStoreTestsV2 {
         var repeated = CharacterMemorySqliteStore.UpgradeExisting(fixture.Path, Owner(), apply: true);
         Assert.Equal("AlreadyCurrent", repeated.Outcome);
         Assert.Null(repeated.BackupPath);
-        Assert.Single(MemoryUpgradeTestInspection.Backups(fixture.Path));
+        Assert.Equal(backupsAfterApply, MemoryUpgradeTestInspection.Backups(fixture.Path).Order(StringComparer.Ordinal).ToArray());
     }
 
     [Fact]
@@ -67,11 +73,18 @@ public sealed partial class CharacterMemorySqliteStoreTests {
     [InlineData("Pending")]
     [InlineData("ObservationBound")]
     [InlineData("Delivered")]
-    public void OperatorUpgradePreservesOriginalV3ReceiptStatesAndBackup(string state) {
+    public void OperatorUpgradePreservesV3ConfirmationFactsAndStopsWithoutOldBoundProof(string state) {
         using var fixture = new ReadyStore();
         CharacterNoteReceiptDeliverySnapshot old = PrepareOperatorV3Fixture(fixture, state);
         string database = Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName);
         byte[] original = File.ReadAllBytes(database);
+        if (state == "ObservationBound") {
+            Assert.Throws<InvalidDataException>(() => CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply: false));
+            Assert.Throws<InvalidDataException>(() => CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply: true));
+            Assert.Equal(original, File.ReadAllBytes(database));
+            Assert.Empty(MemoryUpgradeTestInspection.Backups(fixture.DirectoryPath));
+            return;
+        }
         var preview = CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply: false);
         Assert.Equal("DryRunReady", preview.Outcome);
         Assert.Equal(original, File.ReadAllBytes(database));
@@ -79,10 +92,14 @@ public sealed partial class CharacterMemorySqliteStoreTests {
         var applied = CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply: true);
         string backup = Assert.IsType<string>(applied.BackupPath);
         Assert.Equal(3, MemoryUpgradeTestInspection.Version(backup));
-        Assert.Equal(MemoryUpgradeTestInspection.ReadLegacyReceiptCells(backup),
-            MemoryUpgradeTestInspection.ReadLegacyReceiptCells(database));
         using var reopened = CharacterMemorySqliteStore.OpenExisting(fixture.DirectoryPath, fixture.Owner);
-        Assert.Equal(old, reopened.ReadReceiptDeliveryExact(old.SourceActionAddress));
+        ActionReceiptDeliverySnapshot converted = reopened.ReadReceiptDeliveryExact(old.SourceActionAddress)!;
+        Assert.Equal(old.SourceActionAddress, converted.SourceActionAddress);
+        Assert.Equal(old.CreatedRevision, converted.CreatedRevision);
+        Assert.Equal(old.StateRevision, converted.StateRevision);
+        Assert.Equal(state, converted.State.ToString());
+        if (state == "Pending") { Assert.IsType<NoteReceiptBatch>(converted.FrozenBatch); }
+        else { Assert.Null(converted.FrozenBatch); Assert.Equal(old.ObservationAddress, converted.ObservationAddress); }
     }
 
     [Theory]
@@ -115,27 +132,27 @@ public sealed partial class CharacterMemorySqliteStoreTests {
     [InlineData(true)]
     public void OperatorUpgradeMigrationCommitBoundariesRetainBackupAndClassifyActualState(bool afterCommit) {
         using var fixture = new ReadyStore();
-        _ = PrepareOperatorV3Fixture(fixture, "ObservationBound");
+        CharacterNoteReceiptDeliverySnapshot old = PrepareOperatorV3Fixture(fixture, "Pending", version: 4);
         string database = Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName);
         Action<string> fail = operation => {
-            if (operation == "migrate-character-memory-v3-to-v4") { throw new IOException("migration boundary"); }
+            if (operation == "migrate-character-memory-v4-to-v5") { throw new IOException("migration boundary"); }
         };
         var hooks = afterCommit ? new CharacterMemoryStoreTestHooks(AfterCommitBeforeReturn: fail)
             : new CharacterMemoryStoreTestHooks(BeforeCommit: fail);
         if (afterCommit) {
             var result = CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply: true, hooks);
             Assert.Equal("Upgraded", result.Outcome);
-            Assert.Equal(4, MemoryUpgradeTestInspection.Version(database));
+            Assert.Equal(5, MemoryUpgradeTestInspection.Version(database));
         }
         else {
             InvalidDataException error = Assert.Throws<InvalidDataException>(() =>
                 CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply: true, hooks));
             Assert.Contains("validated=True", error.Message, StringComparison.Ordinal);
-            Assert.Equal(3, MemoryUpgradeTestInspection.Version(database));
+            Assert.Equal(4, MemoryUpgradeTestInspection.Version(database));
         }
         string backup = Assert.Single(MemoryUpgradeTestInspection.Backups(fixture.DirectoryPath));
-        Assert.Equal(3, MemoryUpgradeTestInspection.Version(backup));
-        Assert.Equal(MemoryUpgradeTestInspection.ReadLegacyReceiptCells(backup), MemoryUpgradeTestInspection.ReadLegacyReceiptCells(database));
+        Assert.Equal(4, MemoryUpgradeTestInspection.Version(backup));
+        Assert.Contains(Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(old.NoticeBody!)), MemoryUpgradeTestInspection.ReadLegacyReceiptCells(backup));
     }
 
     [Theory]
@@ -148,7 +165,7 @@ public sealed partial class CharacterMemorySqliteStoreTests {
         void Alter() => ExecuteSql(database, "UPDATE character_memory_meta SET store_revision = store_revision + 1;");
         var hooks = afterBackup ? new CharacterMemoryStoreTestHooks(AfterUpgradeBackup: _ => Alter())
             : new CharacterMemoryStoreTestHooks(AfterValidationBeforeTransaction: operation => {
-                if (operation == "upgrade-character-memory-v3-to-v4") { Alter(); }
+                if (operation == "upgrade-character-memory-v3-to-v5") { Alter(); }
             });
         Assert.Throws<InvalidDataException>(() => CharacterMemorySqliteStore.UpgradeExisting(fixture.DirectoryPath, fixture.Owner, apply: true, hooks));
         Assert.Equal(3, MemoryUpgradeTestInspection.Version(database));
@@ -173,22 +190,18 @@ public sealed partial class CharacterMemorySqliteStoreTests {
         Assert.False(Directory.Exists(absent));
     }
 
-    private static CharacterNoteReceiptDeliverySnapshot PrepareOperatorV3Fixture(ReadyStore fixture, string state) {
+    private static CharacterNoteReceiptDeliverySnapshot PrepareOperatorV3Fixture(ReadyStore fixture, string state, int version = 3) {
         _ = fixture.Store.SettleApplied(PrepareReceiptBatch(fixture, Address(160)));
-        CharacterNoteReceiptDeliverySnapshot receipt = fixture.Store.ReadPendingReceiptDelivery()!;
-        string body = HistoricalNoteReceiptFixture.OldWording(CharacterNoteSaveReceipt.CreateDurable(receipt.Facts!.Memos).Notice.Body);
-        if (state != "Pending") {
-            receipt = fixture.Store.BindReceiptDelivery(receipt.SourceActionAddress, receipt.StateRevision, Address(161), RenderReceiptObservation(receipt));
-        }
-        if (state == "Delivered") { receipt = fixture.Store.CompleteReceiptDelivery(receipt.SourceActionAddress, receipt.StateRevision, Address(162)); }
-        var old = receipt with {
-            Facts = null, BoundInput = null, NoticeBody = body,
-            RenderedObservation = state == "ObservationBound"
-                ? PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation("old turn", notices: [new PlayerTurnNotice.NoteSaveReceipt(body)])) : null
-        };
+        ActionReceiptDeliverySnapshot receipt = fixture.Store.ReadPendingReceiptDelivery()!;
+        string body = LegacyCharacterMemoryReceiptFixture.Body;
+        var old = new CharacterNoteReceiptDeliverySnapshot(receipt.SourceActionAddress,
+            Enum.Parse<CharacterNoteReceiptDeliveryState>(state), body,
+            receipt.CreatedRevision, receipt.StateRevision + (state == "Pending" ? 0 : 1),
+            state == "Pending" ? null : Address(161),
+            state == "ObservationBound" ? PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation("old turn", notices: [new PlayerTurnNotice.NoteSaveReceipt(body)])) : null,
+            state == "Delivered" ? Address(162) : null);
         fixture.DisposeStore();
-        HistoricalNoteReceiptFixture.WriteFrozenNotice(fixture.DirectoryPath, old);
-        DowngradeSyntheticReceiptStoreToV3(Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName));
+        LegacyCharacterMemoryReceiptFixture.Install(Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName), old, version);
         return old;
     }
 

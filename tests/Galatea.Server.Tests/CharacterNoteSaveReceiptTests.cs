@@ -1,126 +1,80 @@
-using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Atelia.Data;
+using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.MemoPod;
+using Atelia.MdJson;
+using Atelia.SessionJournal;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class CharacterNoteSaveReceiptTests {
+    private static readonly string Source = EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None));
+
     [Fact]
-    public void TryCreate_RendersTruthfulFrozenReceiptFromDurableMemos() {
-        const string ExactText = "第一行\n~~~~\n最后一行\n";
-
-        Assert.True(CharacterNoteSaveReceipt.TryCreate(
-            [Memo(0, ExactText)],
-            out CharacterNoteSaveReceipt? receipt
-        ));
-
-        Assert.Equal(
-            Encoding.UTF8.GetByteCount(receipt.Notice.Body),
-            receipt.Utf8Bytes
-        );
-        Assert.Contains(
-            "Galatea runtime 已将以下 1 条 Note 内容成功保存到默认MemoPod。",
-            receipt.Notice.Body,
-            StringComparison.Ordinal
-        );
-        Assert.Contains(
-            "本回执只证明以下Note内容已保存；不承诺分类、metadata补全或召回。",
-            receipt.Notice.Body,
-            StringComparison.Ordinal
-        );
-        Assert.Contains(
-            "1.\n~~~~~character-note-exact-text\n"
-                + ExactText + "~~~~~",
-            receipt.Notice.Body,
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            "Evidence",
-            receipt.Notice.Body,
-            StringComparison.Ordinal
-        );
+    public void HistoricalSemanticReceiptPreservesCompleteExactTextAndSavedOrder() {
+        string exactText = new string('~', 64 * 1024);
+        SessionInputContent input = HistoricalInput(new {
+            kind = "note-save-receipt",
+            sender = new { kind = "runtime", id = "galatea", name = "Galatea runtime" },
+            receipt = new {
+                sourceActionAddress = Source,
+                podId = CharacterNoteDefaultPodV1.PodIdText,
+                saved = new[] { new { ordinal = 0, memoId = "m1:00000001" }, new { ordinal = 1, memoId = "m1:00000002" } },
+                exactTexts = new[] { exactText, "historical second note" }
+            }
+        });
+        byte[] before = input.ToUtf8Json();
+        PlayerTurnNotice.NoteSaveReceipt notice = Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
+            Assert.Single(GalateaObservationContent.ReadPlayerTurn(input).Notices));
+        Assert.Equal(new[] { "m1:00000001", "m1:00000002" }, notice.Selection!.MemoIds.Select(id => id.Value));
+        Assert.Equal(new[] { exactText, "historical second note" }, notice.Selection.ExactTexts);
+        JsonElement projected = MdJsonSerializer.Read(GalateaInputProjector.Instance.Project(input));
+        Assert.Equal(exactText, projected.GetProperty("notices")[0].GetProperty("receipt").GetProperty("exactTexts")[0].GetString());
+        Assert.Equal(before, input.ToUtf8Json());
     }
 
     [Fact]
-    public void TryCreate_PreservesDurableOrderAndRejectsEmpty() {
-        Assert.False(CharacterNoteSaveReceipt.TryCreate(
-            Array.Empty<CharacterNoteAppliedMemo>(),
-            out CharacterNoteSaveReceipt? empty
-        ));
-        Assert.Null(empty);
-
-        Assert.True(CharacterNoteSaveReceipt.TryCreate(
-            [
-                Memo(0, "first"),
-                Memo(1, "second\n"),
-            ],
-            out CharacterNoteSaveReceipt? receipt
-        ));
-
-        Assert.Contains(
-            "以下 2 条 Note 内容成功保存到默认MemoPod",
-            receipt.Notice.Body,
-            StringComparison.Ordinal
-        );
-        int first = receipt.Notice.Body.IndexOf(
-            "1.\n~~~~character-note-exact-text\nfirst\n~~~~",
-            StringComparison.Ordinal
-        );
-        int second = receipt.Notice.Body.IndexOf(
-            "2.\n~~~~character-note-exact-text\nsecond\n~~~~",
-            StringComparison.Ordinal
-        );
-        Assert.True(first >= 0);
-        Assert.True(second > first);
+    public void HistoricalOpaqueReceiptPreservesFrozenWordingAndCompleteBody() {
+        const string oldBody = "Galatea runtime 已将以下 1 条 Note 原文成功保存到默认MemoPod。\n\n"
+            + "本回执只证明以下原文已保存；不承诺分类、metadata补全或召回。\n\n"
+            + "已保存的 Note 原文：\n\n1.\n~~~~character-note-exact-text\n第一行\n最后一行\n~~~~";
+        SessionInputContent input = HistoricalInput(new { kind = "legacy-note-save-receipt", body = oldBody, sourceActionAddress = Source });
+        byte[] before = input.ToUtf8Json();
+        PlayerTurnNotice.NoteSaveReceipt notice = Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
+            Assert.Single(GalateaObservationContent.ReadPlayerTurn(input).Notices));
+        Assert.True(notice.IsLegacyDurable);
+        Assert.Equal(Source, notice.LegacySourceActionAddress);
+        Assert.Equal(oldBody, notice.Body);
+        Assert.Contains(oldBody, PlayerTurnObservationEnvelope.FormatForDisplay(GalateaObservationContent.ReadPlayerTurn(input)), StringComparison.Ordinal);
+        _ = GalateaInputProjector.Instance.Project(input);
+        Assert.Equal(before, input.ToUtf8Json());
     }
 
     [Fact]
-    public void TryCreate_RejectsNonDefaultOrDisorderedDurableMemos() {
-        CharacterNoteAppliedMemo wrongPod = Memo(0, "first") with {
-            PodId = MemoPodId.Parse("00000000000000000000000000000002")
-        };
-        Assert.Throws<ArgumentException>(() =>
-            CharacterNoteSaveReceipt.TryCreate(
-                [wrongPod],
-                out CharacterNoteSaveReceipt? _
-            )
-        );
-        Assert.Throws<ArgumentException>(() =>
-            CharacterNoteSaveReceipt.TryCreate(
-                [Memo(1, "first")],
-                out CharacterNoteSaveReceipt? _
-            )
-        );
+    public void CurrentNoteReceiptCarriesPreviewAndCanOmitAllPreviewsWithoutChangingFrozenBatch() {
+        string exact = new string('~', 64 * 1024);
+        var batch = new NoteReceiptBatch(Source, CharacterNoteDefaultPodV1.PodId,
+            [new NoteReceiptItem(MemoId.Parse("m1:00000001"), ActionReceiptPreview.Create(exact)),
+                new NoteReceiptItem(MemoId.Parse("m1:00000002"), "second")]);
+        string frozen = ActionReceiptBatchCodec.SerializeFrozen(batch);
+        NoteReceiptBatch compact = Assert.IsType<NoteReceiptBatch>(batch.Compact());
+        Assert.All(compact.Items, item => Assert.Null(item.Preview));
+        Assert.Equal(batch.Items.Select(item => item.MemoId), compact.Items.Select(item => item.MemoId));
+        Assert.True(batch.MatchesProjection(compact));
+        Assert.Equal(frozen, ActionReceiptBatchCodec.SerializeFrozen(batch));
+        Assert.DoesNotContain(exact, frozen, StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(() => ActionReceiptBatchCodec.SerializeFrozen(compact));
     }
 
-    [Fact]
-    public void TryCreate_RejectsFenceExpansionBeyondReceiptBudget() {
-        CharacterNoteAppliedMemo[] memos = Enumerable.Range(0, 4)
-            .Select(index => Memo(
-                index,
-                new string(
-                    '~',
-                    CharacterNoteBounds.MaximumExactTextUtf8Bytes
-                )
-            ))
-            .ToArray();
-
-        Assert.False(CharacterNoteSaveReceipt.TryCreate(
-            memos,
-            out CharacterNoteSaveReceipt? receipt
-        ));
-        Assert.Null(receipt);
+    private static SessionInputContent HistoricalInput(object notice) {
+        SessionInputContent basis = GalateaObservationContent.Create(
+            new GalateaFreshInput.PlayerAction("historical continuation", GalateaDelegateTestConfiguration.PlayerSender),
+            new DateTimeOffset(2026, 9, 15, 0, 0, 0, TimeSpan.Zero), new GalateaSenderSnapshot("character", "alice", "Alice"));
+        JsonObject raw = JsonNode.Parse(basis.JsonValue.GetRawText())!.AsObject();
+        raw["notices"] = new JsonArray(JsonSerializer.SerializeToNode(notice));
+        return SessionInputContent.Structured(GalateaObservationContent.V1SchemaId, JsonSerializer.SerializeToElement(raw));
     }
-
-    private static CharacterNoteAppliedMemo Memo(
-        int ordinal,
-        string exactText
-    ) => new(
-        "0000000100000001",
-        ordinal,
-        CharacterNoteDefaultPodV1.PodId,
-        MemoId.Parse("m1:" + (ordinal + 1).ToString("x8")),
-        exactText
-    );
 }

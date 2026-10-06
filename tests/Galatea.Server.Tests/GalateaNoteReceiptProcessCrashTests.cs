@@ -4,9 +4,11 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Completion;
+using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.SessionJournal;
+using Atelia.Testing;
 using Microsoft.Data.Sqlite;
 using Xunit;
 using Xunit.Abstractions;
@@ -23,6 +25,53 @@ namespace Atelia.Galatea.Server.Tests;
 [Trait("Category", "GalateaLab")]
 public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output) {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HistoricalTextReceipt_ColdReconstructKeepsOriginalObservationAndFrozenPreparedBytes(bool started) {
+        string root = Directory.CreateTempSubdirectory("atelia-historical-note-receipt-").FullName;
+        string repository = Path.Combine(root, "session");
+        const string historicalBody = "Galatea runtime 已将以下 1 条 Note 原文成功保存到默认MemoPod。\n\n"
+            + "本回执只证明以下原文已保存；不承诺分类、metadata补全或召回。\n\n已保存的 Note 原文：\n"
+            + GalateaNoteReceiptFixture.NoteText;
+        string historicalText = PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation(
+            "Historical continuation.", ActionReceiptDeliveryFixture.Timestamp, [new PlayerTurnNotice.NoteSaveReceipt(historicalBody)]));
+        var client = new HistoricalNoDispatchClient();
+        var connection = new CompletionConnectionConfig("test", "openai-chat", "model-a", "openai-chat/strict",
+            "http://synthetic-history.invalid/", ApiKey: "synthetic-history-key");
+        try {
+            EventAddress head = LegacyPreparedV7Fixture.CreatePending(repository, connection, client,
+                started, "historic-note-adapter", historicalText);
+            SessionPreparedRequestReconstruction frozen = GalateaRecapFixture.ReadLatestPrepared(repository);
+            byte[] preparedBytes;
+            byte[] observationBytes;
+            EventAddress observation;
+            using (SessionJournalEngine first = SessionJournalEngine.OpenReadOnly(repository)) {
+                var events = new List<SessionJournalAuditEvent>();
+                first.ScanCheckedAuditEvents(events.Add);
+                observation = Assert.Single(events, item => item.Kind == SessionEventKind.ObservationAccepted).Address;
+                Assert.Equal(1, Assert.Single(events, item => item.Kind == SessionEventKind.ObservationAccepted).BodySchemaVersion);
+                Assert.Equal(7, Assert.Single(events, item => item.Kind == SessionEventKind.CompletionRequestPrepared).BodySchemaVersion);
+                preparedBytes = first.ReadPayloadBytes(frozen.SourcePreparedAddress!.Value);
+                observationBytes = first.ReadPayloadBytes(observation);
+                Assert.Equal(head, first.ReadCurrentHead());
+            }
+            SessionPreparedRequestReconstruction cold = GalateaRecapFixture.ReadLatestPrepared(repository);
+            Assert.Equal(frozen.SourcePreparedAddress, cold.SourcePreparedAddress);
+            Assert.Equal(frozen.CanonicalBytes, cold.CanonicalBytes);
+            Assert.Equal(frozen.Manifest.Commitment, cold.Manifest.Commitment);
+            Assert.Equal(historicalText, cold.Request.PromptPrefix.SharedContextMessages.OfType<ObservationMessage>().Last().Content);
+            Assert.Contains(GalateaNoteReceiptFixture.UniqueMiddle,
+                cold.Request.PromptPrefix.SharedContextMessages.OfType<ObservationMessage>().Last().Content, StringComparison.Ordinal);
+            using SessionJournalEngine reopened = SessionJournalEngine.OpenReadOnly(repository);
+            Assert.Equal(preparedBytes, reopened.ReadPayloadBytes(cold.SourcePreparedAddress!.Value));
+            Assert.Equal(observationBytes, reopened.ReadPayloadBytes(observation));
+            Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(reopened.InspectRuntimeRecoveryRequirements());
+            Assert.Equal(0, client.Calls);
+        }
+        finally { TestDirectorySafety.DeleteOwnedTreeNoFollow(root); }
+    }
 
     [Fact]
     public async Task ReceiptBoundWithDurableObservation_HardKill_AutomaticallyReconcilesAndCompletes() {
@@ -41,7 +90,7 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
         var epoch = await GalateaNoteReceiptFixture.StartEpochAsync(lab, clock, seedFactory);
         await GalateaNoteReceiptFixture.AdvanceHeartbeatAsync(epoch);
         var pending = await GalateaNoteReceiptFixture.ReadStateAsync(epoch);
-        Assert.Equal(CharacterNoteReceiptDeliveryState.Pending, pending.Receipt.State);
+        Assert.Equal(ActionReceiptDeliveryState.Pending, pending.Receipt.State);
         Assert.Single(pending.Turns);
         Assert.Equal(1, seedFactory.SaveIntents);
         Assert.Equal(1, seedFactory.DerivedCalls);
@@ -76,22 +125,24 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
         EventAddress startedHead;
         EventAddress observationAddress;
         SessionInputContent renderedObservation;
-        CharacterNoteReceiptDeliverySnapshot bound;
+        ActionReceiptDeliverySnapshot bound;
         using (SessionJournalEngine engine = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory))
         using (CharacterMemorySqliteStore store = CharacterMemorySqliteStore.OpenExisting(
                    memoryDirectory, memoryOwner)) {
-            bound = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+            bound = Assert.IsType<ActionReceiptDeliverySnapshot>(
                 store.ReadReceiptDeliveryExact(pending.Receipt.SourceActionAddress));
-            Assert.Equal(CharacterNoteReceiptDeliveryState.ObservationBound, bound.State);
-            Assert.Equal(pending.Receipt.NoticeBody, bound.NoticeBody);
+            Assert.Equal(ActionReceiptDeliveryState.ObservationBound, bound.State);
+            Assert.Equal(pending.Receipt.FrozenBatch, bound.FrozenBatch);
             Assert.Equal(pending.Receipt.CreatedRevision, bound.CreatedRevision);
             Assert.Null(bound.ObservationAddress);
             renderedObservation = Assert.IsType<SessionInputContent>(bound.BoundInput);
-            Assert.Null(bound.RenderedObservation);
             PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(renderedObservation);
             Assert.Equal(PlayerTurnObservationTriggerKind.PlayerAction, observation.TriggerKind);
-            Assert.Equal(GalateaNoteReceiptFixture.NoteText,
-                Assert.Single(Assert.Single(observation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>()).Selection!.ExactTexts));
+            var batch = Assert.IsType<NoteReceiptBatch>(
+                Assert.Single(observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>()).Batch);
+            Assert.Equal(ActionReceiptPreview.Create(GalateaNoteReceiptFixture.NoteText), Assert.Single(batch.Items).Preview);
+            Assert.DoesNotContain(GalateaNoteReceiptFixture.UniqueMiddle,
+                GalateaInputProjector.Instance.Project(renderedObservation), StringComparison.Ordinal);
             var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 engine.InspectRuntimeRecoveryRequirements());
             Assert.Equal(SessionExecutionPhase.AwaitingCompletion, frozen.Phase);
@@ -125,14 +176,14 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
         using (CharacterMemorySqliteStore store = CharacterMemorySqliteStore.OpenExisting(
                    memoryDirectory, memoryOwner)) {
             Assert.Equal(SessionExecutionPhase.Idle, engine.InspectExecutionBoundary().Phase);
-            var delivered = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+            var delivered = Assert.IsType<ActionReceiptDeliverySnapshot>(
                 store.ReadReceiptDeliveryExact(bound.SourceActionAddress));
-            Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, delivered.State);
+            Assert.Equal(ActionReceiptDeliveryState.Delivered, delivered.State);
             Assert.Equal(deliveredRevision, delivered.StateRevision);
-            Assert.Equal(pending.Receipt.NoticeBody, delivered.NoticeBody);
+            Assert.Null(delivered.FrozenBatch);
             Assert.Equal(pending.Receipt.CreatedRevision, delivered.CreatedRevision);
             Assert.Equal(EventAddressTextCodec.Format(observationAddress), delivered.ObservationAddress);
-            Assert.Null(delivered.RenderedObservation);
+            Assert.Null(delivered.BoundInput);
             Assert.Null(store.ReadPendingReceiptDelivery());
             Assert.Null(store.ReadBoundReceiptDelivery());
             AssertSeedNoteUnchanged(store, memoryDirectory, pending);
@@ -147,7 +198,7 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
             int receipts = 0;
             foreach (SessionCompletedTurnProjection turn in turns) {
                 PlayerTurnObservation observation = GalateaObservationContent.ReadPlayerTurn(turn.ObservationContent);
-                receipts += observation.Notices.OfType<PlayerTurnNotice.NoteSaveReceipt>().Count();
+                receipts += observation.Notices.OfType<PlayerTurnNotice.ActionReceipt>().Count();
             }
             Assert.Equal(1, receipts);
             AssertAuditCounts(engine, observations: 2, prepared: 2, started: 0, actions: 2);
@@ -163,6 +214,17 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
     private static CompletionConnectionConfig Connection(string id, string model,
         GalateaLabNoteReceiptResponsesServer provider) => new(id, "openai-responses", model,
         "openai-responses", provider.BaseAddress.AbsoluteUri, ApiKey: GalateaLabNoteReceiptResponsesServer.ApiKey);
+
+    private sealed class HistoricalNoDispatchClient : ICompletionClient {
+        internal int Calls { get; private set; }
+        public string Name => "historical-receipt-fixture";
+        public string ApiSpecId => "fixture-history-v1";
+        public Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default) {
+            Calls++;
+            throw new Xunit.Sdk.XunitException("Historical reconstruction must not dispatch provider work.");
+        }
+    }
 
     private static void AssertSeedNoteUnchanged(CharacterMemorySqliteStore store, string memoryDirectory,
         GalateaNoteReceiptFixture.DurableState pending) {
@@ -197,7 +259,7 @@ public sealed class GalateaNoteReceiptProcessCrashTests(ITestOutputHelper output
         connection.Open();
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
-            SELECT state, state_revision, observation_address, rendered_observation, expected_session_head
+            SELECT state, state_revision, observation_address, bound_input, expected_session_head
             FROM note_receipt_delivery WHERE source_action_address = $source;
             """;
         command.Parameters.AddWithValue("$source", source);

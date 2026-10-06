@@ -272,10 +272,19 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             Assert.NotNull(turn.DurableReplyLease);
         }
         else {
-            turn = triggerKind == "player-action"
-                ? service.StartTurn(session, playerText, new GalateaTurnOptions("test"), sender: GalateaDelegateTestConfiguration.PlayerSender)
-                : session.StartTurn(new GalateaFreshInput.HeartbeatActivation(
-                    new GalateaCharacterName("Alice"), 10), new GalateaTurnOptions("test"));
+            if (triggerKind == "player-action") {
+                turn = service.StartTurn(session, playerText, new GalateaTurnOptions("test"),
+                    sender: GalateaDelegateTestConfiguration.PlayerSender);
+            }
+            else {
+                GalateaFreshAdmissionPlan plan = GalateaFreshAdmissionPlan.Compose(
+                    new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10),
+                    PlayerTurnObservationEnvelope.TruncateToSecond(DateTimeOffset.Now),
+                    new GalateaSenderSnapshot("character", session.Character.CharacterId,
+                        session.Character.CharacterName.Value));
+                turn = session.StartTurn(plan.FreshInput,
+                    new GalateaTurnOptions("test"), admissionPlan: plan);
+            }
         }
         try {
             await service.RunTurnAsync(session, turn, CancellationToken.None)
