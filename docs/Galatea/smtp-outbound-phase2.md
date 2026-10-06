@@ -1,8 +1,8 @@
 # 对外邮件第二期：宿主账号绑定与 SMTP 发送边界
 
-基线：`127a0b1f9a18761f341e4266faa28c2b01595fec`，分支 `g01/smtp-outbound`。本期只开发与离线验证，不部署、不读取真实凭据、不连接外部 SMTP、不真实发送。第一期持久状态机与事务边界沿用；数据库仍为 V6，不回填旧记录。
+初始基线：`127a0b1f9a18761f341e4266faa28c2b01595fec`，分支 `g01/smtp-outbound`。本期只开发与离线验证，不部署、不读取真实凭据、不连接外部 SMTP、不真实发送。第一期持久状态机与事务边界沿用；rebase 到主线 `c0a2bbfa` 后，数据库为 V7（主线 V6 保存冻结回执），不回填旧记录。
 
-兼容边界：新代码可以读取第一期 V6 离线行；本补充增加 `blocked:` 身份格式，C-022 二进制不能读取这种新行。第一期二进制的身份校验不能读取含 `smtp:` 引用的新行，旧严格配置读取器也不接受新增 SMTP 字段。第一期未部署，本期不需要运行库迁移；不提供自动降级或生产回退工具。
+兼容边界：rebase 后的第一期、第二期均使用 V7；原分支 V6 与主线 V6 的结构不同，不能互换。主线 V6 可通过显式升级保留冻结回执并建立空 SMTP 表；原分支 V6 从未部署，本次不提供该实验格式的转换。本补充增加 `blocked:` 身份格式，C-022 二进制不能读取这种新行。第一期二进制的身份校验不能读取含 `smtp:` 引用的新行，旧严格配置读取器也不接受新增 SMTP 字段。不提供自动降级或生产回退工具。
 
 ## 实现选择
 
@@ -172,3 +172,31 @@ FROM smtp_mail_outbox s JOIN outbound_mail m ON m.dispatch_id = s.dispatch_id;
 基线 `d3b6c2531af8da654579f136216f077709fb08a1`。字段确认只依据 Galatea 转述的刘世超说明，未读取真实凭据。`CredentialsV1_AcceptsProviderMetadataAndCaseInsensitiveLogin`、`CredentialsV1_MissingRequiredFieldFailsBeforeConnect`、`CredentialsV1_InvalidSchemaFailsWithoutConnectingOrLeaking` 使用临时目录中的合成文件和 127.0.0.1 假服务器；既有重复字段、符号链接、地址不一致测试同步改用 V1 格式。
 
 沿用 C-019 邮件过滤条件并排除五类旧 Recap 夹具。C-022 的 408 例在 C-023 后扩为 413 例（新增五例，默认宿主测试改名）；逐例映射中保留改名关系，不将其计为丢失。Debug 中跳过的 Release 专属例另构建 Release 后运行。执行结果、完整命令与逐例对照放在本工作树的忽略目录 `.artifacts/c024/`。
+
+## 2026-10-06：rebase 到冻结回执主线
+
+从已暂停的 rebase 继续，将原分支七个提交重放到 fetch 后的 `origin/main`：`c0a2bbfa5ef9da4b18835dcf871422004a9c868d`。保留原 SMTP 功能、配置与保守发送边界，解决七个冲突文件。
+
+两个分支原先都占用 Delegation store V6。现保留主线 V6 的 `mail_receipt_delivery`，SMTP 表顺延到 V7；显式升级链为 V1–V5 → 主线 V6 → V7，以及主线 V6 → V7。升级不回填 SMTP，不重写已有回执与 Observation 绑定。原分支实验 V6 不属于该升级入口。
+
+新 email 捕获在同一事务内写入 SMTP outbox 和冻结短回执。回执 `accepted` 表示已接纳到该流程，不表示服务商接收或最终送达；后续 SMTP 失败不改写原回执。独立状态通知尚未接入 Observation。
+
+新增三例 V6 升级测试，覆盖 Pending / ObservationBound / Delivered 的回执及绑定保留、dry-run 不改变数据库字节、SMTP 表为空；新增一例长正文 email 短回执及后续 SMTP 失败测试。
+
+首次全集回归为 1674 通过、3 失败、1 跳过；三项失败均来自新增 V6 升级测试，定位到 SMTP 表字段校验仍使用 `expectedVersion >= 6`，已修正为 `>= 7`。修正后新增四例单独复验全部通过。
+
+首轮 SMTP、解析器、Delegation 迁移与语义、Mail/Action receipt 回归：278 通过、0 失败。新增测试纳入随后完整 Galatea 非 Live 测试集，执行命令如下：
+
+```bash
+env -u ATELIA_RUN_GALATEA_NOTE_LIVE \
+    -u ATELIA_RUN_GALATEA_LAB_LIVE \
+    -u ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE \
+  dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj \
+    --no-restore -m:1 -nr:false \
+    --filter 'FullyQualifiedName!~CharacterNoteTranscriptionLiveTests&FullyQualifiedName!~GalateaCodexDelegationLiveTests&FullyQualifiedName!~GalateaScenarioLabLiveTests' \
+    --verbosity minimal -- xUnit.MaxParallelThreads=4
+```
+
+最终以相同过滤条件、额外 `--no-build` 复跑：**1677 通过、0 失败、1 跳过，共 1678 项**，耗时 2 分 20 秒。跳过项为既有 Release 专属 `ReleaseCapture_PersistsWithoutDiagnostic`；本轮未另跑 Release。`git diff --check` 通过；文档检查仍为 66 文件、4 处主线既有旧链接诊断，无新增诊断。
+
+本轮仅合并代码与离线验证，未迁移实例、读取真实凭据、连接外部 SMTP、重启服务或 push。

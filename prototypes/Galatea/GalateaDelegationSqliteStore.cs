@@ -474,7 +474,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
                 "observation_address", "quarantine_code", "revision"
             }.Concat(expectedVersion >= 5 ? ["bound_input"] : Array.Empty<string>()).ToArray());
         }
-        if (expectedVersion >= 6) {
+        if (expectedVersion >= 7) {
             RequireExactColumns(connection, "smtp_mail_outbox", [
                 "dispatch_id", "recipient", "from_character_id", "sender_account_reference",
                 "state", "result_code", "revision"

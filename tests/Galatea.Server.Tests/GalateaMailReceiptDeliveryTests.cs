@@ -8,6 +8,53 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaMailReceiptDeliveryTests {
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("bound")]
+    [InlineData("delivered")]
+    public void V6Upgrade_PreservesReceiptAndExactObservationWithoutBackfillingSmtp(string state) {
+        using var fixture = new Fixture();
+        _ = fixture.Store.CaptureActionBatch(Capture(100, [Mail("Codex", new string('a', 80))]));
+        ActionReceiptDeliverySnapshot receipt = fixture.Store.ReadPendingReceiptDelivery()!;
+        if (state != "pending") {
+            receipt = fixture.Store.BindReceiptDelivery(receipt.SourceActionAddress, receipt.StateRevision,
+                Address(90), Observation(receipt.FrozenBatch!));
+        }
+        if (state == "delivered") {
+            receipt = fixture.Store.CompleteReceiptDelivery(receipt.SourceActionAddress, receipt.StateRevision, Address(91));
+        }
+        GalateaDelegationStateSnapshot before = fixture.Store.ReadSnapshot();
+        fixture.Store.Dispose();
+        // Mainline V6 has frozen receipts and no SMTP table. Preserve every
+        // receipt byte and state while removing only the SMTP schema addition.
+        fixture.Execute("""
+            DROP TABLE smtp_mail_outbox;
+            PRAGMA writable_schema = ON;
+            UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = 7', 'schema_version = 6')
+                WHERE name='delegation_meta';
+            PRAGMA writable_schema = OFF;
+            PRAGMA schema_version = 402;
+            PRAGMA ignore_check_constraints = ON;
+            UPDATE delegation_meta SET schema_version=6;
+            PRAGMA ignore_check_constraints = OFF;
+            PRAGMA user_version=6;
+            """, string.Empty);
+        byte[] original = File.ReadAllBytes(fixture.DatabasePath);
+        Assert.Throws<InvalidDataException>(fixture.Reopen);
+        Assert.Equal("DryRunReady", fixture.Upgrade(apply: false).Outcome);
+        Assert.Equal(original, File.ReadAllBytes(fixture.DatabasePath));
+        GalateaDelegationStoreUpgradeResult upgraded = fixture.Upgrade(apply: true);
+        Assert.Equal("Upgraded", upgraded.Outcome);
+        Assert.NotNull(upgraded.BackupPath);
+        fixture.Reopen();
+        GalateaDelegationStateSnapshot after = fixture.Store.ReadSnapshot();
+        Assert.Equal(before.Captures, after.Captures);
+        Assert.Equal(before.Mails, after.Mails);
+        Assert.Equal(before.StoreRevision, after.StoreRevision);
+        Assert.Equal(receipt, Assert.Single(after.MailReceipts));
+        Assert.Empty(after.SmtpMailOutboxes);
+    }
+
     [Fact]
     public void Capture_FreezesOrderedRealRouteResultsAndShortPreviews() {
         using var fixture = new Fixture();
@@ -276,6 +323,9 @@ public sealed class GalateaMailReceiptDeliveryTests {
                 new(new EventJournalPhysicalAppendFrontier(1, 4), Address(90)), Limits, hooks);
         }
         internal GalateaDelegationSqliteStore Store { get; private set; }
+        internal string DatabasePath => Path.Combine(_directory, GalateaDelegationSqliteStore.DatabaseFileName);
+        internal GalateaDelegationStoreUpgradeResult Upgrade(bool apply) =>
+            GalateaDelegationSqliteStore.UpgradeExisting(_directory, Owner, Limits, apply);
         internal void Reopen() {
             Store.Dispose();
             Store = GalateaDelegationSqliteStore.OpenExisting(_directory, Owner, Limits);

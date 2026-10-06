@@ -453,6 +453,25 @@ public sealed class GalateaSmtpOutboundTests {
     }
 
     [Fact]
+    public async Task EmailReceipt_FreezesShortCaptureAcceptanceAcrossLaterSmtpFailure() {
+        using var fixture = new Fixture();
+        string body = new string('a', 32) + "unique-middle-omitted-from-receipt" + new string('z', 16);
+        await fixture.ExtractAndCapture($"收件人：a@Example.test\n{body}\n[Galatea] 我已寄出。",
+            Range("a@Example.test", 2, 2, 3));
+        ActionReceiptDeliverySnapshot receipt = fixture.Store.ReadPendingReceiptDelivery()!;
+        MailReceiptItem item = Assert.Single(Assert.IsType<MailReceiptBatch>(receipt.FrozenBatch).Items);
+        Assert.Equal("accepted", item.Outcome);
+        Assert.Equal(ActionReceiptPreview.Create(body), item.Preview);
+        Assert.DoesNotContain("unique-middle", item.Preview!);
+        Assert.Equal(body, Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes).Body);
+        var consumer = new GalateaSmtpOutboxConsumer(new GalateaOfflineSmtpSender(GalateaOfflineSmtpBehavior.DefiniteFailure));
+        Assert.True(await consumer.ConsumeOneAsync(fixture.Store, default));
+        fixture.Reopen();
+        Assert.Equal(GalateaSmtpMailState.DefiniteFailure, Assert.Single(fixture.Store.ReadSnapshot().SmtpMailOutboxes).State);
+        Assert.Equal(receipt, fixture.Store.ReadPendingReceiptDelivery());
+    }
+
+    [Fact]
     public async Task V5Migration_DoesNotBackfillAndExistingCaptureRemainsAlreadyCaptured() {
         using var fixture = new Fixture();
         await fixture.CaptureEmail();
