@@ -1,6 +1,6 @@
 # 每角色明文邮箱配置：SMTP 外发 MVP 设计与实施方案
 
-状态：S1–S3 产品改造与验收已落地；S4 真实双向发件待操作者填写授权码后验证。日期：2026-10-07。设计代码基线：`g01/smtp-outbound` / `050c711f`。实际检查与未覆盖项见第 9 节。
+状态：S1–S3 产品改造与验收已落地；S4 两个目标账号的实际宿主发件均获服务商受理，冷重开检查通过，等待操作者确认实际收件。日期：2026-10-07。设计代码基线：`g01/smtp-outbound` / `050c711f`。实际检查与未覆盖项见第 9 节。
 
 最小路径是：操作者在 `config.json` 的每个角色中填写邮箱地址、明文授权码和 SMTP 参数；角色明确写出一封新信；宿主按原文捕获、入队并调用现有 SMTP 发送器；操作者能按 `dispatchId` 核验结果，并在受控收件箱实际收到信。复用冻结短回执，但不把它改成发送成功回执。
 
@@ -18,7 +18,7 @@
 | C3 | 捕获确认与 SMTP 结果分开；已冻结 Observation 不随当前状态变更 | 当前 action receipt / fresh composer / Journal；角色、历史渲染和恢复。 |
 | C4 | Delegation 当前 V7，主线 V6 可显式升级；历史未路由、离线、blocked 行不补发 | 当前 schema、upgrade 与测试。现有格式有持久消费者，不能因为未发布而丢弃这些事实。 |
 | C5 | 一个宿主、已打开可写 store 的独占锁与 CAS；每封单次 SMTP 尝试，关闭排空 | 当前运行模型；不是多实例分布式调度问题。 |
-| C6 | 当前根配置 V14；没有发布兼容义务，倾向删除未使用旧产品入口 | 代码、根配置合同、AGENTS.md。抽样核对可访问配置的字段结构，尚未发现已配置 email 字段；下文是新字段提案。 |
+| C6 | 设计基线根配置 V14；没有发布兼容义务，倾向删除未使用旧产品入口 | 设计时的代码、根配置合同、AGENTS.md。当前已实施的 V15 与配置变更见第 9 节。 |
 | D1 | MVP 通过人工收件核验最终到达，不承诺自动已送达检测或角色最终结果必达 | 本轮方案裁决；源码没有 SMTP 逐封结果通知消费者，用户也未新增这一承诺。 |
 | D2 | 非秘密账号描述变化视为新绑定，旧 Pending 不借新绑定发送；授权码轮换不改变绑定 | 本轮新增的保守策略，替代操作者手写 bindingId 的生命周期；不是 SMTP 必然要求或当前代码已经冻结 endpoint。 |
 
@@ -270,6 +270,21 @@ dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj \
 python3 scripts/check_session_journal_docs.py --report-only
 ```
 
-本工作树已经生成 Git 忽略的独立 canary 配置与操作说明，角色 ID 为 `gpt`、`cyber`；用户指定两个受控邮箱互发，实际地址和待填授权码只保存在私有文件，不进入本文或提交。全局 SMTP 保持关闭、maintenanceMode 保持开启；真实进程预检 `/login` 返回 200 并正常退出，未建立角色 session 或消费队列。两个服务商的 465 隐式 TLS、EHLO 250 和 AUTH LOGIN 广告经无认证连接核验；未执行 AUTH、MAIL、RCPT 或 DATA。
+实施提交 `cd6d7dbd` 时，本工作树已生成 Git 忽略的独立 canary 配置与操作说明，角色 ID 为 `gpt`、`cyber`；用户指定两个受控邮箱互发，实际地址和授权码只保存在私有文件，不进入本文或提交。首次预检保持全局 SMTP 关闭、maintenanceMode 开启，`/login` 返回 200 并正常退出，未建立角色 session 或消费队列。两个服务商的 465 隐式 TLS、EHLO 250 和 AUTH LOGIN 广告经无认证连接核验；这个预检阶段未执行 AUTH、MAIL、RCPT 或 DATA。
 
-S4 尚未完成：等待操作者填写两个授权码后，先沿普通角色回合各生成一封新信，再关联 dispatchId、持久终态、两个收件箱人工确认和冷重开无重复。没有修改既有实例配置、迁移实际数据库、分配长期角色邮箱或实际发信；不能宣称两个目标账号已经接入。
+### 同日受控真实 SMTP 验收
+
+操作者随后填写并修正授权码，通知继续验收。主线程重新读取配置，确认两个账号无首尾空白、模型环境可用、角色自动心跳关闭、测试目录内没有既有会话或发件队列。保持配置私有备份，先用修正后的配置再做维护模式启动预检，随后仅对独立 canary 开启发送。未修改既有实例配置、迁移实际数据库或分配长期角色邮箱。
+
+通过登录后的实际 HTTP 普通角色回合执行，使用生产模型、原文提取、原子 capture、后台 consumer 与生产网络 sender。没有直接调用 sender 绕过角色链，也没有使用测试信任锚。结果如下；实际地址、全文、完整 dispatchId、turnId 和配置备份在忽略目录 `.atelia/smtp-mvp-canary/` 的私有运行记录中。
+
+| 方向 | 唯一邮件标记尾部 | SMTP 持久终态 | 正文 / 主题 / 收件人 | 发送后 revision |
+|:--|:--|:--|:--|:--|
+| `gpt` → `cyber` 受控邮箱 | `064859Z-75abe4` | ProviderAccepted / SMTP_DATA_ACCEPTED | 与本次指定原文一致 | 2 |
+| `cyber` → `gpt` 受控邮箱 | `065103Z-8fbbe6` | ProviderAccepted / SMTP_DATA_ACCEPTED | 与本次指定原文一致 | 2 |
+
+有两项前置现象保留了原始记录：第一次 HTTP 客户端的 15 秒等待期限在会话初始化阶段到期；停止后只读完整审计确认仅有 3 个 setup 事件，Observation / PreparedRequest / Action 均为零，且无发件队列，再以更长等待期限继续初始化。`cyber` 首个完成轮次只写“正文即操作者指定内容”，缺少 Action 内的正文，提取器成功记录零件 capture；没有尝试 SMTP。随后通过一个新的普通轮次明确要求完整正文，形成上表的唯一反向邮件。没有重提取旧 Action、删除 capture、复位 outbox 或重发已受理邮件。
+
+两封受理后正常停服，再在 SMTP 开启的正常模式下冷重开、附着两个会话并等待后台 consumer 多轮检查；两个会话均为 Idle，outbox 各仍只有一条 ProviderAccepted，终态、revision 与邮件内容保持不变。两个 Delegation SQLite `quick_check` 均为 `ok`；最终 SessionJournal 全量只读审计均通过，`gpt` 为 6 个事件 / 1 个完整轮次，`cyber` 为 9 个事件 / 2 个完整轮次，均为 Idle。停止后扫描 38 个隔离持久工件（SessionJournal / Delegation；未启用的 Character Memory 没有 store），未发现任一真实授权码。该检查不扩大为对 HTTP/SSE、全局日志或所有未来投影的动态证明。
+
+测试完成后进程正常退出，私有配置恢复 `maintenanceMode=true`、`smtp.enabled=false`。此时两个目标账号的实际外发路径与冷重开检查已经通过；两个收件箱人工收件及重复收件确认仍待操作者反馈。ProviderAccepted 不等于 Delivered，在实际收件确认前不将 S4 或完整 MVP 标成完成。
