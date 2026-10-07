@@ -233,7 +233,7 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         internal SessionInputContent Render(ActionReceiptDeliverySnapshot receipt) =>
             GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Galatea"), 10),
                 Timestamp, new GalateaSenderSnapshot("character", "user", "Galatea"),
-                [new PlayerTurnNotice.ActionReceipt(receipt.FrozenBatch!)]);
+                [new PlayerTurnNotice.ActionReceipt(receipt.FrozenBatch!)], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
 
         internal SessionInputContent Bind() {
             ActionReceiptDeliverySnapshot pending = Pending;

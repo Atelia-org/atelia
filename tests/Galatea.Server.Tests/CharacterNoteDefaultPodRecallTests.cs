@@ -706,7 +706,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             _ => new GalateaFreshInput.PlayerAction(observation.PlayerText, GalateaDelegateTestConfiguration.PlayerSender)
         };
         return GalateaObservationContent.Create(fresh, observation.ExternalLocalTimestamp!.Value,
-            new GalateaSenderSnapshot("character", "alice", "Galatea"), observation.Notices, observation.Recalls);
+            new GalateaSenderSnapshot("character", "alice", "Galatea"), observation.Notices, observation.Recalls, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
     }
 
     private static string Sha256(string text) => Convert.ToHexStringLower(

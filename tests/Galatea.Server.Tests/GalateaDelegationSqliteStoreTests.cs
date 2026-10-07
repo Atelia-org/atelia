@@ -1692,7 +1692,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         return GalateaObservationContent.Create(
             new GalateaFreshInput.PlayerAction(playerText, GalateaDelegateTestConfiguration.PlayerSender),
             new DateTimeOffset(2026, 8, 29, 14, 23, 5, TimeSpan.FromHours(8)),
-            GalateaDelegationTestInputs.Sender(store, "sender-name"), [selected]);
+            GalateaDelegationTestInputs.Sender(store, "sender-name"), [selected], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
     }
 
     private static GalateaReplyLeaseSnapshot BeginBoundCommittedLease(

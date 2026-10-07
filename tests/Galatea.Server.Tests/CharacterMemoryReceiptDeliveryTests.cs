@@ -137,7 +137,7 @@ public sealed partial class CharacterMemorySqliteStoreTests {
             new GalateaFreshInput.PlayerAction("next", GalateaDelegateTestConfiguration.PlayerSender),
             new DateTimeOffset(2026, 9, 15, 0, 0, 0, TimeSpan.Zero), new GalateaSenderSnapshot("character", "alice", "Alice"),
             [new PlayerTurnNotice.ActionReceipt(batch), new PlayerTurnNotice.Reply("a reply",
-                new GalateaSenderSnapshot("delegate", "codex", "Codex"), "dispatch")]);
+                new GalateaSenderSnapshot("delegate", "codex", "Codex"), "dispatch")], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         ActionReceiptDeliverySnapshot bound = fixture.Store.BindReceiptDelivery(source, pending.StateRevision, Address(110), input);
         Assert.Equal(input, bound.BoundInput);
         var reversed = new NoteReceiptBatch(source, batch.PodId, batch.Items.Reverse().ToArray());
@@ -287,7 +287,7 @@ public sealed partial class CharacterMemorySqliteStoreTests {
     private static SessionInputContent RenderReceiptObservation(ActionReceiptDeliverySnapshot receipt, bool compact = false) =>
         GalateaObservationContent.Create(new GalateaFreshInput.PlayerAction("next", GalateaDelegateTestConfiguration.PlayerSender),
             new DateTimeOffset(2026, 9, 15, 0, 0, 0, TimeSpan.Zero), new GalateaSenderSnapshot("character", "alice", "Alice"),
-            [new PlayerTurnNotice.ActionReceipt(compact ? receipt.FrozenBatch!.Compact() : receipt.FrozenBatch!)]);
+            [new PlayerTurnNotice.ActionReceipt(compact ? receipt.FrozenBatch!.Compact() : receipt.FrozenBatch!)], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
 }
 
 // Synthetic legacy payload only. Production does not recognize renderer versions.

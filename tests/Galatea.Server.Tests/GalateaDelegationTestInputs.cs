@@ -4,10 +4,11 @@ internal static class GalateaDelegationTestInputs {
     internal static Atelia.SessionJournal.SessionInputContent InternalMailInput(
         GalateaDelegationSqliteStore store, GalateaInternalMailOutboxSnapshot outbox) {
         var sender = Sender(store, outbox.FromCharacterName);
-        var message = GalateaCharacterMailDeliveryReconciler.RestoreMessage(new(
+        var message = GalateaCharacterMailDeliveryReconciler.RestoreMessage(new GalateaInternalMailSourceOutbox(
             sender.Id, store, outbox));
-        return GalateaObservationContent.Create(new GalateaFreshInput.InboundMail(message, Sender: sender),
-            DateTimeOffset.UnixEpoch, new GalateaSenderSnapshot("character", outbox.TargetCharacterId, message.To));
+        return GalateaObservationContent.Create(new GalateaFreshInput.InboundMail(message, new GalateaInboundMailOrigin.CharacterDelivery(sender,
+                new GalateaInternalMailDeliveryBinding(store, outbox.DispatchId, outbox.Revision))),
+            DateTimeOffset.UnixEpoch, new GalateaSenderSnapshot("character", outbox.TargetCharacterId, message.To), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
     }
     internal static void ImportQueuedLegacyTasks(GalateaDelegationSqliteStore store) {
         // Explicit historical fixture import, used only by legacy preflight

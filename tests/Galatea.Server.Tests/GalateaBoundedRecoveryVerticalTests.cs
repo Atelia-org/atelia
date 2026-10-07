@@ -197,7 +197,7 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
                 notice => Assert.IsType<PlayerTurnNotice.Reply>(notice));
             SessionInputContent content = GalateaObservationContent.Create(
                 new GalateaFreshInput.DelegateReply(lease.ReadNotices()), DateTimeOffset.UnixEpoch,
-                GalateaDelegationTestInputs.Sender(Store, "Galatea"));
+                GalateaDelegationTestInputs.Sender(Store, "Galatea"), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
             lease.BindObservationBase(Engine, Engine.ReadCurrentHead()!.Value, content);
             lease.RecordObservationCommitted(Engine.AppendObservation(content));
             Reopen();

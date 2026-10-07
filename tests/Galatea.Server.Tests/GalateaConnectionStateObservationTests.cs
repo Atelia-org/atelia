@@ -22,7 +22,7 @@ public sealed class GalateaConnectionStateObservationTests {
     [InlineData("heartbeat-activation")]
     [InlineData("delegate-reply")]
     [InlineData("inbound-mail")]
-    public void V4SnapshotSurvivesStructuredStorageAndRequestProjection(string kind) {
+    public void V5SnapshotSurvivesStructuredStorageAndRequestProjection(string kind) {
         string address = EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None));
         var change = new GalateaConnectionStateChange(address, "old", "new", "戴眼镜", Evidence);
         var snapshot = new GalateaConnectionStateSnapshot("new", "new", "diagnostic", change);
@@ -32,11 +32,11 @@ public sealed class GalateaConnectionStateObservationTests {
             "delegate-reply" => new GalateaFreshInput.DelegateReply([
                 new PlayerTurnNotice.Reply("回复", Player, "dispatch")]),
             _ => new GalateaFreshInput.InboundMail(
-                MailboxMessage.FromCanonicalEnvelope(new string('a', 32), "Sender", "Alice", null, "邮件正文"), Sender: Character)
+                MailboxMessage.FromCanonicalEnvelope(new string('a', 32), "Sender", "Alice", null, "邮件正文"), new GalateaInboundMailOrigin.PlayerInjection(Player))
         };
         SessionInputContent content = GalateaObservationContent.Create(input, Timestamp, Character, connectionState: snapshot);
 
-        Assert.Equal(GalateaObservationContent.V4SchemaId, content.SchemaId);
+        Assert.Equal(GalateaObservationContent.V5SchemaId, content.SchemaId);
         Assert.Equal(snapshot, GalateaObservationContent.ReadConnectionState(content));
         string projected = GalateaObservationInputProjector.Instance.Project(content);
         Assert.Equal(JsonValueKind.String, MdJsonSerializer.Read(projected).GetProperty("connectionState").ValueKind);
@@ -60,7 +60,7 @@ public sealed class GalateaConnectionStateObservationTests {
     [Theory]
     [InlineData("")]
     [InlineData("第一行\n第二行")]
-    public void V4AcceptsConfiguredOptionNamesIncludingEmptyAndMultiline(string name) {
+    public void V5AcceptsConfiguredOptionNamesIncludingEmptyAndMultiline(string name) {
         string address = EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None));
         var snapshot = new GalateaConnectionStateSnapshot("new", "new", "new",
             new GalateaConnectionStateChange(address, "old", "new", name, Evidence));
@@ -70,7 +70,7 @@ public sealed class GalateaConnectionStateObservationTests {
     }
 
     [Fact]
-    public void V4AcceptsExactConfigurationBounds() {
+    public void V5AcceptsExactConfigurationBounds() {
         string address = EventAddressTextCodec.Format(new EventAddress(SizedPtr.Create(4, 4), 1, AddressHint.None));
         string id = new string('x', 128);
         var snapshot = new GalateaConnectionStateSnapshot(id, id, id,

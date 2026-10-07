@@ -8,7 +8,7 @@ namespace Atelia.Galatea.Server;
 /// Explicitly constructed durable delegation current-state authority.
 /// </summary>
 internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActionReceiptDeliveryStore {
-    internal const int SchemaVersion = 7;
+    internal const int SchemaVersion = 8;
     internal const int ApplicationId = 0x47444C47; // "GDLG"
     internal const string DatabaseFileName = "delegation-state.sqlite3";
     internal const string LockFileName = "delegation-state.lock";
@@ -139,12 +139,22 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
         hooks: null
     );
 
+    // Offline IMAP maintenance owns the same writer lock, but must never settle
+    // an unrelated interrupted SMTP attempt as part of opening its checkpoint.
+    internal static GalateaDelegationSqliteStore OpenExistingForImapMaintenance(
+        string storeDirectory,
+        GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreLimits limits
+    ) => OpenExistingCore(storeDirectory, owner, limits, readOnly: false,
+        hooks: null, recoverSmtpAttempts: false);
+
     private static GalateaDelegationSqliteStore OpenExistingCore(
         string storeDirectory,
         GalateaDelegationStoreOwner owner,
         GalateaDelegationStoreLimits limits,
         bool readOnly,
-        GalateaDelegationStoreTestHooks? hooks
+        GalateaDelegationStoreTestHooks? hooks,
+        bool recoverSmtpAttempts = true
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(storeDirectory);
         GalateaDelegationDurableFiles.RequireLinux();
@@ -189,7 +199,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
                 lifetimeLock,
                 readOnly
             );
-            if (!readOnly) { store.RecoverSmtpAttemptsOnOpen(); }
+            if (!readOnly && recoverSmtpAttempts) { store.RecoverSmtpAttemptsOnOpen(); }
             return store;
         }
         catch {
@@ -383,6 +393,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
             }
         }
         RequireOwner(connection, transaction: null, owner, limits, expectedVersion);
+        if (expectedVersion >= 8) { ValidateImapDurableState(connection, transaction: null, owner); }
         return ReadSnapshotCore(connection, transaction: null, expectedVersion);
     }
 
@@ -433,6 +444,11 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
         if (expectedVersion >= 7) {
             expected.Add("table:smtp_mail_outbox");
             expected.Add("index:ix_smtp_mail_state");
+        }
+        if (expectedVersion >= 8) {
+            expected.AddRange(["table:imap_checkpoint", "table:external_mail_inbox",
+                "index:ix_smtp_auto_display_sender", "index:ux_external_mail_uid",
+                "index:ux_external_mail_message_id", "index:ix_external_mail_state"]);
         }
         if (!actual.SetEquals(expected)) {
             throw new InvalidDataException(
@@ -552,6 +568,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable, IActio
             "notice_id->reply_notice.notice_id:RESTRICT"
         ]);
         if (expectedVersion >= 6) { ValidateMailReceiptDeliverySchema(connection); }
+        if (expectedVersion >= 8) { ValidateImapSchema(connection); }
     }
 
     private static IReadOnlyList<string> ColumnsForVersion(

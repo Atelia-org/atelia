@@ -1,6 +1,6 @@
 # IMAP 自动展示准入：设计与施工方案
 
-状态：已完成两轮 dialectical-simplification 审查，尚未实施。日期：2026-10-07。代码基线：`g01/smtp-outbound` / `b47848f1`。本轮只修改文档和运行内存 SQL 原型，不读取私有配置或真实邮箱。
+状态：产品已实施，验收记录见第 8 节。日期：2026-10-07。设计代码基线：`g01/smtp-outbound` / `b47848f1`；施工从 `5ff37bcb` 开始。此前文档审查的只读限制仅属于设计阶段，本次施工及受控测试由用户授权。
 
 最小模型是：**启动配置中的自动展示名单，与同角色已持久受理的外发 email 收件人取并集。只有获准邮件进入角色经历并自动触发回合；陌生邮件只推进收取游标。** 用户已进一步明确：派生许可跟随角色保留，修正 SMTP endpoint 或更换角色邮箱不会撤销原联系人的许可。
 
@@ -82,7 +82,7 @@ LIMIT 1;
 
 `$smtpPrefix = "smtp:" + owner.CharacterId + ":"`，参数化精确前缀，不用通配 LIKE。已有打开验证确保 owner、引用语法及 outbox/capture 一致性；新增查询仍使用这些边界，读失败或校验错误不能视为“陌生人”。NOCASE 缩小 ASCII 候选，BINARY local-part 保留精确语义。V8 strict schema 新增索引预期，并针对该索引用 index_xinfo 核对 NOCASE，不建设通用索引框架。
 
-内存 SQLite 原型已验证 7 个地址/作用域样本、cursor-only 提交顺序及索引 SEARCH；真实 store 集成仍须下一轮验收。
+设计阶段的内存 SQLite 原型已验证 7 个地址/作用域样本、cursor-only 提交顺序及索引 SEARCH；施工阶段进一步以真实 store 和故障注入验证，见第 8 节。
 
 checkpoint COMMIT 不明的确认采用窄 checkpoint 后态读取；现有 ExecuteWrite 在不明提交时调用 ReadSnapshotCore，不能直接作为该操作的确认路径而装入无关正文。沿用 owner、异常分类和精确后态原则，只补这个 domain 操作所需的读回，不泛化写入平台。
 
@@ -152,7 +152,7 @@ flowchart LR
 
 静态阶段要求角色只确认内容、不回复，并核查 outbox，否则两个许可来源的证据会混合。多角色不串用、建立联系人后其它未知 From 仍拒绝、正常绑定网络失败/Unknown、domain/local-part/plus-tag、背压、缺省名单与配置严格性由合成测试覆盖。
 
-.NET 检查按主方案串行 `--no-restore -m:1 -nr:false`。本轮只完成文档、SQL 原型与审查，真实 store/.NET/IMAP 验证留到实施阶段，完成声明须逐项区分。
+.NET 检查按主方案串行 `--no-restore -m:1 -nr:false`。第 8 节区分代码、离线验证、真实邮箱测试与长期实例接入；本节保留施工验收要求。
 
 ## 7. 两轮辩证审查与裁决
 
@@ -167,3 +167,42 @@ flowchart LR
 | defer | 自主查取信、待审/历史重判、TTL/撤销/线程、筛选模型、认证平台、唤醒配额、下载优化，有消费者再建。 |
 
 消除的矛盾：主方案所有合法新信自动入场；发送 descriptor 被草案扩成社交许可身份；把陌生字节进内存误当角色已经注意；把诊断行误当游标恢复必要条件。初稿的两个准入说明字段和一个新状态均删除。最终增量是一个配置数组、一个标准索引/窄查询、一个正文投影前的原子准入操作；新增角色交互协议、联系人表和持久筛选状态均为零。
+
+## 8. 2026-10-07 施工与验收记录
+
+本轮按 bounded-delegation 分为配置、持久模型、角色投递和传输/MIME 四个包，主线程集成 Host/HTTP/operator 并串行验收；独立 reviewer 根据实际代码指出接缝并复核修正。
+
+产品入口已完成：
+
+- [V16 配置合同](../SessionJournal/current/contracts/galatea-root-config-v16.md)与 strict reader/loader/bootstrap；静态名单冻结，SMTP / IMAP 引用同一不可变账号对象，两个窄 policy 视图不复制凭据、不重写现有 SMTP 协议。
+- [V8 持久实现](../../prototypes/Galatea/GalateaDelegationSqliteStore.Imap.cs)：静态 ∪ 同角色正常 outbox；未知仅 cursor，入箱/拒收与 cursor 原子提交，COMMIT 不明窄读后态。两个表、一个普通 recipient 索引，没有联系人表/逐信 Filtered 账本。
+- [传输](../../prototypes/Galatea/Mailbox/GalateaImapTransport.cs)、[唯一 MIME 路径](../../prototypes/Galatea/Mailbox/GalateaImapMimeDecoder.cs)、[poller](../../prototypes/Galatea/Mailbox/GalateaImapPoller.cs)：MailKit 4.18.1，未选中 INBOX 的 STATUS→EXAMINE/UID/BODY.PEEK partial；EXAMINE 必须自行给出相同 UIDVALIDITY，省略 UIDNEXT 时只能沿用确切 STATUS 值，不推算。额外在库分配 literal 缓冲前拦截忽略 partial 的超限响应。先 HeaderList 取 From/准入，获准后才建立 MIME 正文树。
+- [共用 proof](../../prototypes/Galatea/GalateaCharacterMailDelivery.cs)和[单 relay](../../prototypes/Galatea/GalateaCharacterMailRelay.cs)：闭合 origin、Observation v5，混合 Bound/Q 进入所有既有 writer gate，公平来源 FIFO，一次 append；邮件不额外领取 recall/notice/receipt。失败或用户停止后暂停新自动 admission。
+- [纯读取 status](../../prototypes/Galatea/GalateaHostService.Imap.cs)及[离线 rebaseline](../../prototypes/Galatea/GalateaImapRebaseline.cs)。维护写打开不顺便恢复 SMTP Attempting；必须核对五个 preview 值才 CAS 应用。全局开关默认关闭，停服先取消/排空 poll 再释放 owner。
+
+真实 owner store 与合成协议覆盖：联系人地址/作用域/发送终态、V7 显式升级与历史合同、capture/准入提交顺序、事务不明和 rollback、索引归属/NOCASE/非 partial、UID 空隙/退步/上限/vanished、未知 sentinel 不进持久正文或模型、背压、MIME/charset/附件/40层 nesting、名单变更/邮箱变更、混合 Bound/Q、Observed 后 Undo、生成失败/用户停止、无副作用状态、维护和关闭。真实 TLS fake server → production poller → owner store → relay → accepted runner → Journal 的连续测试通过。
+
+Debug 非 Live 全集：**1907 passed、2 skipped、0 failed**；两个 skip 是原有的显式真实 Codex gate。运行入口：
+
+```bash
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false \
+  --filter 'Category!=GalateaLabLive&Category!=GalateaNoteLive&Category!=GalateaEmailLive&Category!=GalateaConnectionStateLive&Category!=GalateaImapLive'
+```
+
+Release 最终针对性回归：**379 passed、0 skipped、0 failed**，包含真实 TLS 协议、持久准入、共用来信、SMTP 和迁移。完整 Debug 回归后增加的 STATUS/EXAMINE 与 Open 阶段异常案例均包含在此次 Release 复验。
+
+独立复核发现并已修正：Subject wire 展开后再解码避免吞掉隐藏换行；runtime 普通 snapshot 不追加读取收件历史正文；内部绑定/Host projector/RecallBarrier 的 V5 接缝；停止暂停不被 settlement 清理；poll 中 UIDNEXT 退步即阻断；recipient 索引严格归属正确表；STATUS 缓存不能掩盖 EXAMINE 缺少 UIDVALIDITY；已有 checkpoint 在 Open 阶段遇到明确 namespace 变化/UIDNEXT 退步也持久 Block。文档检查目前只有 4 条施工前已存在的 AgentControl 历史断链，本次无新增诊断。
+
+真实两账号 canary 在基线阶段停止，尚未发送测试邮件：QQ 建立 Ready（cursor=9），126 返回 `IMAP_INVALID_UID_METADATA`。独立只读 probe 再确认：QQ STATUS / EXAMINE 的 UIDVALIDITY=1667961098、UIDNEXT=10，INBOX=1；126 两者 UIDVALIDITY=1、UIDNEXT 均缺失，INBOX=4。probe 不作 SEARCH/BODY/SMTP，不改变 Seen 或原失败 ledger。数量及最高现存 UID 不证明 UIDNEXT；126 不建立猜测基线。用户随后明确本轮完成 QQ 验收、126 兼容另开一轮，因此 I5 两账号完整验收延期。
+
+QQ 独立真实 canary **1 passed / 0 failed，耗时 188 秒**；原失败 ledger 保留，另用 `ledger-qq.json`，完成后 guard 禁止重跑。5 次 SMTP 均为 `SMTP_DATA_ACCEPTED`：4 封受控对象寄给 QQ，1 封 QQ 角色的正常原 Action→capture→outbox→consumer 外发。QQ 四封新来信中，空名单与移除名单后的两封仅推进 cursor，静态名单与派生许可各产生一条 Observed；两条 exact Journal proof、4 次 Seen 不变、未知 sentinel 隔离、冷重开无新模型调用/Observation/SMTP 消费全部通过。126 在此路径仅作 SMTP 控制对象，没有调用其 IMAP。
+
+验收使用 production network transport、owner store、poller、relay、runner、Journal；completion 为确定性“不回复”，contact extraction 为确定性 exact 原 Action。它证明运行时链路及准入，不证明真实 LLM 判断或自主回复。重现入口要求私有配置与全新隔离 guard；既有 Completed / Failed / Running 不得覆盖后盲重试：
+
+```bash
+ATELIA_GALATEA_IMAP_CANARY_CONFIG="$PWD/.atelia/imap-mvp-canary/config.json" \
+  dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj -c Release --no-restore -m:1 -nr:false \
+  --filter 'FullyQualifiedName~QqOnlyReceiver_AdmissionAndRuntimeObservation_AreDurableAndReadOnly'
+```
+
+长期 gpt/cyber 实例配置、旧 store 升级及真实 LLM 自动理解/回复不由隔离 canary 代替；自主查信、HTML 转换、强认证等延期维持第 5 节边界。

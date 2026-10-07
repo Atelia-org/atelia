@@ -9,18 +9,20 @@ namespace Atelia.Galatea.Server.Mailbox;
 // The validated file object is also the immutable, host-owned sending snapshot.
 internal sealed class GalateaEmailAccount {
     public GalateaEmailAccount(string address, string authorizationCode,
-        string smtpHost, int smtpPort, string tlsMode) {
+        string smtpHost, int smtpPort, string tlsMode, GalateaImapAccount? imap = null) {
         Address = address;
         AuthorizationCode = authorizationCode;
         SmtpHost = smtpHost;
         SmtpPort = smtpPort;
         TlsMode = tlsMode;
+        Imap = imap;
     }
     public string Address { get; }
     public string AuthorizationCode { get; }
     public string SmtpHost { get; }
     public int SmtpPort { get; }
     public string TlsMode { get; }
+    public GalateaImapAccount? Imap { get; }
 }
 
 internal sealed record GalateaSmtpPolicy(bool Enabled = false, int TimeoutSeconds = 60);
@@ -94,12 +96,12 @@ internal sealed class GalateaSmtpConfig {
             || account.AuthorizationCode.Any(char.IsControl)) {
             throw InvalidEmail("authorizationCode");
         }
-        if (!IsSmtpHost(account.SmtpHost)) { throw InvalidEmail("smtpHost"); }
+        if (!IsMailServerHost(account.SmtpHost)) { throw InvalidEmail("smtpHost"); }
         if (account.SmtpPort is < 1 or > 65535) { throw InvalidEmail("smtpPort"); }
         if (account.TlsMode is not ("implicit" or "starttls")) { throw InvalidEmail("tlsMode"); }
     }
 
-    private static bool IsSmtpHost(string? host) {
+    internal static bool IsMailServerHost(string? host) {
         if (host is not { Length: > 0 and <= 253 }
             || host.Any(c => c > 127 || char.IsControl(c) || char.IsWhiteSpace(c))) {
             return false;

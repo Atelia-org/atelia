@@ -39,6 +39,7 @@ matched V1 endpoint 的 failure 只有 `turn-busy` 使用 `{code,error,turnId}`�
 | GET | `/api/v1/characters/{characterId}/recent-turns` | 200；latest 6 completed turns、同 head Context header、rewind token 与 RecapGrid readiness |
 | GET | `/api/v1/characters/{characterId}/recap-cadence-progress` | 200；独立 Timeline/Cadence HistoryLoad telemetry |
 | GET | `/api/v1/characters/{characterId}/mailbox/status` | 200；delegation store 的只读聚合状态 |
+| GET | `/api/v1/characters/{characterId}/email/inbound/status` | 200；IMAP 基线、游标、有界待投计数与最近 poll 结果；不创建会话或联网 |
 | GET | `/api/v1/characters/{characterId}/agent/status` | 200；server Agent loop 的只读状态 |
 | POST | `/api/v1/characters/{characterId}/agent/retry-admission` | strict `{}`；200 Agent 状态，或 409 busy/具体未完成原因；不创建主线轮次 |
 | POST | `/api/v1/characters/{characterId}/agent/resume-autonomy` | strict `{}`；仅在失败暂停且会话 Idle 时重新计时；200 Agent 状态或 409 |
@@ -177,6 +178,12 @@ console.log(retry);
 ```
 
 state 为 `no-mail|queued|active-running|backoff|accepted-history-unavailable|ready-reply|quarantined|unavailable`。它只读 supervisor 已持有的 delegation store：不调用 `GetSessionAsync`、不 attach session、不 signal pulse，也不触发 extractor、transport 或 provider；不会返回正文或 message/dispatch/thread/turn identity。它在单个 SQLite read transaction 中聚合状态，响应带 `Cache-Control: no-store`。
+
+`GET /api/v1/characters/{characterId}/email/inbound/status` 独立返回
+`{configured,enabled,state,baselineEstablished,uidValidity,scannedThroughUid,baselineAtUnixTimeMilliseconds,pendingCount,boundCount,blockedCode,lastPoll}`。
+state 为 `BaselinePending|Ready|Paused|Blocked`；Ready 表示持久基线已建立且无已知阻断，不承诺服务商在线。
+lastPoll 只包含采样时间、固定 Code 和 imported/rejected/filtered 计数。GET 不创建 session、不建立基线、不联网、不投信，不包含地址、主题、正文或凭据；维护模式可以观察既有只读 store。
+不可读状态会返回错误，不能伪装成空队列。初次真实验收必须先确认 Ready 再寄新测试邮件；UIDVALIDITY 阻断的恢复入口见[V16 配置合同](../SessionJournal/current/contracts/galatea-root-config-v16.md)。
 
 `attemptCount` 表示当前邮件的连续恢复失败次数，绑定、启动前失败和结果检查共用上限 8；不是模型调用次数。backoff/accepted-history-unavailable 表示有限恢复；耗尽后生成正常失败回信并继续队列。`nextRetryAtUnixTimeMilliseconds` 是显示与重开调度提示，不承诺绝对墙钟执行时间。结果不明的失败回信不表示旧工作已经停止。JSON 字段不变。
 

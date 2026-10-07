@@ -22,7 +22,7 @@ public sealed class GalateaPlayerCharacterApiTests {
     private const string Second = "/api/v1/characters/beta";
     private static readonly (string Method, string Suffix)[] CharacterRoutes = [
         ("GET", "/recent-turns"), ("GET", "/recap-cadence-progress"),
-        ("GET", "/mailbox/status"), ("POST", "/chat/turns"),
+        ("GET", "/mailbox/status"), ("GET", "/email/inbound/status"), ("POST", "/chat/turns"),
         ("POST", "/chat/turns/resume"), ("POST", "/mailbox/ready-turn"),
         ("GET", "/agent/status"), ("POST", "/agent/resume-autonomy"),
         ("POST", "/agent/retry-admission"),
@@ -33,6 +33,23 @@ public sealed class GalateaPlayerCharacterApiTests {
         ("GET", "/agent/admission"),
         ("POST", "/agent/admission/{operationId}/stop")
     ];
+
+    [Fact]
+    public async Task InboundEmailStatusRequiresAuthenticationAndRejectsUnknownCharacterWithoutSessionAttach() {
+        await using var host = CreateTwoCharacterHost();
+        using HttpClient client = host.CreateClient();
+        using HttpResponseMessage anonymous = await client.GetAsync(First + "/email/inbound/status");
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using HttpResponseMessage login = await LoginAsync(client);
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+        using HttpResponseMessage unknown = await client.GetAsync("/api/v1/characters/missing/email/inbound/status");
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Contains("character-not-found", await unknown.Content.ReadAsStringAsync());
+        var service = host.Factory.Services.GetRequiredService<GalateaHostService>();
+        Assert.Null(service.ReadAttachedSession("alice"));
+        Assert.Null(service.ReadAttachedSession("beta"));
+        Assert.False(Directory.Exists(host.SessionDirectory));
+    }
 
     [Fact]
     public async Task DirectoryAndPage_SeparateVisitorFromTarget_AndDoNotExposePrivateConfig() {

@@ -7,7 +7,7 @@ using Atelia.Galatea.Server.Mailbox;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 15;
+    internal const int CurrentConfigVersion = 16;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumCharacterCount = 256;
@@ -286,13 +286,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("15"u8)) {
+            || !reader.ValueSpan.SequenceEqual("16"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 15; "
+        "Galatea config requires exact integer version 'v': 16; "
         + "migrate the config before retrying."
     );
 
@@ -441,6 +441,10 @@ internal static class GalateaStrictConfigReader {
                     RequireToken(reader.TokenType, JsonTokenType.StartObject, property);
                     ValidateSmtpObject(ref reader);
                     break;
+                case "imap":
+                    RequireToken(reader.TokenType, JsonTokenType.StartObject, property);
+                    ValidateImapObject(ref reader);
+                    break;
                 default:
                     throw Unknown("runtime", property);
             }
@@ -470,6 +474,7 @@ internal static class GalateaStrictConfigReader {
         var seen = NewPropertySet();
         string? address = null, authorizationCode = null, smtpHost = null, tlsMode = null;
         int smtpPort = 0;
+        GalateaImapAccount? imap = null;
         while (ReadProperty(ref reader, seen, "email", out string property,
                    redactPropertyName: true)) {
             switch (property) {
@@ -495,6 +500,13 @@ internal static class GalateaStrictConfigReader {
                         throw new InvalidDataException("SMTP_INVALID_EMAIL: smtpPort.");
                     }
                     break;
+                case "imap":
+                    RequireReadValue(ref reader, "imap");
+                    if (reader.TokenType != JsonTokenType.Null) {
+                        RequireToken(reader.TokenType, JsonTokenType.StartObject, "imap");
+                        imap = ValidateEmailImapObject(ref reader);
+                    }
+                    break;
                 default: throw new InvalidDataException("SMTP_UNKNOWN_EMAIL_FIELD.");
             }
         }
@@ -504,8 +516,77 @@ internal static class GalateaStrictConfigReader {
             }
         }
         GalateaSmtpConfig.RequireValidAccount(new GalateaEmailAccount(
-            address!, authorizationCode!, smtpHost!, smtpPort, tlsMode!
+            address!, authorizationCode!, smtpHost!, smtpPort, tlsMode!, imap
         ));
+    }
+
+    private static void ValidateImapObject(ref Utf8JsonReader reader) {
+        var seen = NewPropertySet();
+        while (ReadProperty(ref reader, seen, "imap", out string property,
+                   redactPropertyName: true)) {
+            switch (property) {
+                case "enabled":
+                    RequireReadValue(ref reader, "enabled");
+                    RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, "enabled");
+                    break;
+                case "pollIntervalSeconds":
+                case "timeoutSeconds":
+                    RequireReadValue(ref reader, property);
+                    int maximum = property == "pollIntervalSeconds" ? 3600 : 300;
+                    if (reader.TokenType != JsonTokenType.Number
+                        || !reader.TryGetInt32(out int seconds) || seconds < 1 || seconds > maximum) {
+                        throw new InvalidDataException("IMAP_INVALID_POLICY: " + property + ".");
+                    }
+                    break;
+                default: throw new InvalidDataException("IMAP_UNKNOWN_FIELD.");
+            }
+        }
+    }
+
+    private static GalateaImapAccount ValidateEmailImapObject(ref Utf8JsonReader reader) {
+        var seen = NewPropertySet();
+        string? host = null, tlsMode = null;
+        int port = 0;
+        var senders = new List<string>();
+        while (ReadProperty(ref reader, seen, "email.imap", out string property,
+                   redactPropertyName: true)) {
+            switch (property) {
+                case "host":
+                case "tlsMode":
+                    RequireReadValue(ref reader, property);
+                    RequireToken(reader.TokenType, JsonTokenType.String, property);
+                    if (property == "host") { host = reader.GetString(); }
+                    else { tlsMode = reader.GetString(); }
+                    break;
+                case "port":
+                    RequireReadValue(ref reader, "port");
+                    if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt32(out port)) {
+                        throw new InvalidDataException("IMAP_INVALID_ACCOUNT: port.");
+                    }
+                    break;
+                case "autoDisplaySenders":
+                    RequireReadValue(ref reader, "autoDisplaySenders");
+                    RequireToken(reader.TokenType, JsonTokenType.StartArray, "autoDisplaySenders");
+                    while (reader.Read() && reader.TokenType != JsonTokenType.EndArray) {
+                        if (senders.Count >= GalateaImapConfig.MaximumAutoDisplaySenders) {
+                            throw new InvalidDataException("IMAP_INVALID_ACCOUNT: autoDisplaySenders.");
+                        }
+                        RequireToken(reader.TokenType, JsonTokenType.String, "autoDisplaySenders");
+                        senders.Add(reader.GetString()!);
+                    }
+                    RequireToken(reader.TokenType, JsonTokenType.EndArray, "autoDisplaySenders");
+                    break;
+                default: throw new InvalidDataException("IMAP_UNKNOWN_ACCOUNT_FIELD.");
+            }
+        }
+        foreach (string field in new[] { "host", "port", "tlsMode" }) {
+            if (!seen.Contains(field)) {
+                throw new InvalidDataException("IMAP_MISSING_ACCOUNT_FIELD: " + field + ".");
+            }
+        }
+        var imap = new GalateaImapAccount(host!, port, tlsMode!, senders);
+        GalateaImapConfig.RequireValidAccount(imap);
+        return imap;
     }
 
     private static void RequireExactSessionProvisioning(

@@ -178,7 +178,7 @@ public sealed class GalateaStructuredDeliveryRewindGateTests {
                 new GalateaFreshInput.PlayerAction("我继续前进。\r\n```\n原文\n```",
                     GalateaDelegateTestConfiguration.PlayerSender), timestamp,
                 new GalateaSenderSnapshot("character", session.Character.CharacterId, session.Character.CharacterName.Value),
-                [new PlayerTurnNotice.ActionReceipt(pending.FrozenBatch!)]);
+                [new PlayerTurnNotice.ActionReceipt(pending.FrozenBatch!)], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
             ActionReceiptDelivery.Bind(memory.ReceiptDeliveryStore, session.Engine, pending, sourceAction, content);
             EventAddress appended = session.Engine.AppendObservation(content);
 
@@ -258,7 +258,7 @@ public sealed class GalateaStructuredDeliveryRewindGateTests {
             new GalateaFreshInput.PlayerAction("continue after both receipts", GalateaDelegateTestConfiguration.PlayerSender),
             ActionReceiptDeliveryFixture.Timestamp,
             new GalateaSenderSnapshot("character", session.Character.CharacterId, session.Character.CharacterName.Value),
-            [new PlayerTurnNotice.ActionReceipt(seed.Mail.FrozenBatch!), new PlayerTurnNotice.ActionReceipt(seed.Note.FrozenBatch!)]);
+            [new PlayerTurnNotice.ActionReceipt(seed.Mail.FrozenBatch!), new PlayerTurnNotice.ActionReceipt(seed.Note.FrozenBatch!)], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         ActionReceiptDelivery.Bind(session.DelegationHandle!.Store, session.Engine, seed.Mail, seed.Source, content);
         ActionReceiptDelivery.Bind(session.CharacterMemoryReconciler!.ReceiptDeliveryStore, session.Engine, seed.Note, seed.Source, content);
         return session.Engine.AppendObservation(content);

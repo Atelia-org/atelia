@@ -2,10 +2,10 @@
 
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
-[runtime.md](runtime.md)。根配置当前为 [V15](../SessionJournal/current/contracts/galatea-root-config-v15.md)。V14 是历史格式；exact 字段由
+[runtime.md](runtime.md)。根配置当前为 [V16](../SessionJournal/current/contracts/galatea-root-config-v16.md)。V15 及更早格式仅供历史查阅；exact 字段由
 [`GalateaStrictConfigReader`](../../prototypes/Galatea/GalateaStrictConfigReader.cs) 与
 [`GalateaRootFileConfig`](../../prototypes/Galatea/GalateaConfig.cs) 定义。
-[V14](../SessionJournal/current/contracts/galatea-root-config-v14.md)、[V13](../SessionJournal/current/contracts/galatea-root-config-v13.md)及更早合同仅供历史查阅，不是当前配置入口。
+[V15](../SessionJournal/current/contracts/galatea-root-config-v15.md)、[V14](../SessionJournal/current/contracts/galatea-root-config-v14.md)、[V13](../SessionJournal/current/contracts/galatea-root-config-v13.md)及更早合同不是当前配置入口。
 
 ## 配置目录与首次生成
 
@@ -44,15 +44,15 @@
 
 ## `config.json`
 
-根文件必须是 strict V15 JSON：`v` 必须是整数 `15`，根字段为 `v`、`characters`、`players`、`runtime`。
+根文件必须是 strict V16 JSON：`v` 必须是整数 `16`，根字段为 `v`、`characters`、`players`、`runtime`。
 `characters` 至少一项；`players` 可以为 `[]`。`runtime.recapGrid` 是必需 object。未知字段、旧版、未来版、
-`null` 或 `15.0` 都拒绝；正常启动不会迁移或重写旧文件。
+`null` 或 `16.0` 都拒绝；正常启动不会迁移或重写旧文件。
 
 下面展示当前字段归属，密码位置仅为占位符；除必需的 absolute `homeDir` 外，相对路径以配置文件目录解析。
 
 ```json
 {
-  "v": 15,
+  "v": 16,
   "characters": [{
     "id": "alice",
     "name": "Alice",
@@ -80,18 +80,54 @@
         "dispatchTimeoutMilliseconds": 900000
       }
     },
-    "smtp": { "enabled": false, "timeoutSeconds": 60 }
+    "smtp": { "enabled": false, "timeoutSeconds": 60 },
+    "imap": { "enabled": false, "pollIntervalSeconds": 60, "timeoutSeconds": 60 }
   }
 }
 ```
 
-`email` 缺省或为 `null` 表示该 Character 未绑定外发账号；如需配置，只能提供
-`address`、`authorizationCode`、`smtpHost`、`smtpPort`、`tlsMode` 五个字段。地址同时用于 AUTH、`MAIL FROM`
+`email` 缺省或为 `null` 表示该 Character 未绑定邮箱账号；如需配置，必须提供
+`address`、`authorizationCode`、`smtpHost`、`smtpPort`、`tlsMode` 五个字段，可再增加可选的 `imap` object。地址同时用于 AUTH、`MAIL FROM`
 和 MIME `From`。`runtime.smtp` 只接受可选的 `enabled`（默认 `false`）与 `timeoutSeconds`（默认 `60`，范围 1..300）。
-V15 的 SMTP 配置细节、身份派生、Pending 处理与逐封核验入口见
-[V15 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v15.md)和
+SMTP 配置细节、身份派生、Pending 处理与逐封核验入口见
+[V16 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v16.md)和
 [SMTP MVP 设计与实施方案第 5 节](smtp-email-mvp-design-and-implementation.md#5-回执可观察性与-mvp-的完成定义)与[第 7 节验收矩阵](smtp-email-mvp-design-and-implementation.md#7-验收矩阵与必要检查)。
 配置路径已实施；真实账号与收件验收状态以方案实施记录为准，配置形状文档不是真实收件证据。
+
+### IMAP 收件与自动展示名单
+
+`characters[].email.imap` 缺省或为 `null` 表示该角色不拉取；非空时 `host`、`port`、`tlsMode` 三项必需。host 支持 ASCII DNS host 或 IP，禁止 URL、路径、空白和控制字符；port 为 1..65535 的整数；TLS 只接受精确的 `implicit` / `starttls`。MVP 固定读取 `INBOX`，与 SMTP 共用 `email.address` 登录及同一个 `authorizationCode`，不新增 username、folder 或第二份授权码。
+
+```json
+{
+  "email": {
+    "address": "actor@example.test",
+    "authorizationCode": "REPLACE_WITH_PRIVATE_IMAP_SMTP_CODE",
+    "smtpHost": "smtp.example.test",
+    "smtpPort": 465,
+    "tlsMode": "implicit",
+    "imap": {
+      "host": "imap.example.test",
+      "port": 993,
+      "tlsMode": "implicit",
+      "autoDisplaySenders": ["friend@example.test"]
+    }
+  },
+  "runtime": {
+    "imap": { "enabled": false, "pollIntervalSeconds": 60, "timeoutSeconds": 60 }
+  }
+}
+```
+
+这是字段归属片段，`email` 实际位于 `characters[]`。`runtime.imap` 可以省略；object 内各项可选，`enabled` 默认 false，`pollIntervalSeconds` 默认 60、范围 1..3600，`timeoutSeconds` 默认 60、范围 1..300。即使全局关闭也严格验证所有 IMAP 配置。首次模板默认 SMTP / IMAP 均关闭。
+
+`autoDisplaySenders` 缺省 `[]`，最多128个窄语法单 ASCII mailbox。拒绝未知/重复字段、非数组、null/非法条目、域名通配和重复地址。比较时 local-part 大小写精确、domain ASCII 忽略大小写；不合并 plus-tag、别名。名单与同角色持久 store 中已经正常受理的 SMTP 外发收件人取并集：正常 `smtp:<角色>:` outbox 在 capture 提交后即建立许可，网络失败或 Unknown 不撤销；blocked/offline 不建立。许可跟随该角色 store 保留，换邮箱或 endpoint 不撤销，也不跨角色继承。
+
+账号与名单在启动时冻结，修改后重启。两个网络 policy 视图引用同一不可变账号对象。IMAP namespace 由角色、address、IMAP host/port/TLS 与固定 INBOX 派生，授权码与名单不进指纹；改名单或授权码沿用游标，改 IMAP endpoint / 邮箱建立新 namespace。SMTP 指纹只含原四字段，增改 IMAP 不改变旧发件身份；SMTP Unknown 仍不得自动重发。
+
+首次建立基线跳过当时已有邮件，只有 status Ready 后的新信才可被接收。暂停再启用继续原游标，不重复建立基线。未获准邮件只推进 cursor，不保存正文或触发回合；后加名单/主动外发不补投旧陌生信。获准邮件持久入箱后自动触发来信回合，不内置自动回复；From 是外部声明，仍以 runtime 来源展示。
+
+关闭 IMAP 或启用 maintenance 会暂停拉取和新的自动投递，保留 Pending；已 Bound 的投递证明仍参与全部 writer gate。名单是注意力筛选，不构成 From 强认证。操作状态、UIDVALIDITY 恢复和合成/真实验收分别见[运行时指南](runtime.md)、[IMAP 主方案](imap-email-mvp-design-and-implementation.md)与[准入实施记录](imap-email-auto-display-admission-design.md)。
 
 Character 的 `id`/`name`、状态目录、home、默认连接、可选连接与心跳独立于 Player。`connectionOptions` 必须有 1..256 项，`connectionId` 在 catalog 中精确存在且同一角色内不重复；`defaultConnectionId` 必须列在本角色的选项中。`name` 和 `trigger` 是必填字符串，各不超过 4096 UTF-8 bytes，可以暂填空字符串。状态识别 binding 启用且角色至少有一个非空 `trigger` 时，`trigger` 表示回合末状态条件，`name` 用于展示匹配含义；空 trigger 只供诊断选择，不参与自动识别。网页仍只显示 connectionId/modelId。诊断选择及进程内 runtime override 都受当前角色的选项约束。细节见[状态驱动的连接选择](character-connection-state-design.md)。Player 只提供 `id`、`name`、
 `password`；当前所有已配置并认证的 Player 都是同一级管理员，可以选择任意 Character。`player-main` 是
@@ -234,7 +270,7 @@ task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经�
 
 ## RecapGrid 文件与首次 scaffold
 
-当前 V15 的 `runtime.recapGrid` 只含 `maintenance`，精确字段与取值范围见
+当前 V16 的 `runtime.recapGrid` 只含 `maintenance`，精确字段与取值范围见
 [V14 历史 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v14.md)。maintenance 的 connection、全局
 并发预算与每次 attempt timeout 由 `GalateaCompletionOwner` 的同一 connection registry、retry invoker 和并发 lane
 使用；不得为每个 work 创建独立 semaphore。已持久化 `RowWork` 的 actual family、protocol 和 semantic key 在执行时构造
@@ -285,13 +321,13 @@ CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototy
 
 ## 历史 V13 root config 转换到 V14
 
-这是历史 V13 → V14 转换说明，不代表当前入口。现有 V13 实例需先按对应历史合同转换；不能直接跳到 V15 或只改版本号。更早版本也须逐级按对应历史合同处理。已有 session 的冻结请求仍按持久化身份恢复，不因配置迁移获得换模授权。
+这是历史 V13 → V14 转换说明，不代表当前入口。现有 V13 实例需先按对应历史合同转换；不能直接跳到 V15/V16 或只改版本号。更早版本也须逐级按对应历史合同处理。已有 session 的冻结请求仍按持久化身份恢复，不因配置迁移获得换模授权。
 
 停服并备份后，将每个角色允许的连接写入该角色的 `connectionOptions`，每项提供 `connectionId`、`name`、`trigger` 三个字符串，默认连接必须包含在内；删除 `connections.json` 的全局 `selectableConnectionIds`，将根 `v` 改为 `14`。字段来源见 [V13 历史合同](../SessionJournal/current/contracts/galatea-root-config-v13.md)，随后再按下面的 V14 → V15 清单转换。
 
 ## 从历史 root config V14 切换到 V15
 
-当前 host 仅接受 V15；转换前先停服并备份 `config.json`。没有双版本 reader 或启动自动改写。按以下清单人工转换：
+这是历史 V14 → V15 转换步骤，完成后还须按下一节转到当前 V16。转换前先停服并备份 `config.json`。没有双版本 reader 或启动自动改写。按以下清单人工转换：
 
 1. 将根 `v` 从整数 `14` 改为 `15`。
 2. 在每个 `characters[]` 项中省略 `email` 或设为 `null`；只有准备启用该角色账号时，才填完整五字段 `email` object。值必须来自操作者确认的服务商设置。
@@ -300,3 +336,23 @@ CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototy
 5. 不升级或重建 Delegation V7 数据库。既有 V7 的 offline Pending 仍保持隔离并确定失败；三个旧 blocked 原因 `SMTP_DISABLED`、`NO_SENDER_BINDING`、`SENDER_BINDING_DISABLED` 仍须识别。不要把全局 `enabled: false` 当作 queue pause；需要保留 Pending 时停服或启用 maintenance mode。
 
 V15 只支持 `implicit` 与 `starttls`；没有产品 `none` 模式。旧 SMTP 配置中的 `credentialPath`、手写 `bindingId`、用户名/发件别名、账号目录和 `offlineMode` 都须删除。换授权码不改变账号身份；改地址或 SMTP endpoint/TLS 会更换绑定，使旧 Pending 以确定失败结束，不自动重绑。常用操作、只读查询和人工收件核验步骤见[SMTP MVP 设计与实施方案第 5 节](smtp-email-mvp-design-and-implementation.md#5-回执可观察性与-mvp-的完成定义)与[第 7 节验收矩阵](smtp-email-mvp-design-and-implementation.md#7-验收矩阵与必要检查)。
+
+## 从历史 root config V15 切换到 V16
+
+当前 reader 只接受 V16，Delegation store 当前为 V8。停服，确认 supervisor 的独占锁已释放，备份配置、session 与 delegation state，再进行以下操作；本轮不会自动转换长期实例。
+
+1. 将 root 的整数 `v` 改为 `16`，保留既有 SMTP 五字段和其它角色配置。不准备收件时可省略角色 `email.imap` 与 `runtime.imap`，默认关闭。
+2. 如需收件，填写服务商确认的 IMAP host/port/TLS 和该角色的 `autoDisplaySenders`；建议首次仍设置 `runtime.imap.enabled: false`。名单/授权码不要提交到公共仓库或发送到聊天。
+3. 对每个已有 Delegation V7 store 用新 V16 config 执行离线升级预览，检查目标角色、owner 与结果，再显式 apply。state 不存在的角色不需要创建旧库来升级；首次 attach 将建立 V8。
+
+```bash
+dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
+  operator upgrade-delegation-store --config /absolute/config.json --character alice
+
+dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
+  operator upgrade-delegation-store --config /absolute/config.json --character alice --apply
+```
+
+升级新增 checkpoint、external inbox 与准入 recipient 索引，保留旧 outbox/receipt/proof，不导入历史来信或重发旧 SMTP。完成后再启用 IMAP，并通过只读 inbound status 确认 baseline Ready 后寄新的受控测试信。使用隔离 store 做首次验证，长期实例接入另行核对。
+
+UIDVALIDITY 改变不会自动重置 cursor。停服备份后用 `operator rebaseline-imap --config /absolute/config.json --character alice` 只读预览；apply 必须携带 `--expected-validity`、`--expected-cursor`、`--expected-revision`、`--new-validity`、`--new-uidnext` 五个预览值与 `--apply`。该操作 CAS 更新基线并跳过新 namespace 当时已有邮件，保留旧 inbox；不会重投旧陌生信。详细合同见[V16 root config](../SessionJournal/current/contracts/galatea-root-config-v16.md)。

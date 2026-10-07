@@ -173,7 +173,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         Assert.Throws<ArgumentOutOfRangeException>(() => GalateaObservationContent.Create(
             new GalateaFreshInput.PlayerAction(new string('\u0001', GalateaHttpV1.MaximumMessageUtf8Bytes),
                 GalateaDelegateTestConfiguration.PlayerSender), ObservationTimestamp,
-            new GalateaSenderSnapshot("character", "user", "Galatea"), plan.Notices));
+            new GalateaSenderSnapshot("character", "user", "Galatea"), plan.Notices, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test")));
         GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
             fixture.Reconciler.BeginMembership("player", plan.ReplyMembers)).Lease;
         _ = lease.BindObservationBase(fixture.Engine, fixture.Engine.ReadCurrentHead()!.Value,
@@ -547,7 +547,8 @@ public sealed class GalateaDurableReplyLeaseTests {
                 "Alice",
                 null,
                 "mail"
-            )
+            ),
+            new GalateaInboundMailOrigin.PlayerInjection(GalateaDelegateTestConfiguration.PlayerSender)
         );
 
         _ = new GalateaLiveTurn(player, options);
@@ -903,7 +904,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             _ => throw new InvalidOperationException("Unexpected fixture input kind.")
         };
         return GalateaObservationContent.Create(fresh, observation.ExternalLocalTimestamp!.Value,
-            new GalateaSenderSnapshot("character", "user", "Galatea"), observation.Notices, observation.Recalls);
+            new GalateaSenderSnapshot("character", "user", "Galatea"), observation.Notices, observation.Recalls, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
     }
 
     private static PlayerTurnNotice.NoteSaveReceipt Receipt(string text) => new(new CharacterNoteReceiptSelection(
@@ -970,11 +971,10 @@ public sealed class GalateaDurableReplyLeaseTests {
         var character = new GalateaSenderSnapshot("character", "user", "Galatea");
         IReadOnlyList<GalateaReplyNoticeSnapshot> ready = fixture.Store.ReadSnapshot().Notices;
         return playerText == PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator
-            ? GalateaFreshAdmissionPlan.ComposeReadyReply(ObservationTimestamp, character,
-                null, null, receipt, ready)
+            ? GalateaFreshAdmissionPlan.ComposeReadyReply(ObservationTimestamp, character, new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"), null, receipt, ready)
             : GalateaFreshAdmissionPlan.Compose(new GalateaFreshInput.PlayerAction(playerText,
                 GalateaDelegateTestConfiguration.PlayerSender), ObservationTimestamp,
-                character, noteReceipt: receipt, readyNotices: ready);
+                character, noteReceipt: receipt, readyNotices: ready, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
     }
 
     private static ActionReceiptDeliverySnapshot PendingNoteReceipt(string preview) => new(

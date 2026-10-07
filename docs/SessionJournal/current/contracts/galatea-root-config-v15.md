@@ -1,4 +1,6 @@
-# Galatea root config V15（当前合同）
+# Galatea root config V15（历史合同）
+
+当前入口已升级为 [V16](galatea-root-config-v16.md)。本文保留 V15 发布前实施时的字段语境，不是当前 host 可接受的配置。
 
 V15 已由 strict reader、loader 与 bootstrap 实施。SMTP 的离线验证与真实发件验收状态见 [SMTP MVP 设计与实施方案](../../../Galatea/smtp-email-mvp-design-and-implementation.md)；接受配置不等于真实账号已验收。
 

@@ -63,7 +63,7 @@ session attach 是 provider-free：只做本地打开、durable delivery proof �
 
 ## Observation 与回合入口
 
-新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v4` 的机读 JSON；旧 `galatea.observation.v1/v2/v3` 继续精确读取。外层由 SessionJournal
+新主线通过 `GalateaObservationContent` 保存 `galatea.observation.v5` 的机读 JSON；旧 `galatea.observation.v1/v2/v3/v4` 继续精确读取。外层由 SessionJournal
 `SessionInputContent.Structured` 明确标记。`GalateaInputProjector` 在请求时用 md-json 投影；领域代码提供候选字符串路径，
 md-json 只将需要 JSON 转义的候选值移到 fence，其余值留在 JSON 骨架。正文的空白、换行、Unicode 和 Markdown
 不被当成 runtime 元数据解析。存储、查询、Undo、exact append proof 不读取生成的 fence。
@@ -74,6 +74,7 @@ md-json 只将需要 JSON 转义的候选值移到 fence，其余值留在 JSON 
 | `heartbeat-activation` | Runtime 来源、采样时间、Character 与周期事实；独立于 Player。 |
 | `delegate-reply` | Runtime 触发；各条回信或失败通知保留自己的来源与 dispatch/thread/turn/notice 关联。 |
 | `inbound-mail` | 内部信记录核实的 Character sender；HTTP 注入记录已认证 Player 与信内自称 From，二者不混同。 |
+| `email-inbound` | Runtime 报告收到外部 email；声明 From 是邮件数据，不升级为 Player/Character；仅主纯文本和附件数量进入来信回合。 |
 
 notices 与 recalls 各自保留来源；不能把整个 composite 当成 Player 的话。业务时间在形成 Observation 时采样，不能因重渲染变成当前时间。具体字段、数量、UTF-8 边界和闭合 schema 由 [`GalateaObservationContent`](../../prototypes/Galatea/GalateaObservationContent.cs) 验证。
 
@@ -87,7 +88,7 @@ notices 与 recalls 各自保留来源；不能把整个 composite 当成 Player
 
 共享 fresh composer MUST 用实际 trigger、sender、timestamp、connectionState 和本轮行动文本规划 receipt 投影与 Ready prefix；其不可变计划贯穿 lease membership、optional recall 与 fresh send，所有参与者绑定相同最终输入。Heartbeat 不领取外界 Reply/DeliveryFailure，DelegateReply MUST 带真实外界 notice；回执不算 external notice。InboundMail / recovery 不新领取回执、回信或 recall，也不为回执单独创建轮次。这里只保证同一输入内选中的回执前置，不设置跨轮确认屏障。
 
-v4 输入在接纳时冻结 `connectionState`：`runtimeOverrideConnectionId` 是当时的进程内选择，`effectiveConnectionId` 是常规新回合选择，`turnConnectionId` 是该回合实际使用的连接，`effectiveName` 与 `turnName` 是对应的显示名，`lastChange` 是最近一次有效切换的可空历史记录。它覆盖全部新回合来源，包括 inbound-mail。快照随 Observation 正常落盘，仅是当时输入证据；恢复已有输入不从当前内存重算，也不从历史快照恢复 override。旧 v1/v2 没有此字段；v3 保留旧的机读状态投影，按原 schema 读取。具体语义见[状态驱动的连接选择](character-connection-state-design.md)。
+v4/v5 输入在接纳时冻结 `connectionState`：`runtimeOverrideConnectionId` 是当时的进程内选择，`effectiveConnectionId` 是常规新回合选择，`turnConnectionId` 是该回合实际使用的连接，`effectiveName` 与 `turnName` 是对应的显示名，`lastChange` 是最近一次有效切换的可空历史记录。它覆盖全部新回合来源，包括 inbound-mail。快照随 Observation 正常落盘，仅是当时输入证据；恢复已有输入不从当前内存重算，也不从历史快照恢复 override。旧 v1/v2 没有此字段；v3 保留旧的机读状态投影，按原 schema 读取。具体语义见[状态驱动的连接选择](character-connection-state-design.md)。
 
 ### Canonical grammar 与兼容读取
 

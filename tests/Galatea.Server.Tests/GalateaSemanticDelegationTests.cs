@@ -119,7 +119,7 @@ public sealed class GalateaSemanticDelegationTests {
         using SessionJournalEngine journal = SessionJournalEngine.Create(Path.Combine(fixture.Root, "journal"), new("model", "system", "test"));
         var created = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(BeginFixtureMembership(fixture.Store));
         SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.PlayerAction("continue", new("player", "admin", "Operator")),
-            Fixture.Timestamp, fixture.Sender, created.Lease.ReadNotices());
+            Fixture.Timestamp, fixture.Sender, created.Lease.ReadNotices(), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         EventAddress head = journal.ReadCurrentHead()!.Value;
         long beforeBindRevision = fixture.Store.ReadSnapshot().StoreRevision;
         Assert.Throws<ArgumentException>(() => fixture.Store.BindReplyLeaseObservationBase(
@@ -148,14 +148,14 @@ public sealed class GalateaSemanticDelegationTests {
         using SessionJournalEngine journal = SessionJournalEngine.Create(Path.Combine(fixture.Root, "journal"), new("model", "system", "test"));
         var binding = new GalateaInternalMailDeliveryBinding(fixture.Store, outbox.DispatchId, outbox.Revision);
         var target = new GalateaSenderSnapshot("character", "target-character", "Target");
-        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.InboundMail(message, binding, Sender: fixture.Sender), Fixture.Timestamp, target);
+        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.InboundMail(message, new GalateaInboundMailOrigin.CharacterDelivery(fixture.Sender, binding)), Fixture.Timestamp, target, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         EventAddress head = journal.ReadCurrentHead()!.Value;
         long beforeBindRevision = fixture.Store.ReadSnapshot().StoreRevision;
         Assert.Throws<ArgumentException>(() => fixture.Store.BindInternalMailObservation(outbox.DispatchId,
             outbox.Revision, EventAddressTextCodec.Format(head), SessionInputContent.Text("arbitrary")));
         MailboxMessage changedMessage = MailboxMessage.FromCanonicalEnvelope(outbox.MessageId, "Resident", "Target", null, "substituted body");
         SessionInputContent changedInput = GalateaObservationContent.Create(
-            new GalateaFreshInput.InboundMail(changedMessage, binding, Sender: fixture.Sender), Fixture.Timestamp, target);
+            new GalateaFreshInput.InboundMail(changedMessage, new GalateaInboundMailOrigin.CharacterDelivery(fixture.Sender, binding)), Fixture.Timestamp, target, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.Throws<InvalidDataException>(() => fixture.Store.BindInternalMailObservation(outbox.DispatchId,
             outbox.Revision, EventAddressTextCodec.Format(head), changedInput));
         Assert.Equal(beforeBindRevision, fixture.Store.ReadSnapshot().StoreRevision);
@@ -427,7 +427,7 @@ public sealed class GalateaSemanticDelegationTests {
         Assert.Null(Assert.IsType<PlayerTurnNotice.Reply>(notices[0]).Sender);
         Assert.NotNull(Assert.IsType<PlayerTurnNotice.Reply>(notices[1]).Sender);
         SessionInputContent input = GalateaObservationContent.Create(
-            new GalateaFreshInput.PlayerAction("continue", new("player", "admin", "Operator")), Fixture.Timestamp, fixture.Sender, notices);
+            new GalateaFreshInput.PlayerAction("continue", new("player", "admin", "Operator")), Fixture.Timestamp, fixture.Sender, notices, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
 
         _ = cutoff.Lease.BindObservationBase(journal, journal.ReadCurrentHead()!.Value, input);
 
@@ -500,6 +500,8 @@ public sealed class GalateaSemanticDelegationTests {
                     maximum_queued_mails,maximum_task_utf8_bytes,maximum_reply_utf8_bytes,maximum_inbox_replies,
                     maximum_inbox_utf8_bytes,next_completion_sequence,revision FROM prior_meta;
                 DROP TABLE prior_meta;
+                DROP TABLE external_mail_inbox;
+                DROP TABLE imap_checkpoint;
                 DROP TABLE mail_receipt_delivery;
                 DROP TABLE smtp_mail_outbox;
                 ALTER TABLE outbound_mail DROP COLUMN content_format;

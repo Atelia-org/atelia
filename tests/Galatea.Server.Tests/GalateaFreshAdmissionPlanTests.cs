@@ -22,7 +22,7 @@ public sealed class GalateaFreshAdmissionPlanTests {
         ActionReceiptDeliverySnapshot? mail = receiptCount == 2 ? Mail() : null;
         ActionReceiptDeliverySnapshot? note = receiptCount >= 1 ? Note() : null;
         GalateaFreshAdmissionPlan plan = GalateaFreshAdmissionPlan.ComposeReadyReply(
-            Timestamp, Character, null, mail, note, available)!;
+            Timestamp, Character, new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"), mail, note, available)!;
 
         Assert.Equal(16, plan.Notices.Count);
         Assert.Equal(expectedReplies, plan.ReplyMembers.Count);
@@ -46,11 +46,11 @@ public sealed class GalateaFreshAdmissionPlanTests {
         // Receipt-only full input fits, so selection must check the reply too.
         GalateaFreshAdmissionPlan receiptsOnly = GalateaFreshAdmissionPlan.Compose(
             new GalateaFreshInput.PlayerAction("p", Player), Timestamp, Character,
-            mailReceipt: mail, noteReceipt: note);
+            mailReceipt: mail, noteReceipt: note, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.All(receiptsOnly.Notices.OfType<PlayerTurnNotice.ActionReceipt>(), receipt => Assert.True(receipt.Batch.HasPreviews));
 
         GalateaFreshAdmissionPlan plan = GalateaFreshAdmissionPlan.ComposeReadyReply(
-            Timestamp, Character, null, mail, note, [earliest, Ready(2, "later")])!;
+            Timestamp, Character, new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"), mail, note, [earliest, Ready(2, "later")])!;
 
         Assert.Equal(2, plan.ReplyMembers.Count);
         Assert.All(plan.Notices.OfType<PlayerTurnNotice.ActionReceipt>(), receipt => {
@@ -86,7 +86,7 @@ public sealed class GalateaFreshAdmissionPlanTests {
     public void RecallCannotChangeFrozenReceiptProjectionOrReplyMembership() {
         GalateaFreshAdmissionPlan plan = GalateaFreshAdmissionPlan.Compose(
             new GalateaFreshInput.PlayerAction("p", Player), Timestamp, Character,
-            mailReceipt: Mail(), noteReceipt: Note(), readyNotices: [Ready(1, "reply")]);
+            mailReceipt: Mail(), noteReceipt: Note(), readyNotices: [Ready(1, "reply")], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         var recall = new PlayerTurnRecall(new RecallEntry(RecallType.MemoExactText,
             GalateaMemoRecallSourceIdCodec.Format(MemoPodId.Parse("00000000000000000000000000000001"),
                 MemoId.Parse("m1:00000002"))), "identity", "title", "body");
@@ -106,7 +106,7 @@ public sealed class GalateaFreshAdmissionPlanTests {
         GalateaReplyNoticeSnapshot[] ready = [Ready(1, "new reply")];
         GalateaFreshAdmissionPlan heartbeat = GalateaFreshAdmissionPlan.Compose(
             new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10),
-            Timestamp, Character, mailReceipt: Mail(), noteReceipt: Note(), readyNotices: ready);
+            Timestamp, Character, mailReceipt: Mail(), noteReceipt: Note(), readyNotices: ready, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.Empty(heartbeat.ReplyMembers);
         Assert.Equal(2, heartbeat.Notices.Count);
         Assert.Equal(PlayerTurnObservationTriggerKind.HeartbeatActivation,
@@ -114,8 +114,8 @@ public sealed class GalateaFreshAdmissionPlanTests {
 
         var message = MailboxMessage.FromCanonicalEnvelope(new string('a', 32), "Player", "Alice", null, "mail");
         GalateaFreshAdmissionPlan inbound = GalateaFreshAdmissionPlan.Compose(
-            new GalateaFreshInput.InboundMail(message, InjectedBy: Player), Timestamp, Character,
-            mailReceipt: Mail(), noteReceipt: Note(), readyNotices: ready);
+            new GalateaFreshInput.InboundMail(message, new GalateaInboundMailOrigin.PlayerInjection(Player)), Timestamp, Character,
+            mailReceipt: Mail(), noteReceipt: Note(), readyNotices: ready, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.Empty(inbound.Notices);
         Assert.Empty(inbound.ReplyMembers);
         Assert.Null(inbound.MailReceipt);
@@ -125,15 +125,13 @@ public sealed class GalateaFreshAdmissionPlanTests {
 
     [Fact]
     public void EmptyReadyDoesNotManufactureReceiptOnlyReplyTurn() {
-        Assert.Null(GalateaFreshAdmissionPlan.ComposeReadyReply(Timestamp, Character,
-            null, Mail(), Note(), []));
+        Assert.Null(GalateaFreshAdmissionPlan.ComposeReadyReply(Timestamp, Character, new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"), Mail(), Note(), []));
     }
 
     [Fact]
     public void UnrenderableEarliestReplyDoesNotSkipToLaterReply() {
         GalateaTurnException failure = Assert.Throws<GalateaTurnException>(() =>
-            GalateaFreshAdmissionPlan.ComposeReadyReply(Timestamp, Character,
-                null, Mail(), Note(), [Ready(1, new string('\u0001', 256 * 1024)), Ready(2, "small")]));
+            GalateaFreshAdmissionPlan.ComposeReadyReply(Timestamp, Character, new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"), Mail(), Note(), [Ready(1, new string('\u0001', 256 * 1024)), Ready(2, "small")]));
         Assert.Equal("fresh-input-budget-exceeded", failure.FailureReason);
     }
 

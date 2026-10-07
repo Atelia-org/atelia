@@ -397,7 +397,8 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         SessionInputContent observation = GalateaObservationContent.Create(
             new GalateaFreshInput.PlayerAction("player", GalateaDelegateTestConfiguration.PlayerSender),
             DateTimeOffset.UnixEpoch, GalateaDelegationTestInputs.Sender(store, "Galatea"),
-            [GalateaDurableNoticeContent.Project(notice)]);
+            [GalateaDurableNoticeContent.Project(notice)],
+            connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         lease = store.BindReplyLeaseObservationBase(lease.LeaseId, lease.Revision, Address(20), observation);
         if (state == "Leased") { return; }
         lease = store.RecordLeaseObservationCommitted(lease.LeaseId, lease.Revision, Address(21));
@@ -444,10 +445,12 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             using SqliteCommand downgrade = target.CreateCommand();
             if (version == 5) {
                 downgrade.CommandText = """
+                    DROP TABLE external_mail_inbox;
+                    DROP TABLE imap_checkpoint;
                     DROP TABLE mail_receipt_delivery;
                     DROP TABLE smtp_mail_outbox;
                     PRAGMA writable_schema = ON;
-                    UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = 7', 'schema_version = 5') WHERE name='delegation_meta';
+                    UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = 8', 'schema_version = 5') WHERE name='delegation_meta';
                     PRAGMA writable_schema = OFF;
                     PRAGMA schema_version = 401;
                     PRAGMA ignore_check_constraints = ON;
@@ -459,6 +462,8 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
                 return;
             }
             downgrade.CommandText = """
+                DROP TABLE external_mail_inbox;
+                DROP TABLE imap_checkpoint;
                 DROP TABLE mail_receipt_delivery;
                 DROP TABLE smtp_mail_outbox;
                 ALTER TABLE outbound_mail DROP COLUMN content_format;

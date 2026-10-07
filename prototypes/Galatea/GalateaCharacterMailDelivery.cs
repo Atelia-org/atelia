@@ -4,215 +4,187 @@ using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
-/// <summary>
-/// Process-local capability for the one relay-owned internal mailbox turn.
-/// It deliberately contains a store object rather than any public HTTP data.
-/// </summary>
-internal sealed class GalateaInternalMailDeliveryBinding(
-    GalateaDelegationSqliteStore senderStore,
-    string dispatchId,
-    long expectedRowRevision
-) {
-    private readonly GalateaDelegationSqliteStore _senderStore =
-        senderStore ?? throw new ArgumentNullException(nameof(senderStore));
-    private readonly string _dispatchId = dispatchId
-        ?? throw new ArgumentNullException(nameof(dispatchId));
-    private readonly long _expectedRowRevision = expectedRowRevision;
-
+/// <summary>Process-local capability shared by the two durable incoming sources.</summary>
+internal abstract class GalateaMailDeliveryBinding {
     internal void BindObservationBase(
-        SessionJournalEngine engine,
-        EventAddress exactBaseHead,
-        SessionInputContent renderedObservation
+        SessionJournalEngine engine, EventAddress exactBaseHead,
+        SessionInputContent observation
     ) {
         ArgumentNullException.ThrowIfNull(engine);
-        ArgumentNullException.ThrowIfNull(renderedObservation);
+        ArgumentNullException.ThrowIfNull(observation);
         if (engine.ReadView.ReadCurrentHead() != exactBaseHead) {
             throw new GalateaTurnException(
-                "Character-mail target head changed before binding.",
-                "character-mail-stale-session-head"
-            );
+                "Mail target head changed before binding.",
+                "character-mail-stale-session-head");
         }
-        _ = _senderStore.BindInternalMailObservation(
-            _dispatchId,
-            _expectedRowRevision,
-            EventAddressTextCodec.Format(exactBaseHead),
-            renderedObservation
-        );
+        Bind(EventAddressTextCodec.Format(exactBaseHead), observation);
     }
+
+    protected abstract void Bind(string exactBaseHead, SessionInputContent observation);
+}
+
+internal sealed class GalateaInternalMailDeliveryBinding(
+    GalateaDelegationSqliteStore senderStore, string dispatchId,
+    long expectedRowRevision
+) : GalateaMailDeliveryBinding {
+    private readonly GalateaDelegationSqliteStore _store = senderStore
+        ?? throw new ArgumentNullException(nameof(senderStore));
+    private readonly string _dispatchId = dispatchId
+        ?? throw new ArgumentNullException(nameof(dispatchId));
+
+    protected override void Bind(string exactBaseHead, SessionInputContent observation) =>
+        _ = _store.BindInternalMailObservation(
+            _dispatchId, expectedRowRevision, exactBaseHead, observation);
+}
+
+internal sealed class GalateaImapMailDeliveryBinding(
+    GalateaDelegationSqliteStore targetStore, long inboxId,
+    long expectedRowRevision
+) : GalateaMailDeliveryBinding {
+    private readonly GalateaDelegationSqliteStore _store = targetStore
+        ?? throw new ArgumentNullException(nameof(targetStore));
+
+    protected override void Bind(string exactBaseHead, SessionInputContent observation) =>
+        _ = _store.BindExternalMailObservation(
+            inboxId, expectedRowRevision, exactBaseHead, observation);
 }
 
 /// <summary>
-/// Target-side durable writer gate for character mail.  This is intentionally
-/// separate from Codex reply leases: a source SQLite row is settled only from
-/// the target Journal's exact Observation proof.
+/// Every target writer enters this gate. Internal outboxes and external inboxes
+/// use the same exact Journal proof and share the one-bound-mail invariant.
 /// </summary>
 internal static class GalateaCharacterMailDeliveryReconciler {
     internal static void Reconcile(
-        GalateaDelegationSupervisor supervisor,
-        CharacterSessionHost target,
+        GalateaDelegationSupervisor supervisor, CharacterSessionHost target,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(supervisor);
         ArgumentNullException.ThrowIfNull(target);
         cancellationToken.ThrowIfCancellationRequested();
-
-        IReadOnlyList<GalateaInternalMailSourceOutbox> unsettled = supervisor
+        GalateaInternalMailSourceOutbox[] internalRows = supervisor
             .ReadInternalMailOutboxesForTarget(target.Character.CharacterId)
-            .Where(static value => value.Outbox.State is
-                GalateaInternalMailState.ObservationBound
-                or GalateaInternalMailState.Quarantined)
+            .Where(static source => source.Outbox.State is
+                GalateaInternalMailState.ObservationBound or GalateaInternalMailState.Quarantined)
             .ToArray();
-        GalateaInternalMailSourceOutbox? quarantined = unsettled
-            .FirstOrDefault(static value => value.Outbox.State
-                == GalateaInternalMailState.Quarantined);
-        if (quarantined is not null) {
-            throw Blocked("character-mail-quarantined",
-                "Character mail delivery is quarantined.");
+        GalateaDelegationSqliteStore? inboxStore = null;
+        IReadOnlyList<GalateaExternalMailInboxSnapshot> externalRows = [];
+        if (supervisor.TryGetAttachedStore(target.Character.CharacterId, out var attached)) {
+            inboxStore = attached;
+            externalRows = attached.ReadUnsettledExternalMails();
         }
-        GalateaInternalMailSourceOutbox[] bound = unsettled
-            .Where(static value => value.Outbox.State
-                == GalateaInternalMailState.ObservationBound)
-            .ToArray();
-        if (bound.Length > 1) {
-            throw Blocked("character-mail-multiple-bound",
-                "More than one character mail Observation is bound for one target.");
+        if (internalRows.Any(static source => source.Outbox.State == GalateaInternalMailState.Quarantined)
+            || externalRows.Any(static row => row.State == GalateaExternalMailInboxState.Quarantined)) {
+            throw Blocked("character-mail-quarantined", "Incoming mail delivery is quarantined.");
         }
-        if (bound.Length == 0) { return; }
+        GalateaInternalMailSourceOutbox[] internalBound = internalRows
+            .Where(static source => source.Outbox.State == GalateaInternalMailState.ObservationBound).ToArray();
+        GalateaExternalMailInboxSnapshot[] externalBound = externalRows
+            .Where(static row => row.State == GalateaExternalMailInboxState.ObservationBound).ToArray();
+        int boundCount = internalBound.Length + externalBound.Length;
+        if (boundCount > 1) {
+            throw Blocked("character-mail-multiple-bound", "More than one incoming mail Observation is bound for one target.");
+        }
+        if (boundCount == 0) { return; }
+        BoundDelivery delivery = internalBound.Length == 1
+            ? Adapt(internalBound[0]) : Adapt(inboxStore!, externalBound[0]);
+        ReconcileBound(target, delivery, cancellationToken);
+    }
 
-        GalateaInternalMailSourceOutbox source = bound[0];
-        GalateaInternalMailOutboxSnapshot outbox = source.Outbox;
-        string currentRepositoryId =
-            GalateaDelegationSupervisor.CreateSessionRepositoryId(
-                target.Character.SessionDir);
-        if (!string.Equals(outbox.TargetCharacterId, target.Character.CharacterId,
-                StringComparison.Ordinal)
-            || !string.Equals(outbox.TargetSessionRepositoryId,
-                currentRepositoryId, StringComparison.Ordinal)) {
-            throw Blocked("character-mail-target-locator-mismatch",
-                "A bound character mail targets a different session repository.");
+    private static void ReconcileBound(
+        CharacterSessionHost target, BoundDelivery delivery,
+        CancellationToken cancellationToken
+    ) {
+        string repositoryId = GalateaDelegationSupervisor.CreateSessionRepositoryId(target.Character.SessionDir);
+        if (delivery.TargetCharacterId != target.Character.CharacterId
+            || delivery.TargetRepositoryId != repositoryId) {
+            throw Blocked("character-mail-target-locator-mismatch", "Bound incoming mail targets a different session repository.");
         }
-        MailboxMessage message = RestoreMessage(source);
-        if (!string.Equals(message.To, target.Character.CharacterName.Value,
-                StringComparison.Ordinal)) {
-            throw Blocked("character-mail-target-recipient-mismatch",
-                "A bound character mail recipient does not match the target character.");
+        if (delivery.Message.To != target.Character.CharacterName.Value) {
+            throw Blocked("character-mail-target-recipient-mismatch", "Bound incoming mail recipient does not match the target character.");
         }
         EventAddress head = target.Engine.ReadView.ReadCurrentHead()
-            ?? throw Blocked("character-mail-empty-journal",
-                "A bound character mail requires a non-empty target Journal.");
-        var request = new SessionExpectedObservationTurnRequest(
-            head,
-            EventAddressTextCodec.Parse(outbox.ExpectedSessionHead
-                ?? throw new InvalidDataException(
-                    "A bound character mail has no expected session head.")),
-            outbox.ObservationContent
-                ?? throw new InvalidDataException(
-                    "A bound character mail has no rendered Observation."),
-            ExpectedObservationAddress: null
-        );
+            ?? throw Blocked("character-mail-empty-journal", "Bound incoming mail requires a non-empty target Journal.");
+        var request = new SessionExpectedObservationTurnRequest(head,
+            EventAddressTextCodec.Parse(delivery.ExpectedSessionHead), delivery.Observation,
+            ExpectedObservationAddress: null);
         SessionExpectedObservationTurnReadResult proof = target.Engine.ReadView
-            .ProveExpectedObservationTurnAtSelectedHead(
-                request, cancellationToken);
+            .ProveExpectedObservationTurnAtSelectedHead(request, cancellationToken);
         switch (proof) {
             case SessionExpectedObservationTurnReadResult.NotAppended:
-                Reset(source, outbox);
+                Transition(delivery.Reset);
                 return;
             case SessionExpectedObservationTurnReadResult.InProgress progress:
-                Complete(source, outbox, progress.Evidence.ObservationAddress);
+                Transition(() => delivery.Complete(EventAddressTextCodec.Format(progress.Evidence.ObservationAddress)));
                 return;
             case SessionExpectedObservationTurnReadResult.Terminal terminal:
-                Complete(source, outbox, terminal.Evidence.ObservationAddress);
+                Transition(() => delivery.Complete(EventAddressTextCodec.Format(terminal.Evidence.ObservationAddress)));
                 return;
             case SessionExpectedObservationTurnReadResult.Terminated terminated:
-                Complete(source, outbox, terminated.Evidence.ObservationAddress);
+                Transition(() => delivery.Complete(EventAddressTextCodec.Format(terminated.Evidence.ObservationAddress)));
                 return;
             case SessionExpectedObservationTurnReadResult.Retryable:
-                throw Blocked("character-mail-proof-retryable",
-                    "Character mail Journal head changed during proof.");
+                throw Blocked("character-mail-proof-retryable", "Incoming mail Journal head changed during proof.");
             case SessionExpectedObservationTurnReadResult.Conflict:
-                Quarantine(source, outbox, "OBSERVATION_CONFLICT");
-                throw Blocked("character-mail-proof-conflict",
-                    "Character mail Observation conflicts with target Journal evidence.");
+                Transition(() => delivery.Quarantine("OBSERVATION_CONFLICT"));
+                throw Blocked("character-mail-proof-conflict", "Incoming mail Observation conflicts with target Journal evidence.");
             case SessionExpectedObservationTurnReadResult.Corruption:
-                Quarantine(source, outbox, "OBSERVATION_CORRUPTION");
-                throw Blocked("character-mail-proof-corruption",
-                    "Character mail Observation proof found Journal corruption.");
+                Transition(() => delivery.Quarantine("OBSERVATION_CORRUPTION"));
+                throw Blocked("character-mail-proof-corruption", "Incoming mail proof found Journal corruption.");
             case SessionExpectedObservationTurnReadResult.Abandoned:
-                throw Blocked("character-mail-proof-abandoned",
-                    "A bound character mail Observation was abandoned unexpectedly.");
+                throw Blocked("character-mail-proof-abandoned", "Bound incoming mail Observation was abandoned unexpectedly.");
             case SessionExpectedObservationTurnReadResult.LimitExceeded:
-                throw Blocked("character-mail-proof-limit-exceeded",
-                    "Character mail Observation proof exceeded its read limit.");
+                throw Blocked("character-mail-proof-limit-exceeded", "Incoming mail proof exceeded its read limit.");
             case SessionExpectedObservationTurnReadResult.UnsupportedSchema:
-                throw Blocked("character-mail-session-schema-unsupported",
-                    "Character mail Observation proof uses an unsupported schema.");
+                throw Blocked("character-mail-session-schema-unsupported", "Incoming mail proof uses an unsupported schema.");
             default:
-                throw new InvalidDataException(
-                    "Unknown character-mail Observation proof result.");
+                throw new InvalidDataException("Unknown incoming mail Observation proof result.");
         }
     }
 
-    internal static MailboxMessage RestoreMessage(
-        GalateaInternalMailSourceOutbox source
-    ) {
+    internal static MailboxMessage RestoreMessage(GalateaInternalMailSourceOutbox source) {
         ArgumentNullException.ThrowIfNull(source);
         GalateaInternalMailOutboxSnapshot outbox = source.Outbox;
-        GalateaDelegationStateSnapshot snapshot = source.Store.ReadSnapshot();
-        GalateaOutboundMailSnapshot mail = snapshot.Mails.Single(value =>
-            string.Equals(value.DispatchId, outbox.DispatchId,
-                StringComparison.Ordinal));
-        return MailboxMessage.FromCanonicalEnvelope(
-            outbox.MessageId,
-            outbox.FromCharacterName,
-            mail.Recipient,
-            mail.Subject,
-            mail.Body ?? throw new InvalidDataException(
-                "An internal mail artifact has no body.")
-        );
+        GalateaOutboundMailSnapshot mail = source.Store.ReadSnapshot().Mails.Single(
+            row => string.Equals(row.DispatchId, outbox.DispatchId, StringComparison.Ordinal));
+        return MailboxMessage.FromCanonicalEnvelope(outbox.MessageId, outbox.FromCharacterName,
+            mail.Recipient, mail.Subject, mail.Body ?? throw new InvalidDataException("Internal mail has no body."));
     }
 
-    private static void Reset(
-        GalateaInternalMailSourceOutbox source,
-        GalateaInternalMailOutboxSnapshot outbox
-    ) {
-        try {
-            _ = source.Store.ResetInternalMailObservation(
-                outbox.DispatchId, outbox.Revision);
-        }
-        catch (GalateaDelegationStoreConflictException exception) {
-            throw Blocked("character-mail-state-changed", exception.Message);
-        }
+    internal static MailboxMessage RestoreMessage(GalateaExternalMailInboxSnapshot row) =>
+        MailboxMessage.FromCanonicalEnvelope(row.MessageId,
+            row.From ?? throw new InvalidDataException("Accepted external mail has no declared From."),
+            row.TargetCharacterName, row.Subject,
+            row.Body ?? throw new InvalidDataException("Accepted external mail has no body."));
+
+    private static BoundDelivery Adapt(GalateaInternalMailSourceOutbox source) {
+        GalateaInternalMailOutboxSnapshot row = source.Outbox;
+        return new(row.TargetCharacterId, row.TargetSessionRepositoryId, RestoreMessage(source),
+            row.ExpectedSessionHead ?? throw new InvalidDataException("Bound mail has no exact base."),
+            row.ObservationContent ?? throw new InvalidDataException("Bound mail has no Observation."),
+            () => { _ = source.Store.ResetInternalMailObservation(row.DispatchId, row.Revision); },
+            address => { _ = source.Store.CompleteInternalMailObservation(row.DispatchId, row.Revision, address); },
+            code => { _ = source.Store.QuarantineInternalMailObservation(row.DispatchId, row.Revision, code); });
     }
 
-    private static void Complete(
-        GalateaInternalMailSourceOutbox source,
-        GalateaInternalMailOutboxSnapshot outbox,
-        EventAddress address
-    ) {
-        try {
-            _ = source.Store.CompleteInternalMailObservation(
-                outbox.DispatchId, outbox.Revision,
-                EventAddressTextCodec.Format(address));
-        }
-        catch (GalateaDelegationStoreConflictException exception) {
-            throw Blocked("character-mail-state-changed", exception.Message);
+    private static BoundDelivery Adapt(GalateaDelegationSqliteStore store, GalateaExternalMailInboxSnapshot row) =>
+        new(row.TargetCharacterId, row.TargetSessionRepositoryId, RestoreMessage(row),
+            row.ExpectedSessionHead ?? throw new InvalidDataException("Bound mail has no exact base."),
+            row.BoundInput ?? throw new InvalidDataException("Bound mail has no Observation."),
+            () => { _ = store.ResetExternalMailObservation(row.InboxId, row.Revision); },
+            address => { _ = store.CompleteExternalMailObservation(row.InboxId, row.Revision, address); },
+            code => { _ = store.QuarantineExternalMailObservation(row.InboxId, row.Revision, code); });
+
+    private static void Transition(Action transition) {
+        try { transition(); }
+        catch (GalateaDelegationStoreConflictException) {
+            throw Blocked("character-mail-state-changed", "Incoming mail delivery changed during proof settlement.");
         }
     }
 
-    private static void Quarantine(
-        GalateaInternalMailSourceOutbox source,
-        GalateaInternalMailOutboxSnapshot outbox,
-        string code
-    ) {
-        try {
-            _ = source.Store.QuarantineInternalMailObservation(
-                outbox.DispatchId, outbox.Revision, code);
-        }
-        catch (GalateaDelegationStoreConflictException exception) {
-            throw Blocked("character-mail-state-changed", exception.Message);
-        }
-    }
+    private sealed record BoundDelivery(
+        string TargetCharacterId, string TargetRepositoryId, MailboxMessage Message,
+        string ExpectedSessionHead, SessionInputContent Observation,
+        Action Reset, Action<string> Complete, Action<string> Quarantine);
 
-    private static GalateaTurnException Blocked(string code, string message) =>
-        new(message, code);
+    private static GalateaTurnException Blocked(string code, string message) => new(message, code);
 }

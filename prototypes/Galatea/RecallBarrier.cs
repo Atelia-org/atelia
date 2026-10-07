@@ -77,7 +77,7 @@ internal static class GalateaRecallBarrierBuilder {
                 if (!GalateaObservationContent.IsSupportedSchemaId(structured.Content.SchemaId)) {
                     throw new NotSupportedException("Unknown structured Observation schema in RecallBarrier: " + structured.Content.SchemaId);
                 }
-                if (structured.Content.JsonValue.GetProperty("kind").GetString() != "inbound-mail") {
+                if (structured.Content.JsonValue.GetProperty("kind").GetString() is not ("inbound-mail" or "email-inbound")) {
                     entries.AddRange(GalateaObservationContent.ReadPlayerTurn(structured.Content).Recalls.Select(recall => recall.Entry));
                 }
                 else { GalateaObservationContent.Validate(structured.Content); }

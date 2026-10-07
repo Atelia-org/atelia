@@ -1,6 +1,6 @@
 # 每角色 IMAP 收件：MVP 设计与实施方案
 
-状态：设计完成，尚未实施。日期：2026-10-07。代码基线：`g01/smtp-outbound` / `a673ee2f`；SMTP 产品实施为 `cd6d7dbd`，两个目标账号互发与实际收件已通过[SMTP 验收](smtp-email-mvp-design-and-implementation.md#9-2026-10-07-实施与验收记录)。本轮没有登录 IMAP、读取真实邮箱、切换实例配置或修改产品代码。
+状态：产品已实施；施工验收见第 8 节及准入方案第 8 节。日期：2026-10-07。设计代码基线：`g01/smtp-outbound` / `a673ee2f`；SMTP 产品实施为 `cd6d7dbd`，两个目标账号互发与实际收件已通过[SMTP 验收](smtp-email-mvp-design-and-implementation.md#9-2026-10-07-实施与验收记录)。这句历史边界仅属于起草阶段：当时没有登录 IMAP 或修改产品；当前施工和受控验收见文末记录。
 
 用户已明确：**首次只接收启用后的新邮件；获准新邮件持久化后自动触发来信回合。** 后续[自动展示准入设计与施工方案](imap-email-auto-display-admission-design.md)收紧了原来“所有合法新信自动入场”的前提：静态自动展示名单与同角色正常外发受理事实取并集，派生许可跟随角色 store 保留；自主查信/取信延后。该补充方案拥有准入规则，本文件拥有传输、持久入箱和投递证明。
 
@@ -85,7 +85,9 @@ flowchart LR
 
 ### 首次只收新信
 
-第一次成功 EXAMINE 后，在本地事务内保存 `uidValidity`、`scannedThroughUid = UIDNEXT - 1`、`baselineAt`，不下载已有邮件。**“开始收新信”以这个事务成功、状态出现 Ready 为界**，不是编辑配置或启动进程的时刻。canary 必须先确认 Ready 再寄测试信。事务结果不明先重读 checkpoint，不重新取一个更晚的基线来覆盖已有值。
+首次连接先对未选中的 INBOX 请求 STATUS 的 UIDVALIDITY / UIDNEXT，再只读 EXAMINE；要求 EXAMINE 自身提供相同的有效 UIDVALIDITY，UIDNEXT 不退步。EXAMINE 省略 UIDNEXT 时可使用同一命名空间中服务端刚返回的 STATUS 值；两处均缺失则不能猜测。
+
+第一次成功只读打开后，在本地事务内保存 `uidValidity`、`scannedThroughUid = UIDNEXT - 1`、`baselineAt`，跳过服务端采样值以下的 UID。Ready 表示这个基线已持久保存、收件启动完成，不是邮件到达时刻的精确切线：采样到本地 COMMIT 的窗口中到达的邮件可能被保守接收。canary 必须先确认 Ready 再寄测试信。事务结果不明先重读 checkpoint，不重新取一个更晚的基线来覆盖已有值。
 
 UIDNEXT 不可用、为非法值或 UIDVALIDITY 缺失时不能猜测基线；返回固定错误码，不收取。UIDVALIDITY 变化也不自动清空游标：在 checkpoint 持久化 `IMAP_UIDVALIDITY_CHANGED` 阻断，保留原游标和旧收件记录。实施提供一个窄 rebaseline 操作：停服、只读预览当前 validity / UIDNEXT，显式核对旧 checkpoint 后 CAS 更新为新基线并清除此阻断。它跳过当时已存在邮件，不能伪装成连续无遗漏恢复。
 
@@ -198,4 +200,12 @@ Host 增加 IMAP poller 的注册、BeginShutdown、Drain。先取消拉取与�
 
 真实步骤在实施阶段执行：停服备份、预览 V7 state、显式升级候选；先关闭 SMTP / 开启 IMAP，两个 baseline Ready 后验证默认过滤和静态准入。派生阶段开启 SMTP 并重启保留 checkpoint，由角色主动外发受理建立许可，再验证新回信；分阶段步骤以准入 A3 为准。不重新导入原 SMTP canary 的两封历史邮件，不迁移长期角色实例。完成声明区分代码/合成验证、真实账号兼容、Journal 来信、完成回合与长期实例接入，逐项保留证据。
 
-本轮产物仅为该设计和索引维护；未安装包、修改 reader/schema、执行 .NET 或真实 IMAP 测试。下一轮可按 I1–I5 有界实施。
+以上保留 I1–I5 施工要求。产品落地与实际验证已转入第 8 节，不将设计阶段结论当成测试证据。
+
+## 8. 2026-10-07 实施记录
+
+I1–I4 已实施：root V16、Delegation V8 与显式离线升级、Observation v5、共用 relay/proof、MailKit 4.18.1 与有界只读 poll、MIME 先准入再投影、status/rebaseline、维护/停止排空及配置/prompt/当前合同维护均已落地。
+
+落地保持最小模型：SMTP / IMAP 两个窄 policy 视图引用同一个账号对象；不存在复制授权码的第二份持久账号表。联系人直接窄读正常 SMTP outbox，不改发送身份或 Unknown 边界。陌生内容仅瞬时 bounded raw，最终准入的持久事实只有单调 cursor。
+
+Debug 非 Live 全集 1907 passed / 2 skipped / 0 failed，最终 Release 针对性回归 379 passed / 0 failed；真实 TLS fake server 的完整 production poller→store→relay→runner→Journal 通过。QQ 独立真实 canary 通过 5 封受控邮件，证明过滤、静态/派生准入、两条真实 Journal Observation、Seen 不变及冷重开不重投。126 STATUS / EXAMINE 均不提供 UIDNEXT，不能建立基线；用户明确其兼容另开一轮，I5 双账号收件延期。故障与独立复核裁决、全部兼容和实际收件证据记录在[准入方案第 8 节](imap-email-auto-display-admission-design.md#8-2026-10-07-施工与验收记录)。本轮不切换或升级长期角色实例。

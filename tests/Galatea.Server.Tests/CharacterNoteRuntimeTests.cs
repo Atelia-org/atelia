@@ -1495,7 +1495,7 @@ public sealed class CharacterNoteRuntimeTests {
                     "body"
                 ),
                 new GalateaTurnOptions(main.Id),
-                injectedBy: GalateaDelegateTestConfiguration.PlayerSender
+                new GalateaInboundMailOrigin.PlayerInjection(GalateaDelegateTestConfiguration.PlayerSender)
             );
             Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             service.FinishTurn(session, inbound);

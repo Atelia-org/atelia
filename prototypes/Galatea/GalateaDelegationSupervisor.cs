@@ -281,6 +281,39 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         _slots.Values.Where(slot => slot.ReadStatus().Availability
             == GalateaDelegationCharacterAvailability.Writable).Select(slot => slot.Store).ToArray();
 
+    // Observation only. Never initializes a session or opens a second writer.
+    internal bool TryGetAttachedStore(string characterId, out GalateaDelegationSqliteStore store) {
+        UserSlot slot = GetSlot(characterId);
+        GalateaDelegationCharacterStatus status = slot.ReadStatus();
+        if (status.Availability == GalateaDelegationCharacterAvailability.Uninitialized) {
+            store = null!;
+            return false;
+        }
+        if (status.Availability != GalateaDelegationCharacterAvailability.Writable) {
+            throw new GalateaDelegationCharacterUnavailableException(characterId,
+                status.UnavailableCode ?? "STORE_NOT_WRITABLE");
+        }
+        store = slot.Store;
+        return true;
+    }
+
+    // A maintenance host owns a read-only store, which remains observable.
+    internal bool TryGetObservableStore(string characterId, out GalateaDelegationSqliteStore store) {
+        UserSlot slot = GetSlot(characterId);
+        GalateaDelegationCharacterStatus status = slot.ReadStatus();
+        if (status.Availability == GalateaDelegationCharacterAvailability.Uninitialized) {
+            store = null!;
+            return false;
+        }
+        if (status.Availability is not (GalateaDelegationCharacterAvailability.Writable
+            or GalateaDelegationCharacterAvailability.ReadOnly)) {
+            throw new GalateaDelegationCharacterUnavailableException(characterId,
+                status.UnavailableCode ?? "STORE_NOT_READABLE");
+        }
+        store = slot.Store;
+        return true;
+    }
+
     internal GalateaDelegationCharacterStatus ReadStatus(string userId) {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
         return GetSlot(userId).ReadStatus();

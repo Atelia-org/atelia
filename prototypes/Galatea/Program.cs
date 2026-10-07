@@ -23,6 +23,11 @@ if (GalateaDelegationStoreUpgrade.IsInvocation(args)) {
     return;
 }
 
+if (GalateaImapRebaseline.IsInvocation(args)) {
+    Environment.ExitCode = await GalateaImapRebaseline.RunAsync(args, Console.Out, Console.Error);
+    return;
+}
+
 if (GalateaCodexBindingReset.IsInvocation(args)) {
     Environment.ExitCode = GalateaCodexBindingReset.Run(args, Console.Out, Console.Error);
     return;
@@ -75,11 +80,15 @@ builder.Services.AddSingleton(static services => new GalateaHostService(
 builder.Services.AddSingleton<GalateaAcceptedTurnRunner>();
 builder.Services.AddSingleton<GalateaAutomaticTurnCoordinator>();
 builder.Services.AddSingleton<GalateaCharacterMailRelay>();
+builder.Services.AddSingleton<IGalateaImapTransport>(_ => new GalateaNetworkImapTransport(config.Imap));
+builder.Services.AddSingleton<GalateaImapPoller>();
 // One network boundary uses startup account snapshots; the global policy defaults to disabled.
 builder.Services.AddSingleton<IGalateaSmtpSender>(_ => new GalateaNetworkSmtpSender(config.Smtp));
 builder.Services.AddHostedService<GalateaServerAgentHostedService>();
 builder.Services.AddHostedService(static services =>
     services.GetRequiredService<GalateaCharacterMailRelay>());
+builder.Services.AddHostedService(static services =>
+    services.GetRequiredService<GalateaImapPoller>());
 // Register last so normal host shutdown drains this consumer before store owners.
 builder.Services.AddHostedService<GalateaSmtpOutboxBackgroundService>();
 builder.Services.ConfigureHttpJsonOptions(
@@ -381,6 +390,14 @@ characterApi.MapGet(
                 + $"head={response.ObservedRawHead ?? "<none>"}"
         );
         return Results.Ok(response);
+    }
+);
+
+characterApi.MapGet(
+    "/email/inbound/status",
+    (HttpContext httpContext, string characterId, GalateaHostService hostService) => {
+        httpContext.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(hostService.ReadImapInboundStatus(characterId));
     }
 );
 
@@ -895,7 +912,7 @@ characterApi.MapPost(
                 session,
                 message,
                 new GalateaTurnOptions(connection.Id),
-                injectedBy: PlayerSender(user, hostService)
+                new GalateaInboundMailOrigin.PlayerInjection(PlayerSender(user, hostService))
             );
             IResult result = Results.Json(
                 new InboundMailboxAcceptedDto(

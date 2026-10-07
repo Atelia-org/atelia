@@ -69,6 +69,7 @@ docs/SessionJournal/current/contracts/galatea-root-config-v9.md
 docs/SessionJournal/current/contracts/galatea-root-config-v10.md
 docs/SessionJournal/current/contracts/galatea-root-config-v11.md
 docs/SessionJournal/current/contracts/galatea-root-config-v15.md
+docs/SessionJournal/current/contracts/galatea-root-config-v16.md
 docs/SessionJournal/current/contracts/recap-grid-route-manifest-v2.md
 
 # Evidence/archive records are intentionally not default-scanned. Their links

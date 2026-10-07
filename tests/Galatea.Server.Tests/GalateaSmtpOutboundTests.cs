@@ -504,7 +504,7 @@ public sealed class GalateaSmtpOutboundTests {
             string meta = ((string)read.ExecuteScalar()!).Replace("CREATE TABLE delegation_meta", "CREATE TABLE old_meta")
                 .Replace($"schema_version = {GalateaDelegationSqliteStore.SchemaVersion}", "schema_version = 5");
             using var command = connection.CreateCommand();
-            command.CommandText = "DROP TABLE smtp_mail_outbox;DROP TABLE mail_receipt_delivery;" + meta
+            command.CommandText = "DROP TABLE external_mail_inbox;DROP TABLE imap_checkpoint;DROP TABLE smtp_mail_outbox;DROP TABLE mail_receipt_delivery;" + meta
                 + ";INSERT INTO old_meta SELECT singleton, 5, user_id, session_repository_id,"
                 + "capture_frontier_segment_number,capture_frontier_tail_offset,baseline_selected_head,"
                 + "maximum_queued_mails,maximum_task_utf8_bytes,maximum_reply_utf8_bytes,maximum_inbox_replies,"

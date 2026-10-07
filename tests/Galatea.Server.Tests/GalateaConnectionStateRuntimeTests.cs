@@ -185,7 +185,7 @@ public sealed class GalateaConnectionStateRuntimeTests {
                 MailboxMessage.CreateInbound(session.Character.CharacterName,
                     "outside", null, "这里有一封信。"),
                 new GalateaTurnOptions("dress"),
-                injectedBy: GalateaDelegateTestConfiguration.PlayerSender);
+                new GalateaInboundMailOrigin.PlayerInjection(GalateaDelegateTestConfiguration.PlayerSender));
             Assert.Equal("dress", inbound.Options.ConnectionState!.EffectiveConnectionId);
             Assert.Equal("生活状态", inbound.Options.ConnectionState.EffectiveName);
             Assert.Equal("生活状态", inbound.Options.ConnectionState.TurnName);

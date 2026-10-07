@@ -33,10 +33,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 _ = ValidateOpenedDatabase(source, owner, limits);
                 return new("AlreadyCurrent", null);
             }
-            if (version is not (1 or 2 or 3 or 4 or 5 or 6)) {
+            if (version is not (1 or 2 or 3 or 4 or 5 or 6 or 7)) {
                 throw new InvalidDataException($"Delegation schema version {version} cannot be upgraded.");
             }
-            if (version is 5 or 6) {
+            if (version is 5 or 6 or 7) {
                 _ = ValidateOpenedDatabase(source, owner, limits, expectedVersion: version);
             } else if (version is 3 or 4) {
                 ValidateV3UpgradeSource(source, owner, limits, version);
@@ -49,7 +49,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 2 => UpgradeRecoveryColumnsSql + UpgradeMetaToV3Sql
                     + UpgradeV3ToV4Sql,
                 3 => UpgradeV3ToV4Sql,
-                4 or 5 or 6 => string.Empty,
+                4 or 5 or 6 or 7 => string.Empty,
                 _ => throw new InvalidOperationException("Unexpected upgrade version.")
             };
             if (version < 5) { sql += UpgradeV4ToV5Sql; }
@@ -63,7 +63,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 projection.CommandText = sql;
                 _ = projection.ExecuteNonQuery();
                 if (version < 6) { UpgradeDelegationV5ToV6(projected, transaction: null); }
-                UpgradeDelegationV6ToV7(projected, transaction: null);
+                if (version < 7) { UpgradeDelegationV6ToV7(projected, transaction: null); }
+                UpgradeDelegationV7ToV8(projected, transaction: null);
                 expected = ValidateOpenedDatabase(projected, owner, limits);
             }
             if (!apply) { return new("DryRunReady", null); }
@@ -75,7 +76,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
             upgrade.CommandText = sql;
             _ = upgrade.ExecuteNonQuery();
             if (version < 6) { UpgradeDelegationV5ToV6(source, transaction); }
-            UpgradeDelegationV6ToV7(source, transaction);
+            if (version < 7) { UpgradeDelegationV6ToV7(source, transaction); }
+            UpgradeDelegationV7ToV8(source, transaction);
             RequireSameUpgradeState(expected, ReadSnapshotCore(source, transaction));
             hooks?.BeforeCommit?.Invoke(operation);
             transaction.Commit();
@@ -182,7 +184,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         using (SqliteConnection backup = OpenConnection(backupPath, create: false)) {
             source.BackupDatabase(backup);
             ConfigureOpenedDatabase(backup, readOnly: true);
-            if (version is 5 or 6) {
+            if (version is 5 or 6 or 7) {
                 _ = ValidateOpenedDatabase(backup, owner, limits, expectedVersion: version);
             } else if (version is 3 or 4) {
                 ValidateV3UpgradeSource(backup, owner, limits, version);
@@ -241,6 +243,25 @@ internal sealed partial class GalateaDelegationSqliteStore {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = UpgradeV6ToV7Sql + CreateSmtpOutboxSql;
+        command.ExecuteNonQuery();
+    }
+
+    private static void UpgradeDelegationV7ToV8(SqliteConnection connection, SqliteTransaction? transaction) {
+        using SqliteCommand read = connection.CreateCommand();
+        read.Transaction = transaction;
+        read.CommandText = "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'delegation_meta';";
+        string meta = ((string)read.ExecuteScalar()!).Replace("schema_version = 7", "schema_version = 8", StringComparison.Ordinal);
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "ALTER TABLE delegation_meta RENAME TO delegation_meta_v7;" + meta + ";" + """
+            INSERT INTO delegation_meta SELECT singleton, 8, user_id, session_repository_id,
+                capture_frontier_segment_number, capture_frontier_tail_offset,
+                baseline_selected_head, maximum_queued_mails, maximum_task_utf8_bytes,
+                maximum_reply_utf8_bytes, maximum_inbox_replies, maximum_inbox_utf8_bytes,
+                next_completion_sequence, revision FROM delegation_meta_v7;
+            DROP TABLE delegation_meta_v7;
+            PRAGMA user_version = 8;
+            """ + CreateImapSql;
         command.ExecuteNonQuery();
     }
 

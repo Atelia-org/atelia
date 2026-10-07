@@ -17,6 +17,7 @@ internal static class GalateaObservationContent {
     internal const string V2SchemaId = GalateaObservationSchema.V2SchemaId;
     internal const string V3SchemaId = GalateaObservationSchema.V3SchemaId;
     internal const string V4SchemaId = GalateaObservationSchema.V4SchemaId;
+    internal const string V5SchemaId = GalateaObservationSchema.V5SchemaId;
     internal const int MaximumContentUtf8Bytes = GalateaObservationLimits.MaximumContentUtf8Bytes;
     internal static GalateaSenderSnapshot RuntimeSender { get; } = new("runtime", "galatea", "Galatea runtime");
 
@@ -36,6 +37,7 @@ internal static class GalateaObservationContent {
         GalateaConnectionStateSnapshot? connectionState = null
     ) {
         ArgumentNullException.ThrowIfNull(fresh);
+        ArgumentNullException.ThrowIfNull(connectionState);
         if (character.Kind != "character") { throw new ArgumentException("A target Character snapshot is required.", nameof(character)); }
         IReadOnlyList<PlayerTurnNotice> selected = notices ?? fresh switch {
             GalateaFreshInput.PlayerAction player => player.Notices,
@@ -43,18 +45,28 @@ internal static class GalateaObservationContent {
             _ => []
         };
         return fresh switch {
-            GalateaFreshInput.PlayerAction player => Encode(connectionState is null ? V1SchemaId : V4SchemaId, "player-action", player.Sender, timestamp,
+            GalateaFreshInput.PlayerAction player => Encode(V5SchemaId, "player-action", player.Sender, timestamp,
                 new { text = player.Text }, selected, recalls ?? [], connectionState),
-            GalateaFreshInput.HeartbeatActivation heartbeat => Encode(connectionState is null ? V2SchemaId : V4SchemaId, "heartbeat-activation", RuntimeSender, timestamp,
+            GalateaFreshInput.HeartbeatActivation heartbeat => Encode(V5SchemaId, "heartbeat-activation", RuntimeSender, timestamp,
                 new { character = SenderJson(character), externalIntervalMinutes = heartbeat.IntervalMinutes }, selected, recalls ?? [], connectionState),
-            GalateaFreshInput.DelegateReply => Encode(connectionState is null ? V1SchemaId : V4SchemaId, "delegate-reply", RuntimeSender, timestamp,
+            GalateaFreshInput.DelegateReply => Encode(V5SchemaId, "delegate-reply", RuntimeSender, timestamp,
                 new { }, selected, recalls ?? [], connectionState),
-            GalateaFreshInput.InboundMail mail => Encode(connectionState is null ? V1SchemaId : V4SchemaId, "inbound-mail",
-                mail.Sender ?? mail.InjectedBy ?? throw new InvalidDataException("Inbound mail requires its accepted sender identity."),
+            GalateaFreshInput.InboundMail { Origin: GalateaInboundMailOrigin.ImapDelivery imap } mail => Encode(V5SchemaId, "email-inbound",
+                RuntimeSender, timestamp, new {
+                    messageId = mail.Message.MessageId, from = mail.Message.From, to = mail.Message.To,
+                    subject = mail.Message.Subject, body = mail.Message.Body, attachmentCount = imap.AttachmentCount
+                }, selected, recalls ?? [], connectionState),
+            GalateaFreshInput.InboundMail mail => Encode(V5SchemaId, "inbound-mail",
+                mail.Origin switch {
+                    GalateaInboundMailOrigin.PlayerInjection injection => injection.Player,
+                    GalateaInboundMailOrigin.CharacterDelivery delivery => delivery.Character,
+                    _ => throw new InvalidDataException("Unsupported accepted mail origin.")
+                },
                 timestamp, new {
                     messageId = mail.Message.MessageId, from = mail.Message.From, to = mail.Message.To,
                     subject = mail.Message.Subject, body = mail.Message.Body,
-                    injectedBy = mail.InjectedBy is null ? null : SenderJson(mail.InjectedBy)
+                    injectedBy = mail.Origin is GalateaInboundMailOrigin.PlayerInjection playerInjection
+                        ? SenderJson(playerInjection.Player) : null
                 }, selected, recalls ?? [], connectionState),
             _ => throw new NotSupportedException("Unsupported Galatea fresh input.")
         };
@@ -193,7 +205,10 @@ internal static class GalateaObservationContent {
     }
 
     private static MailboxMessage ReadMailbox(JsonElement action) {
-        GalateaObservationSchema.ValidateMailbox(action);
+        if (action.TryGetProperty("attachmentCount", out _)) {
+            GalateaObservationSchema.ValidateExternalMailbox(action);
+        }
+        else { GalateaObservationSchema.ValidateMailbox(action); }
         return MailboxMessage.FromCanonicalEnvelope(action.GetProperty("messageId").GetString()!, action.GetProperty("from").GetString()!,
             action.GetProperty("to").GetString()!, NullableString(action, "subject"), action.GetProperty("body").GetString()!);
     }
@@ -232,7 +247,7 @@ internal static class GalateaObservationContent {
     internal static GalateaConnectionStateSnapshot? ReadConnectionState(SessionInputContent content) {
         if (!content.IsStructured || !IsSupportedSchemaId(content.SchemaId)) { return null; }
         Validate(content);
-        if (content.SchemaId is not (V3SchemaId or V4SchemaId)) { return null; }
+        if (content.SchemaId is not (V3SchemaId or V4SchemaId or V5SchemaId)) { return null; }
         JsonElement state = content.JsonValue.GetProperty("connectionState");
         JsonElement change = state.GetProperty("lastChange");
         return new GalateaConnectionStateSnapshot(
@@ -245,17 +260,21 @@ internal static class GalateaObservationContent {
                 change.GetProperty("connectionId").GetString()!,
                 change.GetProperty("name").GetString()!,
                 change.GetProperty("evidence").GetString()!,
-                content.SchemaId == V4SchemaId ? change.GetProperty("previousName").GetString()! : ""),
-            content.SchemaId == V4SchemaId ? state.GetProperty("effectiveName").GetString()! : "",
-            content.SchemaId == V4SchemaId ? state.GetProperty("turnName").GetString()! : "");
+                content.SchemaId is V4SchemaId or V5SchemaId ? change.GetProperty("previousName").GetString()! : ""),
+            content.SchemaId is V4SchemaId or V5SchemaId ? state.GetProperty("effectiveName").GetString()! : "",
+            content.SchemaId is V4SchemaId or V5SchemaId ? state.GetProperty("turnName").GetString()! : "");
     }
 
     internal static string DisplayText(SessionInputContent content) {
         Validate(content);
         JsonElement value = content.JsonValue;
         JsonElement action = value.GetProperty("action");
-        return value.GetProperty("kind").GetString() == "inbound-mail"
-            ? GalateaMailboxObservationEnvelope.FormatForDisplay(ReadMailbox(action))
+        string? kind = value.GetProperty("kind").GetString();
+        return kind is "inbound-mail" or "email-inbound"
+            ? (kind == "email-inbound" ? "外部 e-mail（发件人是未经认证的声明）\n" : "")
+                + GalateaMailboxObservationEnvelope.FormatForDisplay(ReadMailbox(action))
+                + (kind == "email-inbound" && action.GetProperty("attachmentCount").GetInt32() is > 0 and var count
+                    ? "\n附件：" + count.ToString(CultureInfo.InvariantCulture) + " 个，附件内容未提供。" : "")
             : PlayerTurnObservationEnvelope.FormatForDisplay(ReadPlayerTurn(content));
     }
 
@@ -264,9 +283,9 @@ internal static class GalateaObservationContent {
             return GalateaMailboxObservationEnvelope.TryUnwrap(content.TextValue, out MailboxMessage legacy)
                 ? legacy : throw new InvalidDataException("Unsupported legacy mailbox input.");
         }
-        if (content.SchemaId is not (V1SchemaId or V3SchemaId or V4SchemaId)) { throw new InvalidDataException("Unsupported mailbox schema."); }
+        if (content.SchemaId is not (V1SchemaId or V3SchemaId or V4SchemaId or V5SchemaId)) { throw new InvalidDataException("Unsupported mailbox schema."); }
         Validate(content);
-        if (content.JsonValue.GetProperty("kind").GetString() != "inbound-mail") { throw new InvalidDataException("Expected inbound-mail input."); }
+        if (content.JsonValue.GetProperty("kind").GetString() is not ("inbound-mail" or "email-inbound")) { throw new InvalidDataException("Expected inbound-mail input."); }
         return ReadMailbox(content.JsonValue.GetProperty("action"));
     }
 

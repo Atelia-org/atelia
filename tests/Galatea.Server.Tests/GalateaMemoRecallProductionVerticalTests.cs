@@ -281,9 +281,9 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                     new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10),
                     PlayerTurnObservationEnvelope.TruncateToSecond(DateTimeOffset.Now),
                     new GalateaSenderSnapshot("character", session.Character.CharacterId,
-                        session.Character.CharacterName.Value));
+                        session.Character.CharacterName.Value), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
                 turn = session.StartTurn(plan.FreshInput,
-                    new GalateaTurnOptions("test"), admissionPlan: plan);
+                    new GalateaTurnOptions("test", ConnectionState: plan.ConnectionState), admissionPlan: plan);
             }
         }
         try {

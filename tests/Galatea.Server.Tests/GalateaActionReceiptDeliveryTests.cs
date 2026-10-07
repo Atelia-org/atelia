@@ -135,7 +135,7 @@ internal sealed class ActionReceiptDeliveryFixture : IDisposable {
     internal SessionInputContent Input => GalateaObservationContent.Create(
         new GalateaFreshInput.PlayerAction("Continue", GalateaDelegateTestConfiguration.PlayerSender), Timestamp,
         new GalateaSenderSnapshot("character", "user", "Galatea"),
-        [new PlayerTurnNotice.ActionReceipt(MailPending.FrozenBatch!), new PlayerTurnNotice.ActionReceipt(NotePending.FrozenBatch!)]);
+        [new PlayerTurnNotice.ActionReceipt(MailPending.FrozenBatch!), new PlayerTurnNotice.ActionReceipt(NotePending.FrozenBatch!)], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
 
     internal static async Task<ActionReceiptDeliveryFixture> CreateAsync() {
         var fixture = new ActionReceiptDeliveryFixture();

@@ -72,8 +72,9 @@ public sealed class CharacterNoteSaveReceiptTests {
     private static SessionInputContent HistoricalInput(object notice) {
         SessionInputContent basis = GalateaObservationContent.Create(
             new GalateaFreshInput.PlayerAction("historical continuation", GalateaDelegateTestConfiguration.PlayerSender),
-            new DateTimeOffset(2026, 9, 15, 0, 0, 0, TimeSpan.Zero), new GalateaSenderSnapshot("character", "alice", "Alice"));
+            new DateTimeOffset(2026, 9, 15, 0, 0, 0, TimeSpan.Zero), new GalateaSenderSnapshot("character", "alice", "Alice"), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         JsonObject raw = JsonNode.Parse(basis.JsonValue.GetRawText())!.AsObject();
+        raw.Remove("connectionState");
         raw["notices"] = new JsonArray(JsonSerializer.SerializeToNode(notice));
         return SessionInputContent.Structured(GalateaObservationContent.V1SchemaId, JsonSerializer.SerializeToElement(raw));
     }

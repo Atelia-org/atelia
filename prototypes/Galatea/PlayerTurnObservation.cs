@@ -1498,7 +1498,7 @@ internal static class PlayerTurnObservationClassifier {
                 PlayerTurnObservationTriggerKind kind = stored.JsonValue.GetProperty("kind").GetString() switch {
                     "heartbeat-activation" => PlayerTurnObservationTriggerKind.HeartbeatActivation,
                     "delegate-reply" => PlayerTurnObservationTriggerKind.DelegateReply,
-                    "inbound-mail" => PlayerTurnObservationTriggerKind.InboundMail,
+                    "inbound-mail" or "email-inbound" => PlayerTurnObservationTriggerKind.InboundMail,
                     _ => throw new InvalidDataException("Unsupported Observation kind.")
                 };
                 projection = new Projection(kind, null, GalateaObservationContent.DisplayText(stored));

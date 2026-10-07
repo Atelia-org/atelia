@@ -83,8 +83,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                     membership.LeaseId, membership.Revision);
                 SessionInputContent input = GalateaObservationContent.Create(
                     new GalateaFreshInput.DelegateReply(lease.ReadNotices()), DateTimeOffset.UnixEpoch,
-                    GalateaDelegationTestInputs.Sender(firstSession.RequireDelegationHandle().Store, "Galatea")
-                );
+                    GalateaDelegationTestInputs.Sender(firstSession.RequireDelegationHandle().Store, "Galatea"),
+                    connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
                 lease.BindObservationBase(firstSession.Engine, firstSession.Engine.ReadCurrentHead()!.Value, input);
                 observation = firstSession.Engine.AppendObservation(input);
             }
@@ -1196,8 +1196,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         SessionInputContent input = GalateaObservationContent.Create(
             new GalateaFreshInput.DelegateReply(durable.ReadNotices()),
             DateTimeOffset.UnixEpoch,
-            GalateaDelegationTestInputs.Sender(store, "Galatea")
-        );
+            GalateaDelegationTestInputs.Sender(store, "Galatea"),
+            connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         string head = EventAddressTextCodec.Format(Assert.IsType<EventAddress>(
             engine.ReadCurrentHead()
         ));

@@ -57,6 +57,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     private readonly IReadOnlyDictionary<string,
         GalateaRecapGridDefaultPolicy> _defaultPolicies;
     private readonly bool _maintenanceMode;
+    private readonly GalateaImapConfig _imap;
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
     private readonly GalateaDelegationSupervisor _delegationSupervisor;
@@ -95,6 +96,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
     private GalateaAcceptedTurnRunner? _turnRunner;
     private GalateaCharacterMailRelay? _characterMailRelay;
     private GalateaSmtpOutboxBackgroundService? _smtpOutboxConsumer;
+    private GalateaImapPoller? _imapPoller;
     private Task? _disposeTask;
     private readonly IReadOnlyDictionary<string, GalateaCharacterConfig> _characters;
     private readonly IReadOnlyDictionary<string, GalateaPlayerConfig> _players;
@@ -181,6 +183,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         _allowMissingCharacterNoteDerivedInfoEnricher = false;
         _defaultPolicies = components.DefaultPolicies;
         _maintenanceMode = components.MaintenanceMode;
+        _imap = config.Imap;
         _characters = components.Characters;
         GalateaConfigValidation.RequireValidPlayers(config.Players);
         _players = config.Players.ToDictionary(static player => player.PlayerId, StringComparer.Ordinal);
@@ -244,6 +247,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             userMessageNormalizer
         );
         _maintenanceMode = config.MaintenanceMode;
+        _imap = config.Imap;
         _characterRecipientDirectory = config.CharacterRecipientDirectory;
         _characterNoteBindingEnabled =
             config.CharacterNoteExtractorConnectionId is not null;
@@ -602,6 +606,7 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         => _players.TryGetValue(playerId, out player!);
 
     internal bool MaintenanceMode => _maintenanceMode;
+    internal GalateaImapConfig Imap => _imap;
     internal TimeProvider TimeProvider => _timeProvider;
     internal bool IsStopping { get { lock (_lifecycleGate) { return _stopping; } } }
     internal void RequireRunning() {
@@ -645,6 +650,36 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             stopping = _stopping;
         }
         if (stopping) { consumer.BeginShutdown(); }
+    }
+
+    internal void RegisterImapPoller(GalateaImapPoller poller) {
+        ArgumentNullException.ThrowIfNull(poller);
+        bool stopping;
+        lock (_lifecycleGate) {
+            if (_imapPoller is not null && !ReferenceEquals(_imapPoller, poller)) {
+                throw new InvalidOperationException("Only one IMAP poller may own a host.");
+            }
+            _imapPoller = poller;
+            stopping = _stopping;
+        }
+        if (stopping) { poller.BeginShutdown(); }
+    }
+
+    internal void SignalInboundMail() => _ = _characterMailRelay?.Signal();
+
+    internal async Task<GalateaDelegationSqliteStore> GetImapStoreAsync(
+        string characterId, CancellationToken cancellationToken
+    ) {
+        RequireRunning();
+        if (_maintenanceMode || !_imap.Enabled) {
+            throw new InvalidOperationException("IMAP reception is paused.");
+        }
+        CharacterSessionHost session = await GetSessionAsync(characterId, cancellationToken)
+            .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        RequireRunning();
+        return session.DelegationHandle?.Store
+            ?? throw new InvalidOperationException("IMAP reception requires a writable role store.");
     }
 
     internal IReadOnlyList<GalateaCharacterRecipient> CharacterRecipients =>
@@ -1823,25 +1858,15 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         CharacterSessionHost host,
         MailboxMessage message,
         GalateaTurnOptions options,
-        GalateaInternalMailDeliveryBinding? internalDelivery = null,
-        GalateaSenderSnapshot? injectedBy = null,
-        GalateaSenderSnapshot? sender = null
+        GalateaInboundMailOrigin origin
     ) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(origin);
         options = FreezeConnectionState(host, options);
-        if (internalDelivery is not null && injectedBy is not null) {
-            throw new ArgumentException("Internal relay cannot acquire an external Player injector.", nameof(injectedBy));
-        }
-        if (injectedBy is not null && injectedBy.Kind != "player") {
-            throw new ArgumentException("HTTP injection requires a Player source.", nameof(injectedBy));
-        }
-        if (sender is not null && (sender.Kind != "character" || internalDelivery is null)) {
-            throw new ArgumentException("Trusted Character sender requires an internal delivery binding.", nameof(sender));
-        }
         GalateaFreshAdmissionPlan plan = ComposeFreshAdmission(host,
-            new GalateaFreshInput.InboundMail(message, internalDelivery, injectedBy, sender), options);
+            new GalateaFreshInput.InboundMail(message, origin), options);
         return StartPlannedFreshTurn(host, plan, options);
     }
 
@@ -1965,19 +1990,10 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             StringComparison.Ordinal
         );
         bool closed = completed || turn.Status == "terminated";
-        if (!closed
+        bool automaticMailIncomplete = !completed
             && turn.FreshInput is GalateaFreshInput.InboundMail {
-                InternalDelivery: not null
-            }) {
-            // A relay-owned inbound mail may already have appended its
-            // Observation. Keep automatic admission paused until the normal
-            // recovery/settlement path has made that boundary explicit.
-            host.AutomaticAdmissionFailed = true;
-            host.AutomaticAdmissionFailure = new ApiErrorDto(
-                "character-mail-generation-failed",
-                "角色站内信生成未完成；若会话显示待恢复轮次，请先恢复；否则点击“重试未完成处理”。"
-            );
-        }
+                Origin.DeliveryBinding: not null
+            };
         bool settled = host.AutonomyCadence?.SettleMainTurn(
             turn.AutonomyCadenceSettlement,
             turn.FreshInput is GalateaFreshInput.HeartbeatActivation,
@@ -1992,6 +2008,13 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         }
         else if (settled && turn.FreshInput is GalateaFreshInput.DelegateReply) {
             host.AutomaticReplyFailed = true;
+        }
+        if (automaticMailIncomplete) {
+            // A user stop closes the turn but still pauses queued automatic mail.
+            host.AutomaticAdmissionFailed = true;
+            host.AutomaticAdmissionFailure = new ApiErrorDto(
+                "character-mail-generation-failed",
+                "角色来信处理未完成；若会话显示待恢复轮次，请先恢复；否则点击“重试未完成处理”。");
         }
         if (settled
             && !closed
@@ -2860,6 +2883,10 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
 
     private async Task DisposeCoreAsync() {
         List<Exception>? failures = null;
+        if (_imapPoller is { } imap) {
+            try { await imap.DrainAsync().ConfigureAwait(false); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
         if (_smtpOutboxConsumer is { } smtp) {
             try { await smtp.DrainAsync().ConfigureAwait(false); }
             catch (Exception exception) { (failures ??= []).Add(exception); }
@@ -2927,12 +2954,15 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
         GalateaAcceptedTurnRunner? runner;
         GalateaCharacterMailRelay? characterMailRelay;
         GalateaSmtpOutboxBackgroundService? smtpOutboxConsumer;
+        GalateaImapPoller? imapPoller;
         lock (_lifecycleGate) {
             _stopping = true;
             runner = _turnRunner;
             characterMailRelay = _characterMailRelay;
             smtpOutboxConsumer = _smtpOutboxConsumer;
+            imapPoller = _imapPoller;
         }
+        imapPoller?.BeginShutdown();
         smtpOutboxConsumer?.BeginShutdown();
         characterMailRelay?.BeginShutdown();
         _admissionStopping.Cancel();
@@ -3053,9 +3083,9 @@ public sealed partial class GalateaHostService : IAsyncDisposable {
             prompted
         );
         if (liveTurn.FreshInput is GalateaFreshInput.InboundMail {
-                InternalDelivery: { } internalDelivery
+                Origin.DeliveryBinding: { } deliveryBinding
             }) {
-            internalDelivery.BindObservationBase(
+            deliveryBinding.BindObservationBase(
                 host.Engine,
                 ready.GoverningSetup.Head,
                 prompted
@@ -4538,6 +4568,8 @@ internal static class GalateaConfigLoader {
 
         GalateaSmtpConfig smtp = GalateaSmtpConfig.Resolve(rootFile.Runtime.Smtp,
             rootFile.Characters);
+        GalateaImapConfig imap = GalateaImapConfig.Resolve(rootFile.Runtime.Imap,
+            rootFile.Characters);
         characters = Array.AsReadOnly(characters.Select(character => character with {
             SmtpSenderAccountReference = smtp.ReferenceFor(character.CharacterId)
         }).ToArray());
@@ -4565,7 +4597,8 @@ internal static class GalateaConfigLoader {
             CharacterConnectionStateExtractorConnectionId: characterConnectionStateExtractorConnectionId
         ) with {
             CharacterRecipientDirectory = characterRecipientDirectory,
-            Smtp = smtp
+            Smtp = smtp,
+            Imap = imap
         };
 
         Validate(config);
@@ -5075,6 +5108,7 @@ internal static class GalateaConfigTemplateFactory {
             Runtime: new GalateaRuntimeFileConfig(
               ListenUrls: ["http://0.0.0.0:3510"],
               Smtp: new GalateaSmtpPolicy(),
+              Imap: new GalateaImapPolicy(),
               RecapGrid: new GalateaRecapGridFileConfig(
                 Maintenance: new GalateaRecapGridMaintenanceFileConfig(
                     ConnectionId: DefaultConnectionId,
@@ -5210,6 +5244,8 @@ internal static class GalateaJson {
 [JsonSerializable(typeof(GalateaRuntimeFileConfig))]
 [JsonSerializable(typeof(GalateaEmailAccount))]
 [JsonSerializable(typeof(GalateaSmtpPolicy))]
+[JsonSerializable(typeof(GalateaImapAccount))]
+[JsonSerializable(typeof(GalateaImapPolicy))]
 [JsonSerializable(typeof(GalateaSessionProvisioning))]
 [JsonSerializable(typeof(GalateaRecapGridFileConfig))]
 internal sealed partial class GalateaJsonContext : JsonSerializerContext;

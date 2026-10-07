@@ -32,6 +32,9 @@ public sealed record GalateaConfig(
     [JsonIgnore]
     internal GalateaSmtpConfig Smtp { get; init; } = GalateaSmtpConfig.Disabled;
 
+    [JsonIgnore]
+    internal GalateaImapConfig Imap { get; init; } = GalateaImapConfig.Disabled;
+
     // This directory is derived once from the complete config-file character set.
     // Direct in-process test configurations intentionally leave it unset; the
     // character-mail runtime only accepts the loader-produced directory.
@@ -215,7 +218,9 @@ internal sealed record GalateaRuntimeFileConfig(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    GalateaSmtpPolicy? Smtp = null
+    GalateaSmtpPolicy? Smtp = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    GalateaImapPolicy? Imap = null
 );
 
 /// <summary>

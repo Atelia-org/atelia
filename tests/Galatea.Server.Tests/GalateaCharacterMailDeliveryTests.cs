@@ -76,9 +76,10 @@ public sealed class GalateaCharacterMailDeliveryTests {
     public void HttpInboundShape_CarriesNoInternalDeliveryCapability() {
         MailboxMessage message = MailboxMessage.CreateInbound(
             new GalateaCharacterName("Bob"), "outside", null, "hello");
-        var input = new GalateaFreshInput.InboundMail(message);
+        var input = new GalateaFreshInput.InboundMail(message,
+            new GalateaInboundMailOrigin.PlayerInjection(new("player", "player", "Player")));
 
-        Assert.Null(input.InternalDelivery);
+        Assert.Null(input.Origin.DeliveryBinding);
     }
 
     [Fact]
@@ -156,12 +157,106 @@ public sealed class GalateaCharacterMailDeliveryTests {
             fixture.Source.Outbox.State);
     }
 
+    [Fact]
+    public async Task ImapBoundBeforeAppendResets_AndDurableAppendBecomesObservedWithoutGeneration() {
+        await using var fixture = await Fixture.CreateAsync();
+        GalateaExternalMailInboxSnapshot row = fixture.AcceptExternal();
+        SessionInputContent input = ExternalObservation(fixture, row);
+        string exactBase = EventAddressTextCodec.Format(fixture.Target.Engine.ReadCurrentHead()!.Value);
+        var store = fixture.Target.DelegationHandle!.Store;
+        _ = store.BindExternalMailObservation(row.InboxId, row.Revision, exactBase, input);
+        GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target);
+        GalateaExternalMailInboxSnapshot reset = store.ReadExternalMail(row.InboxId)!;
+        Assert.Equal(GalateaExternalMailInboxState.Pending, reset.State);
+
+        _ = store.BindExternalMailObservation(row.InboxId, reset.Revision, exactBase, input);
+        EventAddress appended = fixture.Target.Engine.AppendObservation(input);
+        GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target);
+        var observed = store.ReadExternalMail(row.InboxId)!;
+        Assert.Equal(GalateaExternalMailInboxState.Observed, observed.State);
+        Assert.Equal(EventAddressTextCodec.Format(appended), observed.ObservationAddress);
+        GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target);
+        Assert.Equal(observed, store.ReadExternalMail(row.InboxId));
+    }
+
+    [Theory]
+    [InlineData(SessionTurnEndReason.Stopped)]
+    [InlineData(SessionTurnEndReason.Rejected)]
+    [InlineData(SessionTurnEndReason.Incomplete)]
+    public async Task ImapTerminatedObservationAndUndoNeverReviveInbox(SessionTurnEndReason reason) {
+        await using var fixture = await Fixture.CreateAsync();
+        var row = fixture.AcceptExternal();
+        var store = fixture.Target.DelegationHandle!.Store;
+        var input = ExternalObservation(fixture, row);
+        _ = store.BindExternalMailObservation(row.InboxId, row.Revision,
+            EventAddressTextCodec.Format(fixture.Target.Engine.ReadCurrentHead()!.Value), input);
+        EventAddress observation = fixture.Target.Engine.AppendObservation(input);
+        var ended = Assert.IsType<SessionTurnEndResult.Ended>(fixture.Target.Engine.EndPendingTurn(observation, reason));
+        GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target);
+        var observed = store.ReadExternalMail(row.InboxId)!;
+        Assert.Equal(GalateaExternalMailInboxState.Observed, observed.State);
+        _ = fixture.Target.Engine.RewindLatestCompletedTurn(fixture.Target.Engine.ReadCurrentHead()!.Value);
+        GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target);
+        Assert.Equal(observed, store.ReadExternalMail(row.InboxId));
+        Assert.Null(store.ReadPendingExternalMail());
+        Assert.Equal(1u, store.ReadImapCheckpoint(row.AccountReference)!.ScannedThroughUid);
+    }
+
+    [Fact]
+    public async Task InternalAndImapBothBound_BlockTheSharedWriterGateWithoutResettingEither() {
+        await using var fixture = await Fixture.CreateAsync();
+        var internalSource = fixture.Source;
+        var external = fixture.AcceptExternal();
+        string exactBase = EventAddressTextCodec.Format(fixture.Target.Engine.ReadCurrentHead()!.Value);
+        _ = internalSource.Store.BindInternalMailObservation(internalSource.Outbox.DispatchId,
+            internalSource.Outbox.Revision, exactBase, Observation(internalSource));
+        var store = fixture.Target.DelegationHandle!.Store;
+        _ = store.BindExternalMailObservation(external.InboxId, external.Revision, exactBase,
+            ExternalObservation(fixture, external));
+
+        var error = Assert.Throws<GalateaTurnException>(() =>
+            GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target));
+        Assert.Equal("character-mail-multiple-bound", error.FailureReason);
+        Assert.Equal(GalateaInternalMailState.ObservationBound, fixture.Source.Outbox.State);
+        Assert.Equal(GalateaExternalMailInboxState.ObservationBound, store.ReadExternalMail(external.InboxId)!.State);
+    }
+
+    [Fact]
+    public async Task ConflictingImapObservationQuarantines_AndAllLaterGateCallsRemainBlocked() {
+        await using var fixture = await Fixture.CreateAsync();
+        var row = fixture.AcceptExternal();
+        var store = fixture.Target.DelegationHandle!.Store;
+        _ = store.BindExternalMailObservation(row.InboxId, row.Revision,
+            EventAddressTextCodec.Format(fixture.Target.Engine.ReadCurrentHead()!.Value), ExternalObservation(fixture, row));
+        _ = fixture.Target.Engine.AppendObservation("different observation");
+        var conflict = Assert.Throws<GalateaTurnException>(() =>
+            GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target));
+        Assert.Equal("character-mail-proof-conflict", conflict.FailureReason);
+        Assert.Equal(GalateaExternalMailInboxState.Quarantined, store.ReadExternalMail(row.InboxId)!.State);
+        var quarantined = Assert.Throws<GalateaTurnException>(() =>
+            GalateaCharacterMailDeliveryReconciler.Reconcile(fixture.Supervisor, fixture.Target));
+        Assert.Equal("character-mail-quarantined", quarantined.FailureReason);
+    }
+
+    private static SessionInputContent ExternalObservation(Fixture fixture, GalateaExternalMailInboxSnapshot row) =>
+        GalateaObservationContent.Create(new GalateaFreshInput.InboundMail(
+            GalateaCharacterMailDeliveryReconciler.RestoreMessage(row),
+            new GalateaInboundMailOrigin.ImapDelivery(
+                new GalateaImapMailDeliveryBinding(fixture.Target.DelegationHandle!.Store, row.InboxId, row.Revision),
+                row.AttachmentCount)), DateTimeOffset.UnixEpoch,
+            new("character", fixture.Target.Character.CharacterId, fixture.Target.Character.CharacterName.Value),
+            connectionState: new(null, "test", "test", null, "Test", "Test"));
+
     private static SessionInputContent Observation(GalateaInternalMailSourceOutbox source) =>
         GalateaObservationContent.Create(new GalateaFreshInput.InboundMail(
             GalateaCharacterMailDeliveryReconciler.RestoreMessage(source),
-            Sender: new GalateaSenderSnapshot("character", source.Store.ReadSnapshot().Owner.CharacterId,
-                source.Outbox.FromCharacterName)), DateTimeOffset.UnixEpoch,
-            new GalateaSenderSnapshot("character", source.Outbox.TargetCharacterId, GalateaCharacterMailDeliveryReconciler.RestoreMessage(source).To));
+            new GalateaInboundMailOrigin.CharacterDelivery(
+                new GalateaSenderSnapshot("character", source.Store.ReadSnapshot().Owner.CharacterId,
+                    source.Outbox.FromCharacterName),
+                new GalateaInternalMailDeliveryBinding(source.Store, source.Outbox.DispatchId, source.Outbox.Revision))),
+            DateTimeOffset.UnixEpoch,
+            new GalateaSenderSnapshot("character", source.Outbox.TargetCharacterId, GalateaCharacterMailDeliveryReconciler.RestoreMessage(source).To),
+            connectionState: new(null, "test", "test", null, "Test", "Test"));
 
     private sealed class Fixture : IAsyncDisposable {
         private readonly string _root = Path.Combine(Path.GetTempPath(),
@@ -176,6 +271,14 @@ public sealed class GalateaCharacterMailDeliveryTests {
 
         internal GalateaInternalMailSourceOutbox Source => Assert.Single(
             Supervisor.ReadInternalMailOutboxesForTarget(Bob.CharacterId));
+
+        internal GalateaExternalMailInboxSnapshot AcceptExternal() {
+            var store = Target.DelegationHandle!.Store;
+            string account = "imap:" + Bob.CharacterId + ":" + new string('b', 64);
+            var checkpoint = store.EstablishImapBaseline(account, 7, 0, DateTimeOffset.UnixEpoch);
+            return store.AcceptImapMail(checkpoint, 1, Bob.CharacterName.Value,
+                "alice@example.test", "external", "From is an external claim, not Alice identity.", 2)!;
+        }
 
         internal static Task<Fixture> CreateAsync(
             string? targetRepositoryId = null,

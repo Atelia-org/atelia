@@ -308,9 +308,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             new GalateaFreshInput.HeartbeatActivation(session.Character.CharacterName, 10),
             PlayerTurnObservationEnvelope.TruncateToSecond(clock.GetLocalNow()),
             new GalateaSenderSnapshot("character", session.Character.CharacterId,
-                session.Character.CharacterName.Value));
+                session.Character.CharacterName.Value), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         GalateaLiveTurn turn = session.StartTurn(plan.FreshInput,
-            new GalateaTurnOptions(main.Id), admissionPlan: plan);
+            new GalateaTurnOptions(main.Id, ConnectionState: plan.ConnectionState), admissionPlan: plan);
         try {
             await service.RunTurnAsync(
                 session,

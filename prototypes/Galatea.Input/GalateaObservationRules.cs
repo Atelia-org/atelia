@@ -24,6 +24,48 @@ internal static class GalateaObservationRules {
         return value.EnumerateRunes().Any(static rune => rune.Value is '\r' or '\n' or '\v' or '\f' or 0x0085 or 0x2028 or 0x2029);
     }
 
+    // One narrow mailbox syntax authority for the external-mail parser and persisted input reader.
+    // Callers may trim U+0020 before admission; persisted addresses must already be canonical.
+    internal static bool IsCanonicalExternalMailAddress(string? value) {
+        if (value is not { Length: >= 5 and <= 254 }) { return false; }
+        ReadOnlySpan<char> candidate = value.AsSpan();
+        int at = candidate.IndexOf('@');
+        if (at < 1 || at != candidate.LastIndexOf('@')) { return false; }
+        ReadOnlySpan<char> local = candidate[..at];
+        ReadOnlySpan<char> domain = candidate[(at + 1)..];
+        if (local.Length > 64 || domain.Length > 253) { return false; }
+        bool previousWasDot = true;
+        foreach (char character in local) {
+            if (character == '.') {
+                if (previousWasDot) { return false; }
+                previousWasDot = true;
+            }
+            else {
+                if (!IsAsciiAlphaNumeric(character) && "!#$%&'*+-/=?^_`{|}~".IndexOf(character) < 0) { return false; }
+                previousWasDot = false;
+            }
+        }
+        if (previousWasDot) { return false; }
+        int labelLength = 0;
+        bool sawDot = false;
+        char previous = '\0';
+        foreach (char character in domain) {
+            if (character == '.') {
+                if (labelLength == 0 || previous == '-') { return false; }
+                labelLength = 0;
+                sawDot = true;
+            }
+            else {
+                if ((!IsAsciiAlphaNumeric(character) && character != '-')
+                    || (labelLength == 0 && character == '-') || ++labelLength > 63) { return false; }
+            }
+            previous = character;
+        }
+        return sawDot && labelLength > 0 && previous != '-';
+    }
+
+    private static bool IsAsciiAlphaNumeric(char character) => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9';
+
     internal static void ValidateMailbox(string messageId, string from, string to, string? subject, string body) {
         if (!IsCanonicalMessageId(messageId)) { throw new ArgumentException("Mailbox messageId must be canonical 32-lowerhex text.", nameof(messageId)); }
         RequireMailboxText(from, GalateaObservationLimits.MaximumMailSenderUtf8Bytes, nameof(from), allowLineBreaks: false);

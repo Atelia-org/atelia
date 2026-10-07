@@ -26,11 +26,13 @@ public sealed class GalateaMailReceiptDeliveryTests {
         GalateaDelegationStateSnapshot before = fixture.Store.ReadSnapshot();
         fixture.Store.Dispose();
         // Mainline V6 has frozen receipts and no SMTP table. Preserve every
-        // receipt byte and state while removing only the SMTP schema addition.
-        fixture.Execute("""
+        // receipt byte and state while removing the later SMTP and IMAP schema.
+        fixture.Execute($"""
+            DROP TABLE external_mail_inbox;
+            DROP TABLE imap_checkpoint;
             DROP TABLE smtp_mail_outbox;
             PRAGMA writable_schema = ON;
-            UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = 7', 'schema_version = 6')
+            UPDATE sqlite_schema SET sql=replace(sql, 'schema_version = {GalateaDelegationSqliteStore.SchemaVersion}', 'schema_version = 6')
                 WHERE name='delegation_meta';
             PRAGMA writable_schema = OFF;
             PRAGMA schema_version = 402;
@@ -306,7 +308,7 @@ public sealed class GalateaMailReceiptDeliveryTests {
     private static SessionInputContent Observation(ActionReceiptBatch? batch) => GalateaObservationContent.Create(
         new GalateaFreshInput.PlayerAction("next", GalateaDelegateTestConfiguration.PlayerSender),
         new DateTimeOffset(2026, 10, 6, 1, 2, 3, TimeSpan.Zero), Sender,
-        batch is null ? [] : [new PlayerTurnNotice.ActionReceipt(batch)]);
+        batch is null ? [] : [new PlayerTurnNotice.ActionReceipt(batch)], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
     private static readonly GalateaSenderSnapshot Sender = new("character", "user", "sender");
     private static string Address(int value) => $"ej1:{value:x16}0000000100000000";
     private static SendMailIntent Mail(string recipient, string body) => new(recipient, null, body, null, "sent");

@@ -13,8 +13,9 @@ internal static class GalateaObservationSchema {
     internal const string V2SchemaId = "galatea.observation.v2";
     internal const string V3SchemaId = "galatea.observation.v3";
     internal const string V4SchemaId = "galatea.observation.v4";
+    internal const string V5SchemaId = "galatea.observation.v5";
     internal const int MaximumContentUtf8Bytes = GalateaObservationLimits.MaximumContentUtf8Bytes;
-    internal static bool IsSupportedSchemaId(string? schemaId) => schemaId is V1SchemaId or V2SchemaId or V3SchemaId or V4SchemaId;
+    internal static bool IsSupportedSchemaId(string? schemaId) => schemaId is V1SchemaId or V2SchemaId or V3SchemaId or V4SchemaId or V5SchemaId;
 
     internal static void Validate(string? schemaId, JsonElement value) {
         bool isV2 = schemaId switch {
@@ -22,13 +23,15 @@ internal static class GalateaObservationSchema {
             V2SchemaId => true,
             V3SchemaId => false,
             V4SchemaId => false,
+            V5SchemaId => false,
             _ => throw new InvalidDataException("Unsupported Galatea Observation schema: " + schemaId)
         };
         bool isV3 = schemaId == V3SchemaId;
         bool isV4 = schemaId == V4SchemaId;
-        if (isV3 || isV4) {
+        bool isV5 = schemaId == V5SchemaId;
+        if (isV3 || isV4 || isV5) {
             GalateaInputValidation.RequireObject(value, "v", "kind", "sender", "externalLocalTimestamp", "action", "notices", "recalls", "connectionState");
-            ValidateConnectionState(value.GetProperty("connectionState"), isV4);
+            ValidateConnectionState(value.GetProperty("connectionState"), isV4 || isV5);
         }
         else { GalateaInputValidation.RequireObject(value, "v", "kind", "sender", "externalLocalTimestamp", "action", "notices", "recalls"); }
         GalateaInputValidation.RequireVersion(value);
@@ -56,7 +59,7 @@ internal static class GalateaObservationSchema {
                 GalateaInputValidation.RequireObject(action, "character", "externalIntervalMinutes");
                 RequireSenderKind(GalateaInputValidation.ReadSender(action.GetProperty("character")), "character");
                 if (!action.GetProperty("externalIntervalMinutes").TryGetInt32(out int minutes)
-                    || (isV2 || isV3 || isV4
+                    || (isV2 || isV3 || isV4 || isV5
                         ? minutes is < 1 or > GalateaObservationLimits.MaximumExternalIntervalMinutes
                         : minutes != GalateaObservationLimits.ExternalIntervalMinutes)) {
                     throw new InvalidDataException("Unsupported heartbeat activation interval.");
@@ -79,6 +82,14 @@ internal static class GalateaObservationSchema {
                 }
                 else { RequireSenderKind(sender, "character"); }
                 if (notices.GetArrayLength() != 0 || recalls.GetArrayLength() != 0) { throw new InvalidDataException("Inbound mail does not carry player-turn enrichment."); }
+                break;
+            case "email-inbound":
+                if (!isV5) { throw new InvalidDataException("External email requires Galatea Observation v5."); }
+                if (sender != new GalateaInputSource("runtime", "galatea", "Galatea runtime")) {
+                    throw new InvalidDataException("External email requires the Galatea runtime sender.");
+                }
+                ValidateExternalMailbox(action);
+                if (notices.GetArrayLength() != 0 || recalls.GetArrayLength() != 0) { throw new InvalidDataException("External email does not carry player-turn enrichment."); }
                 break;
             default: throw new InvalidDataException("Unknown Observation kind.");
         }
@@ -134,7 +145,7 @@ internal static class GalateaObservationSchema {
         var paths = new List<string>();
         string? kind = value.GetProperty("kind").GetString();
         if (kind == "player-action") { paths.Add("/action/text"); }
-        if (kind == "inbound-mail") { paths.Add("/action/body"); }
+        if (kind is "inbound-mail" or "email-inbound") { paths.Add("/action/body"); }
         int i = 0;
         foreach (JsonElement notice in value.GetProperty("notices").EnumerateArray()) {
             if (notice.TryGetProperty("body", out _)) { paths.Add($"/notices/{i}/body"); }
@@ -165,14 +176,14 @@ internal static class GalateaObservationSchema {
             else { paths.Add($"/recalls/{i}/text"); }
             i++;
         }
-        if (schemaId is V3SchemaId or V4SchemaId) {
+        if (schemaId is V3SchemaId or V4SchemaId or V5SchemaId) {
             JsonElement state = value.GetProperty("connectionState");
-            if (schemaId == V4SchemaId) {
+            if (schemaId is V4SchemaId or V5SchemaId) {
                 paths.Add("/connectionState/effectiveName");
                 paths.Add("/connectionState/turnName");
             }
             if (state.GetProperty("lastChange") is JsonElement change && change.ValueKind == JsonValueKind.Object) {
-                if (schemaId == V4SchemaId) {
+                if (schemaId is V4SchemaId or V5SchemaId) {
                     paths.Add("/connectionState/lastChange/previousName");
                     paths.Add("/connectionState/lastChange/name");
                 }
@@ -339,6 +350,22 @@ internal static class GalateaObservationSchema {
         GalateaObservationRules.ValidateMailbox(Text(action, "messageId", 64), Text(action, "from", 1024),
             Text(action, "to", 1024), OptionalText(action, "subject", GalateaObservationLimits.MaximumMailSubjectUtf8Bytes),
             Text(action, "body", GalateaObservationLimits.MaximumMailBodyUtf8Bytes));
+    }
+
+    internal static void ValidateExternalMailbox(JsonElement action) {
+        GalateaInputValidation.RequireObject(action, "messageId", "from", "to", "subject", "body", "attachmentCount");
+        string from = Text(action, "from", GalateaObservationLimits.MaximumMailSenderUtf8Bytes);
+        if (!GalateaObservationRules.IsCanonicalExternalMailAddress(from)) {
+            throw new InvalidDataException("External email From must be a single canonical ASCII mailbox address.");
+        }
+        GalateaObservationRules.ValidateMailbox(Text(action, "messageId", 64), from,
+            Text(action, "to", GalateaObservationLimits.MaximumMailRecipientUtf8Bytes),
+            OptionalText(action, "subject", GalateaObservationLimits.MaximumMailSubjectUtf8Bytes),
+            Text(action, "body", GalateaObservationLimits.MaximumMailBodyUtf8Bytes));
+        JsonElement attachments = action.GetProperty("attachmentCount");
+        if (attachments.ValueKind != JsonValueKind.Number || !attachments.TryGetInt32(out int count) || count < 0) {
+            throw new InvalidDataException("External email attachmentCount must be a nonnegative Int32.");
+        }
     }
 
     private static void ValidateNoticeLocators(JsonElement value) {

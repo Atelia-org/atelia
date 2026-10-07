@@ -25,7 +25,11 @@ public sealed class ActionReceiptObservationTests {
         byte[] before = content.ToUtf8Json();
         string projected = GalateaObservationInputProjector.Instance.Project(content);
         Assert.Equal(projected, GalateaInputProjector.Instance.Project(content));
-        Assert.True(JsonElement.DeepEquals(content.JsonValue, MdJsonSerializer.Read(projected)));
+        JsonElement visible = MdJsonSerializer.Read(projected);
+        Assert.Equal("当前运行配置：Test。", visible.GetProperty("connectionState").GetString());
+        foreach (JsonProperty property in content.JsonValue.EnumerateObject().Where(property => property.Name != "connectionState")) {
+            Assert.True(JsonElement.DeepEquals(property.Value, visible.GetProperty(property.Name)));
+        }
         Assert.Equal(before, content.ToUtf8Json());
         PlayerTurnObservation decoded = GalateaObservationContent.ReadPlayerTurn(content);
         Assert.Equal(2, decoded.Notices.Count);
@@ -51,13 +55,14 @@ public sealed class ActionReceiptObservationTests {
     public void ReceiptClassificationPreservesHeartbeatReplyAndSixteenSlotContracts() {
         PlayerTurnNotice[] receipts = Receipts(false);
         var heartbeat = new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10);
-        SessionInputContent heartbeatContent = GalateaObservationContent.Create(heartbeat, Timestamp, Character, receipts);
+        SessionInputContent heartbeatContent = GalateaObservationContent.Create(heartbeat, Timestamp, Character, receipts, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.Equal(PlayerTurnObservationTriggerKind.HeartbeatActivation, GalateaObservationContent.ReadPlayerTurn(heartbeatContent).TriggerKind);
         Assert.Throws<ArgumentException>(() => new GalateaFreshInput.DelegateReply(receipts));
         JsonObject receiptOnlyReply = JsonNode.Parse(heartbeatContent.JsonValue.GetRawText())!.AsObject();
+        receiptOnlyReply.Remove("connectionState");
         receiptOnlyReply["kind"] = "delegate-reply";
         receiptOnlyReply["action"] = new JsonObject();
-        Assert.Throws<InvalidDataException>(() => GalateaObservationContent.Validate(Content(receiptOnlyReply)));
+        Assert.Throws<InvalidDataException>(() => GalateaObservationContent.Validate(Content(receiptOnlyReply, GalateaObservationSchema.V1SchemaId)));
         PlayerTurnNotice reply = new PlayerTurnNotice.Reply("real reply", new GalateaSenderSnapshot("delegate", "codex", "Codex"), "reply-dispatch");
         var sixteen = receipts.Concat(Enumerable.Repeat(reply, 14)).ToArray();
         SessionInputContent content = CreateInput(sixteen);
@@ -65,7 +70,7 @@ public sealed class ActionReceiptObservationTests {
         Assert.Throws<ArgumentOutOfRangeException>(() => CreateInput(receipts.Concat(Enumerable.Repeat(reply, 15)).ToArray()));
         var delegated = new GalateaFreshInput.DelegateReply(sixteen);
         Assert.Equal(PlayerTurnObservationTriggerKind.DelegateReply,
-            GalateaObservationContent.ReadPlayerTurn(GalateaObservationContent.Create(delegated, Timestamp, Character)).TriggerKind);
+            GalateaObservationContent.ReadPlayerTurn(GalateaObservationContent.Create(delegated, Timestamp, Character, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"))).TriggerKind);
         Assert.Throws<ArgumentException>(() => CreateInput([reply, .. receipts]));
         Assert.Throws<ArgumentException>(() => CreateInput([receipts[1], receipts[0]]));
     }
@@ -73,13 +78,13 @@ public sealed class ActionReceiptObservationTests {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void CurrentV4ProjectionTransformsOnlyConnectionPresentation(bool compact) {
+    public void CurrentV5ProjectionTransformsOnlyConnectionPresentation(bool compact) {
         JsonObject input = JsonNode.Parse(CreateInput(Receipts(compact)).JsonValue.GetRawText())!.AsObject();
         input["connectionState"] = new JsonObject {
             ["runtimeOverrideConnectionId"] = null, ["effectiveConnectionId"] = "main", ["turnConnectionId"] = "main",
             ["effectiveName"] = "常规连接", ["turnName"] = "常规连接", ["lastChange"] = null
         };
-        SessionInputContent content = Content(input, GalateaObservationSchema.V4SchemaId);
+        SessionInputContent content = Content(input, GalateaObservationSchema.V5SchemaId);
         byte[] before = content.ToUtf8Json();
         string projected = GalateaObservationInputProjector.Instance.Project(content);
         JsonElement visible = MdJsonSerializer.Read(projected);
@@ -168,17 +173,17 @@ public sealed class ActionReceiptObservationTests {
         string exactlyAtLimit = mailJson.Insert(1, new string(' ', paddingToLimit));
         using JsonDocument atLimit = JsonDocument.Parse(input.GetRawText().Replace(mailJson, exactlyAtLimit, StringComparison.Ordinal));
         Assert.Equal(128 * 1024, GalateaInputValidation.StrictUtf8.GetByteCount(atLimit.RootElement.GetProperty("notices").GetRawText()));
-        GalateaObservationSchema.Validate(GalateaObservationSchema.V1SchemaId, atLimit.RootElement);
+        GalateaObservationSchema.Validate(original.SchemaId, atLimit.RootElement);
 
         string overLimit = mailJson.Insert(1, new string(' ', paddingToLimit + 1));
         using JsonDocument oversized = JsonDocument.Parse(input.GetRawText().Replace(mailJson, overLimit, StringComparison.Ordinal));
         Assert.Equal(128 * 1024 + 1, GalateaInputValidation.StrictUtf8.GetByteCount(oversized.RootElement.GetProperty("notices").GetRawText()));
         Assert.True(GalateaInputValidation.StrictUtf8.GetByteCount(oversized.RootElement.GetRawText()) < GalateaObservationLimits.MaximumContentUtf8Bytes);
-        Assert.Throws<InvalidDataException>(() => GalateaObservationSchema.Validate(GalateaObservationSchema.V1SchemaId, oversized.RootElement));
-        Assert.Throws<InvalidDataException>(() => GalateaObservationContent.Validate(GalateaObservationSchema.V1SchemaId, oversized.RootElement));
+        Assert.Throws<InvalidDataException>(() => GalateaObservationSchema.Validate(original.SchemaId, oversized.RootElement));
+        Assert.Throws<InvalidDataException>(() => GalateaObservationContent.Validate(original.SchemaId, oversized.RootElement));
 
         // SessionInputContent owns canonical machine JSON and removes insignificant whitespace.
-        SessionInputContent canonical = SessionInputContent.Structured(GalateaObservationSchema.V1SchemaId, oversized.RootElement);
+        SessionInputContent canonical = SessionInputContent.Structured(original.SchemaId!, oversized.RootElement);
         Assert.Equal(original, canonical);
         GalateaObservationContent.Validate(canonical);
         Assert.Equal(GalateaObservationInputProjector.Instance.Project(original), GalateaObservationInputProjector.Instance.Project(canonical));
@@ -191,7 +196,7 @@ public sealed class ActionReceiptObservationTests {
         PlayerTurnNotice[] historical = [new PlayerTurnNotice.NoteSaveReceipt(selection),
             PlayerTurnNotice.NoteSaveReceipt.FromLegacyDurable(fullText, ActionReceiptContentTests.Source(1))];
         foreach (PlayerTurnNotice notice in historical) {
-            SessionInputContent content = CreateInput([notice]);
+            SessionInputContent content = HistoricalInput([notice]);
             string projection = GalateaObservationInputProjector.Instance.Project(content);
             Assert.Contains(fullText, projection, StringComparison.Ordinal);
             Assert.Contains(fullText, GalateaObservationContent.DisplayText(content), StringComparison.Ordinal);
@@ -200,13 +205,19 @@ public sealed class ActionReceiptObservationTests {
             Assert.Throws<ArgumentException>(() => CreateInput([notice, new PlayerTurnNotice.Reply("reply")]));
         }
         // The new global projection rule does not reinterpret the old IDs-only/full-text choice.
-        SessionInputContent mixedHistory = CreateInput([.. Receipts(true), historical[0]]);
+        SessionInputContent mixedHistory = HistoricalInput([.. Receipts(true), historical[0]]);
         GalateaObservationContent.Validate(mixedHistory);
         Assert.Contains(fullText, GalateaObservationInputProjector.Instance.Project(mixedHistory), StringComparison.Ordinal);
     }
 
     internal static SessionInputContent CreateInput(IReadOnlyList<PlayerTurnNotice> notices) => GalateaObservationContent.Create(
-        new GalateaFreshInput.PlayerAction("current action", Player, notices), Timestamp, Character);
+        new GalateaFreshInput.PlayerAction("current action", Player, notices), Timestamp, Character, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
+
+    private static SessionInputContent HistoricalInput(IReadOnlyList<PlayerTurnNotice> notices) {
+        JsonObject value = JsonNode.Parse(CreateInput(notices).JsonValue.GetRawText())!.AsObject();
+        value.Remove("connectionState");
+        return Content(value, GalateaObservationSchema.V1SchemaId);
+    }
 
     private static PlayerTurnNotice[] Receipts(bool compact) {
         ActionReceiptBatch mail = new MailReceiptBatch(ActionReceiptContentTests.Source(1), [
@@ -216,6 +227,6 @@ public sealed class ActionReceiptObservationTests {
         ActionReceiptBatch note = ActionReceiptContentTests.Note([new NoteReceiptItem(MemoId.Parse("m1:00000001"), ActionReceiptPreview.Create(LongBody))]);
         return [new PlayerTurnNotice.ActionReceipt(compact ? mail.Compact() : mail), new PlayerTurnNotice.ActionReceipt(compact ? note.Compact() : note)];
     }
-    private static SessionInputContent Content(JsonObject value, string schema = GalateaObservationSchema.V1SchemaId)
+    private static SessionInputContent Content(JsonObject value, string schema = GalateaObservationSchema.V5SchemaId)
         => SessionInputContent.Structured(schema, JsonSerializer.SerializeToElement(value));
 }

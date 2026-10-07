@@ -13,12 +13,12 @@ public sealed class GalateaSemanticMemoryInputTests {
     private static readonly GalateaSenderSnapshot Character = new("character", "alice", "Alice");
 
     [Fact]
-    public void HeartbeatSnapshotWritesV2AndDrivesMarkdownAndRecallEvidence() {
+    public void HeartbeatSnapshotWritesV5AndDrivesMarkdownAndRecallEvidence() {
         SessionInputContent input = GalateaObservationContent.Create(
             new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 7),
-            Time, Character);
+            Time, Character, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
 
-        Assert.Equal(GalateaObservationContent.V2SchemaId, input.SchemaId);
+        Assert.Equal(GalateaObservationContent.V5SchemaId, input.SchemaId);
         Assert.Equal(7, input.JsonValue.GetProperty("action").GetProperty("externalIntervalMinutes").GetInt32());
         PlayerTurnObservation observed = GalateaObservationContent.ReadPlayerTurn(input);
         Assert.Equal(7, observed.HeartbeatIntervalMinutes);
@@ -48,7 +48,7 @@ public sealed class GalateaSemanticMemoryInputTests {
         var selected = new PlayerTurnNotice.ActionReceipt(batch);
         Assert.Equal(memos.Select(m => m.MemoId), batch.Items.Select(item => item.MemoId));
         Assert.All(batch.Items, item => Assert.True(item.Preview!.EnumerateRunes().Count() <= 56));
-        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10), Time, Character, [selected]);
+        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"), 10), Time, Character, [selected], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         PlayerTurnNotice.ActionReceipt reopened = Assert.IsType<PlayerTurnNotice.ActionReceipt>(
             Assert.Single(GalateaObservationContent.ReadPlayerTurn(input).Notices));
         Assert.Equal(batch, reopened.Batch);
@@ -58,7 +58,7 @@ public sealed class GalateaSemanticMemoryInputTests {
     public void TypedInputPreservesSourcesAndUiEnrichmentWhileUndoRestoresOnlyAction() {
         PlayerTurnRecall gist = PlayerTurnRecall.FromText(new RecallEntry(RecallType.MemoGist, "memory-source"), "revision-17", "remember the garden");
         var reply = new PlayerTurnNotice.Reply("remote original", new("delegate", "codex", "Codex"), "dispatch", "thread", "turn", "notice");
-        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.PlayerAction("open the door", GalateaDelegateTestConfiguration.PlayerSender), Time, Character, [reply], [gist]);
+        SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.PlayerAction("open the door", GalateaDelegateTestConfiguration.PlayerSender), Time, Character, [reply], [gist], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         byte[] before = input.ToUtf8Json();
         PlayerTurnObservation observed = GalateaObservationContent.ReadPlayerTurn(input);
         Assert.Equal("revision-17", Assert.Single(observed.Recalls).SourceVersion);
@@ -78,7 +78,7 @@ public sealed class GalateaSemanticMemoryInputTests {
     public void RecallHelperReceivesTheCapturedPlayerAndReplyProvenance() {
         var reply = new PlayerTurnNotice.Reply("remote evidence", new("delegate", "codex", "Codex"), "dispatch-1", "thread-1", "turn-1", "notice-1");
         SessionInputContent input = GalateaObservationContent.Create(new GalateaFreshInput.PlayerAction("recall", GalateaDelegateTestConfiguration.PlayerSender),
-            Time, Character, [reply]);
+            Time, Character, [reply], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         string queryText = GalateaMemoRecallQueryRenderer.Render(new GalateaCharacterName("Alice"),
             GalateaObservationContent.ReadPlayerTurn(input), new GalateaPlayerTurnRecallContext(RecallBarrier.Empty, CharacterNoteOriginBarrier.Empty), input);
         using JsonDocument query = JsonDocument.Parse(queryText);
@@ -97,9 +97,9 @@ public sealed class GalateaSemanticMemoryInputTests {
     public void NewInputRejectsUnattributedLegacyNoticeButReadsExplicitDurableLegacyReceipt() {
         var fresh = new GalateaFreshInput.PlayerAction("continue", GalateaDelegateTestConfiguration.PlayerSender);
         Assert.Throws<InvalidDataException>(() => GalateaObservationContent.Create(fresh, Time, Character,
-            [new PlayerTurnNotice.NoteSaveReceipt("fresh rendered text is not content")]));
+            [new PlayerTurnNotice.NoteSaveReceipt("fresh rendered text is not content")], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test")));
         SessionInputContent imported = GalateaObservationContent.Create(fresh, Time, Character,
-            [PlayerTurnNotice.NoteSaveReceipt.FromLegacyDurable("unchanged historical wording")]);
+            [PlayerTurnNotice.NoteSaveReceipt.FromLegacyDurable("unchanged historical wording")], connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.Equal("legacy-note-save-receipt", imported.JsonValue.GetProperty("notices")[0].GetProperty("kind").GetString());
         Assert.Equal("unchanged historical wording", Assert.Single(GalateaObservationContent.ReadPlayerTurn(imported).Notices).Body);
     }

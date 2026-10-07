@@ -25,7 +25,7 @@ public sealed class GalateaActionReceiptIntegrationTests {
             new GalateaFreshInput.PlayerAction("continue", GalateaDelegateTestConfiguration.PlayerSender),
             ActionReceiptDeliveryFixture.Timestamp, Character,
             mailReceipt: receiptCount == 2 ? fixture.MailPending : null,
-            noteReceipt: receiptCount >= 1 ? fixture.NotePending : null, readyNotices: ready);
+            noteReceipt: receiptCount >= 1 ? fixture.NotePending : null, readyNotices: ready, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         var reconciler = new GalateaDurableReplyLeaseReconciler(fixture.Mail);
         GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
             reconciler.BeginMembership("continue", plan.ReplyMembers)).Lease;
@@ -54,7 +54,7 @@ public sealed class GalateaActionReceiptIntegrationTests {
         using var fixture = await ActionReceiptDeliveryFixture.CreateAsync();
         ProduceReadyReply(fixture.Mail, 0, "first reply");
         GalateaFreshAdmissionPlan plan = Assert.IsType<GalateaFreshAdmissionPlan>(GalateaFreshAdmissionPlan.ComposeReadyReply(
-            ActionReceiptDeliveryFixture.Timestamp, Character, null, fixture.MailPending, fixture.NotePending, Ready(fixture.Mail)));
+            ActionReceiptDeliveryFixture.Timestamp, Character, new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"), fixture.MailPending, fixture.NotePending, Ready(fixture.Mail)));
         SessionInputContent frozen = plan.PreliminaryInput;
         ProduceReadyReply(fixture.Mail, 1, "LATE_READY_MUST_WAIT");
         GalateaDurableReplyLease lease = Assert.IsType<GalateaDurableReplyLeaseBeginResult.Created>(
@@ -74,20 +74,20 @@ public sealed class GalateaActionReceiptIntegrationTests {
         GalateaFreshAdmissionPlan heartbeat = GalateaFreshAdmissionPlan.Compose(
             new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Galatea"), 10),
             ActionReceiptDeliveryFixture.Timestamp, Character,
-            mailReceipt: fixture.MailPending, noteReceipt: fixture.NotePending, readyNotices: Ready(fixture.Mail));
+            mailReceipt: fixture.MailPending, noteReceipt: fixture.NotePending, readyNotices: Ready(fixture.Mail), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.Empty(heartbeat.ReplyMembers);
         Assert.Equal(2, heartbeat.Notices.OfType<PlayerTurnNotice.ActionReceipt>().Count());
         Assert.Equal(PlayerTurnObservationTriggerKind.HeartbeatActivation, heartbeat.PreliminaryObservation!.TriggerKind);
         Assert.Single(Ready(fixture.Mail));
         Assert.Null(fixture.Mail.ReadSnapshot().ActiveLease);
         Assert.Null(GalateaFreshAdmissionPlan.ComposeReadyReply(
-            ActionReceiptDeliveryFixture.Timestamp, Character, null, fixture.MailPending, fixture.NotePending, []));
+            ActionReceiptDeliveryFixture.Timestamp, Character, new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"), fixture.MailPending, fixture.NotePending, []));
 
         MailboxMessage message = MailboxMessage.CreateInbound(new GalateaCharacterName("Galatea"), "visitor", null, "incoming body");
         GalateaFreshAdmissionPlan inbound = GalateaFreshAdmissionPlan.Compose(new GalateaFreshInput.InboundMail(message,
-                InjectedBy: GalateaDelegateTestConfiguration.PlayerSender),
+                new GalateaInboundMailOrigin.PlayerInjection(GalateaDelegateTestConfiguration.PlayerSender)),
             ActionReceiptDeliveryFixture.Timestamp, Character,
-            mailReceipt: fixture.MailPending, noteReceipt: fixture.NotePending, readyNotices: Ready(fixture.Mail));
+            mailReceipt: fixture.MailPending, noteReceipt: fixture.NotePending, readyNotices: Ready(fixture.Mail), connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         Assert.Empty(inbound.Notices);
         Assert.Empty(inbound.ReplyMembers);
         Assert.Null(inbound.MailReceipt);
@@ -103,7 +103,7 @@ public sealed class GalateaActionReceiptIntegrationTests {
         GalateaFreshAdmissionPlan plan = GalateaFreshAdmissionPlan.Compose(
             new GalateaFreshInput.PlayerAction("continue", GalateaDelegateTestConfiguration.PlayerSender),
             ActionReceiptDeliveryFixture.Timestamp, Character,
-            mailReceipt: fixture.MailPending, noteReceipt: fixture.NotePending);
+            mailReceipt: fixture.MailPending, noteReceipt: fixture.NotePending, connectionState: new GalateaConnectionStateSnapshot(null, "test", "test", EffectiveName: "Test", TurnName: "Test"));
         string projected = GalateaInputProjector.Instance.Project(plan.PreliminaryInput);
         Assert.DoesNotContain(ActionReceiptDeliveryFixture.NoteMiddle, projected, StringComparison.Ordinal);
         Assert.DoesNotContain(ActionReceiptDeliveryFixture.MailMiddle, projected, StringComparison.Ordinal);
