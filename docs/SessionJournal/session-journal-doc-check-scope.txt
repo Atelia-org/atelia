@@ -55,6 +55,7 @@ docs/Galatea/player-character-separation-design.md
 docs/Galatea/structured-input-rendering-design.md
 docs/Galatea/mail-note-receipt-preview-refactor-design.md
 docs/Galatea/smtp-email-mvp-design-and-implementation.md
+docs/Galatea/imap-email-mvp-design-and-implementation.md
 docs/Galatea/character-note-default-memopod-v1.md
 docs/Galatea/text-extractor-observation-bridge.md
 docs/Galatea/codex-delegation-operator-recovery.md

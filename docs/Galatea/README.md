@@ -37,6 +37,7 @@
 | 日常解除 Codex 绑定，让后续邮件进入新 session | [离线解绑设计](codex-session-reset-design.md)：尚未实施；保留队列/回信、显式结束旧任务等待、懒创建新 thread |
 | 角色间站内信 | [角色间站内信设计与实施记录](character-mail-design.md)：地址簿、提示词、可靠入箱、recovery 与实例迁移边界 |
 | 普通 email 外发 | [SMTP MVP 设计与实施方案](smtp-email-mvp-design-and-implementation.md)是当前入口；[一期](smtp-outbound-phase1.md)与[二期](smtp-outbound-phase2.md)仅记录对应历史切片和离线验证。已实施每角色配置、仅 SMTP 外发，IMAP 收信延后；产品实施与真实发送验证状态以方案证据为准 |
+| 普通 email 收取（待实施） | [IMAP MVP 设计与实施方案](imap-email-mvp-design-and-implementation.md)：首次只收新信、持久去重、自动来信回合与精确投递证明；V16 / Observation v5 / Delegation V8 均为拟实施格式 |
 | Character 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |
 | 每 Character 的自主激活间隔（待实施设计） | [自主激活间隔设计](per-character-autonomy-interval-design.md)：澄清 durable pulse、Ready reply 与周期自主活动的边界 |
