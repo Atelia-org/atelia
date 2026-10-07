@@ -17,26 +17,35 @@ internal static class GalateaImapReceiver {
         GalateaImapPollResult Result(string code) => new(now.ToUnixTimeMilliseconds(), code, imported, rejected, filtered);
         GalateaImapCheckpointSnapshot? checkpoint = store.ReadImapCheckpoint(reference);
         if (checkpoint?.BlockedCode is { } blocked) { return Result(blocked); }
-        if (connection.UidValidity == 0 || connection.UidNext is null or 0) { return Result("IMAP_INVALID_UID_METADATA"); }
+        if (connection.UidValidity == 0 || connection.UidNext is 0) { return Result("IMAP_INVALID_UID_METADATA"); }
         uint validity = connection.UidValidity;
-        uint observedUidNext = connection.UidNext.Value;
-        uint upper = observedUidNext - 1;
+        uint? observedUidNext = connection.UidNext;
+        uint? scanUpper = null;
+        string? CheckNamespace() {
+            uint? next = connection.UidNext;
+            string? code = connection.UidValidity != (checkpoint?.UidValidity ?? validity) ? "IMAP_UIDVALIDITY_CHANGED"
+                : next is 0 || (observedUidNext is not null && next is null) ? "IMAP_INVALID_UID_METADATA"
+                : next is { } native && (native < observedUidNext
+                    || (checkpoint is not null && native - 1 < checkpoint.ScannedThroughUid)
+                    || (scanUpper is { } bound && native - 1 < bound))
+                    ? "IMAP_UIDNEXT_REGRESSED" : null;
+            if (code is null) { observedUidNext = next; }
+            else if (checkpoint is not null) {
+                cancellationToken.ThrowIfCancellationRequested();
+                checkpoint = store.BlockImapCheckpoint(checkpoint, code);
+            }
+            return code;
+        }
+        if (CheckNamespace() is { } beforeUpperCode) { return Result(beforeUpperCode); }
+        uint upper = await connection.ReadScanUpperUidAsync(cancellationToken).ConfigureAwait(false);
+        scanUpper = upper;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (CheckNamespace() is { } afterUpperCode) { return Result(afterUpperCode); }
         if (checkpoint is null) {
-            cancellationToken.ThrowIfCancellationRequested();
             store.EstablishImapBaseline(reference, validity, upper, now);
             return Result("IMAP_BASELINE_ESTABLISHED");
         }
-        bool CheckNamespace() {
-            uint? next = connection.UidNext;
-            string? code = connection.UidValidity != checkpoint.UidValidity ? "IMAP_UIDVALIDITY_CHANGED"
-                : next is null or 0 ? "IMAP_INVALID_UID_METADATA"
-                : next.Value < observedUidNext || next.Value - 1 < checkpoint.ScannedThroughUid ? "IMAP_UIDNEXT_REGRESSED" : null;
-            if (code is null) { observedUidNext = next!.Value; return true; }
-            checkpoint = store.BlockImapCheckpoint(checkpoint, code);
-            return false;
-        }
-        if (!CheckNamespace()) { return Result(checkpoint.BlockedCode!); }
-        if (upper == checkpoint.ScannedThroughUid) { return Result("IMAP_READY"); }
+        if (upper <= checkpoint.ScannedThroughUid) { return Result("IMAP_READY"); }
         ulong firstWide = checked((ulong)checkpoint.ScannedThroughUid + 1);
         ulong lastWide = Math.Min(upper, checked((ulong)checkpoint.ScannedThroughUid + GalateaImapBounds.MaximumSearchUidSpan));
         uint first = checked((uint)firstWide), last = checked((uint)lastWide);
@@ -47,7 +56,7 @@ internal static class GalateaImapReceiver {
             return Result(checkpoint.BlockedCode!);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        if (!CheckNamespace()) { return Result(checkpoint.BlockedCode!); }
+        if (CheckNamespace() is { } afterSearchCode) { return Result(afterSearchCode); }
         if (uids.Count > GalateaImapBounds.MaximumSearchUidSpan || uids.Any(uid => uid < first || uid > last)
             || uids.Distinct().Count() != uids.Count) {
             checkpoint = store.BlockImapCheckpoint(checkpoint, "IMAP_INVALID_SEARCH_RESULT");
@@ -63,7 +72,7 @@ internal static class GalateaImapReceiver {
             }
             GalateaImapRawMessage raw = await connection.ReadRawAsync(uid, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!CheckNamespace()) { return Result(checkpoint.BlockedCode!); }
+            if (CheckNamespace() is { } afterReadCode) { return Result(afterReadCode); }
             if (raw.Missing) {
                 IReadOnlyList<uint> exact;
                 try { exact = await connection.SearchUidsAsync(uid, uid, cancellationToken).ConfigureAwait(false); }
@@ -72,7 +81,7 @@ internal static class GalateaImapReceiver {
                     return Result(checkpoint.BlockedCode!);
                 }
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!CheckNamespace()) { return Result(checkpoint.BlockedCode!); }
+                if (CheckNamespace() is { } afterExactSearchCode) { return Result(afterExactSearchCode); }
                 if (exact.Count > 1 || exact.Any(value => value != uid)) {
                     checkpoint = store.BlockImapCheckpoint(checkpoint, "IMAP_INVALID_SEARCH_RESULT");
                     return Result(checkpoint.BlockedCode!);

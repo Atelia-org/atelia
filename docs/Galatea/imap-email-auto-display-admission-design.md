@@ -119,7 +119,7 @@ flowchart LR
 | cursor COMMIT 结果不明 | 保持 owner gate，关闭原 connection，窄读相同命名空间 checkpoint 的预期后态；确认提交则继续，确认原态可重新裁决，不明/冲突停止，不猜失败。 |
 | 获准、正文入箱前崩溃 | cursor 未前移，下次重新有界读取/裁决。 |
 | 获准 row+cursor 已提交、relay 未启动 | Pending 保留，继续既有 proof，不建立第二个来信 Observation。 |
-| UIDVALIDITY 改变 | 沿主方案阻断；显式 rebaseline 用新 validity / UIDNEXT−1 跳过当时旧信，不回退旧命名空间或复活过滤信。 |
+| UIDVALIDITY 改变 | 沿主方案阻断；显式 rebaseline 用新 validity / scanUpperUid 跳过当时旧信，不回退旧命名空间或复活过滤信。上界优先真实 UIDNEXT−1，缺失时只读最高现存 UID。 |
 
 只跨越确认不存在的 UID 空隙，不越过未处置获准 UID。获准 inbox 的 UID 唯一键、内容冻结及 Journal proof 保留。MIME malformed/超限仍按主方案写正常 Rejected；策略过滤不增加 Filtered、Held 或 Quarantined 状态。Quarantined 只属于投递证明异常，会阻断 writer；陌生信不进该 gate。
 
@@ -206,3 +206,44 @@ ATELIA_GALATEA_IMAP_CANARY_CONFIG="$PWD/.atelia/imap-mvp-canary/config.json" \
 ```
 
 长期 gpt/cyber 实例配置、旧 store 升级及真实 LLM 自动理解/回复不由隔离 canary 代替；自主查信、HTML 转换、强认证等延期维持第 5 节边界。
+
+## 9. 126 缺失 UIDNEXT 的适配
+
+第 8 节记录的是首轮验收的实际限制。后续用户授权继续适配 126，目标是让既有准入、持久化与角色投递链路接收新信，不引入邮箱厂商配置、联系人表、角色查取信协议或存储迁移。
+
+适配只改变扫描边界的来源。`IGalateaImapConnection` 保留真实可空 `UidNext`，增加 `ReadScanUpperUidAsync`：优先返回真实 `UidNext−1`；两处服务端元数据均缺失时，只读 `UID FETCH 4294967295:* UID`，取得最高现存 UID。标准 MailKit `UniqueIdRange(Max,Max)` 生成这个范围；[RFC 3501 §6.4.8](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.8) 的反向范围规则使它仅匹配最高现存 UID。响应须有有效 UID 且对应当前最后一个序号；非空但缺结果、重复或序号不符都延后，不把缺结果当空箱。明确空箱的上界为 0。
+
+最高现存 UID 不是 UIDNEXT 的推算值：历史最高 UID 的邮件可能已删除。它仍能作为一次观测的扫描上界，因为同 UIDVALIDITY 内新分配 UID 严格递增且不可复用；[RFC 4549 §4.3.1](https://www.rfc-editor.org/rfc/rfc4549.html#section-4.3.1) 同样以已知最高 UID 发现后续邮件。首次保存这个上界跳过旧信；之后仍按有界 UID 区间扫描。删除导致上界低于持久 cursor 时保持 cursor，绝不回退或误报 UIDNEXT 退步。取得真实 UIDNEXT 时，既有单调检查仍有效。
+
+所有协议等待之后重验 UIDVALIDITY，已有 checkpoint 在等待之前也先检查已知身份变化。namespace 改变仍持久 Block，不自动重建基线。仅支持持久 UID；不增加 MailKit 没有公开支持的 UIDNOTSTICKY 协议观察器，也不宣称主动侦测。符合 [RFC 4315 §3](https://www.rfc-editor.org/rfc/rfc4315.html#section-3) 的非持久 UID 邮箱会在下次选中时改变 UIDVALIDITY，被既有检查阻断。
+
+两个协议边界保留在同一实现中：fallback 采样后若真实 UIDNEXT 出现，它必须高于本轮已采样上界；否则不能用矛盾元数据前移 cursor。普通 SEARCH 的请求用最多 256 个显式 UID 构成固定数字范围，避免 `uint.MaxValue` 被 `UniqueIdRange` 序列化为 `*` 后，在尾信删除时反向覆盖历史邮件。`Max:*` 只用于单尾 UID 探测，不用于扫描新信。
+
+离线 `operator rebaseline-imap` 与 receiver 复用同一个上界方法。五个预览值中的 `newUidNext` 改为 `newCursor`，apply 参数直接使用 `--new-cursor`，允许 0..uint.MaxValue；不留旧参数别名，不执行 `upper+1`。仍只解除 `IMAP_UIDVALIDITY_CHANGED`，要求精确核对旧 checkpoint、当前远端 namespace 和新 cursor，并保留旧 inbox 与无关 SMTP Attempting。配置 V16、store V8、Observation v5、accountReference 及准入合同均不变。
+
+### 9.1 实际验证
+
+独立 source review 检查并促成修正上述两处因果边界，没有残留阻断。真实 TLS fake server 的 **35 个协议 case 全部通过**，包含原生元数据优先、STATUS 缺 next 而 EXAMINE 提供、双缺 next 的尾 UID、空箱/消失/并发新增/重复/缺 UID/非末序号/拒绝、来源切换、namespace 变化和最大 numeric SEARCH 端点。receiver 与真实配置/owner/store 的 operator cases 覆盖冷重开、新信准入、删除后保持游标、五值 CAS、错误源数据不写、旧 inbox 和 SMTP Attempting 保留。
+
+Release 非 Live 全集 **1963 passed / 4 skipped / 0 failed，耗时约 2 分 5 秒**。四项 skip 是一项显式真实 Codex gate 和三项要求 DEBUG build 的既有 extraction diagnostics 测试；本轮没有改动这些诊断路径。重现入口：
+
+```bash
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj -c Release --no-restore -m:1 -nr:false \
+  --filter 'Category!=GalateaLabLive&Category!=GalateaNoteLive&Category!=GalateaEmailLive&Category!=GalateaConnectionStateLive&Category!=GalateaImapLive'
+```
+
+只读双账号 probe **1 passed / 0 failed**，每账号两次独立连接，不读取正文或 flags、不进行 SMTP 或修改 ledger。QQ 的 UIDVALIDITY=1667961098、UIDNEXT=14，末尾 UID=13 / 12；126 的 UIDVALIDITY=1、UIDNEXT 仍缺失，末尾 UID=1791351821 / 1791351820。两账号的末尾观测均跨连接一致，间隙均为 1；这是具体观测，不代替持久 UID 的协议前提。probe 对有 native next 的 QQ 只取最后至多两个临时序号的 UID；只有缺 native next 的 126 强求单尾查询。首版探针对 QQ 同样强求备用尾查询时失败，不能据此声称 QQ 的 fallback 已通过。
+
+双 receiver 真实 canary **1 passed / 0 failed，183 秒**，使用新独立 `ledger-dual-horizon.json`；原 Failed / QQ Completed ledger 保留。两个 baseline Ready 后才发件，六次 SMTP 均为 `SMTP_DATA_ACCEPTED`；六个新 UID 中三个仅推进 cursor，三个获准入箱并形成 Observed（QQ 两条、126 一条），三个 exact Journal proof、六次 Seen 不变、冷重开无额外模型调用/Observation/SMTP 消费全部通过。正常角色外发仍从原 Action→production reconciler→outbox→consumer 提交并建立派生许可；IMAP 准入与投递复用 production transport / poller / owner store / relay / runner / Journal。
+
+六封新信的 UID gap 均为 1，包括 126 的默认过滤与静态获准来信。保留 256 数字跨度 / 16 封的现有限额，不增加未经需要的稀疏 UID 扫描策略；极稀疏 UID 邮箱仍可能需要多轮推进，这是当前有界轮询的吞吐限制。未知 marker 与真实授权码没有写入可持久角色工件，私有配置/ledger 未加入 Git。文档检查仍只有四条已有 AgentControl 历史断链，没有新增诊断。
+
+精确运行入口（需私有配置与全新独立 Prepared guard；Completed / Failed / Running 不得覆盖后重跑，也不要批量运行整个 Live category）：
+
+```bash
+ATELIA_GALATEA_IMAP_CANARY_CONFIG="/absolute/private-canary-config.json" \
+  dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj -c Release --no-restore -m:1 -nr:false \
+  --filter 'FullyQualifiedName~DualReceiversAfterUidHorizonAdaptation_AdmissionAndRuntimeObservation_AreDurableAndReadOnly'
+```
+
+本轮完成两个真实账号的隔离运行时收件验收，解除此前 126 兼容造成的 I5 延期。completion/extraction 仍为确定性测试，没有验证生产 LLM 的邮件判断或回复；长期 gpt/cyber 实例没有切换、升级或改写配置。自主查取信、HTML 转换等产品边界继续按第 5 节延期。

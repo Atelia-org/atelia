@@ -27,7 +27,7 @@ IMAP namespace 为 `imap:<characterId>:lowercase_hex(SHA256(UTF8(JSON_ARRAY[addr
 | `pollIntervalSeconds` | `60`，整数 1..3600。 |
 | `timeoutSeconds` | `60`，整数 1..300。 |
 
-首次成功只读打开 INBOX 后持久保存 UIDVALIDITY / UIDNEXT−1，跳过服务端采样值以下的 UID；status Ready 表示基线已持久、收件启动完成。采样到本地提交期间到达的邮件可能被保守接收，不承诺精确的到达时间切线。只收基线之后的 UID，不按 Seen 筛选、不标已读、不移动删除。关闭或 maintenance 暂停拉取和新自动投递；已 Bound 的 Journal proof 仍进入所有 writer gate。重新启用继续原游标，不再次跳过积压。
+首次成功只读打开 INBOX 后持久保存 UIDVALIDITY / scanUpperUid，跳过服务端采样值以下的 UID；上界优先真实 UIDNEXT−1，缺失时只读取最高现存 UID，明确空箱为 0。它不伪造 UIDNEXT；最高现存 UID 随删除降低时保留原游标。status Ready 表示基线已持久、收件启动完成。采样到本地提交期间到达的邮件可能被保守接收，不承诺精确的到达时间切线。只收基线之后的 UID，不按 Seen 筛选、不标已读、不移动删除。关闭或 maintenance 暂停拉取和新自动投递；已 Bound 的 Journal proof 仍进入所有 writer gate。重新启用继续原游标，不再次跳过积压。
 
 陌生信只原子前移 checkpoint，没有逐信 Filtered 行，也不持久正文或触发回合。后加名单/主动外发不补投已越过的 UID。获准邮件正文投影后与游标同事务入箱，再通过共用 relay / exact Journal proof 自动启动回合；关闭后保留 Pending，删除名单不撤销已入箱事实。
 
@@ -35,7 +35,7 @@ IMAP namespace 为 `imap:<characterId>:lowercase_hex(SHA256(UTF8(JSON_ARRAY[addr
 
 当前 Delegation **V8** 新增 `imap_checkpoint` / `external_mail_inbox` 和 recipient NOCASE 索引。旧 V7 必须停服备份，通过 `operator upgrade-delegation-store --config <absolute-path> --character <id>` 预览，再加 `--apply` 显式升级；不自动迁移、不删库、不重发旧 SMTP。Observed 表示 Journal 已追加一次 Observation，不表示模型完成或回复；Unknown SMTP 仍不自动重发。
 
-新角色输入为 `galatea.observation.v5`，`email-inbound` 的 sender 固定 runtime，声明 From 只是邮件数据，必需冻结 connection snapshot。旧 v1–v4 只读历史不重写。UIDVALIDITY 改变会阻断；停服后通过 `operator rebaseline-imap` 预览，携带原 checkpoint 与新 namespace 五个预览值显式 CAS apply，跳过当时已有信并保留旧 inbox。
+新角色输入为 `galatea.observation.v5`，`email-inbound` 的 sender 固定 runtime，声明 From 只是邮件数据，必需冻结 connection snapshot。旧 v1–v4 只读历史不重写。仅支持持久 UID；UIDVALIDITY 改变会阻断。停服后通过 `operator rebaseline-imap` 预览，携带 `--expected-validity`、`--expected-cursor`、`--expected-revision`、`--new-validity`、`--new-cursor` 五个预览值显式 CAS apply，跳过当时已有信并保留旧 inbox。preview 与 apply 复用自动收件的同一扫描上界，cursor 允许 0..uint.MaxValue。
 
 ## 合成配置片段
 

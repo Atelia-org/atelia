@@ -85,17 +85,17 @@ flowchart LR
 
 ### 首次只收新信
 
-首次连接先对未选中的 INBOX 请求 STATUS 的 UIDVALIDITY / UIDNEXT，再只读 EXAMINE；要求 EXAMINE 自身提供相同的有效 UIDVALIDITY，UIDNEXT 不退步。EXAMINE 省略 UIDNEXT 时可使用同一命名空间中服务端刚返回的 STATUS 值；两处均缺失则不能猜测。
+首次连接先对未选中的 INBOX 请求 STATUS 的 UIDVALIDITY / UIDNEXT，再只读 EXAMINE；要求 EXAMINE 自身提供相同的有效 UIDVALIDITY，真实 UIDNEXT 不退步。EXAMINE 省略 UIDNEXT 时可使用同一命名空间中服务端刚返回的 STATUS 值。两处均缺失时，改为只读获取最高现存 UID 作为扫描上界；这是独立的观测边界，不推算或伪造 UIDNEXT。[RFC 3501 §6.4.8](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.8) 定义了 UID `*` 的含义；[RFC 4549 §4.3.1](https://www.rfc-editor.org/rfc/rfc4549.html#section-4.3.1) 描述了按已知最高 UID 发现新信的同步方式。
 
-第一次成功只读打开后，在本地事务内保存 `uidValidity`、`scannedThroughUid = UIDNEXT - 1`、`baselineAt`，跳过服务端采样值以下的 UID。Ready 表示这个基线已持久保存、收件启动完成，不是邮件到达时刻的精确切线：采样到本地 COMMIT 的窗口中到达的邮件可能被保守接收。canary 必须先确认 Ready 再寄测试信。事务结果不明先重读 checkpoint，不重新取一个更晚的基线来覆盖已有值。
+第一次成功只读打开后，在本地事务内保存 `uidValidity`、`scannedThroughUid = scanUpperUid`、`baselineAt`，跳过服务端采样值以下的 UID。`scanUpperUid` 优先为真实 `UIDNEXT - 1`；UIDNEXT 不可用时取最高现存 UID，明确空箱为 0，非空但不能证明尾 UID 则延后。Ready 表示这个基线已持久保存、收件启动完成，不是邮件到达时刻的精确切线：采样到本地 COMMIT 的窗口中到达的邮件可能被保守接收。canary 必须先确认 Ready 再寄测试信。事务结果不明先重读 checkpoint，不重新取一个更晚的基线来覆盖已有值。
 
-UIDNEXT 不可用、为非法值或 UIDVALIDITY 缺失时不能猜测基线；返回固定错误码，不收取。UIDVALIDITY 变化也不自动清空游标：在 checkpoint 持久化 `IMAP_UIDVALIDITY_CHANGED` 阻断，保留原游标和旧收件记录。实施提供一个窄 rebaseline 操作：停服、只读预览当前 validity / UIDNEXT，显式核对旧 checkpoint 后 CAS 更新为新基线并清除此阻断。它跳过当时已存在邮件，不能伪装成连续无遗漏恢复。
+UIDVALIDITY 缺失或可靠扫描上界不可得时不建立基线，返回固定错误码。仅支持同 UIDVALIDITY 内 UID 持久且递增的邮箱；不增加协议 logger 主动识别 UIDNOTSTICKY，[RFC 4315 §3](https://www.rfc-editor.org/rfc/rfc4315.html#section-3) 要求这类邮箱每次选中时改变 UIDVALIDITY，因此后续连接会被现有命名空间检查阻断。UIDVALIDITY 变化不自动清空游标：在 checkpoint 持久化 `IMAP_UIDVALIDITY_CHANGED`，保留原游标和旧收件记录。窄 rebaseline 操作复用同一扫描上界：停服，只读预览当前 validity / newCursor，显式核对旧 checkpoint 后 CAS 更新并清除此阻断。它跳过当时已存在邮件，不能伪装成连续无遗漏恢复。
 
 ### 有界扫描
 
 每个角色只运行一个 poll，不重叠；网络读取不持有 TurnLock 或 SQLite transaction。MVP 顺序轮询各角色，单账号失败后继续其它账号；按下一次 poll 重试瞬态读取，不热循环重试。
 
-每次取当前 `upper = UIDNEXT - 1`，只 SEARCH 一个最多 256 UID 值的闭区间 `[scannedThroughUid+1, min(upper,scannedThroughUid+256)]`，按 UID 升序处理，最多取 16 封。边界计算使用 checked 的宽整数；`upper == cursor` 时不发 SEARCH，同 validity 下 UIDNEXT 倒退或结果超出请求范围则阻断，不能构造反向区间或溢出。不能把 `UID n:*` 的全部结果先装入内存。范围内确认不存在的空隙可前进；达到本轮封数/容量限制则停在最后已决定的 UID，不能跨过还没处理的邮件。
+每次取得可靠的 `scanUpperUid`，只 SEARCH 一个最多 256 UID 值的闭区间 `[scannedThroughUid+1, min(scanUpperUid,scannedThroughUid+256)]`，按 UID 升序处理，最多取 16 封。边界计算使用 checked 的宽整数；没有高于 cursor 的观测 UID 时不发 SEARCH。真实 UIDNEXT 倒退或结果超出请求范围仍阻断；最高现存 UID 因删除而降低时仅保留原 cursor，不阻断、不回退，也不把该观测值当成 UIDNEXT。不能把 `UID n:*` 的全部结果先装入内存。范围内确认不存在的空隙可前进；达到本轮封数/容量限制则停在最后已决定的 UID，不能跨过还没处理的邮件。
 
 获准邮件的成功导入或明确 MIME 拒收，与 cursor 前移在**同一 SQLite 事务**提交。未获准按准入方案只原子前移 checkpoint，不新增逐 UID 筛选行；没有历史重判/游标倒退。若 SEARCH 后邮件消失，以精确 UID 查询确认不再存在后记录 `IMAP_MESSAGE_VANISHED` 再前进；断网、超时或结果不明不等于“已消失”，不前移。
 
@@ -204,8 +204,10 @@ Host 增加 IMAP poller 的注册、BeginShutdown、Drain。先取消拉取与�
 
 ## 8. 2026-10-07 实施记录
 
-I1–I4 已实施：root V16、Delegation V8 与显式离线升级、Observation v5、共用 relay/proof、MailKit 4.18.1 与有界只读 poll、MIME 先准入再投影、status/rebaseline、维护/停止排空及配置/prompt/当前合同维护均已落地。
+I1–I5 已实施并完成两个受控账号的隔离收件验收：root V16、Delegation V8 与显式离线升级、Observation v5、共用 relay/proof、MailKit 4.18.1 与有界只读 poll、MIME 先准入再投影、status/rebaseline、维护/停止排空及配置/prompt/当前合同维护均已落地。
 
 落地保持最小模型：SMTP / IMAP 两个窄 policy 视图引用同一个账号对象；不存在复制授权码的第二份持久账号表。联系人直接窄读正常 SMTP outbox，不改发送身份或 Unknown 边界。陌生内容仅瞬时 bounded raw，最终准入的持久事实只有单调 cursor。
 
-Debug 非 Live 全集 1907 passed / 2 skipped / 0 failed，最终 Release 针对性回归 379 passed / 0 failed；真实 TLS fake server 的完整 production poller→store→relay→runner→Journal 通过。QQ 独立真实 canary 通过 5 封受控邮件，证明过滤、静态/派生准入、两条真实 Journal Observation、Seen 不变及冷重开不重投。126 STATUS / EXAMINE 均不提供 UIDNEXT，不能建立基线；用户明确其兼容另开一轮，I5 双账号收件延期。故障与独立复核裁决、全部兼容和实际收件证据记录在[准入方案第 8 节](imap-email-auto-display-admission-design.md#8-2026-10-07-施工与验收记录)。本轮不切换或升级长期角色实例。
+首轮 Debug 非 Live 全集 1907 passed / 2 skipped / 0 failed，Release 针对性回归 379 passed / 0 failed；QQ 独立真实 canary 通过 5 封受控邮件。首轮 126 缺失 UIDNEXT 的阻断保留在[准入方案第 8 节](imap-email-auto-display-admission-design.md#8-2026-10-07-施工与验收记录)。
+
+后续 126 适配复用最高现存 UID 作为独立扫描上界，保持真实 nullable UIDNEXT；receiver 与 rebaseline 共用 `ReadScanUpperUidAsync`，后者改用 `--new-cursor`。Release 非 Live 全集 **1963 passed / 4 skipped / 0 failed**，35 个真实 TLS 协议 case 通过。双账号真实 canary **1 passed / 0 failed，183 秒**：6 次 SMTP 接受、6 个新 UID，3 次 cursor-only 过滤、3 条 Observed / exact Journal proof、6 次 Seen 不变及冷重开不重投/不重发；QQ 原生 next 与 126 fallback 都实际跑通。因此 I5 双账号延期已解除，详见[准入方案第 9 节](imap-email-auto-display-admission-design.md#9-126-缺失-uidnext-的适配)。验证仍为隔离实例与确定性 completion/extraction，没有切换或升级长期角色实例，也不声称验证真实 LLM 判断/回复。

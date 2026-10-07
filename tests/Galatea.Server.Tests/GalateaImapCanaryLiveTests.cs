@@ -24,8 +24,9 @@ using Xunit.Abstractions;
 namespace Atelia.Galatea.Server.Tests;
 
 // Opt in with ATELIA_GALATEA_IMAP_CANARY_CONFIG. No private file is opened by
-// ordinary test runs. These canaries send five or six messages between the two
-// explicitly controlled addresses, never retries SMTP, and never reads old UIDs.
+// ordinary test runs. Receiving canaries send five or six controlled messages,
+// never retry SMTP, and never download old messages. Independent probes inspect
+// only bounded UID metadata, never message content.
 public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
     private static readonly TimeSpan NetworkDeadline = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ArrivalDeadline = TimeSpan.FromSeconds(120);
@@ -90,6 +91,118 @@ public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
         Require(!failed, "IMAP_METADATA_PROBE_FAILED");
     }
 
+    // Only UID metadata: two independent selections and at most the last two
+    // UID summaries. Sequence indexes are transient probe selectors, never IDs.
+    // This probe does not establish persistent-UID support or a receive baseline.
+    [ImapCanaryFact]
+    [Trait("Category", "GalateaImapLive")]
+    public async Task ReadOnlyUidHorizonProbe_ReportsStableTailAcrossSessions() {
+        IReadOnlyDictionary<string, GalateaEmailAccount> accounts;
+        try {
+            string? path = Environment.GetEnvironmentVariable(ConfigVariable);
+            Require(!string.IsNullOrWhiteSpace(path), "CANARY_CONFIG_NOT_SET");
+            accounts = ReadAccounts(path!);
+        }
+        catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)) {
+            throw new InvalidOperationException("IMAP_HORIZON_CONFIG_FAILED exceptionType=" + exception.GetType().FullName);
+        }
+        bool failed = false;
+        foreach (string id in new[] { "gpt", "cyber" }) {
+            UidHorizonSnapshot? previousSession = null;
+            for (int sessionNumber = 1; sessionNumber <= 2; sessionNumber++) {
+                using var deadline = new CancellationTokenSource(NetworkDeadline);
+                using var client = GalateaNetworkImapTransport.CreateReadOnlyClient(checked((int)NetworkDeadline.TotalMilliseconds));
+                string stage = "IMAP_CONNECT_FAILED";
+                int? tailSummaryCount = null;
+                string tailProbeMode = "not-selected";
+                try {
+                    GalateaEmailAccount account = accounts[id];
+                    await client.ConnectAsync(account.Imap!.Host, account.Imap.Port,
+                        account.Imap.TlsMode == "implicit" ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls,
+                        deadline.Token);
+                    stage = "IMAP_AUTH_FAILED";
+                    await client.AuthenticateAsync(account.Address, account.AuthorizationCode, deadline.Token);
+                    if (client.Capabilities.HasFlag(ImapCapabilities.Id)) {
+                        stage = "IMAP_ID_FAILED";
+                        await client.IdentifyAsync(new ImapImplementation { Name = "Galatea", Version = "1" }, deadline.Token);
+                    }
+                    stage = "IMAP_STATUS_FAILED";
+                    await client.Inbox.StatusAsync(StatusItems.UidValidity | StatusItems.UidNext, deadline.Token);
+                    uint statusUidValidity = client.Inbox.UidValidity;
+                    uint? statusUidNext = client.Inbox.UidNext is { IsValid: true } next ? next.Id : null;
+                    stage = "IMAP_EXAMINE_FAILED";
+                    // The diagnostic deliberately observes missing native UIDNEXT.
+                    // It does not invoke the production baseline-selection helper.
+                    await client.Inbox.OpenAsync(FolderAccess.ReadOnly, deadline.Token);
+                    uint examineUidValidity = client.Inbox.UidValidity;
+                    uint? examineUidNext = client.Inbox.UidNext is { IsValid: true } after ? after.Id : null;
+                    int examineMessageCount = client.Inbox.Count;
+                    uint? tailUid = null, previousTailUid = null;
+                    int lastTwoSummaryCount = 0;
+                    tailProbeMode = examineUidNext is null ? "highest-uid-fallback" : "native-next-sequence-tail";
+                    if (examineMessageCount > 0) {
+                        if (examineUidNext is null) {
+                            stage = "IMAP_TAIL_UID_FETCH_FAILED";
+                            // Only the missing-native path requires this range.
+                            var tailSummaries = await client.Inbox.FetchAsync(
+                                new UniqueIdRange(UniqueId.MaxValue, UniqueId.MaxValue),
+                                new FetchRequest(MessageSummaryItems.UniqueId), deadline.Token);
+                            tailSummaryCount = tailSummaries.Count;
+                            Require(tailSummaryCount == 1 && tailSummaries[0].UniqueId.IsValid,
+                                "IMAP_TAIL_UID_RESULT_INVALID");
+                            tailUid = tailSummaries[0].UniqueId.Id;
+                        }
+                        stage = "IMAP_LAST_TWO_UID_FETCH_FAILED";
+                        int minimumIndex = Math.Max(0, examineMessageCount - 2);
+                        var lastTwo = await client.Inbox.FetchAsync(minimumIndex, examineMessageCount - 1,
+                            new FetchRequest(MessageSummaryItems.UniqueId), deadline.Token);
+                        lastTwoSummaryCount = lastTwo.Count;
+                        Require(lastTwo.Count == examineMessageCount - minimumIndex
+                            && lastTwo.All(summary => summary.UniqueId.IsValid
+                                && summary.Index >= minimumIndex && summary.Index < examineMessageCount),
+                            "IMAP_LAST_TWO_UID_RESULT_INVALID");
+                        var ordered = lastTwo.OrderBy(summary => summary.Index).ToArray();
+                        Require(ordered.Select(summary => summary.Index).Distinct().Count() == ordered.Length
+                            && (tailUid is null || ordered[^1].UniqueId.Id == tailUid),
+                            "IMAP_TAIL_UID_CHANGED_DURING_PROBE");
+                        tailUid = ordered[^1].UniqueId.Id;
+                        if (ordered.Length == 2) {
+                            previousTailUid = ordered[0].UniqueId.Id;
+                            Require(previousTailUid < tailUid, "IMAP_LAST_TWO_UID_ORDER_INVALID");
+                        }
+                    }
+                    Require(client.Inbox.UidValidity == examineUidValidity && client.Inbox.Count == examineMessageCount,
+                        "IMAP_NAMESPACE_CHANGED_DURING_PROBE");
+                    ulong? tailUidGap = previousTailUid is { } earlier && tailUid is { } latest
+                        ? (ulong)latest - earlier : null;
+                    ulong? missingUidSlotsBetweenLastTwo = tailUidGap is { } gap ? gap - 1 : null;
+                    var current = new UidHorizonSnapshot(examineUidValidity, examineMessageCount, tailUid, previousTailUid);
+                    bool? tailStableAcrossSessions = previousSession is null ? null
+                        : previousSession.UidValidity == current.UidValidity && previousSession.TailUid == current.TailUid;
+                    bool? lastTwoStableAcrossSessions = previousSession is null ? null : previousSession == current;
+                    output.WriteLine(JsonSerializer.Serialize(new {
+                        characterId = id, sessionNumber, statusUidValidity, statusUidNext,
+                        examineUidValidity, examineUidNext, examineMessageCount, tailUid, previousTailUid,
+                        tailUidGap, missingUidSlotsBetweenLastTwo, tailSummaryCount, lastTwoSummaryCount,
+                        tailProbeMode, tailStableAcrossSessions, lastTwoStableAcrossSessions,
+                        uidPersistence = "not-observable", code = "IMAP_UID_HORIZON_OBSERVED"
+                    }));
+                    previousSession = current;
+                }
+                catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)) {
+                    failed = true;
+                    string code = exception is CanaryFailure failure ? failure.Code
+                        : exception is OperationCanceledException ? "IMAP_HORIZON_TIMEOUT" : stage;
+                    output.WriteLine(JsonSerializer.Serialize(new {
+                        characterId = id, sessionNumber, code, tailProbeMode, tailSummaryCount,
+                        exceptionType = exception.GetType().FullName
+                    }));
+                }
+            }
+        }
+        Require(!failed, "IMAP_UID_HORIZON_PROBE_FAILED");
+    }
+
     [ImapCanaryFact]
     [Trait("Category", "GalateaImapLive")]
     public Task ControlledMailboxes_AdmissionAndRuntimeObservation_AreDurableAndReadOnly() =>
@@ -100,15 +213,21 @@ public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
     public Task QqOnlyReceiver_AdmissionAndRuntimeObservation_AreDurableAndReadOnly() =>
         RunCanaryAsync(receiveOnSecondAccount: false);
 
-    private async Task RunCanaryAsync(bool receiveOnSecondAccount) {
+    [ImapCanaryFact]
+    [Trait("Category", "GalateaImapLive")]
+    public Task DualReceiversAfterUidHorizonAdaptation_AdmissionAndRuntimeObservation_AreDurableAndReadOnly() =>
+        RunCanaryAsync(receiveOnSecondAccount: true, guardName: "ledger-dual-horizon.json",
+            receiverMode: "dual-receiver-native-or-observed-tail-horizon");
+
+    private async Task RunCanaryAsync(bool receiveOnSecondAccount, string? guardName = null, string? receiverMode = null) {
         string? configPath = Environment.GetEnvironmentVariable(ConfigVariable);
         Require(!string.IsNullOrWhiteSpace(configPath), "CANARY_CONFIG_NOT_SET");
 
         // A durable attempt guard makes accidental reruns explicit. Failed or
         // uncertain sends require examining this ledger before preparing a new run.
-        string ledgerName = receiveOnSecondAccount ? "ledger.json" : "ledger-qq.json";
+        string ledgerName = guardName ?? (receiveOnSecondAccount ? "ledger.json" : "ledger-qq.json");
         using var ledger = new CanaryLedger(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(configPath!))!, ledgerName),
-            receiveOnSecondAccount ? "dual-receiver" : "gpt-only-receiver");
+            receiverMode ?? (receiveOnSecondAccount ? "dual-receiver" : "gpt-only-receiver"));
         try {
             IReadOnlyDictionary<string, GalateaEmailAccount> accounts = ReadAccounts(configPath!);
             var completion = new NoReplyCompletion();
@@ -201,8 +320,12 @@ public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
                     ? cyber.DelegationHandle!.Store.ReadImapCheckpoint(host.Imap.ReferenceFor("cyber")!) : null;
                 await CaptureAndSendAsync(web, gpt, accounts["cyber"].Address, marker, ledger);
                 if (receiveOnSecondAccount) {
-                    var delivered = await WaitForNewUidAsync(accounts["cyber"], cyberCheckpoint!.ScannedThroughUid, marker);
-                    ledger.Record("arrived", "cyber", "IMAP_NEW_UID", delivered.Uid, delivered.Seen);
+                    uint previousCyberUid = cyberCheckpoint!.ScannedThroughUid;
+                    var delivered = await WaitForNewUidAsync(accounts["cyber"], previousCyberUid, marker);
+                    ledger.Record("arrived", "cyber", "IMAP_NEW_UID", delivered.Uid, delivered.Seen,
+                        previousScannedUid: previousCyberUid,
+                        uidGap: (ulong)delivered.Uid - previousCyberUid,
+                        observedScanUpperUid: delivered.ObservedScanUpperUid);
                     await ProcessAsync(web, "cyber", delivered.Uid, allowed: true);
                     await VerifySeenAsync(accounts["cyber"], delivered, "cyber");
                 }
@@ -255,7 +378,9 @@ public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
                 ledger.Record("smtp-result", from, result.Code ?? "SMTP_NO_CODE");
                 Require(result.State == GalateaSmtpMailState.ProviderAccepted, "CANARY_CLIENT_SEND_NOT_ACCEPTED");
                 var delivered = await WaitForNewUidAsync(accounts[to], previous, marker);
-                ledger.Record("arrived", to, "IMAP_NEW_UID", delivered.Uid, delivered.Seen);
+                ledger.Record("arrived", to, "IMAP_NEW_UID", delivered.Uid, delivered.Seen,
+                    previousScannedUid: previous, uidGap: (ulong)delivered.Uid - previous,
+                    observedScanUpperUid: delivered.ObservedScanUpperUid);
                 await ProcessAsync(web, to, delivered.Uid, allowed);
                 await VerifySeenAsync(accounts[to], delivered, to);
             }
@@ -425,16 +550,37 @@ public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
         using var deadline = new CancellationTokenSource(ArrivalDeadline);
         while (true) {
             using var client = await OpenReadOnlyAsync(account, deadline.Token);
-            uint next = client.Inbox.UidNext?.Id ?? throw new CanaryFailure("CANARY_UIDNEXT_MISSING");
-            Require(next > previous, "CANARY_UIDNEXT_REGRESSED");
-            uint upper = next - 1;
+            uint validity = client.Inbox.UidValidity;
+            Require(validity != 0, "CANARY_INVALID_UID_VALIDITY");
+            uint upper = await GalateaNetworkImapTransport.ReadScanUpperUidAsync(client, deadline.Token);
+            Require(client.Inbox.UidValidity == validity, "CANARY_UID_VALIDITY_CHANGED");
             if (upper > previous) {
-                Require((ulong)upper - previous <= GalateaImapBounds.MaximumSearchUidSpan, "CANARY_NEW_UID_WINDOW_TOO_LARGE");
+                // Locate the unique controlled marker only in a bounded newest
+                // window. The real poller still processes all preceding windows.
+                uint first = checked((uint)Math.Max((ulong)previous + 1,
+                    (ulong)upper >= GalateaImapBounds.MaximumSearchUidSpan
+                        ? (ulong)upper - GalateaImapBounds.MaximumSearchUidSpan + 1 : 1));
+                int count = checked((int)((ulong)upper - first + 1));
+                Require(first != 0 && count <= GalateaImapBounds.MaximumSearchUidSpan,
+                    "CANARY_INVALID_UID_RANGE");
+                // A range ending at uint.MaxValue becomes '*'; the bounded list
+                // preserves the numeric endpoint if that message is expunged.
+                var requested = new UniqueId[count];
+                for (int index = 0; index < requested.Length; index++) {
+                    requested[index] = new UniqueId(checked(first + (uint)index));
+                }
                 var uids = await client.Inbox.SearchAsync(SearchQuery.And(
-                    SearchQuery.Uids(new UniqueIdRange(new UniqueId(checked(previous + 1)), new UniqueId(upper))),
+                    SearchQuery.Uids(requested),
                     SearchQuery.SubjectContains(marker)), deadline.Token);
+                Require(client.Inbox.UidValidity == validity, "CANARY_UID_VALIDITY_CHANGED");
+                Require(uids.All(uid => uid.IsValid && uid.Id >= first && uid.Id <= upper),
+                    "CANARY_INVALID_SEARCH_RESULT");
                 Require(uids.Count <= 1, "CANARY_DUPLICATE_CONTROLLED_DELIVERY");
-                if (uids.Count == 1) { return new(uids[0].Id, await FlagsAsync(client, uids[0], deadline.Token)); }
+                if (uids.Count == 1) {
+                    bool seen = await FlagsAsync(client, uids[0], deadline.Token);
+                    Require(client.Inbox.UidValidity == validity, "CANARY_UID_VALIDITY_CHANGED");
+                    return new(uids[0].Id, seen, upper);
+                }
             }
             await Task.Delay(TimeSpan.FromSeconds(2), deadline.Token);
         }
@@ -489,7 +635,8 @@ public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
         }
     }
     private sealed class CanaryFailure(string code) : InvalidOperationException(code) { internal string Code { get; } = code; }
-    private sealed record DeliveredMessage(uint Uid, bool Seen);
+    private sealed record DeliveredMessage(uint Uid, bool Seen, uint ObservedScanUpperUid);
+    private sealed record UidHorizonSnapshot(uint UidValidity, int MessageCount, uint? TailUid, uint? PreviousTailUid);
 
     private sealed class CapturedContactExtractor(string recipient, string marker, string exactAction) : IOutboundMailExtractor {
         public string ContractId => "atelia.galatea.imap-canary-contact.v1";
@@ -545,9 +692,11 @@ public sealed class GalateaImapCanaryLiveTests(ITestOutputHelper output) {
         internal void Phase(string phase) { CurrentPhase = phase; Save(); }
         internal void Record(string step, string characterId, string code, uint? uid = null, bool? seen = null,
             string? messageId = null, string? observationAddress = null, string? proofSha256 = null,
-            string? dispatchId = null, string? sourceActionAddress = null) {
+            string? dispatchId = null, string? sourceActionAddress = null, uint? previousScannedUid = null,
+            ulong? uidGap = null, uint? observedScanUpperUid = null) {
             _events.Add(new { phase = CurrentPhase, step, characterId, code, uid, seen,
-                messageId, observationAddress, proofSha256, dispatchId, sourceActionAddress });
+                messageId, observationAddress, proofSha256, dispatchId, sourceActionAddress,
+                previousScannedUid, uidGap, observedScanUpperUid });
             Save();
         }
         internal void Complete() { _state = "Completed"; CurrentPhase = "complete"; Save(); }

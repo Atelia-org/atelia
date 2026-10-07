@@ -20,6 +20,8 @@ public sealed class GalateaNetworkImapTests {
         await using var connection = await transport.OpenAsync(account, default);
         Assert.Equal(41u, connection.UidValidity);
         Assert.Equal(2u, connection.UidNext);
+        Assert.Equal(1u, await connection.ReadScanUpperUidAsync(default));
+        Assert.DoesNotContain(server.Commands, command => command.Contains("4294967295:*", StringComparison.Ordinal));
         Assert.Equal(new uint[] { 1 }, await connection.SearchUidsAsync(1, 256, default));
         var raw = await connection.ReadRawAsync(1, default);
         Assert.Null(raw.RejectedCode);
@@ -49,6 +51,7 @@ public sealed class GalateaNetworkImapTests {
         // EXISTS is one and the only actual message has UID one. The exact
         // STATUS value must survive; neither count nor maximum UID proves it.
         Assert.Equal(101u, connection.UidNext);
+        Assert.Equal(100u, await connection.ReadScanUpperUidAsync(default));
         Assert.Contains(server.Commands, command => command.Contains(" STATUS ", StringComparison.Ordinal)
             && command.Contains("UIDVALIDITY", StringComparison.Ordinal) && command.Contains("UIDNEXT", StringComparison.Ordinal));
         Assert.DoesNotContain(server.Commands, command => command.Contains(" UID SEARCH ", StringComparison.Ordinal)
@@ -56,7 +59,6 @@ public sealed class GalateaNetworkImapTests {
     }
 
     [Theory]
-    [InlineData("status-missing-uidnext", "IMAP_INVALID_UID_METADATA")]
     [InlineData("status-missing-validity", "IMAP_INVALID_UID_METADATA")]
     [InlineData("status-rejected", "IMAP_STATUS_FAILED")]
     [InlineData("examine-missing-validity", "IMAP_INVALID_UID_METADATA")]
@@ -80,6 +82,82 @@ public sealed class GalateaNetworkImapTests {
         var account = Account(server, "implicit");
         await using var connection = await new GalateaNetworkImapTransport(Config(account), server.Certificate).OpenAsync(account, default);
         Assert.Equal(3u, connection.UidNext);
+    }
+
+    [Fact]
+    public async Task StatusOmitsUidNext_ExamineCanSupplyNativeValue() {
+        await using var server = new FakeImapServer("implicit", "status-missing-uidnext");
+        var account = Account(server, "implicit");
+        await using var connection = await new GalateaNetworkImapTransport(Config(account), server.Certificate).OpenAsync(account, default);
+        Assert.Equal(2u, connection.UidNext);
+        Assert.Equal(1u, await connection.ReadScanUpperUidAsync(default));
+        Assert.DoesNotContain(server.Commands, command => command.Contains(" UID FETCH ", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("implicit")]
+    [InlineData("starttls")]
+    public async Task MissingUidNext_UsesOnlyHighestExistingUidWithoutInventingNext(string tlsMode) {
+        await using var server = new FakeImapServer(tlsMode, "tail-normal");
+        var account = Account(server, tlsMode);
+        await using var connection = await new GalateaNetworkImapTransport(Config(account), server.Certificate).OpenAsync(account, default);
+        Assert.Null(connection.UidNext);
+        // The mailbox contains UID five and UID one thousand. Max:* selects
+        // the highest alone; it is unrelated to the mailbox's message count.
+        Assert.Equal(1000u, await connection.ReadScanUpperUidAsync(default));
+        Assert.Null(connection.UidNext);
+        Assert.Contains(server.Commands, command => command.EndsWith(" UID FETCH 4294967295:* UID", StringComparison.Ordinal));
+        Assert.DoesNotContain(server.Commands, command => command.Contains("BODY", StringComparison.Ordinal)
+            || command.Contains("RFC822", StringComparison.Ordinal) || command.Contains(" UID SEARCH ", StringComparison.Ordinal)
+            || command.Contains(" STORE ", StringComparison.Ordinal) || command.Contains(" EXPUNGE", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("tail-empty", 0u)]
+    [InlineData("tail-empty-after-expunge", 0u)]
+    [InlineData("tail-maximum", uint.MaxValue)]
+    [InlineData("tail-native-appeared", 1999u)]
+    public async Task HighestExistingBoundary_CanBeExplicitlyEmptyOrMaximumUid(string mode, uint expected) {
+        await using var server = new FakeImapServer("implicit", mode);
+        var account = Account(server, "implicit");
+        await using var connection = await new GalateaNetworkImapTransport(Config(account), server.Certificate).OpenAsync(account, default);
+        Assert.Equal(expected, await connection.ReadScanUpperUidAsync(default));
+        if (mode == "tail-native-appeared") { Assert.Equal(2000u, connection.UidNext); }
+        else { Assert.Null(connection.UidNext); }
+    }
+
+    [Theory]
+    [InlineData("tail-nonempty-missing", "IMAP_INVALID_TAIL_UID")]
+    [InlineData("tail-invalid-uid", "IMAP_INVALID_TAIL_UID")]
+    [InlineData("tail-unsolicited-old", "IMAP_INVALID_TAIL_UID")]
+    [InlineData("tail-multiple", "IMAP_INVALID_TAIL_UID")]
+    [InlineData("tail-duplicate", "IMAP_INVALID_TAIL_UID")]
+    [InlineData("tail-arrival-race", "IMAP_INVALID_TAIL_UID")]
+    [InlineData("tail-empty-arrival-race", "IMAP_INVALID_TAIL_UID")]
+    [InlineData("tail-validity-changed", "IMAP_UIDVALIDITY_CHANGED")]
+    [InlineData("tail-native-inconsistent", "IMAP_UIDNEXT_REGRESSED")]
+    [InlineData("tail-rejected", "IMAP_TAIL_UID_FAILED")]
+    public async Task AmbiguousHighestExistingBoundary_FailsWithoutBodyAccess(string mode, string code) {
+        await using var server = new FakeImapServer("implicit", mode);
+        var account = Account(server, "implicit");
+        await using var connection = await new GalateaNetworkImapTransport(Config(account), server.Certificate).OpenAsync(account, default);
+        var exception = await Assert.ThrowsAsync<GalateaImapReadException>(() => connection.ReadScanUpperUidAsync(default));
+        Assert.Equal(code, exception.Code);
+        Assert.DoesNotContain(server.Commands, command => command.Contains("BODY", StringComparison.Ordinal)
+            || command.Contains("RFC822", StringComparison.Ordinal) || command.Contains(" UID SEARCH ", StringComparison.Ordinal));
+        Assert.DoesNotContain("SECRET_MARKER", exception.ToString());
+    }
+
+    [Fact]
+    public async Task MaximumNumericSearchEndpoint_RemainsBoundedAfterHighestMessageIsDeleted() {
+        await using var server = new FakeImapServer("implicit", "tail-maximum-then-deleted");
+        var account = Account(server, "implicit");
+        await using var connection = await new GalateaNetworkImapTransport(Config(account), server.Certificate).OpenAsync(account, default);
+        Assert.Equal(uint.MaxValue, await connection.ReadScanUpperUidAsync(default));
+        Assert.Empty(await connection.SearchUidsAsync(uint.MaxValue - 9, uint.MaxValue, default));
+        Assert.Contains(server.Commands, command => command.EndsWith(" UID SEARCH UID 4294967286:4294967295", StringComparison.Ordinal));
+        Assert.DoesNotContain(server.Commands, command => command.Contains(" UID SEARCH ", StringComparison.Ordinal)
+            && command.Contains('*'));
     }
 
     [Theory]
@@ -233,7 +311,7 @@ public sealed class GalateaNetworkImapTests {
                             await Reply(tag + " NO SECRET_MARKER /synthetic/private/path");
                             continue;
                         }
-                        string fields = mode == "status-missing-uidnext" ? "UIDVALIDITY 41"
+                        string fields = mode == "status-missing-uidnext" || mode.StartsWith("tail-", StringComparison.Ordinal) ? "UIDVALIDITY 41"
                             : mode == "status-missing-validity" ? "UIDNEXT 2"
                             : "UIDVALIDITY 41 UIDNEXT " + (mode == "examine-next-regressed" ? "3"
                                 : mode == "examine-missing-uidnext" ? "101" : "2");
@@ -242,12 +320,14 @@ public sealed class GalateaNetworkImapTests {
                     else if (command.StartsWith("EXAMINE ", StringComparison.Ordinal)) {
                         Assert.Contains("INBOX", command);
                         await Reply("* FLAGS (\\Seen)");
-                        await Reply("* 1 EXISTS");
+                        int count = mode is "tail-empty" or "tail-empty-arrival-race" ? 0
+                            : mode.StartsWith("tail-", StringComparison.Ordinal) ? 2 : 1;
+                        await Reply("* " + count + " EXISTS");
                         await Reply("* 0 RECENT");
                         if (mode != "examine-missing-validity") {
                             await Reply("* OK [UIDVALIDITY " + (mode == "examine-validity-changed" ? "42" : "41") + "] stable");
                         }
-                        if (mode != "examine-missing-uidnext") {
+                        if (mode != "examine-missing-uidnext" && !mode.StartsWith("tail-", StringComparison.Ordinal)) {
                             await Reply("* OK [UIDNEXT " + (mode == "examine-next-increased" ? "3" : "2") + "] next");
                         }
                         await Reply(tag + " OK [READ-ONLY] examined");
@@ -256,7 +336,37 @@ public sealed class GalateaNetworkImapTests {
                     else if (command.StartsWith("UID SEARCH ", StringComparison.Ordinal)) {
                         Assert.StartsWith("UID SEARCH UID ", command);
                         Assert.DoesNotContain("*", command);
-                        await Reply("* SEARCH " + (mode == "search-outside-range" ? "500" : "1"));
+                        if (mode == "tail-maximum-then-deleted") {
+                            await Reply("* 2 EXPUNGE");
+                            await Reply("* SEARCH");
+                        }
+                        else { await Reply("* SEARCH " + (mode == "search-outside-range" ? "500" : "1")); }
+                    }
+                    else if (command == "UID FETCH 4294967295:* UID") {
+                        Assert.StartsWith("tail-", mode);
+                        if (mode == "tail-rejected") {
+                            await Reply(tag + " NO SECRET_MARKER /synthetic/private/path");
+                            continue;
+                        }
+                        if (mode is "tail-empty" or "tail-nonempty-missing") { }
+                        else if (mode == "tail-empty-arrival-race") { await Reply("* 1 EXISTS"); }
+                        else if (mode == "tail-empty-after-expunge") {
+                            await Reply("* 2 EXPUNGE");
+                            await Reply("* 1 EXPUNGE");
+                        }
+                        else if (mode == "tail-invalid-uid") { await Reply("* 2 FETCH (FLAGS (\\Seen))"); }
+                        else if (mode == "tail-unsolicited-old") { await Reply("* 1 FETCH (UID 5)"); }
+                        else {
+                            if (mode is "tail-multiple" or "tail-duplicate") {
+                                await Reply("* 1 FETCH (UID " + (mode == "tail-duplicate" ? "1000" : "5") + ")");
+                            }
+                            await Reply("* 2 FETCH (UID " + (mode.StartsWith("tail-maximum", StringComparison.Ordinal) ? "4294967295" : "1000") + ")");
+                            if (mode == "tail-arrival-race") { await Reply("* 3 EXISTS"); }
+                            if (mode == "tail-validity-changed") { await Reply("* OK [UIDVALIDITY 42] changed"); }
+                            if (mode is "tail-native-appeared" or "tail-native-inconsistent") {
+                                await Reply("* OK [UIDNEXT " + (mode == "tail-native-appeared" ? "2000" : "3") + "] now available");
+                            }
+                        }
                     }
                     else if (command.StartsWith("UID FETCH 1 ", StringComparison.Ordinal)) {
                         if (command.Contains("BODY.PEEK", StringComparison.Ordinal)) {

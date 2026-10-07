@@ -355,4 +355,4 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 升级新增 checkpoint、external inbox 与准入 recipient 索引，保留旧 outbox/receipt/proof，不导入历史来信或重发旧 SMTP。完成后再启用 IMAP，并通过只读 inbound status 确认 baseline Ready 后寄新的受控测试信。使用隔离 store 做首次验证，长期实例接入另行核对。
 
-UIDVALIDITY 改变不会自动重置 cursor。停服备份后用 `operator rebaseline-imap --config /absolute/config.json --character alice` 只读预览；apply 必须携带 `--expected-validity`、`--expected-cursor`、`--expected-revision`、`--new-validity`、`--new-uidnext` 五个预览值与 `--apply`。该操作 CAS 更新基线并跳过新 namespace 当时已有邮件，保留旧 inbox；不会重投旧陌生信。详细合同见[V16 root config](../SessionJournal/current/contracts/galatea-root-config-v16.md)。
+UIDVALIDITY 改变不会自动重置 cursor。停服备份后用 `operator rebaseline-imap --config /absolute/config.json --character alice` 只读预览；apply 必须携带 `--expected-validity`、`--expected-cursor`、`--expected-revision`、`--new-validity`、`--new-cursor` 五个预览值与 `--apply`。`newCursor` 为真实 UIDNEXT−1，或 UIDNEXT 缺失时只读取得的最高现存 UID；明确空箱允许 0。该操作 CAS 更新基线并跳过新 namespace 当时已有邮件，保留旧 inbox；不会重投旧陌生信。详细合同见[V16 root config](../SessionJournal/current/contracts/galatea-root-config-v16.md)。

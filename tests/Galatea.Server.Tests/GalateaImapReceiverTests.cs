@@ -36,6 +36,145 @@ public sealed class GalateaImapReceiverTests {
     }
 
     [Fact]
+    public async Task MissingUidNext_BaselinesCurrentTailAndImportsFutureMailAcrossMetadataSources() {
+        using var fixture = new Fixture();
+        var connection = new FakeConnection(41, null);
+        connection.Messages[100] = Plain("friend@example.test", "history");
+        Assert.Equal("IMAP_BASELINE_ESTABLISHED", (await fixture.Receive(connection)).Code);
+        Assert.Equal(100u, fixture.Checkpoint.ScannedThroughUid);
+        Assert.Null(connection.UidNext);
+        Assert.Empty(connection.Searches);
+        Assert.Empty(connection.Reads);
+        fixture.Reopen();
+        connection.Messages[101] = Plain("friend@example.test", "future with native metadata");
+        connection.UidNext = 102;
+        Assert.Equal(1, (await fixture.Receive(connection, ["friend@example.test"])).ImportedCount);
+        fixture.Reopen();
+        connection.Messages[102] = Plain("friend@example.test", "future without native metadata");
+        connection.UidNext = null;
+        Assert.Equal(1, (await fixture.Receive(connection, ["friend@example.test"])).ImportedCount);
+        Assert.Equal(new uint[] { 101, 102 }, connection.Reads);
+        Assert.Equal(102u, fixture.Checkpoint.ScannedThroughUid);
+        Assert.Null(fixture.Checkpoint.BlockedCode);
+        Assert.Equal(0, (await fixture.Receive(connection)).ImportedCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeletedHighestExistingUid_KeepsCursorAndDoesNotSearchOrBlock(bool empty) {
+        using var fixture = new Fixture();
+        fixture.Baseline(100);
+        var before = fixture.Checkpoint;
+        var connection = new FakeConnection(41, null);
+        if (!empty) { connection.Messages[90] = Plain("friend@example.test", "older than cursor"); }
+        Assert.Equal("IMAP_READY", (await fixture.Receive(connection)).Code);
+        Assert.Equal(before, fixture.Checkpoint);
+        Assert.Empty(connection.Searches);
+        Assert.Empty(connection.Reads);
+        fixture.Reopen();
+        Assert.Equal(before, fixture.Checkpoint);
+    }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(uint.MaxValue)]
+    public async Task MissingUidNext_BaselinesExplicitEmptyOrMaximumUidWithoutArithmeticOverflow(uint upper) {
+        using var fixture = new Fixture();
+        var connection = new FakeConnection(41, null);
+        if (upper != 0) { connection.Messages[upper] = Plain("friend@example.test", "history at maximum UID"); }
+        Assert.Equal("IMAP_BASELINE_ESTABLISHED", (await fixture.Receive(connection)).Code);
+        Assert.Equal(upper, fixture.Checkpoint.ScannedThroughUid);
+        fixture.Reopen();
+        Assert.Equal("IMAP_READY", (await fixture.Receive(connection)).Code);
+        Assert.Empty(connection.Searches);
+        Assert.Empty(connection.Reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NamespaceChangesWhileReadingUpper_NeverMixOldValidityWithNewBoundary(bool existingBaseline) {
+        using var fixture = new Fixture();
+        if (existingBaseline) { fixture.Baseline(10); }
+        var connection = new FakeConnection(41, null) { UidValidityAfterUpperRead = 42 };
+        connection.Messages[100] = Plain("friend@example.test", "not admitted");
+        Assert.Equal("IMAP_UIDVALIDITY_CHANGED", (await fixture.Receive(connection)).Code);
+        if (existingBaseline) {
+            Assert.Equal("IMAP_UIDVALIDITY_CHANGED", fixture.Checkpoint.BlockedCode);
+            Assert.Equal(41u, fixture.Checkpoint.UidValidity);
+            Assert.Equal(10u, fixture.Checkpoint.ScannedThroughUid);
+        }
+        else { Assert.Null(fixture.Store.ReadImapCheckpoint(Reference)); }
+        Assert.Empty(connection.Searches);
+        Assert.Empty(connection.Reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeMetadataInconsistentWithReadUpper_NeverEstablishesOrAdvancesCursor(bool existingBaseline) {
+        using var fixture = new Fixture();
+        if (existingBaseline) { fixture.Baseline(10); }
+        var connection = new FakeConnection(41, null) { UidNextAfterUpperRead = 3 };
+        connection.Messages[100] = Plain("friend@example.test", "not admitted");
+        Assert.Equal("IMAP_UIDNEXT_REGRESSED", (await fixture.Receive(connection)).Code);
+        if (existingBaseline) {
+            Assert.Equal("IMAP_UIDNEXT_REGRESSED", fixture.Checkpoint.BlockedCode);
+            Assert.Equal(10u, fixture.Checkpoint.ScannedThroughUid);
+        }
+        else { Assert.Null(fixture.Store.ReadImapCheckpoint(Reference)); }
+        Assert.Empty(connection.Searches);
+        Assert.Empty(connection.Reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeUidNextAppearingBelowSampledUpper_BlocksBeforeAdmittingMail(bool afterRead) {
+        using var fixture = new Fixture();
+        fixture.Baseline(100);
+        var connection = new FakeConnection(41, null) {
+            UidNextAfterSearch = afterRead ? null : 151,
+            UidNextAfterRead = afterRead ? 151u : null
+        };
+        connection.Messages[101] = Plain("friend@example.test", "must not be admitted");
+        connection.Messages[200] = Plain("friend@example.test", "tail establishes the upper bound");
+        Assert.Equal("IMAP_UIDNEXT_REGRESSED", (await fixture.Receive(connection, ["friend@example.test"])).Code);
+        Assert.Equal("IMAP_UIDNEXT_REGRESSED", fixture.Checkpoint.BlockedCode);
+        Assert.Equal(100u, fixture.Checkpoint.ScannedThroughUid);
+        Assert.Equal(0, fixture.Store.ReadImapInboxStatus().PendingCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeUidNextAppearingAboveSampledUpper_ContinuesNormally(bool afterRead) {
+        using var fixture = new Fixture();
+        fixture.Baseline(100);
+        var connection = new FakeConnection(41, null) {
+            UidNextAfterSearch = afterRead ? null : 201,
+            UidNextAfterRead = afterRead ? 201u : null
+        };
+        connection.Messages[101] = Plain("friend@example.test", "first");
+        connection.Messages[200] = Plain("friend@example.test", "tail");
+        Assert.Equal(2, (await fixture.Receive(connection, ["friend@example.test"])).ImportedCount);
+        Assert.Equal(200u, fixture.Checkpoint.ScannedThroughUid);
+        Assert.Null(fixture.Checkpoint.BlockedCode);
+    }
+
+    [Fact]
+    public async Task MaximumExistingUid_CanBeImportedWithoutIncrementingPastUintMaximum() {
+        using var fixture = new Fixture();
+        fixture.Baseline(uint.MaxValue - 1);
+        var connection = new FakeConnection(41, null);
+        connection.Messages[uint.MaxValue] = Plain("friend@example.test", "new mail at maximum UID");
+        Assert.Equal(1, (await fixture.Receive(connection, ["friend@example.test"])).ImportedCount);
+        Assert.Equal(uint.MaxValue, fixture.Checkpoint.ScannedThroughUid);
+        Assert.Equal((uint.MaxValue, uint.MaxValue), Assert.Single(connection.Searches));
+    }
+
+    [Fact]
     public async Task UnknownSenderInvalidBody_IsNeverDecodedOrPersisted_OnlyCursorMoves() {
         using var fixture = new Fixture();
         fixture.Baseline();
@@ -188,6 +327,7 @@ public sealed class GalateaImapReceiverTests {
         Assert.Equal(10u, fixture.Checkpoint.ScannedThroughUid);
         Assert.Equal(41u, fixture.Checkpoint.UidValidity);
         Assert.Empty(connection.Searches);
+        Assert.Equal(0, connection.UpperReads);
         fixture.Reopen();
         Assert.Equal(code, (await fixture.Receive(new FakeConnection(41, 20))).Code);
     }
@@ -251,6 +391,17 @@ public sealed class GalateaImapReceiverTests {
         internal uint? FailReadUid { get; init; }
         internal uint? UidNextAfterSearch { get; init; }
         internal uint? UidNextAfterRead { get; init; }
+        internal uint? UidValidityAfterUpperRead { get; init; }
+        internal uint? UidNextAfterUpperRead { get; init; }
+        internal int UpperReads { get; private set; }
+        public Task<uint> ReadScanUpperUidAsync(CancellationToken cancellationToken) {
+            cancellationToken.ThrowIfCancellationRequested();
+            UpperReads++;
+            uint upper = UidNext is { } native ? native - 1 : Messages.Keys.DefaultIfEmpty().Max();
+            if (UidValidityAfterUpperRead is { } validity) { UidValidity = validity; }
+            if (UidNextAfterUpperRead is { } next) { UidNext = next; }
+            return Task.FromResult(upper);
+        }
         public Task<IReadOnlyList<uint>> SearchUidsAsync(uint first, uint last, CancellationToken cancellationToken) {
             Searches.Add((first, last));
             IReadOnlyList<uint> result = MissingRead && Reads.Count != 0 && !StillPresentAfterMissingRead

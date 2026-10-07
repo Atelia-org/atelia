@@ -24,6 +24,7 @@ internal interface IGalateaImapTransport {
 internal interface IGalateaImapConnection : IAsyncDisposable {
     uint UidValidity { get; }
     uint? UidNext { get; }
+    Task<uint> ReadScanUpperUidAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<uint>> SearchUidsAsync(uint first, uint last, CancellationToken cancellationToken);
     Task<GalateaImapRawMessage> ReadRawAsync(uint uid, CancellationToken cancellationToken);
 }
@@ -99,7 +100,7 @@ internal sealed class GalateaNetworkImapTransport(
         }
         uint statusValidity = client.Inbox.UidValidity;
         uint? statusNext = client.Inbox.UidNext is { IsValid: true } next ? next.Id : null;
-        if (statusValidity == 0 || statusNext is null or 0) {
+        if (statusValidity == 0) {
             throw new GalateaImapReadException("IMAP_INVALID_UID_METADATA");
         }
         // Require EXAMINE to identify its own selected namespace, rather than
@@ -113,8 +114,48 @@ internal sealed class GalateaNetworkImapTransport(
         // MailKit 4.18.1 preserves the exact STATUS metadata when EXAMINE
         // omits it. If EXAMINE provides a new UIDNEXT it must be monotonic.
         uint? selectedNext = client.Inbox.UidNext is { IsValid: true } selected ? selected.Id : null;
-        if (selectedNext is null or 0) { throw new GalateaImapReadException("IMAP_INVALID_UID_METADATA"); }
-        if (selectedNext < statusNext) { throw new GalateaImapReadException("IMAP_UIDNEXT_REGRESSED"); }
+        if (statusNext is { } earlier && selectedNext is { } current && current < earlier) {
+            throw new GalateaImapReadException("IMAP_UIDNEXT_REGRESSED");
+        }
+    }
+
+    internal static async Task<uint> ReadScanUpperUidAsync(ImapClient client, CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        uint validity = client.Inbox.UidValidity;
+        if (!client.Inbox.IsOpen || validity == 0) { throw new GalateaImapReadException("IMAP_INVALID_UID_METADATA"); }
+        if (client.Inbox.UidNext is { IsValid: true } next) { return next.Id - 1; }
+        try {
+            // This is an observed scan boundary, not a prediction of the next
+            // assigned UID. Expunging the last message may reduce it.
+            // MailKit emits 4294967295:* for this range. Since * resolves to
+            // the highest existing UID, the reversed range contains only it.
+            var summaries = await client.Inbox.FetchAsync(new UniqueIdRange(UniqueId.MaxValue, UniqueId.MaxValue),
+                new FetchRequest(MessageSummaryItems.UniqueId), cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (client.Inbox.UidValidity != validity) {
+                throw new GalateaImapReadException("IMAP_UIDVALIDITY_CHANGED");
+            }
+            if (summaries.Count == 0 && client.Inbox.Count == 0) {
+                return client.Inbox.UidNext is { IsValid: true } emptyNext ? emptyNext.Id - 1 : 0;
+            }
+            if (summaries.Count != 1 || !summaries[0].UniqueId.IsValid || client.Inbox.Count == 0
+                || summaries[0].Index != client.Inbox.Count - 1) {
+                throw new GalateaImapReadException("IMAP_INVALID_TAIL_UID");
+            }
+            uint tailUid = summaries[0].UniqueId.Id;
+            if (client.Inbox.UidNext is { IsValid: true } appearedNext) {
+                if (appearedNext.Id <= tailUid) { throw new GalateaImapReadException("IMAP_UIDNEXT_REGRESSED"); }
+                return appearedNext.Id - 1;
+            }
+            return tailUid;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (GalateaImapReadException) { throw; }
+        catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)) {
+            throw new GalateaImapReadException("IMAP_TAIL_UID_FAILED");
+        }
     }
 
     private sealed class BoundedImapClient : ImapClient {
@@ -137,13 +178,23 @@ internal sealed class GalateaNetworkImapTransport(
         public uint UidValidity => client.Inbox.UidValidity;
         public uint? UidNext => client.Inbox.UidNext is { IsValid: true } next ? next.Id : null;
 
+        public Task<uint> ReadScanUpperUidAsync(CancellationToken cancellationToken) =>
+            GalateaNetworkImapTransport.ReadScanUpperUidAsync(client, cancellationToken);
+
         public async Task<IReadOnlyList<uint>> SearchUidsAsync(uint first, uint last, CancellationToken cancellationToken) {
             if (first == 0 || first > last || (ulong)last - first >= GalateaImapBounds.MaximumSearchUidSpan) {
                 throw new GalateaImapReadException("IMAP_INVALID_UID_RANGE");
             }
             try {
+                // UniqueIdRange serializes uint.MaxValue as '*'. An explicit,
+                // bounded list keeps the endpoint numeric even if the highest
+                // message is expunged between reading the bound and SEARCH.
+                var requested = new UniqueId[checked((int)((ulong)last - first + 1))];
+                for (int index = 0; index < requested.Length; index++) {
+                    requested[index] = new UniqueId(checked(first + (uint)index));
+                }
                 var result = await client.Inbox.SearchAsync(
-                    SearchQuery.Uids(new UniqueIdRange(new UniqueId(first), new UniqueId(last))),
+                    SearchQuery.Uids(requested),
                     cancellationToken).ConfigureAwait(false);
                 if (result.Count > GalateaImapBounds.MaximumSearchUidSpan
                     || result.Any(uid => !uid.IsValid || uid.Id < first || uid.Id > last)

@@ -7,7 +7,8 @@ internal static class GalateaImapRebaseline {
     internal static bool IsInvocation(string[] args) => args.Length >= 2
         && args[0] == "operator" && args[1] == "rebaseline-imap";
 
-    internal static async Task<int> RunAsync(string[] args, TextWriter output, TextWriter error) {
+    internal static async Task<int> RunAsync(string[] args, TextWriter output, TextWriter error,
+        IGalateaImapTransport? transportForTest = null) {
         try {
             Options options = Parse(args);
             GalateaConfig config = GalateaConfigLoader.Load(options.ConfigPath);
@@ -27,27 +28,38 @@ internal static class GalateaImapRebaseline {
             GalateaImapCheckpointSnapshot checkpoint = store.ReadImapCheckpoint(reference)
                 ?? throw new InvalidDataException("IMAP baseline has not been established.");
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(config.Imap.TimeoutSeconds));
-            var transport = new GalateaNetworkImapTransport(config.Imap);
+            IGalateaImapTransport transport = transportForTest ?? new GalateaNetworkImapTransport(config.Imap);
             await using IGalateaImapConnection connection = await transport.OpenAsync(account, deadline.Token)
                 .ConfigureAwait(false);
-            if (connection.UidValidity == 0 || connection.UidNext is not { } next || next == 0) {
+            uint newValidity = connection.UidValidity;
+            uint? nativeNextBefore = connection.UidNext;
+            if (newValidity == 0) {
                 throw new InvalidDataException("IMAP baseline metadata is unavailable.");
+            }
+            uint newCursor = await connection.ReadScanUpperUidAsync(deadline.Token).ConfigureAwait(false);
+            deadline.Token.ThrowIfCancellationRequested();
+            uint? nativeNextAfter = connection.UidNext;
+            if (connection.UidValidity != newValidity || nativeNextAfter == 0
+                || nativeNextAfter is { } nativeAfter && newCursor >= nativeAfter
+                || nativeNextBefore is { } nativeBefore
+                    && (nativeNextAfter is null || nativeNextAfter.Value < nativeBefore)) {
+                throw new InvalidDataException("IMAP namespace or UIDNEXT changed while reading its scan horizon.");
             }
             if (options.Apply) {
                 if (checkpoint.UidValidity != options.ExpectedValidity
                     || checkpoint.ScannedThroughUid != options.ExpectedCursor
                     || checkpoint.Revision != options.ExpectedRevision
-                    || connection.UidValidity != options.NewValidity
-                    || next != options.NewUidNext
+                    || newValidity != options.NewValidity
+                    || newCursor != options.NewCursor
                     || checkpoint.BlockedCode != "IMAP_UIDVALIDITY_CHANGED") {
                     throw new InvalidDataException("IMAP rebaseline preview is stale or checkpoint is not blocked.");
                 }
                 checkpoint = store.RebaselineImapCheckpoint(checkpoint,
-                    connection.UidValidity, next - 1, DateTimeOffset.UtcNow);
+                    newValidity, newCursor, DateTimeOffset.UtcNow);
                 output.WriteLine($"IMAP rebaseline applied: uidValidity={checkpoint.UidValidity}, cursor={checkpoint.ScannedThroughUid}, revision={checkpoint.Revision}. Existing messages are skipped; old inbox facts are retained.");
             }
             else {
-                output.WriteLine($"IMAP rebaseline preview: expectedValidity={checkpoint.UidValidity}, expectedCursor={checkpoint.ScannedThroughUid}, expectedRevision={checkpoint.Revision}, newValidity={connection.UidValidity}, newUidNext={next}, blockedCode={checkpoint.BlockedCode ?? "NONE"}.");
+                output.WriteLine($"IMAP rebaseline preview: expectedValidity={checkpoint.UidValidity}, expectedCursor={checkpoint.ScannedThroughUid}, expectedRevision={checkpoint.Revision}, newValidity={newValidity}, newCursor={newCursor}, blockedCode={checkpoint.BlockedCode ?? "NONE"}.");
                 output.WriteLine("No state changed. Stop the host and back up the store before applying. Apply requires all five preview values and skips existing messages in the new namespace.");
             }
             return 0;
@@ -60,7 +72,7 @@ internal static class GalateaImapRebaseline {
 
     private sealed record Options(string ConfigPath, string CharacterId, bool Apply,
         uint? ExpectedValidity, uint? ExpectedCursor, long? ExpectedRevision,
-        uint? NewValidity, uint? NewUidNext);
+        uint? NewValidity, uint? NewCursor);
 
     private static Options Parse(string[] args) {
         if (!IsInvocation(args)) { throw Usage(); }
@@ -69,7 +81,7 @@ internal static class GalateaImapRebaseline {
         for (int index = 2; index < args.Length; index++) {
             if (args[index] == "--apply" && !apply) { apply = true; continue; }
             if (args[index] is not ("--config" or "--character" or "--expected-validity"
-                or "--expected-cursor" or "--expected-revision" or "--new-validity" or "--new-uidnext")
+                or "--expected-cursor" or "--expected-revision" or "--new-validity" or "--new-cursor")
                 || index + 1 >= args.Length || !values.TryAdd(args[index], args[++index])) {
                 throw Usage();
             }
@@ -88,7 +100,7 @@ internal static class GalateaImapRebaseline {
         uint? validity = Number("--expected-validity", true);
         uint? cursor = Number("--expected-cursor", false);
         uint? newValidity = Number("--new-validity", true);
-        uint? next = Number("--new-uidnext", true);
+        uint? newCursor = Number("--new-cursor", false);
         long? revision = null;
         if (values.TryGetValue("--expected-revision", out var revisionText)) {
             if (!long.TryParse(revisionText, System.Globalization.NumberStyles.None,
@@ -96,13 +108,13 @@ internal static class GalateaImapRebaseline {
             revision = number;
         }
         bool complete = validity.HasValue && cursor.HasValue && revision.HasValue
-            && newValidity.HasValue && next.HasValue;
+            && newValidity.HasValue && newCursor.HasValue;
         if (apply ? !complete : values.Count != 2) { throw Usage(); }
-        return new(path, character, apply, validity, cursor, revision, newValidity, next);
+        return new(path, character, apply, validity, cursor, revision, newValidity, newCursor);
     }
 
     private static InvalidDataException Usage() => new(
         "Usage: operator rebaseline-imap --config <absolute-path> --character <id> "
         + "[--apply --expected-validity <uint> --expected-cursor <uint> --expected-revision <long> "
-        + "--new-validity <uint> --new-uidnext <uint>]. Default is read-only preview.");
+        + "--new-validity <uint> --new-cursor <uint>]. Default is read-only preview.");
 }
