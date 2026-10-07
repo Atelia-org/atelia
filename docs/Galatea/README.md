@@ -36,6 +36,7 @@
 | Galatea 专用 Codex 配置与手动 Provider 切换 | [Codex Home 设计](codex-home-isolation-design.md)：已完成辩证审阅，尚未实施；固定 Home、认证 gate 与首次迁移边界 |
 | 日常解除 Codex 绑定，让后续邮件进入新 session | [离线解绑设计](codex-session-reset-design.md)：尚未实施；保留队列/回信、显式结束旧任务等待、懒创建新 thread |
 | 角色间站内信 | [角色间站内信设计与实施记录](character-mail-design.md)：地址簿、提示词、可靠入箱、recovery 与实例迁移边界 |
+| 普通 email 外发 | [现有 SMTP 实现](smtp-outbound-phase2.md)、[每角色明文配置 MVP 方案](smtp-email-mvp-design-and-implementation.md)：后者已完成辩证审查，待实施；仅 SMTP，IMAP 收信延后 |
 | Character 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |
 | 每 Character 的自主激活间隔（待实施设计） | [自主激活间隔设计](per-character-autonomy-interval-design.md)：澄清 durable pulse、Ready reply 与周期自主活动的边界 |
