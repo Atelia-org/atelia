@@ -1,10 +1,10 @@
 # 每角色明文邮箱配置：SMTP 外发 MVP 设计与实施方案
 
-状态：方案已完成两轮辩证审查，可进入实施；产品改造尚未实施。日期：2026-10-07。代码基线：`g01/smtp-outbound` / `050c711f`。
+状态：S1–S3 产品改造与验收已落地；S4 真实双向发件待操作者填写授权码后验证。日期：2026-10-07。设计代码基线：`g01/smtp-outbound` / `050c711f`。实际检查与未覆盖项见第 9 节。
 
 最小路径是：操作者在 `config.json` 的每个角色中填写邮箱地址、明文授权码和 SMTP 参数；角色明确写出一封新信；宿主按原文捕获、入队并调用现有 SMTP 发送器；操作者能按 `dispatchId` 核验结果，并在受控收件箱实际收到信。复用冻结短回执，但不把它改成发送成功回执。
 
-本文是下一轮施工依据，不是已经完成的验收记录。本轮授权是撰写并完善方案，不修改产品代码、实际配置、数据库或运行服务，不发送邮件。
+第 1–8 节保留设计裁决与施工依据；第 9 节记录后续已授权的实施。本轮没有切换既有实例或迁移实际数据库；真实邮箱是否可发、是否实际收到，须独立验收，不能以离线测试替代。
 
 ## 1. 需求账本与范围
 
@@ -171,7 +171,7 @@ WHERE s.dispatch_id = :dispatch_id;
 
 ### S4：实例接入与受控真实收件验收
 
-本步骤在下一轮实施和实际接入授权范围内执行；本文不执行。实施前确定目标实例、角色、SMTP 参数与受控收件地址，核对服务商支持现有 AUTH LOGIN。确认 `connections.json` 已绑定 outbound-mail extractor；仅填 email 不会自动启用原本关闭的提取器。停服后保留当前配置 / Delegation 备份，只读盘点已有 Pending、Attempting、终态和引用类别；如是主线 V6，使用既有显式升级到 V7，绝不删除重建库来“启用 SMTP”。已经 V7 则不迁移。将根配置显式改为新唯一格式并填写私有值，在 maintenance mode 下关闭 SMTP 验证加载，确保不消费旧 Pending，再退出维护、启用与重启。新式 hash 不匹配的旧真实 Pending 将失败，这项切换后果要在实例清单中记录，不静默转换为新账号。
+本步骤在实际接入与受控发件授权范围内执行，当前执行边界见第 9 节。实施前确定目标实例、角色、SMTP 参数与受控收件地址，核对服务商支持现有 AUTH LOGIN。确认 `connections.json` 已绑定 outbound-mail extractor；仅填 email 不会自动启用原本关闭的提取器。停服后保留当前配置 / Delegation 备份，只读盘点已有 Pending、Attempting、终态和引用类别；如是主线 V6，使用既有显式升级到 V7，绝不删除重建库来“启用 SMTP”。已经 V7 则不迁移。将根配置显式改为新唯一格式并填写私有值，在 maintenance mode 下关闭 SMTP 验证加载，确保不消费旧 Pending，再退出维护、启用与重启。新式 hash 不匹配的旧真实 Pending 将失败，这项切换后果要在实例清单中记录，不静默转换为新账号。
 
 通过角色普通回合产生新的寄信 Action，逐目标角色至少一封；按捕获 dispatchId 关联终态和实际收件。先完成一角色纵向验收，再按相同方式验其他目标角色。遇 OutcomeUnknown 不重试，收件箱查询只提供补充证据；暂未收到不能证明未发送。确需再寄时由角色发出新的明确 Action，作为一封可能与原信重复的新信，不复位原行。出现问题关闭全局 SMTP，保留库与终态，不复位队列；若需保留 Pending 以便调查则停服 / 维护。不得靠首次探针成功就宣称已经部署。
 
@@ -188,7 +188,7 @@ WHERE s.dispatch_id = :dispatch_id;
 | 回执与历史 | 短预览不含长正文中段；后续 SMTP 终态不改原回执或历史 Observation；accepted 不作为发送验收依据。 |
 | 完整宿主路径与真实收件 | 合成完整 config → 真 loader → 双角色 Action → 实际 hosted consumer → 回环 TLS，核对各角色 AUTH / MAIL FROM / MIME From 与正文；真实实例逐目标角色新信落 ProviderAccepted 且实际收到；冷重开不重复。模型、SMTP 和人工收件结果分别记录。 |
 
-重型 .NET 检查串行，使用 `--no-restore -m:1 -nr:false`。先跑配置 / SMTP / capture / receipt 的针对性回归，再跑 Galatea 非 Live 全集；既有 Release 专属测试在 Release 单独运行。真实模型与 SMTP canary 是独立显式 opt-in，不能夹在普通回归中。本文只规定下一轮检查，不宣称这些检查已运行。
+重型 .NET 检查串行，使用 `--no-restore -m:1 -nr:false`。先跑配置 / SMTP / capture / receipt 的针对性回归，再跑 Galatea 非 Live 全集；既有 Release 专属测试在 Release 单独运行。真实模型与 SMTP canary 是独立显式 opt-in，不能夹在普通回归中。实际检查结果见第 9 节。
 
 tracked 文档、示例和测试只用假地址、假授权码与占位符；真实 config 及其备份仍在忽略的私有目录。保留现有 TLS 验证和 content-free Warning / Error；不建设密钥服务、文件权限管理平台或通用脱敏框架。
 
@@ -212,3 +212,64 @@ tracked 文档、示例和测试只用假地址、假授权码与占位符；真
 可观察的简化：账号来源由 config + 外置凭据文件收敛到一个 config；产品 sender 从两层收敛到一层；发送模式由关闭 / 离线 / 网络收敛到关闭 / 网络；新增 outbox 表、结果通知类型、通知游标和热更新机制均为零。保留数据格式识别与不可重发状态机，并非保留旧配置产品入口。
 
 用户已确认 SMTP 范围，方案没有待决的架构阻塞项。实际接入前仍需给定目标实例、目标角色账号参数和受控收件地址；这些是 S4 的输入，不需要在本轮文档中收集或公开授权码。
+
+## 9. 2026-10-07 实施与验收记录
+
+用户后续调用 `bounded-delegation` 授权具体实施和按需提交，并允许准备私有文件供其填写邮箱授权码。两个实现工作包分别负责配置与发送器；文档工作包负责当前合同与操作入口；独立只读复核从实际 diff 检查秘密边界、身份守卫与不可重发状态机，未发现阻断级产品问题。主线程完成跨包集成、验证与最终提交。
+
+### 已落地的切片
+
+- S1：唯一 V15 reader、角色五字段不可变 `GalateaEmailAccount`、启动快照、精确角色 map 与全 tuple 指纹；公开运行配置的 SMTP 位置参数已删除，秘密只留在内部 settings。新增秘密解析路径的未知/重复/类型/截断错误不回显原始字段或 inner 异常。
+- S1：Program 直接注册唯一网络 sender；外置凭据解析、Configured wrapper、产品 offline sender 与明文 TLS 模式已删除。consumer、capture 事务与 Delegation V7 schema 保留；测试替身仅在测试程序集。
+- S2：bootstrap 默认 email=null / SMTP 关闭；V15 当前合同、V14 历史定位、人工转换清单、配置/运行入口及角色协议已同步。角色协议只说明异步发送和确认边界，不夹入配置版本或 operator 文档链接。
+- S3：配置与 SMTP 故障回归、双角色完整宿主 TLS 验收及显式 opt-in 真实模型样本已加入。测试不读取真实邮箱授权码。
+
+双角色纵向测试通过实际 loader、角色 session 的 Action、生产 reconciler 与真实 hosted consumer 发送到两个共用信任锚的回环 TLS 服务器，仅替换内存测试信任锚。它分别核对 AUTH、MAIL FROM、MIME From、原文正文、ProviderAccepted、冷重开与 AlreadyCaptured 不重发；合成秘密不进入公开配置序列化、ToString、SystemPrompt、HTTP mailbox status 或停止后的隔离宿主工件（含 Journal / SQLite / WAL）。SSE、Recap 与全局 Debug 日志未逐项做动态 sentinel 检查；这些投影的无秘密边界由类型隔离与独立源码复核支持，不将它们冒充已逐项实测。
+
+### 真实模型样本与已知限制
+
+`GalateaEmailExtractionLiveTests` 用 `claude-haiku-4-5` 验证本人明确发送及字面正文、草稿不发送、来信引文不发送、同回合两封独立邮件，四个样本全部通过；不做 capture，不打开用户 store，不调用 SMTP。当前测试代理支持 Messages 但 Models API 返回 404，因此测试通过现成 `modelSpecsSelector` 为这个精确 alias 提供官方 64K 输出规格；没有改产品 factory、包 pin 或增加通用配置字段。规格依据 [Haiku 官方说明](https://platform.claude.com/docs/en/models/haiku-4-5/overview)。
+
+最初使用 `deepseek-v4-flash`：已发送/字面正文样本通过，但草稿错误调用 `report_extraction_problem`，两次检查均以 `UnrepresentableLayout` 失败。宿主拒绝该批提取，不生成 SMTP 邮件；本轮没有修改提取器提示词或放松校验来掩盖该现象。独立 SMTP canary 模板仍使用默认 DeepSeek 路径，只产生明确的新发送 Action；其对草稿零结果的模型稳定性未获证明。Haiku 的通过也不构成任意模型都能稳定判断的保证。
+
+### 检查与实际接入边界
+
+针对性检查覆盖配置、SMTP、capture 与冻结回执；双角色 hosted TLS 单项已通过。初次全集发现协议改写遗漏原有 Codex 后续回信说明，已恢复。后续四线程全集出现一次既有 `AcceptedRunner_WithoutHttpBindsTaskAndOwnsLockUntilFatalCleanup` 的锁断言失败，单独原样复验通过；该测试及对应产品代码未修改。最终全集与 Release 结果在下表记录。
+
+| 检查 | 最终结果与范围 |
+|:--|:--|
+| Galatea Debug 非 Live 全集，单线程 | 1681 通过、0 失败、1 跳过，共 1682，6 分 36 秒。跳过项仅适用于 Release，下一行已验证。 |
+| Release 捕获 / 网络 SMTP / outbox / 完整宿主 TLS | 81 通过、0 失败、0 跳过，28 秒；包括 `ReleaseCapture_PersistsWithoutDiagnostic`。 |
+| Haiku 显式模型提取 | 1 个测试中的四个样本全部通过，13 秒；不调用 SMTP。 |
+| 文档检查 | scope 内 68 文件，4 个原有 `MISSING_TARGET`，均为两个旧简化方案指向已移除的 AgentControl 源码；本轮未新增诊断。 |
+| Git diff 检查 | 工作区与 staged diff 均无空白错误；私有 canary 配置与说明被忽略，不进入提交。 |
+
+以下是在当前已构建、已 restore 工作树中的最终命令。前两项均不启用 Live 类；模型检查仅使用合成文本与模型 API 环境变量，不需要邮箱授权码。
+
+```bash
+env -u ATELIA_RUN_GALATEA_NOTE_LIVE \
+    -u ATELIA_RUN_GALATEA_LAB_LIVE \
+    -u ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE \
+    -u ATELIA_RUN_GALATEA_EMAIL_EXTRACTION_LIVE \
+    -u ATELIA_RUN_GALATEA_CONNECTION_STATE_LIVE \
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj \
+    --no-restore --no-build -m:1 -nr:false \
+    --filter 'FullyQualifiedName!~LiveTests' --verbosity minimal \
+    -- xUnit.MaxParallelThreads=1
+
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj \
+    -c Release --no-restore -m:1 -nr:false \
+    --filter 'FullyQualifiedName~ReleaseCapture_PersistsWithoutDiagnostic|FullyQualifiedName~GalateaSmtpHostIntegrationTests|FullyQualifiedName~GalateaNetworkSmtpTests|FullyQualifiedName~GalateaSmtpOutboundTests' \
+    --verbosity minimal -- xUnit.MaxParallelThreads=1
+
+ATELIA_RUN_GALATEA_EMAIL_EXTRACTION_LIVE=1 \
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj \
+    --no-restore -m:1 -nr:false \
+    --filter 'FullyQualifiedName~GalateaEmailExtractionLiveTests' --verbosity minimal
+
+python3 scripts/check_session_journal_docs.py --report-only
+```
+
+本工作树已经生成 Git 忽略的独立 canary 配置与操作说明，角色 ID 为 `gpt`、`cyber`；用户指定两个受控邮箱互发，实际地址和待填授权码只保存在私有文件，不进入本文或提交。全局 SMTP 保持关闭、maintenanceMode 保持开启；真实进程预检 `/login` 返回 200 并正常退出，未建立角色 session 或消费队列。两个服务商的 465 隐式 TLS、EHLO 250 和 AUTH LOGIN 广告经无认证连接核验；未执行 AUTH、MAIL、RCPT 或 DATA。
+
+S4 尚未完成：等待操作者填写两个授权码后，先沿普通角色回合各生成一封新信，再关联 dispatchId、持久终态、两个收件箱人工确认和冷重开无重复。没有修改既有实例配置、迁移实际数据库、分配长期角色邮箱或实际发信；不能宣称两个目标账号已经接入。

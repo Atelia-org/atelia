@@ -1,6 +1,6 @@
 # 对外邮件第二期：宿主账号绑定与 SMTP 发送边界
 
-后续改造方案见[每角色明文配置的 SMTP MVP](smtp-email-mvp-design-and-implementation.md)：拟用角色 `email` 块替代外置凭据文件，并合并产品发送入口。该方案尚未实施；本文仍说明当前代码与既有验证边界。
+历史定位：本文保留第二期的实现记录与离线验证证据，不定义当前配置合同，也不证明真实 SMTP 已联通。当前配置见 [V15 root-config 合同](../SessionJournal/current/contracts/galatea-root-config-v15.md)，当前实施与实测状态见[SMTP MVP 设计与实施方案](smtp-email-mvp-design-and-implementation.md)。下文旧配置形状和结果仅适用于所记录的历史切片。
 
 初始基线：`127a0b1f9a18761f341e4266faa28c2b01595fec`，分支 `g01/smtp-outbound`。本期只开发与离线验证，不部署、不读取真实凭据、不连接外部 SMTP、不真实发送。第一期持久状态机与事务边界沿用；rebase 到主线 `c0a2bbfa` 后，数据库为 V7（主线 V6 保存冻结回执），不回填旧记录。
 

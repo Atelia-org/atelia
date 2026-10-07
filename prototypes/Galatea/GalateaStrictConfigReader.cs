@@ -2,11 +2,12 @@ using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using Atelia.Galatea.Server.Mailbox;
 
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 14;
+    internal const int CurrentConfigVersion = 15;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumCharacterCount = 256;
@@ -230,20 +231,15 @@ internal static class GalateaStrictConfigReader {
                 );
             }
         }
-        catch (JsonException exception) {
+        catch (JsonException) {
             throw new InvalidDataException(
-                "Galatea config JSON is not strict valid UTF-8 JSON.",
-                exception
+                "Galatea config JSON is not strict valid UTF-8 JSON."
             );
         }
         catch (InvalidOperationException exception) when (
             exception.InnerException is DecoderFallbackException) {
             throw new InvalidDataException(
-                "Galatea config JSON is not strict valid UTF-8 JSON.",
-                new JsonException(
-                    "Galatea config JSON contains invalid UTF-8 text.",
-                    exception
-                )
+                "Galatea config JSON is not strict valid UTF-8 JSON."
             );
         }
     }
@@ -290,13 +286,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("14"u8)) {
+            || !reader.ValueSpan.SequenceEqual("15"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 14; "
+        "Galatea config requires exact integer version 'v': 15; "
         + "migrate the config before retrying."
     );
 
@@ -327,6 +323,12 @@ internal static class GalateaStrictConfigReader {
                     break;
                 case "autonomyIntervalMinutes":
                     RequireAutonomyIntervalMinutes(ref reader);
+                    break;
+                case "email":
+                    if (reader.TokenType != JsonTokenType.Null) {
+                        RequireToken(reader.TokenType, JsonTokenType.StartObject, "email");
+                        ValidateEmailObject(ref reader);
+                    }
                     break;
                 default:
                     throw Unknown("character", property);
@@ -447,46 +449,63 @@ internal static class GalateaStrictConfigReader {
 
     private static void ValidateSmtpObject(ref Utf8JsonReader reader) {
         var seen = NewPropertySet();
-        while (ReadProperty(ref reader, seen, "smtp", out string property)) {
-            RequireReadValue(ref reader, property);
+        while (ReadProperty(ref reader, seen, "smtp", out string property,
+                   redactPropertyName: true)) {
             switch (property) {
                 case "enabled":
-                case "offlineMode":
+                    RequireReadValue(ref reader, "enabled");
                     RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
                     break;
                 case "timeoutSeconds":
+                    RequireReadValue(ref reader, "timeoutSeconds");
                     if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt32(out int seconds)
                         || seconds is < 1 or > 300) { throw new InvalidDataException("Invalid SMTP timeout."); }
                     break;
-                case "senderAccounts":
-                    ValidateObjectArray(ref reader, MaximumCharacterCount, property, ValidateSmtpBindingObject);
-                    break;
-                default: throw Unknown("smtp", property);
+                default: throw new InvalidDataException("SMTP_UNKNOWN_FIELD.");
             }
-        }
-        if (!seen.Contains("enabled") || !seen.Contains("senderAccounts")) {
-            throw new InvalidDataException("SMTP requires enabled and senderAccounts.");
         }
     }
 
-    private static void ValidateSmtpBindingObject(ref Utf8JsonReader reader) {
+    private static void ValidateEmailObject(ref Utf8JsonReader reader) {
         var seen = NewPropertySet();
-        while (ReadProperty(ref reader, seen, "smtp binding", out string property)) {
-            RequireReadValue(ref reader, property);
+        string? address = null, authorizationCode = null, smtpHost = null, tlsMode = null;
+        int smtpPort = 0;
+        while (ReadProperty(ref reader, seen, "email", out string property,
+                   redactPropertyName: true)) {
             switch (property) {
-                case "characterId": case "bindingId": case "fromAddress": case "credentialPath":
+                case "address":
+                case "authorizationCode":
+                case "smtpHost":
+                case "tlsMode":
+                    RequireReadValue(ref reader, property);
                     RequireToken(reader.TokenType, JsonTokenType.String, property);
+                    string? value = reader.GetString();
+                    switch (property) {
+                        case "address": address = value; break;
+                        case "authorizationCode": authorizationCode = value; break;
+                        case "smtpHost": smtpHost = value; break;
+                        case "tlsMode": tlsMode = value; break;
+                    }
                     break;
-                case "enabled":
-                    RequireToken(reader.TokenType, JsonTokenType.True, JsonTokenType.False, property);
+                case "smtpPort":
+                    RequireReadValue(ref reader, "smtpPort");
+                    if (reader.TokenType != JsonTokenType.Number
+                        || !reader.TryGetInt32(out smtpPort)
+                        || smtpPort is < 1 or > 65535) {
+                        throw new InvalidDataException("SMTP_INVALID_EMAIL: smtpPort.");
+                    }
                     break;
-                case "displayName": RequireStringOrNull(reader.TokenType, property); break;
-                default: throw Unknown("smtp binding", property);
+                default: throw new InvalidDataException("SMTP_UNKNOWN_EMAIL_FIELD.");
             }
         }
-        foreach (string field in new[] { "characterId", "bindingId", "fromAddress", "credentialPath" }) {
-            if (!seen.Contains(field)) { throw new InvalidDataException("SMTP binding fields are missing."); }
+        foreach (string field in new[] { "address", "authorizationCode", "smtpHost", "smtpPort", "tlsMode" }) {
+            if (!seen.Contains(field)) {
+                throw new InvalidDataException("SMTP_MISSING_EMAIL_FIELD: " + field + ".");
+            }
         }
+        GalateaSmtpConfig.RequireValidAccount(new GalateaEmailAccount(
+            address!, authorizationCode!, smtpHost!, smtpPort, tlsMode!
+        ));
     }
 
     private static void RequireExactSessionProvisioning(
@@ -630,7 +649,8 @@ internal static class GalateaStrictConfigReader {
         ref Utf8JsonReader reader,
         HashSet<string> seen,
         string scope,
-        out string property
+        out string property,
+        bool redactPropertyName = false
     ) {
         if (!reader.Read()) {
             throw new InvalidDataException($"{scope} object is incomplete.");
@@ -643,9 +663,9 @@ internal static class GalateaStrictConfigReader {
         property = reader.GetString()
             ?? throw new InvalidDataException($"{scope} property is null.");
         if (!seen.Add(property)) {
-            throw new InvalidDataException(
-                $"{scope} contains a duplicate property '{property}'."
-            );
+            throw new InvalidDataException(redactPropertyName
+                ? $"{scope} contains a duplicate property."
+                : $"{scope} contains a duplicate property '{property}'.");
         }
         return true;
     }

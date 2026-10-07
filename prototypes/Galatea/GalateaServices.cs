@@ -4537,7 +4537,7 @@ internal static class GalateaConfigLoader {
         );
 
         GalateaSmtpConfig smtp = GalateaSmtpConfig.Resolve(rootFile.Runtime.Smtp,
-            characters.Select(character => character.CharacterId));
+            rootFile.Characters);
         characters = Array.AsReadOnly(characters.Select(character => character with {
             SmtpSenderAccountReference = smtp.ReferenceFor(character.CharacterId)
         }).ToArray());
@@ -4562,10 +4562,10 @@ internal static class GalateaConfigLoader {
             MaintenanceMode: rootFile.Runtime.MaintenanceMode,
             RecapGrid: LoadRecapGridConfig(rootFile.Runtime.RecapGrid),
             CompletionAttemptTimeoutSeconds: rootFile.Runtime.CompletionAttemptTimeoutSeconds,
-            CharacterConnectionStateExtractorConnectionId: characterConnectionStateExtractorConnectionId,
-            Smtp: smtp
+            CharacterConnectionStateExtractorConnectionId: characterConnectionStateExtractorConnectionId
         ) with {
-            CharacterRecipientDirectory = characterRecipientDirectory
+            CharacterRecipientDirectory = characterRecipientDirectory,
+            Smtp = smtp
         };
 
         Validate(config);
@@ -4586,10 +4586,9 @@ internal static class GalateaConfigLoader {
                 GalateaJsonContext.Default.GalateaRootFileConfig
             );
         }
-        catch (JsonException exception) {
+        catch (JsonException) {
             throw new InvalidDataException(
-                "Galatea config JSON could not be materialized.",
-                exception
+                "Galatea config JSON could not be materialized."
             );
         }
         return rootFile ?? throw new InvalidOperationException(
@@ -5075,7 +5074,7 @@ internal static class GalateaConfigTemplateFactory {
             Players: [new GalateaPlayerFileConfig("player-main", "玩家", "REPLACE_WITH_YOUR_PASSWORD")],
             Runtime: new GalateaRuntimeFileConfig(
               ListenUrls: ["http://0.0.0.0:3510"],
-              Smtp: GalateaSmtpConfig.Disabled,
+              Smtp: new GalateaSmtpPolicy(),
               RecapGrid: new GalateaRecapGridFileConfig(
                 Maintenance: new GalateaRecapGridMaintenanceFileConfig(
                     ConnectionId: DefaultConnectionId,
@@ -5157,7 +5156,8 @@ internal static class GalateaConfigTemplateFactory {
             CharacterContextTemplate: "",
             CharacterContextTemplateFile:
                 GalateaDefaults.CharacterContextTemplateFile,
-            AutonomyIntervalMinutes: 0
+            AutonomyIntervalMinutes: 0,
+            Email: null
         );
     }
 }
@@ -5208,6 +5208,8 @@ internal static class GalateaJson {
 [JsonSerializable(typeof(GalateaCharacterFileConfig))]
 [JsonSerializable(typeof(GalateaPlayerFileConfig))]
 [JsonSerializable(typeof(GalateaRuntimeFileConfig))]
+[JsonSerializable(typeof(GalateaEmailAccount))]
+[JsonSerializable(typeof(GalateaSmtpPolicy))]
 [JsonSerializable(typeof(GalateaSessionProvisioning))]
 [JsonSerializable(typeof(GalateaRecapGridFileConfig))]
 internal sealed partial class GalateaJsonContext : JsonSerializerContext;

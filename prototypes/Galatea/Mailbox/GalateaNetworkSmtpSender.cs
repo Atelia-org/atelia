@@ -5,51 +5,47 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using System.Text.Json;
 
 namespace Atelia.Galatea.Server.Mailbox;
 
 /// <summary>
 /// One SMTP transaction per captured mail, no pooling or retry. Only host-bound
-/// accounts enter this boundary. Protocol replies and credential exceptions never escape.
+/// accounts enter this boundary. Protocol replies and credential values never escape.
 /// </summary>
 internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
     X509Certificate2? trustAnchorForLoopbackTests = null) : IGalateaSmtpSender {
     public async Task<GalateaSmtpSendResult> SendAsync(GalateaSmtpSendRequest request, CancellationToken cancellationToken) {
-        // Hard rule also enforced here, independent of the configured router.
+        // Durable historical offline identities are never promoted to network sending.
         if (request.SenderAccountReference.StartsWith("offline:", StringComparison.Ordinal)) {
             return Failure("SMTP_OFFLINE_ISOLATED");
         }
-        var binding = config.Enabled ? config.SenderAccounts?.SingleOrDefault(a => a.Enabled
-            && a.CharacterId == request.FromCharacterId && a.Reference == request.SenderAccountReference) : null;
-        if (binding is null) { return Failure("SMTP_BINDING_UNAVAILABLE"); }
+        if (!config.Enabled || !config.Accounts.TryGetValue(request.FromCharacterId, out var account)
+            || GalateaSmtpConfig.AccountReference(request.FromCharacterId, account) != request.SenderAccountReference) {
+            return Failure("SMTP_BINDING_UNAVAILABLE");
+        }
         if (!GalateaExternalMailAddress.TryParse(request.Recipient, out var recipient)
             || recipient!.Value != request.Recipient) { return Failure("SMTP_INVALID_RECIPIENT"); }
+        if (account.TlsMode is not ("implicit" or "starttls")) { return Failure("SMTP_TLS_REQUIRED"); }
 
         bool dataMayHaveBeenSent = false;
         bool providerAccepted = false;
-        string stage = "CREDENTIALS";
+        string stage = "CONNECT";
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
         CancellationToken ct = deadline.Token;
         try {
             ct.ThrowIfCancellationRequested();
-            Credentials credentials = ReadCredentials(binding);
-            // Plain transport is permitted solely for a literal loopback test endpoint.
-            if (credentials.Security == "none" && !(IPAddress.TryParse(credentials.Host, out var ip) && IPAddress.IsLoopback(ip))) {
-                return Failure("SMTP_TLS_REQUIRED");
-            }
-            string message = CreateMessage(binding, request);
+            string message = CreateMessage(account, request);
             using var client = new TcpClient();
             stage = "CONNECT";
-            await client.ConnectAsync(credentials.Host, credentials.Port, ct).ConfigureAwait(false);
+            await client.ConnectAsync(account.SmtpHost, account.SmtpPort, ct).ConfigureAwait(false);
             using Stream network = client.GetStream();
             Stream transport = network;
             SslStream? tls = null;
             try {
-                if (credentials.Security == "implicit") {
+                if (account.TlsMode == "implicit") {
                     stage = "TLS";
-                    tls = await SecureAsync(transport, credentials.Host, ct).ConfigureAwait(false);
+                    tls = await SecureAsync(transport, account.SmtpHost, ct).ConfigureAwait(false);
                     transport = tls;
                 }
                 var wire = new Wire(transport);
@@ -58,13 +54,13 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
                 stage = "EHLO";
                 var hello = await wire.CommandAsync("EHLO galatea.invalid", ct).ConfigureAwait(false);
                 Expect(hello, 250);
-                if (credentials.Security == "starttls") {
+                if (account.TlsMode == "starttls") {
                     stage = "TLS";
                     if (!hello.Lines.Any(line => line.Equals("STARTTLS", StringComparison.OrdinalIgnoreCase))) {
                         return Failure("SMTP_TLS_UNAVAILABLE");
                     }
                     Expect(await wire.CommandAsync("STARTTLS", ct).ConfigureAwait(false), 220);
-                    tls = await SecureAsync(transport, credentials.Host, ct).ConfigureAwait(false);
+                    tls = await SecureAsync(transport, account.SmtpHost, ct).ConfigureAwait(false);
                     transport = tls;
                     wire = new Wire(transport);
                     stage = "EHLO";
@@ -77,10 +73,10 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
                     return Failure("SMTP_AUTH_UNSUPPORTED");
                 }
                 Expect(await wire.CommandAsync("AUTH LOGIN", ct).ConfigureAwait(false), 334);
-                Expect(await wire.CommandAsync(Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials.Username)), ct).ConfigureAwait(false), 334);
-                Expect(await wire.CommandAsync(Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials.AuthorizationCode)), ct).ConfigureAwait(false), 235);
+                Expect(await wire.CommandAsync(Convert.ToBase64String(Encoding.UTF8.GetBytes(account.Address)), ct).ConfigureAwait(false), 334);
+                Expect(await wire.CommandAsync(Convert.ToBase64String(Encoding.UTF8.GetBytes(account.AuthorizationCode)), ct).ConfigureAwait(false), 235);
                 stage = "MAIL";
-                Expect(await wire.CommandAsync("MAIL FROM:<" + binding.FromAddress + ">", ct).ConfigureAwait(false), 250);
+                Expect(await wire.CommandAsync("MAIL FROM:<" + account.Address + ">", ct).ConfigureAwait(false), 250);
                 stage = "RCPT";
                 var rcpt = await wire.CommandAsync("RCPT TO:<" + request.Recipient + ">", ct).ConfigureAwait(false);
                 if (rcpt.Code is not (250 or 251)) { throw new ReplyException(rcpt.Code); }
@@ -97,9 +93,6 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
                 return new(GalateaSmtpMailState.ProviderAccepted, "SMTP_DATA_ACCEPTED");
             }
             finally { tls?.Dispose(); }
-        }
-        catch (CredentialValidationException exception) {
-            return Failure(exception.Code);
         }
         catch (ReplyException exception) {
             // An explicit 4xx/5xx transaction rejection is known, including after DATA.
@@ -121,56 +114,6 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
     private static GalateaSmtpSendResult Failure(string code) => new(GalateaSmtpMailState.DefiniteFailure, code);
     private static GalateaSmtpSendResult UncertainOrFailure(bool data, string code) =>
         new(data ? GalateaSmtpMailState.OutcomeUnknown : GalateaSmtpMailState.DefiniteFailure, code);
-
-    private sealed record Credentials(string Provider, string Host, int Port, string Security, string Username, string AuthorizationCode);
-    private sealed class CredentialValidationException(string code) : Exception {
-        internal string Code { get; } = code;
-    }
-    private static Credentials ReadCredentials(GalateaSmtpAccountBinding binding) {
-        // V1 field names confirmed by the owner; never inspect a real file during development.
-        byte[] bytes = GalateaStrictConfigReader.ReadBoundedRegularFile(binding.CredentialPath, 64 * 1024, "SMTP credentials");
-        try {
-            using JsonDocument document = JsonDocument.Parse(bytes);
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) { throw new InvalidDataException(); }
-            string[] fields = ["v", "provider", "smtpHost", "smtpPort", "tlsMode", "username", "authorizationCode"];
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var property in root.EnumerateObject()) {
-                if (!fields.Contains(property.Name, StringComparer.Ordinal) || !seen.Add(property.Name)) { throw new InvalidDataException(); }
-            }
-            if (seen.Count != fields.Length) { throw new InvalidDataException(); }
-            var version = root.GetProperty("v");
-            if (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out int v) || v != 1) {
-                throw new CredentialValidationException("SMTP_CREDENTIAL_VERSION_UNSUPPORTED");
-            }
-            string provider = root.GetProperty("provider").GetString()!;
-            string host = root.GetProperty("smtpHost").GetString()!;
-            int port = root.GetProperty("smtpPort").GetInt32();
-            string security = root.GetProperty("tlsMode").GetString()!;
-            string user = root.GetProperty("username").GetString()!;
-            string secret = root.GetProperty("authorizationCode").GetString()!;
-            if (provider is null || provider.Length > 128 || provider.Any(char.IsControl)
-                || string.IsNullOrWhiteSpace(host) || host.Length > 253 || host.Any(char.IsControl)
-                || port is < 1 or > 65535
-                || string.IsNullOrWhiteSpace(user) || user.Any(char.IsControl)
-                || string.IsNullOrWhiteSpace(secret) || secret.Any(char.IsControl)) {
-                throw new InvalidDataException();
-            }
-            if (security is not ("implicit" or "starttls" or "none")) {
-                throw new CredentialValidationException("SMTP_CREDENTIAL_TLS_MODE_UNSUPPORTED");
-            }
-            // SMTP envelope and MIME From remain host-bound; credentials supply only login identity.
-            // Both addresses must be canonical narrow ASCII mailboxes, with no whitespace trimming here.
-            if (!GalateaExternalMailAddress.TryParse(user, out var loginAddress) || loginAddress!.Value != user
-                || !GalateaExternalMailAddress.TryParse(binding.FromAddress, out var senderAddress) || senderAddress!.Value != binding.FromAddress
-                || !string.Equals(binding.FromAddress, user, StringComparison.OrdinalIgnoreCase)) {
-                throw new CredentialValidationException("SENDER_ADDRESS_MISMATCH");
-            }
-            // Provider is metadata only; it never selects an endpoint, transport or account.
-            return new(provider, host, port, security, user, secret);
-        }
-        finally { CryptographicOperations.ZeroMemory(bytes); }
-    }
 
     private async Task<SslStream> SecureAsync(Stream stream, string host, CancellationToken ct) {
         var tls = new SslStream(stream, leaveInnerStreamOpen: true);
@@ -195,10 +138,9 @@ internal sealed class GalateaNetworkSmtpSender(GalateaSmtpConfig config,
         catch { tls.Dispose(); throw; }
     }
 
-    private static string CreateMessage(GalateaSmtpAccountBinding binding, GalateaSmtpSendRequest request) {
-        string from = binding.DisplayName is { Length: > 0 } ? EncodeHeader(binding.DisplayName) + " <" + binding.FromAddress + ">" : binding.FromAddress;
+    private static string CreateMessage(GalateaEmailAccount account, GalateaSmtpSendRequest request) {
         string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.DispatchId))).ToLowerInvariant();
-        return "From: " + from + "\r\nTo: " + request.Recipient + "\r\nSubject: " + EncodeHeader(request.Subject ?? "")
+        return "From: " + account.Address + "\r\nTo: " + request.Recipient + "\r\nSubject: " + EncodeHeader(request.Subject ?? "")
             + "\r\nDate: " + DateTimeOffset.UtcNow.ToString("ddd, dd MMM yyyy HH:mm:ss '+0000'", CultureInfo.InvariantCulture)
             + "\r\nMessage-ID: <" + id + "@galatea.invalid>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
             + "\r\nContent-Transfer-Encoding: base64\r\n\r\n"

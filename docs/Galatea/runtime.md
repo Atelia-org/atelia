@@ -192,7 +192,7 @@ MemoPod recall 的 `invalid-model-output` 在主模型 `SendAsync` 前最多尝�
 
 ## SessionJournal / RecapGrid 恢复顺序
 
-恢复先服从已经 durable 的 Journal 状态，不能拿 current 配置、current route 或当前 provider 猜测旧回合。模型可见的 `recap_grid_control` 已移除：若当前尾部仍冻结着旧工具 runtime，Prepared/ToolContinuation 会返回 `tool-runtime-unsupported`，不会忽略工具调用继续生成。fresh `NewRequest` 使用代码拥有的 RecapGrid bundle；已持久化 `RowWork` 按 actual producer 构造维护 route，V14 root config 只含 maintenance 设置。Completion 不提供 caller-selected output cap，也没有 wildcard/default fallback。
+恢复先服从已经 durable 的 Journal 状态，不能拿 current 配置、current route 或当前 provider 猜测旧回合。模型可见的 `recap_grid_control` 已移除：若当前尾部仍冻结着旧工具 runtime，Prepared/ToolContinuation 会返回 `tool-runtime-unsupported`，不会忽略工具调用继续生成。fresh `NewRequest` 使用代码拥有的 RecapGrid bundle；已持久化 `RowWork` 按 actual producer 构造维护 route，V15 root config 的 recapGrid 只含 maintenance 设置。Completion 不提供 caller-selected output cap，也没有 wildcard/default fallback。
 
 恢复按以下顺序处理：
 
@@ -210,7 +210,7 @@ family/definition-only registration 与 promotion 命令不变。最终真实切
 recipe registration，以及依赖旧 Store proof 的 promotion，不能以 receipt 存在绕过 command/proof 检查。
 当前实施与最终处置见 [Timeline 单一行身份](timeline-row-identity-simplification-plan.md)。
 
-当前 root strict config language 为 V14，connections 是 Completion-owned V3 catalog，delegates 使用当前独立合同。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
+当前 root strict config language 为 V15，connections 是 Completion-owned V3 catalog，delegates 使用当前独立合同。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。
 

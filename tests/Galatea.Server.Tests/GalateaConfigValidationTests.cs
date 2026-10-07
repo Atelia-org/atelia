@@ -153,7 +153,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigTemplateStartsWithExactV14AndRoundTrips() {
+    public void RootConfigTemplateStartsWithExactV15AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
             GalateaConfigTemplateFactory.CreateRootFile(),
             GalateaJson.Options
@@ -165,7 +165,7 @@ public sealed class GalateaConfigValidationTests {
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("14", first.Value.GetRawText());
+        Assert.Equal("15", first.Value.GetRawText());
 
         GalateaRootFileConfig? decoded = JsonSerializer.Deserialize(
             template,
@@ -1001,7 +1001,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV14OutsideFirstProperty() {
+    public void RootConfigAcceptsExactV15OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1009,11 +1009,11 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":14,";
+            const string LeadingVersion = "{\"v\":15,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":14}";
+                + ",\"v\":15}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -1025,7 +1025,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV14AndRejectsOtherVersions() {
+    public void RootConfigRequiresExactIntegerV15AndRejectsOtherVersions() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -1033,7 +1033,7 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":14";
+            const string Version = "\"v\":15";
             Assert.Contains(Version, original, StringComparison.Ordinal);
             Assert.Equal("alice", Assert.Single(GalateaConfigLoader.Load(configPath).Characters).CharacterId);
 
@@ -1075,11 +1075,13 @@ public sealed class GalateaConfigValidationTests {
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":13",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":14.0",
+                original.Replace(Version, "\"v\":14",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":14e0",
+                original.Replace(Version, "\"v\":15.0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":14",
+                original.Replace(Version, "\"v\":15e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":15",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -1167,11 +1169,11 @@ public sealed class GalateaConfigValidationTests {
                 GalateaConfigLoader.ConnectionsFileName
             );
             byte[] original = File.ReadAllBytes(configPath);
-            Assert.Contains("\"v\":14,", System.Text.Encoding.UTF8.GetString(original), StringComparison.Ordinal);
+            Assert.Contains("\"v\":15,", System.Text.Encoding.UTF8.GetString(original), StringComparison.Ordinal);
             byte[] versionless = original;
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":14,",
+                    "\"v\":15,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
@@ -1377,8 +1379,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":14,\"characters\"",
-                    "{\"v\":14,\"unknown\":1,\"characters\"",
+                    "{\"v\":15,\"characters\"",
+                    "{\"v\":15,\"unknown\":1,\"characters\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(

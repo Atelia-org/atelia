@@ -4,7 +4,7 @@
 工作树：`/galatea-homes/g-01/smtp-outbound`；分支：`g01/smtp-outbound`。
 依据：Galatea(Galatea-01) 的 G01-C-016。第一期不连接 SMTP，不读取凭据，不补寄旧信。
 
-本文记录第一期实现范围；第二期的真实发送器、配置扩展与离线隔离见 [第二期设计](smtp-outbound-phase2.md)。本文中的“没有真实发送器”等表述仅指第一期基线，不描述第二期扩展后的全部代码。
+历史定位：本文记录第一期实现范围与当时验证；这些验证不代表当前计划的 V15 产品配置或真实 SMTP 接入。当前配置与实施入口见 [V15 root-config 目标合同](../SessionJournal/current/contracts/galatea-root-config-v15.md)和[SMTP MVP 设计与实施方案](smtp-email-mvp-design-and-implementation.md)。本文中的“没有真实发送器”等表述仅指第一期基线。
 
 ## 协议与提取边界
 

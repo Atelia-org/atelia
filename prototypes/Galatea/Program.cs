@@ -75,8 +75,8 @@ builder.Services.AddSingleton(static services => new GalateaHostService(
 builder.Services.AddSingleton<GalateaAcceptedTurnRunner>();
 builder.Services.AddSingleton<GalateaAutomaticTurnCoordinator>();
 builder.Services.AddSingleton<GalateaCharacterMailRelay>();
-// Disabled configuration remains offline-only; credentials are loaded only when sending.
-builder.Services.AddSingleton<IGalateaSmtpSender>(_ => new GalateaConfiguredSmtpSender(config.Smtp));
+// One network boundary uses startup account snapshots; the global policy defaults to disabled.
+builder.Services.AddSingleton<IGalateaSmtpSender>(_ => new GalateaNetworkSmtpSender(config.Smtp));
 builder.Services.AddHostedService<GalateaServerAgentHostedService>();
 builder.Services.AddHostedService(static services =>
     services.GetRequiredService<GalateaCharacterMailRelay>());

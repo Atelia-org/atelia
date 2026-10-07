@@ -26,9 +26,12 @@ public sealed record GalateaConfig(
     GalateaRecapGridRuntimeConfig? RecapGrid = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null,
-    string? CharacterConnectionStateExtractorConnectionId = null,
-    GalateaSmtpConfig? Smtp = null
+    string? CharacterConnectionStateExtractorConnectionId = null
 ) {
+    // Host-only settings contain authorization codes and are not public data.
+    [JsonIgnore]
+    internal GalateaSmtpConfig Smtp { get; init; } = GalateaSmtpConfig.Disabled;
+
     // This directory is derived once from the complete config-file character set.
     // Direct in-process test configurations intentionally leave it unset; the
     // character-mail runtime only accepts the loader-produced directory.
@@ -212,7 +215,7 @@ internal sealed record GalateaRuntimeFileConfig(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyDictionary<string, int>? CompletionAttemptTimeoutSeconds = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    GalateaSmtpConfig? Smtp = null
+    GalateaSmtpPolicy? Smtp = null
 );
 
 /// <summary>
@@ -231,7 +234,8 @@ internal sealed record GalateaCharacterFileConfig(
     IReadOnlyList<GalateaCharacterConnectionOption> ConnectionOptions,
     string CharacterContextTemplate = "",
     string? CharacterContextTemplateFile = null,
-    int AutonomyIntervalMinutes = 0
+    int AutonomyIntervalMinutes = 0,
+    GalateaEmailAccount? Email = null
 );
 
 internal sealed record GalateaPlayerFileConfig(
